@@ -1,3 +1,5 @@
+import traceback
+
 """상담 회기 정보 처리 엔드포인트"""
 from fastapi import APIRouter, HTTPException
 from app.schemas.session import SessionInput
@@ -47,8 +49,10 @@ async def create_session_draft(session_input: SessionInput):
         )
     
     except Exception as e:
-        # 오류 처리
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"회기 요약 생성 중 오류 발생: {str(e)}"
         )
+

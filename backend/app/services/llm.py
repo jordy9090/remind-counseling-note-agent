@@ -1,19 +1,19 @@
-"""LLM 서비스 - 모든 외부 LLM 호출을 여기서만 처리"""
+"""LLM 호출 서비스 - 유일한 외부 호출점"""
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 from app.core.config import settings
 
 
-def get_llm():
-    """OpenAI ChatGPT 인스턴스 반환"""
+def get_llm() -> ChatOpenAI:
+    """기본 ChatOpenAI 인스턴스"""
     return ChatOpenAI(
         model=settings.openai_model,
-        temperature=0.7,
         api_key=settings.openai_api_key,
+        temperature=0.3,
     )
 
 
-def get_structured_llm(response_schema):
-    """구조화된 응답을 위한 LLM 인스턴스 반환"""
+def get_structured_llm(schema: type[BaseModel]):
+    """Pydantic 스키마를 강제하는 structured output LLM"""
     llm = get_llm()
-    # LangChain 0.1.0+ with_structured_output 메서드 사용
-    return llm.with_structured_output(response_schema)
+    return llm.with_structured_output(schema)

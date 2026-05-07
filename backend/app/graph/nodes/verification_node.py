@@ -27,14 +27,11 @@ def verification_node(state: GraphState) -> GraphState:
     )
     
     # LLM 호출 (구조화되지 않은 텍스트 응답)
-    llm = get_llm()
-    response = llm.invoke(prompt)
-    content = response.content
+    llm = get_structured_llm(VerificationReport)
+    result = llm.invoke(prompt)
     
     # 응답 파싱 - 4개 카테고리로 분류
-    verification_report = _parse_verification_response(content)
-    
-    state["verification"] = verification_report
+    state["verification"] = result
     return state
 
 

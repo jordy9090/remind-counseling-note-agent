@@ -1,6 +1,11 @@
 """상담 정보 구조화 프롬프트"""
 
-STRUCTURE_PROMPT = """당신은 전문 상담사입니다. 다음 상담 정보를 구조화하세요.
+STRUCTURE_PROMPT = """당신은 전문 상담사입니다.
+다음 상담 정보를 구조화하세요.
+
+[규칙]
+- 모든 필드는 string
+- 정보 없으면 "정보 없음"
 
 입력:
 - 상담사 메모: {counselor_memo}
@@ -18,7 +23,9 @@ STRUCTURE_PROMPT = """당신은 전문 상담사입니다. 다음 상담 정보�
 7. assessment: 상담사의 평가
 8. next_plan: 추후 상담 계획
 
-모든 필드를 채우되, 정보가 없으면 "정보 없음"으로 표시하세요."""
+모든 필드를 채우되, 정보가 없으면 "정보 없음"으로 표시하세요.
+"""
+
 
 def get_structure_prompt(counselor_memo: str, transcript: str, prev_summary: str = None) -> str:
     """구조화 프롬프트 생성"""
