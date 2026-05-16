@@ -1,0 +1,10 @@
+# Re:mind Streamlit — 파란색 테마
+[theme]
+primaryColor = "#2563EB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EFF4FF"
+textColor = "#1E293B"
+font = "sans serif"
+
+[server]
+runOnSave = true

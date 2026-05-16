@@ -19,6 +19,9 @@ remind-counseling-note-agent/
 ├── .gitignore
 ├── .env.example
 ├── CLAUDE.md
+├── streamlit_app.py          # Streamlit 데모 UI (화면 전용)
+├── requirements-streamlit.txt
+├── .streamlit/config.toml    # 파란색 테마
 ├── docs/
 │   ├── mvp_spec.md           # v0-A/B 스펙
 │   ├── api_contract.md       # API 명세
@@ -33,6 +36,7 @@ remind-counseling-note-agent/
 │   ├── .env.example
 │   └── app/
 │       ├── main.py              # FastAPI 진입점
+│       ├── pipeline.py          # run_pipeline(): UI/ API 공용 진입점 (+스텁)
 │       ├── api/routes/
 │       │   ├── health.py        # GET /health
 │       │   └── notes.py         # POST /api/notes/session-draft
@@ -85,7 +89,23 @@ remind-counseling-note-agent/
         └── pages/SessionDraftPage.tsx
 ```
 
-## 실행 방법
+## 빠른 시작 — Streamlit 데모 (권장)
+
+입력 → 구조화 → 회기요약 → 검증 리포트 전체 흐름을 한 화면에서 확인하는
+파란색 웹 UI입니다. LangGraph 로직은 `backend/app/` 에 분리돼 있고
+`streamlit_app.py` 는 화면만 담당합니다.
+
+```bash
+pip install -r requirements-streamlit.txt
+streamlit run streamlit_app.py
+```
+
+- 🌐 http://localhost:8501 에서 실행
+- 🔑 **API 키 없이도 동작**: `backend/.env` 에 `OPENAI_API_KEY` 가 없거나
+  `USE_STUB=1` 이면 `sample_data` 의 샘플 응답으로 전체 흐름을 보여줍니다(스텁 모드).
+- 실제 분석을 보려면 `backend/.env` 에 키를 넣으세요(아래 참고).
+
+## 실행 방법 (FastAPI + React, 전체 스택)
 
 ### 준비
 
@@ -93,7 +113,7 @@ remind-counseling-note-agent/
    ```bash
    cd backend
    cp .env.example .env
-   # .env 파일에서 OPENAI_API_KEY 입력
+   # .env 파일에서 OPENAI_API_KEY 입력 (비워두면 스텁 모드)
    ```
 
 ### 백엔드 실행
