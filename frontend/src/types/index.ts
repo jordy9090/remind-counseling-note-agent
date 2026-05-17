@@ -1,13 +1,18 @@
-import type { 
-  SessionInput, 
-  StructuredCase, 
-  SessionSummary, 
-  VerificationReport 
+export type {
+  CounselorReviewField,
+  DocumentTransformPreview,
+  EvidenceItem,
+  EvidenceMappedData,
+  EvidenceMappedItem,
+  EvidenceType,
+  GenerateNoteResponse,
+  GroundedItem,
+  SanitizedInput,
+  SensitiveInfoCandidate,
+  SessionInput,
+  SessionInfo,
+  SessionSummaryDraft,
+  StructuredCaseData,
+  SummarySection,
+  VerificationReport,
 } from './session'
-
-export type { 
-  SessionInput, 
-  StructuredCase, 
-  SessionSummary, 
-  VerificationReport 
-}

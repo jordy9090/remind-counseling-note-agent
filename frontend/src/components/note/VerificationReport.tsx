@@ -1,19 +1,32 @@
-import React from 'react'
 import type { VerificationReport } from '../../types/session'
-import { Card, CardHeader, CardContent } from '../ui/index'
+import { Card, CardContent, CardHeader } from '../ui/index'
 
 interface VerificationReportProps {
   data: VerificationReport
 }
 
-const categoryConfig = {
-  grounded: { label: '근거 있는 항목', color: 'bg-green-50 border-green-200' },
-  ungrounded: { label: '근거 부족 항목', color: 'bg-amber-50 border-amber-200' },
-  sensitive: { label: '민감정보', color: 'bg-red-50 border-red-200' },
-  needs_human_judgment: { label: '판단 필요', color: 'bg-blue-50 border-blue-200' },
-}
-
 export const VerificationReportComponent = ({ data }: VerificationReportProps) => {
+  const groups = [
+    {
+      label: '입력 근거 있음',
+      items: data.grounded_items.map((item) => `${item.claim} (${item.source_refs.join(', ')})`),
+    },
+    {
+      label: '입력 근거 부족 / 추론 가능성',
+      items: [...data.weakly_grounded_items, ...data.unsupported_or_risky_claims].map(
+        (item) => `${item.claim} - ${item.reason}`,
+      ),
+    },
+    {
+      label: '민감정보 후보',
+      items: data.sensitive_info_items.map((item) => `${item.text} (${item.recommendation})`),
+    },
+    {
+      label: '상담사 직접 판단 필요',
+      items: data.requires_counselor_review.map((item) => `${item.field} - ${item.reason}`),
+    },
+  ]
+
   return (
     <Card>
       <CardHeader>
@@ -21,28 +34,22 @@ export const VerificationReportComponent = ({ data }: VerificationReportProps) =
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {(Object.keys(categoryConfig) as Array<keyof VerificationReport>).map((category) => {
-            const config = categoryConfig[category]
-            const items = data[category] || []
-
-            return (
-              <div key={category}>
-                <p className="text-sm font-semibold text-gray-700 mb-2">{config.label}</p>
-                <div className={`rounded-md border ${config.color} p-3 space-y-2`}>
-                  {items.length > 0 ? (
-                    items.map((item, idx) => (
-                      <div key={idx} className="text-xs text-gray-600">
-                        <span className="font-medium">{item.content}</span>
-                        <span className="text-gray-500 ml-2">({item.source})</span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-xs text-gray-500 italic">항목 없음</p>
-                  )}
-                </div>
+          {groups.map((group) => (
+            <div key={group.label}>
+              <p className="mb-2 text-sm font-semibold text-gray-700">{group.label}</p>
+              <div className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+                {group.items.length ? (
+                  group.items.map((item, index) => (
+                    <p key={`${group.label}-${index}`} className="text-xs text-gray-600">
+                      {item}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-xs text-gray-500">항목 없음</p>
+                )}
               </div>
-            )
-          })}
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>

@@ -1,21 +1,17 @@
 import axios from 'axios'
-import type { SessionInput, StructuredCase, SessionSummary, VerificationReport } from '../types/session'
+import type { GenerateNoteResponse, SessionInput } from '../types/session'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 const client = axios.create({
-  baseURL: 'http://localhost:8000',
-  timeout: 60000,
+  baseURL: API_BASE_URL,
+  timeout: 90000,
 })
 
-export interface SessionDraftResponse {
-  structured: StructuredCase
-  summary: SessionSummary
-  verification: VerificationReport
-}
-
-// 세션 드래프트 생성
-export const postSessionDraft = async (input: SessionInput): Promise<SessionDraftResponse> => {
-  const response = await client.post<SessionDraftResponse>('/api/notes/session-draft', input)
+export const postGenerateNote = async (input: SessionInput): Promise<GenerateNoteResponse> => {
+  const response = await client.post<GenerateNoteResponse>('/api/notes/generate', input)
   return response.data
 }
 
+export { API_BASE_URL }
 export default client
