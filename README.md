@@ -1,255 +1,204 @@
-# Remind Counseling Note Agent - MVP v0
+# Re:mind
 
-상담 회기 기록을 자동으로 구조화, 요약, 검증하는 AI 에이전트입니다.
+Re:mind는 정신건강 상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
 
-## 프로젝트 개요
+상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 바탕으로 구조화된 회기요약 초안을 생성합니다. 또한 생성된 내용이 입력 근거에 기반한 것인지, 모델 추론인지, 민감정보 후보인지, 상담사 확인이 필요한 영역인지 구분하는 검증 리포트를 제공합니다.
 
-상담사가 **축어록과 메모**를 입력하면, LangGraph 기반 멀티 에이전트 워크플로우가:
-1. **구조화**: 8가지 필드로 정보 정리
-2. **요약**: 전문가 수준의 4가지 요약 항목 생성
-3. **검증**: 근거도/민감도/판단 필요 여부를 4가지로 분류
+## 제품 목표
 
-→ 상담사가 최종 판단하여 기록을 확정하는 의사결정 지원 도구
+Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 판단을 대체하지 않습니다.
 
-## 폴더 구조
+MVP의 목표는 상담 이후 반복되는 문서화 부담을 줄이고, 상담사가 AI가 생성한 초안을 안전하게 검토, 수정, 확정할 수 있도록 돕는 것입니다.
 
-```
-remind-counseling-note-agent/
-├── README.md
-├── .gitignore
-├── .env.example
-├── CLAUDE.md
-├── streamlit_app.py          # Streamlit 데모 UI (화면 전용)
-├── requirements-streamlit.txt
-├── .streamlit/config.toml    # 파란색 테마
-├── docs/
-│   ├── mvp_spec.md           # v0-A/B 스펙
-│   ├── api_contract.md       # API 명세
-│   ├── demo_scenario.md      # 발표 시연 흐름
-│   ├── schema.md             # 스키마 정의
-│   └── development_plan.md   # 개발 일정
-├── sample_data/
-│   ├── session_input_001.json    # 입력 예시
-│   └── session_output_001.json   # 출력 예시
-├── backend/
-│   ├── pyproject.toml
-│   ├── .env.example
-│   └── app/
-│       ├── main.py              # FastAPI 진입점
-│       ├── pipeline.py          # run_pipeline(): UI/ API 공용 진입점 (+스텁)
-│       ├── api/routes/
-│       │   ├── health.py        # GET /health
-│       │   └── notes.py         # POST /api/notes/session-draft
-│       ├── core/
-│       │   └── config.py        # 설정 관리
-│       ├── schemas/
-│       │   ├── session.py       # SessionInput
-│       │   ├── structured_case.py
-│       │   ├── summary.py
-│       │   └── verification.py
-│       ├── services/
-│       │   └── llm.py           # OpenAI 호출 (유일한 외부 호출점)
-│       ├── prompts/
-│       │   ├── structure_prompt.py
-│       │   ├── summary_prompt.py
-│       │   └── verification_prompt.py
-│       └── graph/
-│           ├── state.py         # GraphState
-│           ├── workflow.py      # StateGraph 조립
-│           └── nodes/
-│               ├── structure_node.py
-│               ├── summary_node.py
-│               └── verification_node.py
-└── frontend/
-    ├── package.json
-    ├── index.html
-    ├── vite.config.ts
-    ├── tsconfig.json
-    ├── tailwind.config.ts
-    ├── postcss.config.js
-    ├── components.json
-    └── src/
-        ├── main.tsx
-        ├── App.tsx
-        ├── index.css
-        ├── api/client.ts        # axios + 백엔드 호출
-        ├── types/session.ts     # 타입 정의
-        ├── lib/utils.ts
-        ├── components/
-        │   ├── layout/
-        │   │   ├── AppShell.tsx
-        │   │   └── Header.tsx
-        │   ├── ui/
-        │   │   └── index.tsx    # Button, Card, Input 등
-        │   └── note/
-        │       ├── SessionInputForm.tsx
-        │       ├── StructuredResult.tsx
-        │       ├── SummaryResult.tsx
-        │       └── VerificationReport.tsx
-        └── pages/SessionDraftPage.tsx
-```
+## 핵심 가치
 
-## 빠른 시작 — Streamlit 데모 (권장)
+- 상담사 메모와 축어록을 바탕으로 구조화된 회기요약 초안 생성
+- 생성된 내용과 원문 근거 연결
+- 입력에 없는 주장과 민감정보 후보 표시
+- AI 추론과 상담사 판단 영역 분리
+- 상담사 검토, 수정, 확정을 전제로 한 human-in-the-loop 흐름 지원
+- 향후 슈퍼비전 보고서와 종결 보고서 형식으로 문서 변환 확장
 
-입력 → 구조화 → 회기요약 → 검증 리포트 전체 흐름을 한 화면에서 확인하는
-파란색 웹 UI입니다. LangGraph 로직은 `backend/app/` 에 분리돼 있고
-`streamlit_app.py` 는 화면만 담당합니다.
+## MVP V0 범위
 
-```bash
-pip install -r requirements-streamlit.txt
-streamlit run streamlit_app.py
-```
+MVP V0는 다음 흐름에 집중합니다.
 
-- 🌐 http://localhost:8501 에서 실행
-- 🔑 **API 키 없이도 동작**: `backend/.env` 에 `OPENAI_API_KEY` 가 없거나
-  `USE_STUB=1` 이면 `sample_data` 의 샘플 응답으로 전체 흐름을 보여줍니다(스텁 모드).
-- 실제 분석을 보려면 `backend/.env` 에 키를 넣으세요(아래 참고).
+1. 회기 자료 입력
+2. 입력 정제
+3. 상담 내용 구조화
+4. 근거 매핑
+5. 회기요약 초안 생성
+6. 검증 리포트 생성
+7. 상담사 수정 및 확정
 
-## 실행 방법 (FastAPI + React, 전체 스택)
-
-### 준비
-
-1. **환경 변수 설정**
-   ```bash
-   cd backend
-   cp .env.example .env
-   # .env 파일에서 OPENAI_API_KEY 입력 (비워두면 스텁 모드)
-   ```
-
-### 백엔드 실행
-
-```bash
-cd backend
-uv sync          # 의존성 설치
-uv run uvicorn app.main:app --reload
-```
-
-- 🚀 http://localhost:8000 에서 API 실행
-- 📖 http://localhost:8000/docs 에서 Swagger UI 확인
-
-### 프론트엔드 실행
-
-```bash
-cd frontend
-pnpm install     # 의존성 설치
-pnpm dev
-```
-
-- 🌐 http://localhost:5173 에서 프론트엔드 실행
-
-### 함께 실행하기
-
-```bash
-# 터미널 1
-cd backend && uv run uvicorn app.main:app --reload
-
-# 터미널 2
-cd frontend && pnpm dev
-```
-
-## 기술 스택
-
-- **Backend**: FastAPI, Python 3.11, LangGraph, langchain-openai, Pydantic v2, uv
-- **Frontend**: React 18, TypeScript, Vite, TailwindCSS
-- **LLM**: OpenAI GPT-4o-mini (환경변수로 모델 변경 가능)
-- **Database**: 없음 (상태저장 없음, v1에서 추가 예정)
-
-## v0-A 범위 (완료)
-
-✅ **백엔드**
-- 3개 노드 워크플로우 (구조화 → 요약 → 검증)
-- Pydantic 스키마 (입력/출력 타입 정의)
-- FastAPI 라우터 (`/api/notes/session-draft`)
-- OpenAI 호출 (구조화된 출력 강제)
-
-✅ **프론트엔드**
-- 입력 폼 (좌측 고정)
-- 3개 결과 카드 (우측 흐르기)
-- 로딩/에러 상태 표시
-- TailwindCSS 스타일링
-
-✅ **문서**
-- API 계약서
-- 스키마 정의
-- 샘플 데이터 (한국어 상담 사례)
-- 발표 시연 시나리오
-
-## v0-B 범위 (다음주)
-
-- 검증 리포트 UI 개선 (색상, 아이콘)
-- 결과 내보내기 (JSON, 향후 PDF)
-- 수정/재생성 기능
-- 슈퍼비전 워크플로우 초안
-
-## 제외 항목 (v1+)
-
-- ❌ 데이터베이스 저장
-- ❌ 사용자 인증
-- ❌ 상담 사례 관리 (CRM)
-- ❌ 실시간 협업
-- ❌ 모바일 앱
-- ❌ 통계/리포팅
-
-## API 예시
-
-### 요청
-
-```bash
-curl -X POST http://localhost:8000/api/notes/session-draft \
-  -H "Content-Type: application/json" \
-  -d @sample_data/session_input_001.json
-```
-
-### 응답
+## 입력 예시
 
 ```json
 {
-  "structured": {
-    "basic_info": "...",
-    "presenting_problem": "...",
-    ...
-  },
-  "summary": {
-    "session_content": "...",
-    ...
-  },
-  "verification": {
-    "grounded": [...],
-    "ungrounded": [...],
-    "sensitive": [...],
-    "needs_human_judgment": [...]
-  }
+  "case_id": "CASE001",
+  "session_number": 3,
+  "session_date": "2026-05-17",
+  "counselor_name": "Counselor A",
+  "counselor_memo": "...",
+  "transcript_text": "...",
+  "previous_session_summary": "..."
 }
 ```
 
-자세한 내용은 [docs/api_contract.md](docs/api_contract.md) 참고
+## 출력 예시
 
-## 주요 특징
+```json
+{
+  "structured_case_data": {},
+  "evidence_mapped_data": {},
+  "session_summary_draft": {},
+  "verification_report": {},
+  "confirmed_session_note": {}
+}
+```
 
-1. **LangGraph 기반 멀티 에이전트**
-   - 각 노드가 독립적이고 재사용 가능
-   - 상태 관리로 정보 흐름 명확화
+## Agent Workflow
 
-2. **구조화된 출력 강제 (Pydantic)**
-   - OpenAI의 `with_structured_output()` 활용
-   - 예측 불가능한 응답 방지
+Re:mind MVP는 6개의 agent 흐름을 기준으로 설계합니다.
 
-3. **검증 계층 (Verification)**
-   - AI의 신뢰도를 명시
-   - 근거 있는 vs 추측 구분
-   - 민감정보 자동 플래깅
+### 1. Input Sanitization Agent
 
-4. **한국어 우선**
-   - 프롬프트, 샘플, 문서 모두 한국어
-   - 한국 상담 문화 반영
+민감정보 후보를 탐지하고 입력 자료를 정제합니다.
 
-## 향후 계획
+### 2. Session Structuring Agent
 
-- 슈퍼비전 워크플로우: 상담사가 승인 전까지 초안 상태
-- 다중 모델 지원: Anthropic Claude, 로컬 모델 등
-- 슬롯 기반 결과 내보내기: 고객사별 형식 커스터마이징
-- 감정 분석, 위험도 판단 등 고급 검증 옵션
+상담사 메모, 축어록, 이전 회기 요약을 공통 중간 구조로 변환합니다.
 
----
+### 3. Evidence Mapping Agent
 
-**개발**: Remind Lab | **라이선스**: MIT | **최종 업데이트**: May 2026
+각 구조화 항목의 출처를 상담사 메모, 축어록, 이전 회기 요약, 모델 추론으로 연결합니다.
+
+### 4. Session Summary Draft Agent
+
+상담사가 수정할 수 있는 회기요약 초안을 생성합니다.
+
+### 5. Verification & Review Agent
+
+근거 부족 주장, 민감정보 후보, 상담사 확인 필요 항목을 탐지합니다.
+
+### 6. Document Transform Agent
+
+확정된 회기요약을 슈퍼비전 보고서 또는 종결 보고서 초안으로 변환합니다. MVP V0에서는 preview 수준으로 구현할 수 있습니다.
+
+## 기술 스택
+
+Frontend:
+
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- shadcn/ui
+
+Backend:
+
+- FastAPI
+- Python 3.11
+- LangGraph
+- Pydantic
+- OpenAI API
+
+Package Manager:
+
+- Frontend: pnpm
+- Backend: uv
+
+Database:
+
+- MVP V0에서는 데이터베이스를 사용하지 않습니다.
+- 회기 데이터는 데모 목적상 요청 단위로 처리합니다.
+
+## 프로젝트 구조
+
+```text
+remind-counseling-note-agent/
+├── README.md
+├── AGENTS.md
+├── streamlit_app.py
+├── requirements-streamlit.txt
+├── docs/
+│   ├── product_spec.md
+│   ├── mvp_scope.md
+│   ├── architecture.md
+│   ├── schema.md
+│   ├── api_contract.md
+│   ├── demo_scenario.md
+│   └── development_plan.md
+├── sample_data/
+│   ├── session_input_001.json
+│   └── session_output_001.json
+├── backend/
+│   ├── pyproject.toml
+│   ├── .env.example
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── pipeline.py
+│   │   ├── api/
+│   │   │   └── routes/
+│   │   │       ├── health.py
+│   │   │       └── notes.py
+│   │   ├── graph/
+│   │   ├── schemas/
+│   │   ├── prompts/
+│   │   └── services/
+│   └── uv.lock
+└── frontend/
+    ├── package.json
+    └── src/
+```
+
+## 빠른 실행
+
+### Streamlit 데모 UI
+
+```bash
+streamlit run streamlit_app.py
+```
+
+브라우저에서 `http://localhost:8501`로 접속합니다.
+
+### Backend
+
+```bash
+cd backend
+uv sync
+uv run uvicorn app.main:app --reload
+```
+
+API 문서는 `http://localhost:8000/docs`에서 확인할 수 있습니다.
+
+### Frontend
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+## 개발 우선순위
+
+첫 번째 개발 마일스톤은 다음 흐름을 연결하는 것입니다.
+
+```text
+Input
+  ↓
+Structured Case Data
+  ↓
+Session Summary Draft
+  ↓
+Verification Report
+```
+
+UI polish, 데이터베이스 저장, 문서 export, 고급 커스터마이징은 이후 버전에서 다룹니다.
+
+## 문서
+
+- [제품 명세](docs/product_spec.md)
+- [MVP 범위](docs/mvp_scope.md)
+- [아키텍처](docs/architecture.md)
+- [스키마](docs/schema.md)
