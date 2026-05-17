@@ -2,69 +2,82 @@
 
 ## 1. 개요
 
-Re:mind MVP V0는 React frontend, FastAPI backend, LangGraph 기반 multi-agent workflow로 구성됩니다.
+Re:mind MVP V0의 주 경로는 React frontend, FastAPI backend, LangGraph 기반 6-agent workflow입니다.
 
 ```text
-Frontend
+React Frontend
   ↓
 FastAPI
   ↓
 LangGraph Workflow
   ↓
-OpenAI API
+OpenAI API 또는 deterministic stub
   ↓
-Structured Output
+Pydantic validated JSON
 ```
+
+Streamlit은 legacy/optional quick demo이며, 주 경로는 React + FastAPI입니다.
 
 ## 2. Frontend
 
-Frontend의 책임은 다음과 같습니다.
+Frontend 위치:
+
+```text
+frontend/src/pages/SessionDraftPage.tsx
+```
+
+Frontend 책임:
 
 - 회기 입력 수집
-- backend API로 입력 전송
+- `POST /api/notes/generate` 호출
+- 처리 단계 표시
 - 구조화 결과 표시
-- 회기요약 초안 표시
+- 회기요약 초안 textarea 편집
 - 검증 리포트 표시
-- 상담사 수정 및 확정 지원
+- 문서 변환 preview 표시
+- Raw JSON 확인
 
-주요 페이지:
+API base URL:
 
-- `SessionDraftPage`
-
-주요 UI 영역:
-
-- `InputPanel`
-- `ProcessingStatus`
-- `ResultTabs`
-- `ConfirmedNotePanel`
-
-결과 탭:
-
-- 구조화 결과
-- 회기요약 초안
-- 검증 리포트
-- 문서 변환 Preview
+- 기본값: `http://localhost:8000`
+- 환경변수: `VITE_API_BASE_URL`
 
 ## 3. Backend
 
-Backend의 책임은 다음과 같습니다.
-
-- Pydantic을 통한 입력 검증
-- LangGraph workflow 실행
-- 구조화된 출력 반환
-- 오류를 안전하게 처리
-
-주요 API route:
+Backend 위치:
 
 ```text
+backend/app/main.py
+backend/app/api/routes/health.py
+backend/app/api/routes/notes.py
+backend/app/schemas/note.py
+backend/app/graph/graph.py
+backend/app/graph/nodes.py
+```
+
+Backend 책임:
+
+- Pydantic 입력/출력 검증
+- LangGraph workflow 실행
+- OpenAI API 또는 deterministic stub 호출
+- 구조화된 JSON 응답 반환
+
+Primary routes:
+
+```text
+GET  /api/health
 POST /api/notes/generate
 ```
 
-현재 구현에서 기존 route가 다를 수 있으므로, MVP 정리 과정에서 route naming을 통일합니다.
+Legacy compatibility route:
+
+```text
+POST /api/notes/session-draft
+```
 
 ## 4. LangGraph Workflow
 
-MVP V0의 기본 workflow는 다음과 같습니다.
+실제 구현은 `backend/app/graph/graph.py`에 있습니다.
 
 ```text
 sanitize_input
@@ -77,59 +90,54 @@ generate_summary
   ↓
 verify_output
   ↓
-transform_document
+transform_document_preview
 ```
-
-V0에서는 `transform_document`를 preview 수준으로 구현할 수 있습니다.
 
 ## 5. Agent 책임
 
 ### sanitize_input
 
-- 민감정보 후보 탐지
-- 입력 형식 정규화
-- 상담사 메모, 축어록, 이전 회기 요약 분리
+- 입력 자료 정제
+- 상담사 메모, 축어록/STT, 이전 회기 요약 분리
+- 전화번호, 이메일, 학교명, 실명 후보 탐지
 
 ### structure_session
 
-- 상담 문서화에 공통적으로 필요한 필드 추출
-- 주호소, 회기 주제, 상담 내용, 개입, 반응, 추후 계획 구성
+- 공통 상담 문서 구조 생성
+- 주호소, 회기 주제, 상담 내용, 상담자 개입, 내담자 반응, 주요 발화, 비언어 메모, reflection 후보, 추후 계획 추출
 
 ### map_evidence
 
-- 각 항목의 근거 출처 연결
-- 상담사 메모, 축어록, 이전 회기 요약, 모델 추론, 확인 필요 구분
+- 각 구조화 항목을 source reference와 연결
+- `direct`, `inferred`, `counselor_input`, `previous_context`, `needs_review`, `mixed`, `model_inference` 구분
 
 ### generate_summary
 
 - 구조화 결과와 근거 매핑 결과를 바탕으로 회기요약 초안 생성
-- 상담사가 수정 가능한 섹션형 출력 생성
+- frontend에서 섹션별 textarea로 수정 가능한 형태 반환
 
 ### verify_output
 
-- 입력에 없는 주장 탐지
-- 과도한 해석 탐지
-- 민감정보 후보 표시
-- 상담사 검토 필요 영역 표시
+- 입력 근거 있음
+- 입력 근거 부족 / 추론 가능성
+- 민감정보 후보
+- 상담사 직접 판단 필요 항목 분리
 
-### transform_document
+### transform_document_preview
 
-- 확정된 회기요약을 목적별 문서 초안으로 변환
-- 슈퍼비전 보고서, 종결 보고서, 기관 양식용 요약으로 확장 가능
-- MVP V0에서는 preview-level logic으로 처리
+- 확정된 회기요약을 슈퍼비전 보고서 또는 종결 보고서로 확장하기 위한 preview 제공
+- MVP V0에서는 정식 문서 변환/export가 아니라 부족 필드와 일부 preview section만 반환
 
 ## 6. 데이터 저장
 
 MVP V0에서는 세션 데이터를 데이터베이스에 저장하지 않습니다.
 
-모든 데이터는 요청 단위로 처리합니다. 이 방식은 초기 데모를 가볍게 유지하고, 민감한 상담 데이터의 저장 위험을 줄입니다.
-
-저장 기능은 V1 이후 전문가 검토와 보안 정책 설계 후 검토합니다.
+모든 데이터는 요청 단위로 처리합니다. DB 저장, 인증, RAG, 파일 업로드, 음성 저장은 MVP V0 제외 범위입니다.
 
 ## 7. 출력 검증 원칙
 
 모든 LLM 출력은 Pydantic model로 검증합니다.
 
-입력에 없는 정보는 확정적으로 서술하지 않습니다. 필요한 경우 `model_inference`, `needs_review`, `requires_counselor_review`로 표시합니다.
+입력에 없는 정보는 확정적으로 서술하지 않습니다. 필요한 경우 `inferred`, `model_inference`, `needs_review`, `requires_review`로 표시합니다.
 
 상담 진단, 위험 평가, 상담사 평가, 사례개념화의 최종 판단은 자동화하지 않습니다.

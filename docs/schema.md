@@ -1,6 +1,20 @@
 # Schema
 
-## 1. SessionInput
+현재 MVP V0 schema의 기준 파일은 `backend/app/schemas/note.py`입니다. 이 문서는 해당 Pydantic schema와 같은 계약을 설명합니다.
+
+## 1. EvidenceType
+
+```text
+direct
+inferred
+counselor_input
+previous_context
+needs_review
+mixed
+model_inference
+```
+
+## 2. SessionInput
 
 회기 자료 입력 스키마입니다.
 
@@ -10,34 +24,32 @@
   "session_number": 3,
   "session_date": "2026-05-17",
   "counselor_name": "Counselor A",
-  "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고 중심으로 진행함.",
+  "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함.",
   "transcript_text": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
   "previous_session_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸.",
-  "counseling_goal": "진로 선택 과정에서 자기이해를 높이고 실행 계획을 세움.",
-  "psychological_test_summary": "검사 결과는 상담사가 확인 후 입력.",
+  "counseling_goal": "진로 선택 과정에서 자기이해를 높이고 실행 가능한 준비 계획을 세움.",
+  "psychological_test_summary": "",
   "key_issue_tags": ["진로불안", "자기비난", "취업준비"],
-  "nonverbal_notes": "말의 속도가 느려지고 한숨이 잦았음."
+  "nonverbal_notes": ""
 }
 ```
 
-필수 필드는 다음과 같습니다.
+필수 입력:
 
 - `case_id`
 - `session_number`
-- `session_date`
-- `counselor_name`
 - `counselor_memo`
 - `transcript_text`
-- `previous_session_summary`
 
-선택 필드는 다음과 같습니다.
+현재 Pydantic model에서는 `session_date`, `counselor_name`, `previous_session_summary` 등은 빈 문자열 default를 가질 수 있지만, frontend MVP 화면에서는 날짜, 상담자, 이전 회기 요약도 주요 입력으로 받습니다.
 
-- `counseling_goal`
-- `psychological_test_summary`
-- `key_issue_tags`
-- `nonverbal_notes`
+호환 alias:
 
-## 2. SanitizedInput
+- `session_no` → `session_number`
+- `transcript` → `transcript_text`
+- `prev_summary` → `previous_session_summary`
+
+## 3. SanitizedInput
 
 입력 정제 결과입니다.
 
@@ -46,41 +58,42 @@
   "case_id": "CASE001",
   "session_number": 3,
   "session_date": "2026-05-17",
+  "counselor_name": "Counselor A",
   "sources": {
-    "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고 중심으로 진행함.",
-    "transcript_text": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
-    "previous_session_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸."
+    "counselor_memo": "상담사 메모",
+    "transcript_text": "축어록/STT 텍스트",
+    "previous_session_summary": "이전 회기 요약",
+    "counseling_goal": "상담 목표",
+    "psychological_test_summary": "",
+    "key_issue_tags": ["진로불안"],
+    "nonverbal_notes": ""
   },
   "sensitive_info_candidates": [
     {
-      "text": "실명 또는 학교명으로 보이는 표현",
+      "text": "010-0000-0000",
       "source": "transcript_text",
-      "recommendation": "가명 또는 케이스 ID로 대체"
+      "category": "phone",
+      "recommendation": "전화번호 후보입니다. 가명 또는 케이스 ID로 대체하세요."
     }
   ]
 }
 ```
 
-## 3. StructuredCaseData
+민감정보 후보 탐지 범위:
+
+- 전화번호
+- 이메일
+- 학교명
+- 실명으로 보이는 표현
+
+## 4. StructuredCaseData
 
 상담 자료를 공통 중간 구조로 변환한 결과입니다.
 
 ```json
 {
-  "presenting_problem": [
-    {
-      "content": "내담자는 진로 불확실성과 취업 불안을 호소함.",
-      "evidence_type": "direct",
-      "source_refs": ["transcript:Cl-1", "counselor_memo"]
-    }
-  ],
-  "session_theme": [
-    {
-      "content": "진로 불안과 자기비난 사고 탐색",
-      "evidence_type": "direct",
-      "source_refs": ["counselor_memo"]
-    }
-  ],
+  "presenting_problem": [],
+  "session_theme": [],
   "session_content": [],
   "counselor_interventions": [],
   "client_responses": [],
@@ -91,90 +104,92 @@
 }
 ```
 
-## 4. EvidenceMappedData
+각 배열 항목은 `EvidenceItem`입니다.
 
-각 구조화 항목에 근거 출처를 연결한 결과입니다.
+```json
+{
+  "content": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+  "evidence_type": "direct",
+  "source_refs": ["transcript_text", "counselor_memo"]
+}
+```
+
+## 5. EvidenceMappedData
+
+각 구조화 항목을 근거 출처와 연결한 결과입니다.
 
 ```json
 {
   "items": [
     {
       "field": "presenting_problem",
-      "content": "내담자는 진로 불확실성과 취업 불안을 호소함.",
+      "content": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
       "evidence_type": "direct",
-      "source_refs": ["transcript:Cl-1", "counselor_memo"],
+      "source_refs": ["transcript_text", "counselor_memo"],
       "requires_review": false
-    },
-    {
-      "field": "client_response",
-      "content": "내담자는 자기비난 사고를 인식하는 반응을 보임.",
-      "evidence_type": "inferred",
-      "source_refs": ["transcript"],
-      "requires_review": true
     }
   ]
 }
 ```
 
-근거 유형은 다음 값을 사용합니다.
+## 6. SessionSummaryDraft
 
-- `direct`
-- `inferred`
-- `counselor_input`
-- `previous_context`
-- `needs_review`
-- `mixed`
-
-## 5. SessionSummaryDraft
-
-상담사가 편집할 수 있는 회기요약 초안입니다.
+상담사가 frontend에서 textarea로 수정할 수 있는 회기요약 초안입니다.
 
 ```json
 {
   "session_info": {
     "case_id": "CASE001",
     "session_number": 3,
-    "session_date": "2026-05-17"
+    "session_date": "2026-05-17",
+    "counselor_name": "Counselor A"
   },
   "session_theme": {
-    "text": "진로 불안과 자기비난 사고 탐색",
+    "text": "진로불안, 자기비난, 취업준비를 중심으로 한 회기 내용 정리",
     "evidence_type": "direct",
-    "source_refs": ["counselor_memo"]
+    "source_refs": ["counselor_memo"],
+    "requires_review": false
   },
   "presenting_problem": {
-    "text": "내담자는 진로가 불확실하다고 느끼며 취업 준비 과정에서 불안을 경험하고 있다.",
+    "text": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
     "evidence_type": "direct",
-    "source_refs": ["transcript:Cl-1"]
+    "source_refs": ["transcript_text", "counselor_memo"],
+    "requires_review": false
   },
   "session_content": {
-    "text": "이번 회기에서는 진로 불확실성과 자기비난 사고를 중심으로 내담자의 사고 패턴을 탐색하였다.",
+    "text": "이번 회기에서는 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
     "evidence_type": "mixed",
-    "source_refs": ["counselor_memo", "transcript"]
+    "source_refs": ["counselor_memo", "transcript_text"],
+    "requires_review": false
   },
   "counselor_intervention": {
-    "text": "상담자는 내담자의 자동사고를 탐색하고, 자기비난 표현을 구체화하도록 질문하였다.",
+    "text": "상담자는 내담자의 표현을 구체화하도록 질문함.",
     "evidence_type": "direct",
-    "source_refs": ["counselor_memo"]
+    "source_refs": ["counselor_memo", "transcript_text"],
+    "requires_review": false
   },
   "client_response": {
-    "text": "내담자는 자신의 불안과 비교 사고를 인식하는 반응을 보였다.",
+    "text": "내담자는 불안을 언어화하고 자신의 사고 흐름을 점검함.",
     "evidence_type": "inferred",
-    "source_refs": ["transcript"]
+    "source_refs": ["transcript_text"],
+    "requires_review": true
   },
   "reflection": {
-    "text": "상담자 reflection은 상담사가 직접 작성하거나 확인해야 한다.",
+    "text": "상담자 reflection은 상담사가 직접 작성하거나 확인해야 합니다.",
     "evidence_type": "counselor_input",
-    "source_refs": []
+    "source_refs": [],
+    "requires_review": true
   },
   "next_plan": {
-    "text": "다음 회기에서는 자동사고 기록지를 바탕으로 구체적인 행동 실험 가능성을 검토한다.",
-    "evidence_type": "direct",
-    "source_refs": ["counselor_memo"]
+    "text": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함.",
+    "evidence_type": "inferred",
+    "source_refs": ["counselor_memo"],
+    "requires_review": true
   }
 }
 ```
 
-## 6. VerificationReport
+## 7. VerificationReport
 
 회기요약 초안의 검증 결과입니다.
 
@@ -182,30 +197,25 @@
 {
   "grounded_items": [
     {
-      "claim": "내담자는 진로 불확실성과 취업 불안을 호소했다.",
-      "source_refs": ["transcript:Cl-1", "counselor_memo"]
+      "claim": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+      "source_refs": ["transcript_text", "counselor_memo"]
     }
   ],
   "weakly_grounded_items": [
     {
-      "claim": "내담자는 자기비난 사고 패턴을 보인다.",
-      "reason": "입력에 자기비난 관련 메모는 있으나, 구체적 사고 패턴은 상담사 확인이 필요함.",
+      "claim": "내담자는 불안을 언어화하고 자신의 사고 흐름을 점검함.",
+      "reason": "입력 근거는 있으나 일부 해석 또는 요약이 포함되어 상담사 확인이 필요함.",
       "recommendation": "상담사가 유지, 수정, 삭제 여부를 판단"
     }
   ],
   "unsupported_or_risky_claims": [
     {
-      "claim": "내담자의 불안은 부모 기대 내면화에서 비롯되었다.",
-      "reason": "부모 기대에 대한 언급은 있으나 원인으로 확정할 근거는 부족함.",
-      "recommendation": "원인으로 단정하지 말고 상담사 판단 영역으로 이동"
+      "claim": "사례개념화, 위험 판단, 목표 달성 정도를 자동으로 확정하지 않음.",
+      "reason": "MVP V0의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
+      "recommendation": "상담사가 직접 작성하거나 별도 확인 필드로 분리"
     }
   ],
-  "sensitive_info_items": [
-    {
-      "text": "실명, 학교명, 학번, 연락처 등으로 보이는 표현",
-      "recommendation": "가명 또는 케이스 ID로 대체"
-    }
-  ],
+  "sensitive_info_items": [],
   "requires_counselor_review": [
     {
       "field": "reflection",
@@ -214,46 +224,27 @@
     {
       "field": "case_conceptualization",
       "reason": "MVP V0 자동 생성 대상이 아님"
+    },
+    {
+      "field": "goal_attainment",
+      "reason": "목표 달성 정도는 상담사 확인 필요"
     }
   ]
 }
 ```
 
-## 7. ConfirmedSessionNote
-
-상담사가 수정하고 확정한 최종 회기 기록입니다.
-
-```json
-{
-  "session_info": {
-    "case_id": "CASE001",
-    "session_number": 3,
-    "session_date": "2026-05-17"
-  },
-  "confirmed_sections": {
-    "session_theme": "진로 불안과 자기비난 사고 탐색",
-    "presenting_problem": "내담자는 진로 불확실성과 취업 준비 과정의 불안을 호소함.",
-    "session_content": "상담사는 자동사고와 자기비난 표현을 중심으로 사고 패턴을 탐색함.",
-    "counselor_intervention": "상담자는 개방형 질문과 구체화 질문을 사용함.",
-    "client_response": "내담자는 비교 사고를 인식하고 불안을 언어화함.",
-    "reflection": "상담사가 직접 작성한 reflection.",
-    "next_plan": "다음 회기에서 자동사고 기록지를 검토함."
-  },
-  "confirmed_by_counselor": true
-}
-```
-
 ## 8. DocumentTransformPreview
 
-MVP V0에서 preview 수준으로 제공할 문서 변환 출력입니다.
+MVP V0에서 preview 수준으로 제공하는 문서 변환 결과입니다.
 
 ```json
 {
-  "document_type": "supervision_report",
+  "document_type": "preview",
+  "available_transforms": ["supervision_report", "termination_report"],
   "preview_sections": {
     "session_summary": "확정된 회기요약 기반 미리보기",
     "client_main_issue": "입력 근거 기반으로 채울 수 있는 항목",
-    "supervision_question": "상담사 추가 입력 필요"
+    "next_plan": "추후 계획"
   },
   "missing_required_fields": [
     "내담자 기본 정보",
@@ -263,13 +254,29 @@ MVP V0에서 preview 수준으로 제공할 문서 변환 출력입니다.
     "심리검사 결과",
     "사례개념화 및 상담방향성",
     "슈퍼비전 요청사항"
-  ]
+  ],
+  "notice": "MVP V0에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다."
 }
 ```
 
-## 9. 원칙
+## 9. GenerateNoteResponse
+
+```json
+{
+  "structured_case_data": {},
+  "evidence_mapped_data": {},
+  "session_summary_draft": {},
+  "verification_report": {},
+  "document_transform_preview": {},
+  "confirmed_session_note": {},
+  "sanitized_input": {},
+  "stub": true
+}
+```
+
+## 10. 원칙
 
 - 모든 LLM 출력은 Pydantic model로 검증합니다.
 - 입력에 없는 정보는 확정적으로 추론하지 않습니다.
 - 진단, 위험 평가, 상담사 평가, 사례개념화의 최종 판단은 자동화하지 않습니다.
-- `reflection`, `case_conceptualization`, `risk_judgment` 같은 영역은 상담사 확인 필요로 표시합니다.
+- `reflection`, `case_conceptualization`, `goal_attainment`는 상담사 확인 필요로 표시합니다.

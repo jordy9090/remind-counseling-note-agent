@@ -1,21 +1,114 @@
-# MVP 스펙
+# MVP V0 스펙
 
-## v0-A (이번주)
-- **구조화 노드**: 축어록 + 상담사 메모 → 8가지 필드로 구조화 ✓
-- **요약 노드**: 구조화된 정보 → 4가지 필드 요약 (상담내용/상담자소견/회기요약/추후계획) ✓
-- **검증 노드**: 원본 입력 vs 생성된 정보 → 4가지 카테고리 분류 ✓
-- **FastAPI 백엔드**: `/api/notes/session-draft` POST 엔드포인트 ✓
-- **기본 React 프론트**: 입력 폼 + 3개 결과 카드 렌더링 ✓
+이 문서는 현재 구현된 MVP V0 기준의 스펙입니다.
 
-## v0-B (다음주)
-- 검증 리포트 UI 개선 (색상, 아이콘)
-- 결과 내보내기 (PDF, JSON)
-- 수정 기능 (사용자가 생성된 요약 편집 후 재저장)
-- 슈퍼비전 모드 (상담사 승인 워크플로우)
+## 1. 주 경로
 
-## 제외 항목 (v1+ 이후)
-- 데이터베이스 저장
-- 사용자 인증
-- 상담 사례 관리 (CRM)
-- 실시간 협업
-- 모바일 앱
+```text
+React Frontend
+  ↓
+FastAPI Backend
+  ↓
+LangGraph 6-agent Workflow
+  ↓
+Pydantic validated JSON
+```
+
+Streamlit은 legacy/optional quick demo입니다.
+
+## 2. Backend
+
+Primary API:
+
+```text
+GET  /api/health
+POST /api/notes/generate
+```
+
+Workflow:
+
+```text
+sanitize_input
+  ↓
+structure_session
+  ↓
+map_evidence
+  ↓
+generate_summary
+  ↓
+verify_output
+  ↓
+transform_document_preview
+```
+
+Schema 기준:
+
+```text
+backend/app/schemas/note.py
+```
+
+API key 처리:
+
+- `OPENAI_API_KEY`가 있고 `USE_STUB=0`이면 OpenAI API 사용
+- `OPENAI_API_KEY`가 없거나 `USE_STUB=1`이면 deterministic stub output 사용
+
+## 3. Frontend
+
+주요 화면:
+
+```text
+frontend/src/pages/SessionDraftPage.tsx
+```
+
+구현된 UI:
+
+- 회기 자료 입력
+- 처리 단계 표시
+- 구조화 결과 탭
+- 회기요약 초안 textarea 편집
+- 검증 리포트 탭
+- 문서 변환 Preview 탭
+- Raw JSON 탭
+
+## 4. Sample data
+
+```text
+sample_data/session_input_001.json
+sample_data/session_output_001.json
+```
+
+두 파일은 현재 `SessionInput`과 `GenerateNoteResponse` schema에 맞춰져 있어야 합니다.
+
+## 5. 제외 항목
+
+- DB 저장
+- 인증
+- 파일 업로드
+- 음성 업로드
+- 실시간 STT
+- Vector DB/RAG
+- AI 슈퍼비전
+- 자동 사례개념화
+- 정식 문서 export
+
+## 6. 검증
+
+Backend:
+
+```bash
+cd backend
+uv run python smoke_test.py
+```
+
+Frontend:
+
+```bash
+cd frontend
+pnpm build
+```
+
+`pnpm`이 없는 환경에서는:
+
+```bash
+npm run build
+```
