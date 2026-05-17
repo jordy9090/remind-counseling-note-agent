@@ -1,46 +1,30 @@
-"""상담 회기 정보 처리 엔드포인트"""
+"""Routes for note generation."""
+from __future__ import annotations
+
 import traceback
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
-from app.pipeline import run_pipeline
-from app.schemas.session import SessionInput
-from app.schemas.structured_case import StructuredCase
-from app.schemas.summary import SessionSummary
-from app.schemas.verification import VerificationReport
+from app.graph.graph import run_note_pipeline
+from app.schemas.note import GenerateNoteResponse, SessionInput
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
 
-class SessionDraftResponse(BaseModel):
-    """세션 드래프트 응답"""
-    structured: StructuredCase
-    summary: SessionSummary
-    verification: VerificationReport
-    stub: bool  # 스텁(샘플) 응답 여부
-
-
-@router.post("/session-draft", response_model=SessionDraftResponse)
-async def create_session_draft(session_input: SessionInput):
-    """
-    상담 회기 정보를 입력받아 구조화, 요약, 검증 수행
-
-    - POST /api/notes/session-draft
-    - Input: {case_id, session_no, counselor_memo, transcript, prev_summary?}
-    - Output: {structured, summary, verification, stub}
-    """
+@router.post("/generate", response_model=GenerateNoteResponse)
+async def generate_note(session_input: SessionInput) -> GenerateNoteResponse:
+    """Run the MVP V0 six-agent note generation workflow."""
     try:
-        result = run_pipeline(session_input)
-        return SessionDraftResponse(
-            structured=result.structured,
-            summary=result.summary,
-            verification=result.verification,
-            stub=result.stub,
-        )
+        return run_note_pipeline(session_input)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"회기 요약 생성 중 오류 발생: {str(e)}",
+            detail=f"회기요약 생성 중 오류가 발생했습니다: {str(e)}",
         )
+
+
+@router.post("/session-draft", response_model=GenerateNoteResponse, include_in_schema=False)
+async def create_session_draft_compat(session_input: SessionInput) -> GenerateNoteResponse:
+    """Backward-compatible alias for older local clients."""
+    return await generate_note(session_input)

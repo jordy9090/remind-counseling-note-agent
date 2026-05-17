@@ -1,1 +1,209 @@
-{"structured": {"basic_info": "케이스ID: CASE001 | 회기번호: 3 | 내담자: 김지은(여, 대학생) | 진로상담", "presenting_problem": "대학 졸업을 앞두고 진로 결정에 대한 불안감. 마케팅/기획 분야에 관심 있으나 자신감 부족.", "goals": "개인의 강점과 적성을 바탕으로 구체적인 진로 옵션 검토 및 행동계획 수립", "session_content": "이전 회기의 강점 점검(창의성, 대인관계, 논리적 사고) → 마케팅과 기획 분야 탐색 → 각 분야의 요구되는 역량과 내담자 강점의 매칭 → 단기 행동 계획 수립(인턴십, 프로젝트 참여 등)", "counselor_intervention": "강점 중심 상담으로 내담자의 자신감 강화. 구체적인 진로 옵션 제시와 함께 현실적인 행동 단계들을 함께 구성. 내담자의 불안감에 공감하면서도 실행 가능한 계획 수립에 초점.", "client_response": "상담사의 피드백을 수용하며 진로에 대한 불안감 감소. 구체적인 행동 계획(인턴십 지원)에 동의하고 진로 선택에 대한 확신 증가. 다음 회기 과제에 적극적 참여 의지 표현.", "assessment": "내담자는 충분한 자기이해 능력과 강점을 보유하고 있으며, 상담을 통해 자신감 회복 추세 보임. 구체적 행동 계획 수립으로 진로 결정의 불안감이 실질적 행동으로 전환될 가능성 높음. 추후 진로 체험 및 피드백 수집이 중요.", "next_plan": "1) 마케팅 분야 인턴십 지원 → 다음 회기에 진행 상황 점검 2) 기획 분야 관련 책/강의 수강 → 분야 이해도 증진 3) 동문 멘토링 신청 → 실무 경험 수집"}, "summary": {"session_content": "이전 회기에서 파악한 강점(창의성, 대인관계, 논리적 사고)을 바탕으로 마케팅과 기획 분야에 대해 탐색했습니다. 각 분야가 요구하는 핵심 역량들과 내담자의 강점을 매칭하며 실질적 진로 검토를 진행했습니다.", "counselor_opinion": "내담자는 자신의 강점을 인식하면서 자신감이 회복되는 모습을 보였습니다. 진로 불안감이 자기이해 부족에서 비롯되었으나, 상담을 통해 구체적 행동으로 전환되고 있습니다. 현실적이고 실행 가능한 계획 수립이 진로 결정에 긍정적 영향을 미칠 것으로 예상됩니다.", "session_summary": "진로 상담의 3회기로, 자기이해에서 진로 탐색 및 행동 계획 수립으로 진행한 회기입니다. 내담자의 주요 강점을 인식하고 두 가지 진로 옵션과의 매칭을 통해 구체적인 행동 과제들을 설정하였습니다.", "next_counseling_plan": "다음 회기(4회기)에서는 현재 진행 중인 인턴십 지원 현황과 분야 탐색 결과에 대한 피드백을 수집하고, 추가적 진로 옵션이 필요한지 검토할 예정입니다. 필요시 강점과 약점에 대한 추가적 논의 및 자기개발 방안 모색."}, "verification": {"grounded": [{"content": "김지은은 대학생이며 취업 불안으로 상담 신청함", "source": "입력 - 상담사 메모"}, {"content": "창의성, 대인관계 능력, 논리적 사고가 주요 강점으로 파악됨", "source": "입력 - 이전 회기 요약"}, {"content": "마케팅과 기획 분야에 관심 있음", "source": "입력 - 축어록"}, {"content": "진로 결정에 대한 불안감과 자신감 부족이 주요 어려움", "source": "입력 - 축어록"}], "ungrounded": [{"content": "내담자는 자신감이 회복되는 모습을 보였다", "source": "생성 - 상담자 소견 / 직접 관찰 필요"}, {"content": "구체적 행동 계획이 진로 결정에 긍정적 영향을 미칠 것으로 예상", "source": "생성 - 예측 / 향후 검증 필요"}, {"content": "인턴십 지원에 동의했다", "source": "생성 - 축어록에서는 언급되지 않은 추측"}], "sensitive": [{"content": "취업 불안, 자신감 부족 등의 심리적 어려움", "source": "민감정보 - 정신건강 관련"}, {"content": "졸업을 앞두고 있는 신분 및 진로 고민", "source": "민감정보 - 개인 상황"}, {"content": "강점과 약점에 대한 평가 정보", "source": "민감정보 - 개인 평가"}], "needs_human_judgment": [{"content": "상담의 실제 효과성(자신감 회복 정도)을 평가하려면 객관적 지표 필요", "source": "검증 - 상담사 판단"}, {"content": "인턴십 지원이나 실제 행동 변화가 일어났는지 다음 회기에서 확인 필요", "source": "검증 - 추후 평가"}, {"content": "내담자가 제시된 계획들을 실제로 실행할 가능성 평가", "source": "검증 - 상담사 판단"}]}}
+{
+  "structured_case_data": {
+    "presenting_problem": [
+      {
+        "content": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+        "evidence_type": "direct",
+        "source_refs": ["transcript_text", "counselor_memo"]
+      }
+    ],
+    "session_theme": [
+      {
+        "content": "진로불안, 자기비난, 취업준비를 중심으로 한 회기 내용 정리",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo"]
+      }
+    ],
+    "session_content": [
+      {
+        "content": "이번 회기에서는 상담사 메모와 축어록을 바탕으로 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
+        "evidence_type": "mixed",
+        "source_refs": ["counselor_memo", "transcript_text", "previous_session_summary"]
+      }
+    ],
+    "counselor_interventions": [
+      {
+        "content": "상담자는 내담자의 표현을 구체화하고, 불안과 자기비난 사고를 탐색하도록 질문함.",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo", "transcript_text"]
+      }
+    ],
+    "client_responses": [
+      {
+        "content": "내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
+        "evidence_type": "inferred",
+        "source_refs": ["transcript_text"]
+      }
+    ],
+    "key_client_utterances": [
+      {
+        "content": "Cl: 여전히 진로가 불확실해서 불안해요. 주변 친구들은 다 정한 것 같은데 저만 뒤처지는 느낌이에요.",
+        "evidence_type": "direct",
+        "source_refs": ["transcript_text"]
+      }
+    ],
+    "nonverbal_observations": [
+      {
+        "content": "진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남.",
+        "evidence_type": "counselor_input",
+        "source_refs": ["nonverbal_notes"]
+      }
+    ],
+    "reflection_candidates": [
+      {
+        "content": "상담자 reflection은 상담사가 직접 작성하거나 확인해야 함.",
+        "evidence_type": "needs_review",
+        "source_refs": []
+      }
+    ],
+    "next_plan": [
+      {
+        "content": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함.",
+        "evidence_type": "inferred",
+        "source_refs": ["counselor_memo"]
+      }
+    ]
+  },
+  "evidence_mapped_data": {
+    "items": [
+      {
+        "field": "presenting_problem",
+        "content": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+        "evidence_type": "direct",
+        "source_refs": ["transcript_text", "counselor_memo"],
+        "requires_review": false
+      },
+      {
+        "field": "client_responses",
+        "content": "내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
+        "evidence_type": "inferred",
+        "source_refs": ["transcript_text"],
+        "requires_review": true
+      }
+    ]
+  },
+  "session_summary_draft": {
+    "session_info": {
+      "case_id": "CASE001",
+      "session_number": 3,
+      "session_date": "2026-05-17",
+      "counselor_name": "Counselor A"
+    },
+    "session_theme": {
+      "text": "진로불안, 자기비난, 취업준비를 중심으로 한 회기 내용 정리",
+      "evidence_type": "direct",
+      "source_refs": ["counselor_memo"],
+      "requires_review": false
+    },
+    "presenting_problem": {
+      "text": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+      "evidence_type": "direct",
+      "source_refs": ["transcript_text", "counselor_memo"],
+      "requires_review": false
+    },
+    "session_content": {
+      "text": "이번 회기에서는 상담사 메모와 축어록을 바탕으로 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
+      "evidence_type": "mixed",
+      "source_refs": ["counselor_memo", "transcript_text", "previous_session_summary"],
+      "requires_review": false
+    },
+    "counselor_intervention": {
+      "text": "상담자는 내담자의 표현을 구체화하고, 불안과 자기비난 사고를 탐색하도록 질문함.",
+      "evidence_type": "direct",
+      "source_refs": ["counselor_memo", "transcript_text"],
+      "requires_review": false
+    },
+    "client_response": {
+      "text": "내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
+      "evidence_type": "inferred",
+      "source_refs": ["transcript_text"],
+      "requires_review": true
+    },
+    "reflection": {
+      "text": "상담자 reflection은 상담사가 직접 작성하거나 확인해야 합니다.",
+      "evidence_type": "counselor_input",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "next_plan": {
+      "text": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함.",
+      "evidence_type": "inferred",
+      "source_refs": ["counselor_memo"],
+      "requires_review": true
+    }
+  },
+  "verification_report": {
+    "grounded_items": [
+      {
+        "claim": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+        "source_refs": ["transcript_text", "counselor_memo"]
+      }
+    ],
+    "weakly_grounded_items": [
+      {
+        "claim": "내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
+        "reason": "입력 근거는 있으나 일부 해석 또는 요약이 포함되어 상담사 확인이 필요함.",
+        "recommendation": "상담사가 유지, 수정, 삭제 여부를 판단"
+      }
+    ],
+    "unsupported_or_risky_claims": [
+      {
+        "claim": "사례개념화, 위험 판단, 목표 달성 정도를 자동으로 확정하지 않음.",
+        "reason": "MVP V0의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
+        "recommendation": "상담사가 직접 작성하거나 별도 확인 필드로 분리"
+      }
+    ],
+    "sensitive_info_items": [],
+    "requires_counselor_review": [
+      {
+        "field": "reflection",
+        "reason": "상담자 내적 경험과 임상적 판단 영역"
+      },
+      {
+        "field": "case_conceptualization",
+        "reason": "MVP V0 자동 생성 대상이 아님"
+      },
+      {
+        "field": "goal_attainment",
+        "reason": "목표 달성 정도는 상담사 확인 필요"
+      }
+    ]
+  },
+  "document_transform_preview": {
+    "document_type": "preview",
+    "available_transforms": ["supervision_report", "termination_report"],
+    "preview_sections": {
+      "session_summary": "이번 회기에서는 상담사 메모와 축어록을 바탕으로 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
+      "client_main_issue": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+      "next_plan": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함."
+    },
+    "missing_required_fields": [
+      "내담자 기본 정보",
+      "상담신청경위",
+      "이전 상담 경험",
+      "가족관계",
+      "심리검사 결과",
+      "사례개념화 및 상담방향성",
+      "슈퍼비전 요청사항"
+    ],
+    "notice": "MVP V0에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다."
+  },
+  "confirmed_session_note": {},
+  "sanitized_input": {
+    "case_id": "CASE001",
+    "session_number": 3,
+    "session_date": "2026-05-17",
+    "counselor_name": "Counselor A",
+    "sources": {
+      "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함.",
+      "transcript_text": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
+      "previous_session_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸.",
+      "counseling_goal": "진로 선택 과정에서 자기이해를 높이고 실행 가능한 준비 계획을 세움.",
+      "psychological_test_summary": "심리검사 결과는 상담사가 추후 확인하여 입력 예정.",
+      "key_issue_tags": ["진로불안", "자기비난", "취업준비"],
+      "nonverbal_notes": "진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남."
+    },
+    "sensitive_info_candidates": []
+  },
+  "stub": true
+}

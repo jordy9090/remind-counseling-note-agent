@@ -1,28 +1,21 @@
-"""파이프라인 진입점.
+"""Compatibility entry point used by the existing Streamlit demo UI.
 
-LangGraph 워크플로우(구조화 → 회기요약 → 검증)를 호출하는 단 하나의 함수를
-노출한다. Streamlit UI / FastAPI 라우터 모두 이 함수만 쓰면 된다.
-
-OPENAI_API_KEY 가 없거나 USE_STUB=1 이면 sample_data 의 예시 응답을 그대로
-돌려주는 스텁 모드로 동작한다. 키 없이도 전체 흐름을 바로 확인할 수 있다.
+The FastAPI backend now uses the MVP V0 six-agent pipeline in
+``app.graph.graph``. This module keeps the older Streamlit result shape alive
+without changing ``streamlit_app.py``.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from app.core.config import settings
-from app.schemas.session import SessionInput
+from app.graph.graph import run_note_pipeline
+from app.schemas.note import SessionInput as NoteSessionInput
+from app.schemas.session import SessionInput as LegacySessionInput
 from app.schemas.structured_case import StructuredCase
 from app.schemas.summary import SessionSummary
-from app.schemas.verification import VerificationReport
-
-# backend/app/pipeline.py → repo 루트 (parents[2]) 아래 sample_data
-_SAMPLE_OUTPUT = Path(__file__).resolve().parents[2] / "sample_data" / "session_output_001.json"
+from app.schemas.verification import VerificationItem, VerificationReport
 
 
 class PipelineResult:
-    """파이프라인 3단계 산출물 묶음"""
+    """Legacy three-part result consumed by the Streamlit demo."""
 
     def __init__(
         self,
@@ -34,46 +27,63 @@ class PipelineResult:
         self.structured = structured
         self.summary = summary
         self.verification = verification
-        self.stub = stub  # 스텁 응답인지 여부 (UI 안내 배너용)
+        self.stub = stub
 
 
-def _run_stub() -> PipelineResult:
-    """sample_data 의 예시 출력을 스키마로 로드해 반환"""
-    data = json.loads(_SAMPLE_OUTPUT.read_text(encoding="utf-8"))
-    return PipelineResult(
-        structured=StructuredCase(**data["structured"]),
-        summary=SessionSummary(**data["summary"]),
-        verification=VerificationReport(**data["verification"]),
-        stub=True,
+def run_pipeline(session_input: LegacySessionInput) -> PipelineResult:
+    """Run the current six-agent pipeline and adapt it to the legacy UI shape."""
+    note_input = NoteSessionInput(
+        case_id=session_input.case_id,
+        session_number=session_input.session_no,
+        counselor_memo=session_input.counselor_memo,
+        transcript_text=session_input.transcript,
+        previous_session_summary=session_input.prev_summary or "",
     )
+    response = run_note_pipeline(note_input)
+    draft = response.session_summary_draft
 
-
-def _run_graph(session_input: SessionInput) -> PipelineResult:
-    """실제 LangGraph 워크플로우 실행 (OpenAI 호출)"""
-    # 그래프/LLM 임포트는 키가 있을 때만 로드 (스텁 모드 import 비용 회피)
-    from app.graph.state import GraphState
-    from app.graph.workflow import app as workflow
-
-    initial_state: GraphState = {
-        "input": session_input,
-        "structured": None,
-        "summary": None,
-        "verification": None,
-    }
-    result = workflow.invoke(initial_state)
-    return PipelineResult(
-        structured=result["structured"],
-        summary=result["summary"],
-        verification=result["verification"],
-        stub=False,
+    structured = StructuredCase(
+        basic_info=(
+            f"케이스ID: {draft.session_info.case_id} | "
+            f"회기번호: {draft.session_info.session_number} | "
+            f"일자: {draft.session_info.session_date or '미입력'}"
+        ),
+        presenting_problem=draft.presenting_problem.text,
+        goals=note_input.counseling_goal or "상담 목표는 상담사가 확인 후 입력해야 합니다.",
+        session_content=draft.session_content.text,
+        counselor_intervention=draft.counselor_intervention.text,
+        client_response=draft.client_response.text,
+        assessment="사례개념화와 목표 달성 정도는 상담사 직접 판단 영역입니다.",
+        next_plan=draft.next_plan.text,
     )
-
-
-def run_pipeline(session_input: SessionInput) -> PipelineResult:
-    """입력 → 구조화 → 회기요약 → 검증 리포트.
-
-    스텁 모드면 예시 응답을, 아니면 LangGraph 결과를 반환한다.
-    """
-    if settings.stub_mode:
-        return _run_stub()
-    return _run_graph(session_input)
+    summary = SessionSummary(
+        session_content=draft.session_content.text,
+        counselor_opinion="상담자 소견과 reflection은 상담사가 직접 검토 및 수정해야 합니다.",
+        session_summary=draft.presenting_problem.text,
+        next_counseling_plan=draft.next_plan.text,
+    )
+    verification = VerificationReport(
+        grounded=[
+            VerificationItem(content=item.claim, source=", ".join(item.source_refs))
+            for item in response.verification_report.grounded_items
+        ],
+        ungrounded=[
+            VerificationItem(content=item.claim, source=item.reason)
+            for item in response.verification_report.weakly_grounded_items
+            + response.verification_report.unsupported_or_risky_claims
+        ],
+        sensitive=[
+            VerificationItem(content=item.text, source=item.source)
+            for item in response.verification_report.sensitive_info_items
+        ],
+        needs_human_judgment=[
+            VerificationItem(content=item.field, source=item.reason)
+            for item in response.verification_report.requires_counselor_review
+        ],
+    )
+    return PipelineResult(
+        structured=structured,
+        summary=summary,
+        verification=verification,
+        stub=response.stub,
+    )
