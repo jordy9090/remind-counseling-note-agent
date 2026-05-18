@@ -130,6 +130,7 @@ export interface DocumentTransformPreview {
   document_type: string
   available_transforms: string[]
   preview_sections: Record<string, string>
+  partially_available_fields: Record<string, string>
   missing_required_fields: string[]
   notice: string
 }

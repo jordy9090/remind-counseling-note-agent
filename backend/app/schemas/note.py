@@ -147,6 +147,7 @@ class DocumentTransformPreview(BaseModel):
     document_type: str = "preview"
     available_transforms: list[str] = Field(default_factory=list)
     preview_sections: dict[str, str] = Field(default_factory=dict)
+    partially_available_fields: dict[str, str] = Field(default_factory=dict)
     missing_required_fields: list[str] = Field(default_factory=list)
     notice: str
 

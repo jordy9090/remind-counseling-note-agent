@@ -244,14 +244,17 @@ MVP V0에서 preview 수준으로 제공하는 문서 변환 결과입니다.
   "preview_sections": {
     "session_summary": "확정된 회기요약 기반 미리보기",
     "client_main_issue": "입력 근거 기반으로 채울 수 있는 항목",
-    "next_plan": "추후 계획"
+    "next_plan": "추후 계획",
+    "psychological_test_summary": "입력된 심리검사 요약"
+  },
+  "partially_available_fields": {
+    "심리검사 결과": "입력 요약은 있으나 검사명, 실시일, 세부 척도, 상담적 해석은 상담사 확인 필요"
   },
   "missing_required_fields": [
     "내담자 기본 정보",
     "상담신청경위",
     "이전 상담 경험",
     "가족관계",
-    "심리검사 결과",
     "사례개념화 및 상담방향성",
     "슈퍼비전 요청사항"
   ],

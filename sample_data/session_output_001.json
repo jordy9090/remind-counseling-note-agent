@@ -16,7 +16,7 @@
     ],
     "session_content": [
       {
-        "content": "이번 회기에서는 상담사 메모와 축어록을 바탕으로 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
+        "content": "이번 회기에서는 취업 준비 과정에서 나타나는 진로 불안과 자기비난 사고를 다루었다. 내담자는 주변 친구들의 진로 진행 상황과 자신을 비교하며 뒤처졌다는 느낌을 표현했고, 선택을 잘못하면 끝이라는 생각이 불안을 키우는 흐름을 보고하였다.",
         "evidence_type": "mixed",
         "source_refs": ["counselor_memo", "transcript_text", "previous_session_summary"]
       }
@@ -44,8 +44,13 @@
     ],
     "nonverbal_observations": [
       {
+        "content": "초반에 눈물이 있었고 말이 느려짐.",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo"]
+      },
+      {
         "content": "진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남.",
-        "evidence_type": "counselor_input",
+        "evidence_type": "direct",
         "source_refs": ["nonverbal_notes"]
       }
     ],
@@ -58,8 +63,8 @@
     ],
     "next_plan": [
       {
-        "content": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함.",
-        "evidence_type": "inferred",
+        "content": "다음 회기에는 자동사고 기록지를 함께 검토하고, 현실적인 준비 행동을 작게 나누어 보기로 함.",
+        "evidence_type": "direct",
         "source_refs": ["counselor_memo"]
       }
     ]
@@ -74,11 +79,67 @@
         "requires_review": false
       },
       {
+        "field": "session_theme",
+        "content": "진로불안, 자기비난, 취업준비를 중심으로 한 회기 내용 정리",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo"],
+        "requires_review": false
+      },
+      {
+        "field": "session_content",
+        "content": "이번 회기에서는 취업 준비 과정에서 나타나는 진로 불안과 자기비난 사고를 다루었다. 내담자는 주변 친구들의 진로 진행 상황과 자신을 비교하며 뒤처졌다는 느낌을 표현했고, 선택을 잘못하면 끝이라는 생각이 불안을 키우는 흐름을 보고하였다.",
+        "evidence_type": "mixed",
+        "source_refs": ["counselor_memo", "transcript_text", "previous_session_summary"],
+        "requires_review": false
+      },
+      {
+        "field": "counselor_interventions",
+        "content": "상담자는 내담자의 표현을 구체화하고, 불안과 자기비난 사고를 탐색하도록 질문함.",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo", "transcript_text"],
+        "requires_review": false
+      },
+      {
         "field": "client_responses",
         "content": "내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
         "evidence_type": "inferred",
         "source_refs": ["transcript_text"],
         "requires_review": true
+      },
+      {
+        "field": "key_client_utterances",
+        "content": "Cl: 여전히 진로가 불확실해서 불안해요. 주변 친구들은 다 정한 것 같은데 저만 뒤처지는 느낌이에요.",
+        "evidence_type": "direct",
+        "source_refs": ["transcript_text"],
+        "requires_review": false
+      },
+      {
+        "field": "nonverbal_observations",
+        "content": "초반에 눈물이 있었고 말이 느려짐.",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo"],
+        "requires_review": false
+      },
+      {
+        "field": "nonverbal_observations",
+        "content": "진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남.",
+        "evidence_type": "direct",
+        "source_refs": ["nonverbal_notes"],
+        "requires_review": false
+      },
+      {
+        "field": "reflection_candidates",
+        "content": "상담자 reflection은 상담사가 직접 작성하거나 확인해야 함.",
+        "evidence_type": "needs_review",
+        "source_refs": [],
+        "requires_review": true
+      },
+      {
+        "field": "next_plan",
+        "content": "다음 회기에는 자동사고 기록지를 함께 검토하고, 현실적인 준비 행동을 작게 나누어 보기로 함.",
+        "evidence_type": "direct",
+        "source_refs": ["counselor_memo"],
+        "requires_review": false
       }
     ]
   },
@@ -102,7 +163,7 @@
       "requires_review": false
     },
     "session_content": {
-      "text": "이번 회기에서는 상담사 메모와 축어록을 바탕으로 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
+      "text": "이번 회기에서는 취업 준비 과정에서 나타나는 진로 불안과 자기비난 사고를 다루었다. 내담자는 주변 친구들의 진로 진행 상황과 자신을 비교하며 뒤처졌다는 느낌을 표현했고, 선택을 잘못하면 끝이라는 생각이 불안을 키우는 흐름을 보고하였다.",
       "evidence_type": "mixed",
       "source_refs": ["counselor_memo", "transcript_text", "previous_session_summary"],
       "requires_review": false
@@ -126,10 +187,10 @@
       "requires_review": true
     },
     "next_plan": {
-      "text": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함.",
-      "evidence_type": "inferred",
+      "text": "다음 회기에는 자동사고 기록지를 함께 검토하고, 현실적인 준비 행동을 작게 나누어 보기로 함.",
+      "evidence_type": "direct",
       "source_refs": ["counselor_memo"],
-      "requires_review": true
+      "requires_review": false
     }
   },
   "verification_report": {
@@ -137,9 +198,38 @@
       {
         "claim": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
         "source_refs": ["transcript_text", "counselor_memo"]
+      },
+      {
+        "claim": "진로불안, 자기비난, 취업준비를 중심으로 한 회기 내용 정리",
+        "source_refs": ["counselor_memo"]
+      },
+      {
+        "claim": "상담자는 내담자의 표현을 구체화하고, 불안과 자기비난 사고를 탐색하도록 질문함.",
+        "source_refs": ["counselor_memo", "transcript_text"]
+      },
+      {
+        "claim": "Cl: 여전히 진로가 불확실해서 불안해요. 주변 친구들은 다 정한 것 같은데 저만 뒤처지는 느낌이에요.",
+        "source_refs": ["transcript_text"]
+      },
+      {
+        "claim": "초반에 눈물이 있었고 말이 느려짐.",
+        "source_refs": ["counselor_memo"]
+      },
+      {
+        "claim": "진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남.",
+        "source_refs": ["nonverbal_notes"]
+      },
+      {
+        "claim": "다음 회기에는 자동사고 기록지를 함께 검토하고, 현실적인 준비 행동을 작게 나누어 보기로 함.",
+        "source_refs": ["counselor_memo"]
       }
     ],
     "weakly_grounded_items": [
+      {
+        "claim": "이번 회기에서는 취업 준비 과정에서 나타나는 진로 불안과 자기비난 사고를 다루었다. 내담자는 주변 친구들의 진로 진행 상황과 자신을 비교하며 뒤처졌다는 느낌을 표현했고, 선택을 잘못하면 끝이라는 생각이 불안을 키우는 흐름을 보고하였다.",
+        "reason": "입력 근거는 있으나 일부 해석 또는 요약이 포함되어 상담사 확인이 필요함.",
+        "recommendation": "상담사가 유지, 수정, 삭제 여부를 판단"
+      },
       {
         "claim": "내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
         "reason": "입력 근거는 있으나 일부 해석 또는 요약이 포함되어 상담사 확인이 필요함.",
@@ -166,6 +256,10 @@
       {
         "field": "goal_attainment",
         "reason": "목표 달성 정도는 상담사 확인 필요"
+      },
+      {
+        "field": "psychological_test_summary",
+        "reason": "입력 요약은 있으나 검사명, 실시일, 세부 척도, 상담적 해석 확인 필요"
       }
     ]
   },
@@ -173,16 +267,19 @@
     "document_type": "preview",
     "available_transforms": ["supervision_report", "termination_report"],
     "preview_sections": {
-      "session_summary": "이번 회기에서는 상담사 메모와 축어록을 바탕으로 주요 이슈, 사고 흐름, 다음 계획을 정리함.",
+      "session_summary": "이번 회기에서는 취업 준비 과정에서 나타나는 진로 불안과 자기비난 사고를 다루었다. 내담자는 주변 친구들의 진로 진행 상황과 자신을 비교하며 뒤처졌다는 느낌을 표현했고, 선택을 잘못하면 끝이라는 생각이 불안을 키우는 흐름을 보고하였다.",
       "client_main_issue": "내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
-      "next_plan": "다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함."
+      "next_plan": "다음 회기에는 자동사고 기록지를 함께 검토하고, 현실적인 준비 행동을 작게 나누어 보기로 함.",
+      "psychological_test_summary": "진로흥미검사 요약에서 사회형과 예술형 흥미가 상대적으로 높게 나타났다고 상담사가 메모함."
+    },
+    "partially_available_fields": {
+      "심리검사 결과": "입력 요약은 있으나 검사명, 실시일, 세부 척도, 상담적 해석은 상담사 확인 필요"
     },
     "missing_required_fields": [
       "내담자 기본 정보",
       "상담신청경위",
       "이전 상담 경험",
       "가족관계",
-      "심리검사 결과",
       "사례개념화 및 상담방향성",
       "슈퍼비전 요청사항"
     ],
@@ -195,11 +292,11 @@
     "session_date": "2026-05-17",
     "counselor_name": "Counselor A",
     "sources": {
-      "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함.",
-      "transcript_text": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
-      "previous_session_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸.",
+      "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함. 내담자는 취업 준비 과정에서 비교 사고가 잦고, 자신의 선택이 틀릴까 봐 걱정한다고 보고함. 초반에 눈물이 있었고 말이 느려짐. 다음 회기에는 자동사고 기록지를 함께 검토하고, 현실적인 준비 행동을 작게 나누어 보기로 함.",
+      "transcript_text": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요. 주변 친구들은 다 정한 것 같은데 저만 뒤처지는 느낌이에요.\nC: 뒤처지는 느낌이 들 때 어떤 생각이 가장 먼저 떠오르나요?\nCl: 제가 잘못 선택하면 끝이라는 생각이 들어요.\nC: 그 생각을 조금 더 구체적으로 살펴보면 좋겠습니다.",
+      "previous_session_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸. 내담자는 창의성, 대인관계 능력, 논리적 사고를 강점으로 확인했으나 적성에 대한 확신 부족을 어려움으로 언급함.",
       "counseling_goal": "진로 선택 과정에서 자기이해를 높이고 실행 가능한 준비 계획을 세움.",
-      "psychological_test_summary": "심리검사 결과는 상담사가 추후 확인하여 입력 예정.",
+      "psychological_test_summary": "진로흥미검사 요약에서 사회형과 예술형 흥미가 상대적으로 높게 나타났다고 상담사가 메모함.",
       "key_issue_tags": ["진로불안", "자기비난", "취업준비"],
       "nonverbal_notes": "진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남."
     },

@@ -73,7 +73,7 @@ POST /api/notes/generate
 - `evidence_mapped_data`: 각 항목의 근거 유형과 source reference
 - `session_summary_draft`: frontend에서 textarea로 수정 가능한 회기요약 초안
 - `verification_report`: 근거 있음, 근거 부족/추론 가능성, 민감정보 후보, 상담사 확인 필요 항목
-- `document_transform_preview`: 슈퍼비전/종결 보고서 변환 preview와 부족 필드
+- `document_transform_preview`: 슈퍼비전/종결 보고서 변환 preview, 부분 입력 필드, 부족 필드
 - `sanitized_input`: 입력 정제 결과와 민감정보 후보
 - `stub`: deterministic mock/stub output 여부
 

@@ -560,6 +560,20 @@ function DocumentPreviewTab({ preview }: { preview: DocumentTransformPreview }) 
         </div>
       </section>
 
+      {Object.keys(preview.partially_available_fields).length > 0 && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h3 className="font-semibold text-amber-900">부분 입력된 항목</h3>
+          <div className="mt-3 grid gap-3">
+            {Object.entries(preview.partially_available_fields).map(([key, value]) => (
+              <div key={key} className="rounded-md bg-white/70 p-3">
+                <p className="text-sm font-medium text-amber-900">{key}</p>
+                <p className="mt-1 text-sm leading-6 text-amber-800">{value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <MissingFields title="슈퍼비전 보고서에 추가로 필요한 필드" fields={preview.missing_required_fields} />
         <MissingFields title="종결 보고서에 추가로 필요한 필드" fields={terminationFields} />
