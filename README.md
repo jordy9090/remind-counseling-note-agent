@@ -2,7 +2,7 @@
 
 Re:mind는 정신건강 상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
 
-MVP V0의 주 경로는 **React + FastAPI + LangGraph**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 6-agent workflow를 실행하고, frontend가 구조화 결과, 회기요약 초안, 검증 리포트, 문서 변환 preview를 보여줍니다.
+MVP V0의 주 경로는 **React + FastAPI + LangGraph**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 기존 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
 
 Streamlit 화면은 남아 있지만 현재 주 경로가 아니라 **legacy/optional quick demo**입니다.
 
@@ -48,18 +48,20 @@ GET  /api/health
 POST /api/notes/generate
 ```
 
-`POST /api/notes/generate` 응답 최상위 필드는 다음과 같습니다.
+`POST /api/notes/generate` 응답 최상위 필드는 frontend demo에 맞춘 compact schema입니다.
 
 ```json
 {
-  "structured_case_data": {},
-  "evidence_mapped_data": {},
-  "session_summary_draft": {},
-  "verification_report": {},
-  "document_transform_preview": {},
-  "confirmed_session_note": {},
-  "sanitized_input": {},
-  "stub": true
+  "case_id": "CASE001",
+  "session_number": 3,
+  "session_summary": "...",
+  "main_issue": "...",
+  "counselor_intervention": "...",
+  "client_response": "...",
+  "next_plan": "...",
+  "evidence_check": [],
+  "missing_items": [],
+  "warnings": []
 }
 ```
 

@@ -145,3 +145,26 @@ export interface GenerateNoteResponse {
   sanitized_input: SanitizedInput
   stub: boolean
 }
+
+export type EvidenceSourceType = 'transcript' | 'counselor_memo' | 'previous_summary' | 'ai_inference'
+export type EvidenceConfidence = 'high' | 'medium' | 'low'
+
+export interface EvidenceCheckItem {
+  claim: string
+  source_type: EvidenceSourceType
+  source_excerpt: string
+  confidence: EvidenceConfidence
+}
+
+export interface NoteDraftResponse {
+  case_id: string
+  session_number: number
+  session_summary: string
+  main_issue: string
+  counselor_intervention: string
+  client_response: string
+  next_plan: string
+  evidence_check: EvidenceCheckItem[]
+  missing_items: string[]
+  warnings: string[]
+}

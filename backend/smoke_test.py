@@ -28,10 +28,11 @@ def main() -> None:
     response = client.post("/api/notes/generate", json=payload)
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["stub"] is True
-    assert data["session_summary_draft"]["session_info"]["case_id"] == payload["case_id"]
-    assert "verification_report" in data
-    assert "document_transform_preview" in data
+    assert data["case_id"] == payload["case_id"]
+    assert data["session_number"] == payload["session_number"]
+    assert data["session_summary"]
+    assert data["main_issue"]
+    assert data["evidence_check"]
 
     print("Smoke test passed: /api/health and /api/notes/generate are working.")
 

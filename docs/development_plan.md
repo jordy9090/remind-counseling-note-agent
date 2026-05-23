@@ -34,7 +34,7 @@
 ### 4. Sample data
 
 - `sample_data/session_input_001.json`을 `SessionInput` schema에 맞춤
-- `sample_data/session_output_001.json`을 `GenerateNoteResponse` schema에 맞춤
+- `sample_data/session_output_001.json`을 `/api/notes/generate`의 compact frontend demo response에 맞춤
 
 ## 현재 검증 명령
 

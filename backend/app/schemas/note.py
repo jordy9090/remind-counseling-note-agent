@@ -15,6 +15,8 @@ EvidenceType = Literal[
     "mixed",
     "model_inference",
 ]
+SourceType = Literal["transcript", "counselor_memo", "previous_summary", "ai_inference"]
+Confidence = Literal["high", "medium", "low"]
 
 
 class SessionInput(BaseModel):
@@ -30,7 +32,7 @@ class SessionInput(BaseModel):
     transcript_text: str = Field(validation_alias=AliasChoices("transcript_text", "transcript"))
     previous_session_summary: str = Field(
         default="",
-        validation_alias=AliasChoices("previous_session_summary", "prev_summary"),
+        validation_alias=AliasChoices("previous_session_summary", "previous_summary", "prev_summary"),
     )
     counseling_goal: str = ""
     psychological_test_summary: str = ""
@@ -161,3 +163,23 @@ class GenerateNoteResponse(BaseModel):
     confirmed_session_note: dict[str, Any] = Field(default_factory=dict)
     sanitized_input: SanitizedInput
     stub: bool = False
+
+
+class EvidenceCheckItem(BaseModel):
+    claim: str
+    source_type: SourceType
+    source_excerpt: str
+    confidence: Confidence
+
+
+class NoteDraftResponse(BaseModel):
+    case_id: str
+    session_number: int
+    session_summary: str
+    main_issue: str
+    counselor_intervention: str
+    client_response: str
+    next_plan: str
+    evidence_check: list[EvidenceCheckItem] = Field(default_factory=list)
+    missing_items: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
