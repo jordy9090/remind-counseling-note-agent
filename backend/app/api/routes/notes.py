@@ -12,9 +12,15 @@ from app.schemas.note import EvidenceCheckItem, GenerateNoteResponse, NoteDraftR
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
 
-@router.post("/generate", response_model=NoteDraftResponse)
-async def generate_note(session_input: SessionInput) -> NoteDraftResponse:
-    """Run the workflow and return the compact frontend demo response."""
+@router.post("/generate", response_model=GenerateNoteResponse)
+async def generate_note(session_input: SessionInput) -> GenerateNoteResponse:
+    """Run the full six-agent workflow and return Pydantic-validated JSON."""
+    return _run_pipeline_with_stub_fallback(session_input)
+
+
+@router.post("/generate-compact", response_model=NoteDraftResponse, include_in_schema=False)
+async def generate_note_compact(session_input: SessionInput) -> NoteDraftResponse:
+    """Legacy compact response for older local demos."""
     full_response = _run_pipeline_with_stub_fallback(session_input)
     return _to_note_draft_response(full_response)
 

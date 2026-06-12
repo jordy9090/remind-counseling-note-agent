@@ -28,11 +28,19 @@ def main() -> None:
     response = client.post("/api/notes/generate", json=payload)
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["case_id"] == payload["case_id"]
-    assert data["session_number"] == payload["session_number"]
-    assert data["session_summary"]
-    assert data["main_issue"]
-    assert data["evidence_check"]
+    assert data["session_summary_draft"]["session_info"]["case_id"] == payload["case_id"]
+    assert data["session_summary_draft"]["session_info"]["session_number"] == payload["session_number"]
+    assert data["session_summary_draft"]["session_content"]["text"]
+    assert data["evidence_mapped_data"]["items"]
+    assert data["verification_report"]["requires_counselor_review"]
+    assert data["document_transform_preview"]["missing_required_fields"]
+    assert data["confirmed_session_note"]["status"] == "draft_requires_counselor_confirmation"
+
+    compact_response = client.post("/api/notes/generate-compact", json=payload)
+    assert compact_response.status_code == 200, compact_response.text
+    compact = compact_response.json()
+    assert compact["case_id"] == payload["case_id"]
+    assert compact["evidence_check"]
 
     print("Smoke test passed: /api/health and /api/notes/generate are working.")
 

@@ -61,6 +61,7 @@ note_graph = create_note_graph()
 
 def run_note_pipeline(session_input: SessionInput) -> GenerateNoteResponse:
     state = note_graph.invoke({"session_input": session_input})
+    confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
     return GenerateNoteResponse(
         sanitized_input=state["sanitized_input"],
         structured_case_data=state["structured_case_data"],
@@ -68,6 +69,36 @@ def run_note_pipeline(session_input: SessionInput) -> GenerateNoteResponse:
         session_summary_draft=state["session_summary_draft"],
         verification_report=state["verification_report"],
         document_transform_preview=state["document_transform_preview"],
-        confirmed_session_note=state.get("confirmed_session_note", {}),
+        confirmed_session_note=confirmed_session_note,
         stub=bool(state.get("stub", False)),
     )
+
+
+def _build_confirmed_session_note(state: NoteGraphState) -> dict[str, Any]:
+    summary = state["session_summary_draft"]
+    verification = state["verification_report"]
+    preview = state["document_transform_preview"]
+
+    return {
+        "status": "draft_requires_counselor_confirmation",
+        "case_id": summary.session_info.case_id,
+        "session_number": summary.session_info.session_number,
+        "session_date": summary.session_info.session_date,
+        "sections": {
+            "session_theme": summary.session_theme.text,
+            "presenting_problem": summary.presenting_problem.text,
+            "session_content": summary.session_content.text,
+            "counselor_intervention": summary.counselor_intervention.text,
+            "client_response": summary.client_response.text,
+            "reflection": summary.reflection.text,
+            "next_plan": summary.next_plan.text,
+        },
+        "review_summary": {
+            "grounded_count": len(verification.grounded_items),
+            "weakly_grounded_count": len(verification.weakly_grounded_items),
+            "risky_claim_count": len(verification.unsupported_or_risky_claims),
+            "sensitive_info_count": len(verification.sensitive_info_items),
+            "counselor_review_count": len(verification.requires_counselor_review),
+        },
+        "document_preview_notice": preview.notice,
+    }

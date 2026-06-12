@@ -1,0 +1,17 @@
+.git
+.vercel
+.streamlit
+.uv-cache
+.venv
+.venv-streamlit
+
+**/__pycache__
+**/*.pyc
+*.log
+
+frontend/node_modules
+frontend/dist
+
+remind-counseling-note-agent
+research_pilot_crew
+sample_data

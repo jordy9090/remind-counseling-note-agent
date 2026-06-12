@@ -22,6 +22,7 @@ import type {
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
+  GenerateNoteResponse,
   NoteDraftResponse,
   SessionInput,
 } from '../types/session'
@@ -46,9 +47,11 @@ type MaterialModalMode =
   | 'file_upload'
   | 'load_previous'
   | 'write_memo'
+  | 'write_test'
   | 'edit_transcript'
   | 'edit_memo'
   | 'edit_previous'
+  | 'edit_test'
 
 type DraftSectionId =
   | 'client_info'
@@ -113,6 +116,7 @@ const defaultChecklistItems: ChecklistItem[] = [
   { id: 'counselor_intervention', title: '상담자 개입' },
   { id: 'client_response', title: '내담자 반응' },
   { id: 'next_plan', title: '다음 계획' },
+  { id: 'psychological_test', title: '심리검사 요약' },
   { id: 'risk_signal', title: '위험 신호' },
   { id: 'supervision_memo', title: '슈퍼비전 메모' },
 ]
@@ -182,9 +186,9 @@ const initialForm: SessionInput = {
   previous_session_summary:
     '이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸. 내담자는 강점은 확인했으나 적성에 대한 확신 부족을 어려움으로 언급함.',
   counseling_goal: '',
-  psychological_test_summary: '',
-  key_issue_tags: [],
-  nonverbal_notes: '',
+  psychological_test_summary: '진로흥미검사 요약에서 사회형과 예술형 흥미가 상대적으로 높게 나타났다고 상담사가 메모함.',
+  key_issue_tags: ['진로불안', '자기비난', '취업준비'],
+  nonverbal_notes: '진로 선택 이야기를 할 때 말의 속도가 느려지고 한숨이 늘어남.',
 }
 
 export default function SessionDraftPage() {
@@ -208,6 +212,7 @@ export default function SessionDraftPage() {
     form.counselor_memo.trim() ||
       form.transcript_text.trim() ||
       form.previous_session_summary.trim() ||
+      form.psychological_test_summary?.trim() ||
       attachments.length,
   )
 
@@ -391,6 +396,7 @@ export default function SessionDraftPage() {
 
               {currentScreen === 'document_transform' && result && (
                 <DocumentTransformWorkspace
+                  preview={result.full_response?.document_transform_preview}
                   selectedType={finalDocumentType}
                   sections={draftSections}
                   onSelectType={setFinalDocumentType}
@@ -420,6 +426,7 @@ export default function SessionDraftPage() {
                 activeStep={activeStep}
                 checklistItems={checklistItems}
                 currentScreen={currentScreen}
+                fullResponse={result?.full_response}
                 isLoading={isLoading}
                 missingItems={result?.missing_items || []}
                 resultReady={Boolean(result)}
@@ -853,6 +860,14 @@ function SessionInputWorkspace({
                 onAction={() => onEditMaterial('edit_previous')}
               />
             )}
+            {form.psychological_test_summary?.trim() && (
+              <MaterialRow
+                label="심리검사 메모"
+                meta={`${countCharacters(form.psychological_test_summary || '')}자 입력됨`}
+                actionLabel="열어서 수정"
+                onAction={() => onEditMaterial('edit_test')}
+              />
+            )}
             {attachments.map((attachment) => (
               <MaterialRow
                 key={attachment.id}
@@ -976,7 +991,7 @@ function SummaryDraftWorkspace({
       <div className="px-6 py-4">
         <div className="rounded-lg bg-blue-50 px-4 py-3 text-sm text-slate-700">
           <Wand2 className="mr-2 inline h-4 w-4 text-blue-700" />
-          각 항목을 클릭하면 바로 수정할 수 있습니다. 배지를 누르면 연결된 근거를 작게 확인할 수 있습니다.
+          각 항목은 바로 수정할 수 있고, 항목 옆 원문 칩을 누르면 연결된 근거를 확인할 수 있습니다.
         </div>
       </div>
 
@@ -1024,12 +1039,29 @@ function DraftSectionBlock({
           badge === 'editable' ? (
             <SourceBadge key={`${section.id}-${badge}`} type={badge} />
           ) : (
-            <button key={`${section.id}-${badge}`} type="button" onClick={() => onToggleEvidence(section.id)}>
-              <SourceBadge type={badge} />
+            <button
+              key={`${section.id}-${badge}`}
+              type="button"
+              aria-expanded={isEvidenceExpanded}
+              title={`${sourceBadgeMeta[badge].label} 원문 보기`}
+              onClick={() => onToggleEvidence(section.id)}
+              className="rounded-full outline-none focus:ring-2 focus:ring-blue-300"
+            >
+              <SourceBadge type={badge} interactive />
             </button>
           ),
         )}
       </div>
+
+      {section.sourceBadges.includes('needs_review') && (
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            AI 검토: 근거가 약하거나 상담사 판단이 필요한 문장입니다. 원문 칩을 열어 유지, 수정, 삭제 여부를
+            확인하세요.
+          </span>
+        </div>
+      )}
 
       {isEvidenceExpanded && (
         <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 p-3">
@@ -1061,14 +1093,19 @@ function DraftSectionBlock({
 function EvidencePreview({ evidence, section }: { evidence: CompactEvidence[]; section: DraftSection }) {
   if (!evidence.length) {
     return (
-      <p className="text-xs leading-5 text-amber-800">
-        직접 연결된 원문 근거가 부족합니다. 이 항목은 상담사 확인 후 유지, 수정, 삭제 여부를 결정해주세요.
-      </p>
+      <div className="flex gap-2 text-xs leading-5 text-amber-800">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>직접 연결된 원문 근거가 부족합니다. 상담사 확인 후 유지, 수정, 삭제 여부를 결정해주세요.</p>
+      </div>
     )
   }
 
   return (
     <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs font-semibold text-blue-900">
+        <Search className="h-3.5 w-3.5" />
+        연결된 원문 근거
+      </div>
       {evidence.map((item, index) => (
         <div key={`${section.id}-${item.label}-${index}`} className="text-xs leading-5 text-slate-700">
           <div className="flex flex-wrap items-center gap-2">
@@ -1078,7 +1115,9 @@ function EvidencePreview({ evidence, section }: { evidence: CompactEvidence[]; s
             </span>
             {item.needsReview && <span className="font-medium text-amber-700">상담사 확인 필요</span>}
           </div>
-          <p className="mt-1 text-slate-600">{item.excerpt || '표시할 원문 일부가 없습니다.'}</p>
+          <p className="mt-2 rounded-md bg-white px-3 py-2 text-slate-700 ring-1 ring-blue-100">
+            {item.excerpt || '표시할 원문 일부가 없습니다.'}
+          </p>
         </div>
       ))}
     </div>
@@ -1088,16 +1127,24 @@ function EvidencePreview({ evidence, section }: { evidence: CompactEvidence[]; s
 function DocumentTransformWorkspace({
   onCreateFinal,
   onSelectType,
+  preview,
   sections,
   selectedType,
 }: {
   onCreateFinal: (documentType: FinalDocumentType) => void
   onSelectType: (documentType: FinalDocumentType) => void
+  preview?: GenerateNoteResponse['document_transform_preview']
   sections: DraftSection[]
   selectedType: FinalDocumentType
 }) {
   const selectedTransform = transformOptions.find((option) => option.id === selectedType) || transformOptions[0]
   const availableCount = sections.filter((section) => section.visible && section.content.trim()).length
+  const previewSectionNames = preview
+    ? Object.keys(preview.preview_sections).map((key) => documentPreviewLabel[key] || key)
+    : []
+  const missingFields = preview?.missing_required_fields.length
+    ? preview.missing_required_fields
+    : selectedTransform.requiredFields
 
   return (
     <section className="space-y-5">
@@ -1155,13 +1202,22 @@ function DocumentTransformWorkspace({
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
           <TransformInfoCard
             title="자동 반영 가능"
-            items={sections
-              .filter((section) => section.visible && section.id !== 'client_info')
-              .slice(0, 5)
-              .map((section) => section.title)}
+            items={
+              previewSectionNames.length
+                ? previewSectionNames
+                : sections
+                    .filter((section) => section.visible && section.id !== 'client_info')
+                    .slice(0, 5)
+                    .map((section) => section.title)
+            }
           />
-          <TransformInfoCard title="추가 확인 필요" items={selectedTransform.requiredFields} tone="warning" />
+          <TransformInfoCard title="추가 확인 필요" items={missingFields} tone="warning" />
         </div>
+        {preview?.notice && (
+          <p className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+            {preview.notice}
+          </p>
+        )}
       </section>
     </section>
   )
@@ -1261,6 +1317,7 @@ function ReviewPanel({
   activeStep,
   checklistItems,
   currentScreen,
+  fullResponse,
   isLoading,
   missingItems,
   onAddCustomSection,
@@ -1275,6 +1332,7 @@ function ReviewPanel({
   activeStep: WorkflowStep
   checklistItems: ChecklistItem[]
   currentScreen: AppScreen
+  fullResponse?: GenerateNoteResponse
   isLoading: boolean
   missingItems: string[]
   onAddCustomSection: () => void
@@ -1292,6 +1350,14 @@ function ReviewPanel({
         <DocumentTransformSidePanel />
       ) : (
         <>
+          {resultReady && (
+            <VerificationSummary
+              fullResponse={fullResponse}
+              missingItems={missingItems}
+              warnings={warnings}
+            />
+          )}
+
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">{activeStep}</p>
             <h2 className="mt-2 text-lg font-semibold">요약에 포함할 항목</h2>
@@ -1395,6 +1461,75 @@ function ReviewPanel({
         </div>
       </div>
     </aside>
+  )
+}
+
+function VerificationSummary({
+  fullResponse,
+  missingItems,
+  warnings,
+}: {
+  fullResponse?: GenerateNoteResponse
+  missingItems: string[]
+  warnings: string[]
+}) {
+  const report = fullResponse?.verification_report
+  const stats = [
+    {
+      label: '근거 약함',
+      value: report?.weakly_grounded_items.length ?? 0,
+      className: 'border-amber-200 bg-amber-50 text-amber-800',
+    },
+    {
+      label: '수정 필요',
+      value: report?.unsupported_or_risky_claims.length ?? warnings.length,
+      className: 'border-rose-200 bg-rose-50 text-rose-800',
+    },
+    {
+      label: '민감정보',
+      value: report?.sensitive_info_items.length ?? 0,
+      className: 'border-sky-200 bg-sky-50 text-sky-800',
+    },
+    {
+      label: '확인 필드',
+      value: report?.requires_counselor_review.length ?? missingItems.length,
+      className: 'border-slate-200 bg-slate-50 text-slate-700',
+    },
+  ]
+
+  const topItems = [
+    ...(report?.unsupported_or_risky_claims.map((item) => item.recommendation) || []),
+    ...(report?.requires_counselor_review.map((item) => `${item.field}: ${item.reason}`) || []),
+    ...missingItems,
+    ...warnings,
+  ].filter(Boolean)
+
+  return (
+    <section className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+        <div>
+          <h3 className="text-sm font-semibold text-amber-950">AI 검토 우선 확인</h3>
+          <p className="mt-1 text-xs leading-5 text-amber-800">초안 확정 전 상담사가 확인할 항목입니다.</p>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {stats.map((item) => (
+          <div key={item.label} className={`rounded-md border px-2 py-2 ${item.className}`}>
+            <p className="text-[11px] font-medium">{item.label}</p>
+            <p className="mt-1 text-lg font-semibold leading-none">{item.value}</p>
+          </div>
+        ))}
+      </div>
+      <ul className="mt-3 space-y-1 text-xs leading-5 text-amber-900">
+        {(topItems.length ? topItems.slice(0, 3) : ['현재 우선 검토 경고가 없습니다.']).map((item, index) => (
+          <li key={`${item}-${index}`} className="flex gap-1">
+            <span aria-hidden="true">·</span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -1596,6 +1731,11 @@ function MaterialModal({
                 description="상담자가 직접 작성한 메모를 추가합니다."
                 onClick={() => onModeChange('write_memo')}
               />
+              <AddOption
+                title="심리검사 메모"
+                description="검사 결과 요약과 상담적 해석 메모를 추가합니다."
+                onClick={() => onModeChange('write_test')}
+              />
             </div>
           )}
 
@@ -1750,10 +1890,18 @@ function Field({ children, htmlFor, label }: { children: ReactNode; htmlFor: str
   )
 }
 
-function SourceBadge({ type }: { type: SourceBadgeKind }) {
+function SourceBadge({ interactive = false, type }: { interactive?: boolean; type: SourceBadgeKind }) {
   const badge = sourceBadgeMeta[type]
   return (
-    <span className={`rounded-full px-2 py-1 text-xs font-medium ring-1 ${badge.className}`}>{badge.label}</span>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ring-1 ${
+        interactive ? 'shadow-sm transition hover:-translate-y-px hover:bg-white' : ''
+      } ${badge.className}`}
+    >
+      {interactive && <Search className="h-3 w-3" />}
+      {badge.label}
+      {interactive && <span className="font-semibold">원문</span>}
+    </span>
   )
 }
 
@@ -1849,6 +1997,17 @@ function buildDocumentSections(
       title: '다음 계획',
       content: result.next_plan || '다음 회기 계획을 입력해 주세요.',
     }),
+    ...(form.psychological_test_summary?.trim()
+      ? [
+          makeSection({
+            id: 'psychological_test',
+            title: '심리검사 요약',
+            content: form.psychological_test_summary,
+            baseEvidence: [],
+            forceBadges: ['attachment', 'needs_review'],
+          }),
+        ]
+      : []),
     makeSection({
       id: 'risk_signal',
       title: '위험 신호',
@@ -1957,6 +2116,10 @@ function buildFinalDocumentSections(
         ],
       },
       {
+        title: '심리검사 결과 및 해석',
+        content: getSection('psychological_test', '심리검사 결과와 상담적 해석은 상담사가 확인해야 합니다.'),
+      },
+      {
         title: '슈퍼비전 요청사항',
         content:
           '내담자의 자기비난 사고를 다룰 때 정서 확인과 행동 계획 사이의 균형을 어떻게 잡을지 슈퍼비전에서 논의가 필요합니다.',
@@ -1988,7 +2151,10 @@ function buildFinalDocumentSections(
 }
 
 interface TextModalConfig {
-  field: keyof Pick<SessionInput, 'transcript_text' | 'counselor_memo' | 'previous_session_summary'>
+  field: keyof Pick<
+    SessionInput,
+    'transcript_text' | 'counselor_memo' | 'previous_session_summary' | 'psychological_test_summary'
+  >
   label: string
 }
 
@@ -1999,9 +2165,11 @@ const modalTitle: Record<MaterialModalMode, string> = {
   file_upload: '파일 업로드',
   load_previous: '이전 회기 불러오기',
   write_memo: '상담사 메모 작성',
+  write_test: '심리검사 메모 작성',
   edit_transcript: '축어록/STT 수정',
   edit_memo: '상담사 메모 수정',
   edit_previous: '이전 회기 요약 변경',
+  edit_test: '심리검사 메모 수정',
 }
 
 const transformOptions: Array<{
@@ -2034,6 +2202,13 @@ const transformOptions: Array<{
   },
 ]
 
+const documentPreviewLabel: Record<string, string> = {
+  session_summary: '상담 내용 요약',
+  client_main_issue: '주요 호소',
+  next_plan: '다음 계획',
+  psychological_test_summary: '심리검사 요약',
+}
+
 const finalDocumentMeta: Record<FinalDocumentType, { title: string }> = {
   session_note: { title: '회기 기록지' },
   supervision_report: { title: '슈퍼비전 보고서' },
@@ -2049,6 +2224,9 @@ function getTextModalConfig(mode: MaterialModalMode): TextModalConfig | null {
   }
   if (mode === 'load_previous' || mode === 'edit_previous') {
     return { field: 'previous_session_summary', label: '이전 회기 요약' }
+  }
+  if (mode === 'write_test' || mode === 'edit_test') {
+    return { field: 'psychological_test_summary', label: '심리검사 결과 및 해석 메모' }
   }
   return null
 }

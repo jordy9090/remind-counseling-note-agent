@@ -167,4 +167,5 @@ export interface NoteDraftResponse {
   evidence_check: EvidenceCheckItem[]
   missing_items: string[]
   warnings: string[]
+  full_response?: GenerateNoteResponse
 }
