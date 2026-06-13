@@ -22,7 +22,7 @@ Response:
 POST /api/notes/generate
 ```
 
-The endpoint runs the existing note generation workflow and returns a compact response for the frontend demo. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output.
+The endpoint runs the six-agent note generation workflow and returns the full Pydantic-validated `GenerateNoteResponse`. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output. The React frontend maps this full response into a compact display shape.
 
 ### Request
 
@@ -42,7 +42,9 @@ Compatibility aliases:
 - `previous_session_summary` and `prev_summary` are also accepted for `previous_summary`.
 - `session_no` is also accepted for `session_number`.
 
-### Response
+### Frontend Display Projection
+
+The full API response includes `sanitized_input`, `structured_case_data`, `evidence_mapped_data`, `session_summary_draft`, `verification_report`, `document_transform_preview`, `confirmed_session_note`, and `stub`. The frontend derives the following compact display fields from that full response:
 
 ```json
 {

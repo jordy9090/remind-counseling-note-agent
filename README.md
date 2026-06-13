@@ -48,7 +48,7 @@ GET  /api/health
 POST /api/notes/generate
 ```
 
-`POST /api/notes/generate` 응답 최상위 필드는 frontend demo에 맞춘 compact schema입니다.
+`POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드만 compact shape으로 변환합니다.
 
 ```json
 {
