@@ -19,8 +19,14 @@ Backend smoke test with deterministic stub output:
 
 ```bash
 cd backend
-uv sync
+uv sync --link-mode=copy
 uv run python smoke_test.py
+```
+
+If `uv` is not installed, install it first:
+
+```bash
+pip install uv
 ```
 
 Run the FastAPI backend:
@@ -52,6 +58,7 @@ For Windows PowerShell:
 
 ```powershell
 cd backend
+$env:UV_LINK_MODE="copy"
 $env:OPENAI_API_KEY="your_api_key_here"
 $env:USE_STUB="0"
 uv run uvicorn app.main:app --reload

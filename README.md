@@ -130,9 +130,11 @@ remind-counseling-note-agent/
 
 ```bash
 cd backend
-uv sync
+uv sync --link-mode=copy
 uv run uvicorn app.main:app --reload
 ```
+
+`--link-mode=copy` avoids hard-link issues that can occur on Windows or cloud-synced folders. If `uv` is not installed, run `pip install uv` first.
 
 API 문서:
 
@@ -190,6 +192,7 @@ Backend smoke test:
 
 ```bash
 cd backend
+uv sync --link-mode=copy
 uv run python smoke_test.py
 ```
 
