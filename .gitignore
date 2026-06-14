@@ -27,6 +27,10 @@ build/
 *.log
 .pytest_cache/
 .coverage
+.codex*/
+HW1_remind_submission.zip
+remind-counseling-note-agent/
+__pycache__/
 
 # OS
 .DS_Store

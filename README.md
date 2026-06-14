@@ -170,7 +170,7 @@ pnpm dev
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-이 작업 환경에서는 `pnpm`이 PATH에 없어 검증을 `npm run build`로 수행했습니다. 프로젝트 package script는 `pnpm build`와 `npm run build` 모두 같은 `tsc && vite build`를 실행합니다.
+`pnpm`이 설치되어 있지 않다면 `npm install`과 `npm run dev`를 사용할 수 있습니다. 빌드 검증은 `pnpm build` 또는 `npm run build`로 실행합니다.
 
 ### Legacy Streamlit Demo
 
