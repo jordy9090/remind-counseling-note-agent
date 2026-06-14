@@ -16,8 +16,6 @@ OpenAI API 또는 deterministic stub
 Pydantic validated JSON
 ```
 
-Streamlit은 legacy/optional quick demo이며, 주 경로는 React + FastAPI입니다.
-
 ## 2. Frontend
 
 Frontend 위치:
@@ -67,12 +65,6 @@ Primary routes:
 ```text
 GET  /api/health
 POST /api/notes/generate
-```
-
-Legacy compatibility route:
-
-```text
-POST /api/notes/session-draft
 ```
 
 ## 4. LangGraph Workflow

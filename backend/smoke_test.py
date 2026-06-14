@@ -36,12 +36,6 @@ def main() -> None:
     assert data["document_transform_preview"]["missing_required_fields"]
     assert data["confirmed_session_note"]["status"] == "draft_requires_counselor_confirmation"
 
-    compact_response = client.post("/api/notes/generate-compact", json=payload)
-    assert compact_response.status_code == 200, compact_response.text
-    compact = compact_response.json()
-    assert compact["case_id"] == payload["case_id"]
-    assert compact["evidence_check"]
-
     print("Smoke test passed: /api/health and /api/notes/generate are working.")
 
 

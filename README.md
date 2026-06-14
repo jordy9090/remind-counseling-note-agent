@@ -2,9 +2,7 @@
 
 Re:mind는 정신건강 상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
 
-MVP V0의 주 경로는 **React + FastAPI + LangGraph**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 기존 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
-
-Streamlit 화면은 남아 있지만 현재 주 경로가 아니라 **legacy/optional quick demo**입니다.
+MVP V0의 주 경로는 **React + FastAPI + LangGraph**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
 
 ## 제품 원칙
 
@@ -48,22 +46,7 @@ GET  /api/health
 POST /api/notes/generate
 ```
 
-`POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드만 compact shape으로 변환합니다.
-
-```json
-{
-  "case_id": "CASE001",
-  "session_number": 3,
-  "session_summary": "...",
-  "main_issue": "...",
-  "counselor_intervention": "...",
-  "client_response": "...",
-  "next_plan": "...",
-  "evidence_check": [],
-  "missing_items": [],
-  "warnings": []
-}
-```
+`POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드를 클라이언트에서 변환합니다.
 
 OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. 따라서 API key 없이도 데모와 smoke test를 실행할 수 있습니다.
 
@@ -72,8 +55,6 @@ OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으
 ```text
 remind-counseling-note-agent/
 ├── README.md
-├── streamlit_app.py                  # legacy/optional quick demo
-├── requirements-streamlit.txt
 ├── docs/
 │   ├── product_spec.md
 │   ├── mvp_scope.md
@@ -91,7 +72,6 @@ remind-counseling-note-agent/
 │   ├── smoke_test.py
 │   └── app/
 │       ├── main.py
-│       ├── pipeline.py              # Streamlit compatibility adapter
 │       ├── api/routes/
 │       │   ├── health.py
 │       │   └── notes.py
@@ -99,19 +79,13 @@ remind-counseling-note-agent/
 │       │   └── config.py
 │       ├── graph/
 │       │   ├── graph.py
-│       │   ├── nodes.py
-│       │   ├── state.py
-│       │   └── workflow.py
+│       │   └── nodes.py
 │       ├── prompts/
 │       │   ├── structure_prompt.py
 │       │   ├── summary_prompt.py
 │       │   └── verification_prompt.py
 │       ├── schemas/
-│       │   ├── note.py              # current MVP V0 schema
-│       │   ├── session.py           # legacy compatibility schema
-│       │   ├── structured_case.py
-│       │   ├── summary.py
-│       │   └── verification.py
+│       │   └── note.py
 │       └── services/
 │           └── llm.py
 └── frontend/
@@ -120,8 +94,7 @@ remind-counseling-note-agent/
     └── src/
         ├── api/client.ts
         ├── pages/SessionDraftPage.tsx
-        ├── types/session.ts
-        └── components/
+        └── types/session.ts
 ```
 
 ## 실행 방법
@@ -171,20 +144,6 @@ VITE_API_BASE_URL=http://localhost:8000
 ```
 
 `pnpm`이 설치되어 있지 않다면 `npm install`과 `npm run dev`를 사용할 수 있습니다. 빌드 검증은 `pnpm build` 또는 `npm run build`로 실행합니다.
-
-### Legacy Streamlit Demo
-
-Streamlit은 React + FastAPI 주 경로와 별개인 optional quick demo입니다.
-
-```bash
-streamlit run streamlit_app.py
-```
-
-또는 Python/uv 환경에 따라:
-
-```bash
-uv run streamlit run ../streamlit_app.py
-```
 
 ## 검증 명령
 

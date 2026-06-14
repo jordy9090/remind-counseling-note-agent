@@ -8,7 +8,6 @@
 
 - README와 핵심 docs를 MVP V0 방향으로 정리
 - Re:mind의 주 경로를 React + FastAPI + LangGraph로 정의
-- Streamlit은 legacy/optional quick demo로 유지
 
 ### 2. Backend MVP V0 pipeline
 
@@ -34,7 +33,7 @@
 ### 4. Sample data
 
 - `sample_data/session_input_001.json`을 `SessionInput` schema에 맞춤
-- `sample_data/session_output_001.json`을 `/api/notes/generate`의 compact frontend demo response에 맞춤
+- `sample_data/session_output_001.json`을 `/api/notes/generate`의 full API response에 맞춤
 
 ## 현재 검증 명령
 
@@ -60,11 +59,10 @@ npm run build
 
 ## 다음 작업 후보
 
-1. AGENTS.md를 최신 6-agent MVP V0 방향으로 갱신
-2. frontend에서 확정된 회기 기록 영역을 실제 interaction으로 정리
-3. 검증 리포트 표시 문구와 badge taxonomy 개선
-4. Document Transform preview의 부족 필드 구조 정교화
-5. 사용자 인터뷰 기반 회기요약 section label 조정
+1. frontend에서 확정된 회기 기록 영역을 실제 interaction으로 정리
+2. 검증 리포트 표시 문구와 badge taxonomy 개선
+3. Document Transform preview의 부족 필드 구조 정교화
+4. 사용자 인터뷰 기반 회기요약 section label 조정
 
 ## MVP V0에서 계속 제외할 것
 

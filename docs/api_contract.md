@@ -22,7 +22,7 @@ Response:
 POST /api/notes/generate
 ```
 
-The endpoint runs the six-agent note generation workflow and returns the full Pydantic-validated `GenerateNoteResponse`. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output. The React frontend maps this full response into a compact display shape.
+The endpoint runs the six-agent note generation workflow and returns the full Pydantic-validated `GenerateNoteResponse`. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output. The React frontend maps this full response into its screen-specific display state.
 
 ### Request
 
@@ -36,7 +36,7 @@ The endpoint runs the six-agent note generation workflow and returns the full Py
 }
 ```
 
-Compatibility aliases:
+Accepted input aliases:
 
 - `transcript_text` is also accepted for `transcript`.
 - `previous_session_summary` and `prev_summary` are also accepted for `previous_summary`.

@@ -148,7 +148,7 @@ Expected core response from `POST /api/notes/generate` includes:
 | --- | --- |
 | `backend/smoke_test.py` | Runs the backend in stub mode and validates the health and note-generation routes. |
 | `sample_data/session_input_001.json` | Synthetic counseling-session sample input. |
-| `sample_data/session_output_001.json` | Sample compact output for quick inspection. |
+| `sample_data/session_output_001.json` | Sample full API output for quick inspection. |
 | `GET /api/health` | Health check endpoint. |
 | `POST /api/notes/generate` | Primary full JSON generation endpoint. |
 | `frontend/src/pages/SessionDraftPage.tsx` | React screen for input, editable summary draft, verification report, and document transform preview. |
@@ -158,5 +158,4 @@ Expected core response from `POST /api/notes/generate` includes:
 - The system should be evaluated through the FastAPI backend and smoke test, not through a non-existent root CLI.
 - The main grading command is `cd backend && uv run python smoke_test.py`.
 - The primary implementation path is React + FastAPI + LangGraph.
-- Streamlit is retained only as a legacy optional quick demo.
 - All counseling examples are synthetic and should not contain real counseling data.

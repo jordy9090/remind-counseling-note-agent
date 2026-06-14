@@ -14,8 +14,6 @@ LangGraph 6-agent Workflow
 Pydantic validated JSON
 ```
 
-Streamlit은 legacy/optional quick demo입니다.
-
 ## 2. Backend
 
 Primary API:
@@ -77,7 +75,7 @@ sample_data/session_input_001.json
 sample_data/session_output_001.json
 ```
 
-두 파일은 현재 `SessionInput`과 `/api/notes/generate`의 compact frontend demo response에 맞춰져 있어야 합니다.
+두 파일은 현재 `SessionInput`과 `/api/notes/generate`의 full API response에 맞춰져 있어야 합니다.
 
 ## 5. 제외 항목
 
