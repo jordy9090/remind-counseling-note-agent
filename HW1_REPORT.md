@@ -16,7 +16,9 @@ The system is designed as a counseling documentation assistant, not a clinical d
 Recommended Python version: 3.11.
 
 Live Demo:
-If a deployed URL is provided separately, open it directly. The demo page is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately.
+https://remind-counseling-note-agent.vercel.app/
+
+The demo page is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately.
 
 Local Run with OpenAI API Key:
 From the extracted project root, run the backend and frontend in two terminals.

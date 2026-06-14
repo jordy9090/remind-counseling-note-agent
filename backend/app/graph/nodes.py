@@ -206,7 +206,7 @@ def _mock_structured_case(sanitized: SanitizedInput) -> StructuredCaseData:
         ],
         session_theme=[
             EvidenceItem(
-                content=f"{tags}를 중심으로 한 회기 내용 정리",
+                content=f"주요 회기 주제: {tags}",
                 evidence_type="direct",
                 source_refs=[memo_ref],
             )
@@ -338,7 +338,7 @@ def _build_session_content_summary(sanitized: SanitizedInput) -> str:
 
     tags = ", ".join(sanitized.sources.key_issue_tags) or "주요 상담 이슈"
     return (
-        f"이번 회기에서는 {tags}와 관련된 내담자의 어려움을 다루었다. "
+        f"이번 회기에서는 다음 주제를 다루었다: {tags}. "
         "내담자는 회기에서 확인된 불안과 반복되는 사고 흐름을 표현했고, "
         "상담자는 이를 구체화하며 다음 회기에서 이어갈 계획을 정리하였다."
     )
