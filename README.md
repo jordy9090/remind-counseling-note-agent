@@ -1,6 +1,6 @@
 # Re:mind
 
-Re:mind는 정신건강 상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
+Re:mind는 심리상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
 
 MVP V0의 주 경로는 **React + FastAPI + LangGraph**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
 
