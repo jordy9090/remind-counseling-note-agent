@@ -577,7 +577,7 @@ function AppSidebar({
 
           <div className="space-y-3 border-t border-slate-200 pt-5">
             <p className="px-1 text-xs font-medium text-slate-400">최근 케이스</p>
-            <CaseListItem name="홍길동" status="진행중" meta="청소년 · 5회기" active />
+            <CaseListItem name="가명 은하" status="진행중" meta="대학생 · 5회기" active />
             <CaseListItem name="신데렐라" status="진행중" meta="직장인 · 3회기" />
             <CaseListItem name="흥부" status="종결" meta="직장인 · 12회기" tone="green" />
             <CaseListItem name="팥쥐" status="대기중" meta="성인 · 1회기" tone="orange" />

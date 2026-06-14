@@ -15,6 +15,34 @@ The system is designed as a counseling documentation assistant, not a clinical d
 
 Recommended Python version: 3.11. No API keys are included in this repository.
 
+After downloading and extracting the submission ZIP, open a terminal at the extracted project root. The full web demo uses two terminals. If the TA wants live LLM generation, set `OPENAI_API_KEY` before starting the backend; if no API key is set, the backend still runs with deterministic stub output.
+
+Terminal 1 - backend:
+
+```bash
+cd backend
+uv sync --link-mode=copy
+uv run uvicorn app.main:app --reload
+```
+
+Terminal 2 - frontend:
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+If `pnpm` is not available:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Then open `http://localhost:5173`. The demo screen is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately and inspect the LangGraph output in the UI.
+
 Backend smoke test with deterministic stub output:
 
 ```bash
@@ -29,7 +57,7 @@ If `uv` is not installed, install it first:
 pip install uv
 ```
 
-Run the FastAPI backend:
+Run the FastAPI backend only:
 
 ```bash
 cd backend
