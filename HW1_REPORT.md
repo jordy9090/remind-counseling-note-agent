@@ -15,7 +15,7 @@ The system is designed as a counseling documentation assistant, not a clinical d
 
 Recommended Python version: 3.11. After extracting the submission ZIP, run the backend and frontend in two terminals.
 
-Backend:
+Terminal 1 - Backend:
 
 ```bash
 cd backend
@@ -24,7 +24,7 @@ uv sync --link-mode=copy
 uv run uvicorn app.main:app --reload
 ```
 
-Frontend:
+Terminal 2 - Frontend:
 
 ```bash
 cd frontend
@@ -40,7 +40,7 @@ http://localhost:5173
 
 The UI is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately. No API key is required for grading because the backend uses deterministic stub output when `OPENAI_API_KEY` is missing. To use a real LLM, set `OPENAI_API_KEY` and `USE_STUB=0` before starting the backend.
 
-Backend smoke test:
+Fastest grading path from the extracted project root:
 
 ```bash
 cd backend
