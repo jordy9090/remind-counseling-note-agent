@@ -13,7 +13,13 @@ The system is designed as a counseling documentation assistant, not a clinical d
 
 ## 2. Quick Start
 
-Recommended Python version: 3.11. After extracting the submission ZIP, run the backend and frontend in two terminals.
+Recommended Python version: 3.11.
+
+Live Demo:
+If a deployed URL is provided separately, open it directly. The demo page is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately.
+
+Local Run with OpenAI API Key:
+From the extracted project root, run the backend and frontend in two terminals.
 
 Terminal 1 - Backend:
 
@@ -21,6 +27,25 @@ Terminal 1 - Backend:
 cd backend
 pip install uv
 uv sync --link-mode=copy
+```
+
+For macOS/Linux:
+
+```bash
+export OPENAI_API_KEY=your_api_key_here
+export USE_STUB=0
+```
+
+For Windows PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY="your_api_key_here"
+$env:USE_STUB="0"
+```
+
+Then start the backend:
+
+```bash
 uv run uvicorn app.main:app --reload
 ```
 
@@ -32,20 +57,27 @@ pnpm install
 pnpm dev
 ```
 
-If `pnpm` is not available, use `npm install` and `npm run dev` instead. Then open:
+If `pnpm` is not available, use:
+
+```bash
+npm install
+npm run dev
+```
+
+Then open:
 
 ```text
 http://localhost:5173
 ```
 
-The UI is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately. No API key is required for grading because the backend uses deterministic stub output when `OPENAI_API_KEY` is missing. To use a real LLM, set `OPENAI_API_KEY` and `USE_STUB=0` before starting the backend.
-
-Fastest grading path from the extracted project root:
+Optional verification command from the extracted project root:
 
 ```bash
 cd backend
 uv run python smoke_test.py
 ```
+
+If no API key is available, leave `OPENAI_API_KEY` unset or set `USE_STUB=1`; the backend will use deterministic stub output for grading.
 
 ## 3. Requirement Mapping
 
