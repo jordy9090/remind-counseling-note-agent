@@ -13,19 +13,18 @@ The system is designed as a counseling documentation assistant, not a clinical d
 
 ## 2. Quick Start
 
-Recommended Python version: 3.11. No API keys are included in this repository.
+Recommended Python version: 3.11. After extracting the submission ZIP, run the backend and frontend in two terminals.
 
-After downloading and extracting the submission ZIP, open a terminal at the extracted project root. The full web demo uses two terminals. If the TA wants live LLM generation, set `OPENAI_API_KEY` before starting the backend; if no API key is set, the backend still runs with deterministic stub output.
-
-Terminal 1 - backend:
+Backend:
 
 ```bash
 cd backend
+pip install uv
 uv sync --link-mode=copy
 uv run uvicorn app.main:app --reload
 ```
 
-Terminal 2 - frontend:
+Frontend:
 
 ```bash
 cd frontend
@@ -33,77 +32,19 @@ pnpm install
 pnpm dev
 ```
 
-If `pnpm` is not available:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Then open `http://localhost:5173`. The demo screen is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately and inspect the LangGraph output in the UI.
-
-Backend smoke test with deterministic stub output:
-
-```bash
-cd backend
-uv sync --link-mode=copy
-uv run python smoke_test.py
-```
-
-If `uv` is not installed, install it first:
-
-```bash
-pip install uv
-```
-
-Run the FastAPI backend only:
-
-```bash
-cd backend
-uv run uvicorn app.main:app --reload
-```
-
-The primary API routes are:
+If `pnpm` is not available, use `npm install` and `npm run dev` instead. Then open:
 
 ```text
-GET  /api/health
-POST /api/notes/generate
+http://localhost:5173
 ```
 
-When `OPENAI_API_KEY` is missing or `USE_STUB=1`, the backend returns deterministic stub output so the demo can run without an API key.
+The UI is pre-filled with synthetic five-session counseling data, so the TA can click the generation button immediately. No API key is required for grading because the backend uses deterministic stub output when `OPENAI_API_KEY` is missing. To use a real LLM, set `OPENAI_API_KEY` and `USE_STUB=0` before starting the backend.
 
-To run with a real OpenAI API key:
+Backend smoke test:
 
 ```bash
 cd backend
-export OPENAI_API_KEY=your_api_key_here
-export USE_STUB=0
-uv run uvicorn app.main:app --reload
-```
-
-For Windows PowerShell:
-
-```powershell
-cd backend
-$env:UV_LINK_MODE="copy"
-$env:OPENAI_API_KEY="your_api_key_here"
-$env:USE_STUB="0"
-uv run uvicorn app.main:app --reload
-```
-
-Frontend demo:
-
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
-
-A legacy optional Streamlit demo is also available:
-
-```bash
-streamlit run streamlit_app.py
+uv run python smoke_test.py
 ```
 
 ## 3. Requirement Mapping
