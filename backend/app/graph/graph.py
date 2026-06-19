@@ -27,6 +27,8 @@ from app.schemas.note import (
 
 class NoteGraphState(TypedDict, total=False):
     session_input: SessionInput
+    requested_section_ids: list[str]
+    session_topic: str
     sanitized_input: SanitizedInput
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
@@ -59,8 +61,17 @@ def create_note_graph():
 note_graph = create_note_graph()
 
 
-def run_note_pipeline(session_input: SessionInput) -> GenerateNoteResponse:
-    state = note_graph.invoke({"session_input": session_input})
+def run_note_pipeline(
+    session_input: SessionInput,
+    requested_section_ids: list[str] | None = None,
+    session_topic: str = "",
+) -> GenerateNoteResponse:
+    initial_state: NoteGraphState = {"session_input": session_input}
+    if requested_section_ids is not None:
+        initial_state["requested_section_ids"] = requested_section_ids
+    if session_topic:
+        initial_state["session_topic"] = session_topic
+    state = note_graph.invoke(initial_state)
     confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
     return GenerateNoteResponse(
         sanitized_input=state["sanitized_input"],

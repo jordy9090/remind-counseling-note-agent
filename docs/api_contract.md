@@ -75,6 +75,87 @@ Field notes:
 - `missing_items`: fields that may require additional counselor input or review
 - `warnings`: safety and review notices shown to the counselor
 
+## Recompose Summary Draft
+
+```text
+POST /api/notes/recompose
+```
+
+When the counselor changes the "요약에 포함할 항목" checklist, the frontend calls this endpoint instead of only hiding sections locally. The backend regenerates a checklist-specific AI draft and caches it by normalized `session_input`, `session_topic`, and `visible_section_ids`, so repeated clicks with the same settings reuse the existing generated draft instead of spending more LLM tokens.
+
+### Request
+
+```json
+{
+  "session_input": {
+    "case_id": "CASE001",
+    "session_number": 3,
+    "session_date": "2026-05-17",
+    "counselor_name": "박상담사",
+    "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함.",
+    "transcript_text": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
+    "previous_session_summary": ""
+  },
+  "session_topic": "진로 불안과 자기비난 사고 점검",
+  "visible_section_ids": ["main_issue", "session_theme", "session_content"]
+}
+```
+
+### Response
+
+```json
+{
+  "result": {},
+  "visible_section_ids": ["main_issue", "session_theme", "session_content"],
+  "cache_key": "sha256-cache-key",
+  "cache_hit": false
+}
+```
+
+`result` is the same full `GenerateNoteResponse` shape returned by `POST /api/notes/generate`.
+
+## Temporary Draft Save
+
+```text
+POST /api/notes/drafts
+GET  /api/notes/drafts/{draft_id}
+GET  /api/notes/drafts?case_id=CASE001
+```
+
+The temporary draft endpoint stores the counselor's current workspace state before final confirmation. It preserves the current screen, raw input form, selected checklist items, editable summary sections, and generated draft response when available.
+
+### Save Request
+
+```json
+{
+  "case_id": "CASE001",
+  "session_number": 3,
+  "session_date": "2026-05-17",
+  "counselor_name": "박상담사",
+  "screen": "summary_draft",
+  "form": {},
+  "session_topic": "진로 불안과 자기비난 사고 점검",
+  "visible_section_ids": ["main_issue", "session_theme", "session_content"],
+  "draft_sections": [],
+  "result": null,
+  "final_document_type": "session_note"
+}
+```
+
+If `draft_id` is included, the backend updates that temporary draft. If it is omitted, the backend creates a new temporary draft.
+
+### Save Response
+
+```json
+{
+  "draft_id": "draft_1234",
+  "case_id": "CASE001",
+  "session_number": 3,
+  "saved_at": "2026-06-19T03:40:00+00:00",
+  "message": "임시저장되었습니다."
+}
+```
+
 ## Local Run
 
 Backend:

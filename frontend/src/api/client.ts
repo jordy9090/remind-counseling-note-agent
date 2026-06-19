@@ -6,7 +6,13 @@ import type {
   EvidenceType,
   GenerateNoteResponse,
   NoteDraftResponse,
+  RecomposeNoteRequest,
+  RecomposeNoteResponse,
   SessionInput,
+  SupervisionReportDraft,
+  SupervisionReportRequest,
+  TemporaryDraftSaveRequest,
+  TemporaryDraftSaveResponse,
 } from '../types/session'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
@@ -34,6 +40,39 @@ export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftR
 }
 
 export const postGenerateNote = generateNoteDraft
+
+export const saveTemporaryDraft = async (
+  draft: TemporaryDraftSaveRequest,
+): Promise<TemporaryDraftSaveResponse> => {
+  const response = await client.post<TemporaryDraftSaveResponse>('/api/notes/drafts', draft)
+  return response.data
+}
+
+export interface RecomposeNoteDraftResult {
+  note: NoteDraftResponse
+  cacheHit: boolean
+  cacheKey: string
+  visibleSectionIds: string[]
+}
+
+export const recomposeNoteDraft = async (
+  request: RecomposeNoteRequest,
+): Promise<RecomposeNoteDraftResult> => {
+  const response = await client.post<RecomposeNoteResponse>('/api/notes/recompose', request)
+  return {
+    note: toNoteDraftResponse(response.data.result),
+    cacheHit: response.data.cache_hit,
+    cacheKey: response.data.cache_key,
+    visibleSectionIds: response.data.visible_section_ids,
+  }
+}
+
+export const generateSupervisionReport = async (
+  request: SupervisionReportRequest,
+): Promise<SupervisionReportDraft> => {
+  const response = await client.post<SupervisionReportDraft>('/api/notes/supervision-report', request)
+  return response.data
+}
 
 export { API_BASE_URL }
 export default client

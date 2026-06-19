@@ -6,6 +6,8 @@ Run from the backend directory:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -23,20 +25,99 @@ def main() -> None:
     assert health.status_code == 200, health.text
     assert health.json() == {"status": "ok"}
 
-    sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "session_input_001.json"
-    payload = json.loads(sample_path.read_text(encoding="utf-8"))
-    response = client.post("/api/notes/generate", json=payload)
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data["session_summary_draft"]["session_info"]["case_id"] == payload["case_id"]
-    assert data["session_summary_draft"]["session_info"]["session_number"] == payload["session_number"]
-    assert data["session_summary_draft"]["session_content"]["text"]
-    assert data["evidence_mapped_data"]["items"]
-    assert data["verification_report"]["requires_counselor_review"]
-    assert data["document_transform_preview"]["missing_required_fields"]
-    assert data["confirmed_session_note"]["status"] == "draft_requires_counselor_confirmation"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        os.environ["TEMP_DRAFT_DIR"] = temp_dir
+        os.environ["RECOMPOSE_CACHE_DIR"] = str(Path(temp_dir) / "recompose")
 
-    print("Smoke test passed: /api/health and /api/notes/generate are working.")
+        sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "session_input_001.json"
+        payload = json.loads(sample_path.read_text(encoding="utf-8"))
+        response = client.post("/api/notes/generate", json=payload)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["session_summary_draft"]["session_info"]["case_id"] == payload["case_id"]
+        assert data["session_summary_draft"]["session_info"]["session_number"] == payload["session_number"]
+        assert data["session_summary_draft"]["session_content"]["text"]
+        assert data["evidence_mapped_data"]["items"]
+        assert data["verification_report"]["requires_counselor_review"]
+        assert data["document_transform_preview"]["missing_required_fields"]
+        assert data["confirmed_session_note"]["status"] == "draft_requires_counselor_confirmation"
+
+        save_payload = {
+            "case_id": payload["case_id"],
+            "session_number": payload["session_number"],
+            "session_date": payload["session_date"],
+            "counselor_name": payload["counselor_name"],
+            "screen": "summary_draft",
+            "form": payload,
+            "session_topic": data["session_summary_draft"]["session_theme"]["text"],
+            "visible_section_ids": ["main_issue", "session_theme", "session_content"],
+            "draft_sections": [
+                {
+                    "id": "session_content",
+                    "title": "상담 내용",
+                    "content": data["session_summary_draft"]["session_content"]["text"],
+                }
+            ],
+            "result": data,
+        }
+        save_response = client.post("/api/notes/drafts", json=save_payload)
+        assert save_response.status_code == 200, save_response.text
+        saved = save_response.json()
+        assert saved["draft_id"]
+        assert saved["case_id"] == payload["case_id"]
+
+        load_response = client.get(f"/api/notes/drafts/{saved['draft_id']}")
+        assert load_response.status_code == 200, load_response.text
+        loaded = load_response.json()
+        assert loaded["draft_id"] == saved["draft_id"]
+        assert loaded["screen"] == "summary_draft"
+        assert loaded["draft_sections"][0]["title"] == "상담 내용"
+
+        recompose_payload = {
+            "session_input": payload,
+            "session_topic": "진로 불안과 자기비난 사고 점검",
+            "visible_section_ids": ["main_issue", "session_theme", "session_content"],
+        }
+        first_recompose = client.post("/api/notes/recompose", json=recompose_payload)
+        assert first_recompose.status_code == 200, first_recompose.text
+        first_data = first_recompose.json()
+        assert first_data["cache_hit"] is False
+        assert first_data["visible_section_ids"] == recompose_payload["visible_section_ids"]
+        assert first_data["result"]["session_summary_draft"]["session_content"]["text"]
+
+        second_recompose = client.post("/api/notes/recompose", json=recompose_payload)
+        assert second_recompose.status_code == 200, second_recompose.text
+        second_data = second_recompose.json()
+        assert second_data["cache_hit"] is True
+        assert second_data["cache_key"] == first_data["cache_key"]
+
+        supervision_payload = {
+            "session_input": payload,
+            "session_summary_draft": data["session_summary_draft"],
+            "demo_mode": True,
+            "report_date": payload["session_date"],
+            "client_alias": "가명 은하",
+        }
+        supervision_response = client.post("/api/notes/supervision-report", json=supervision_payload)
+        assert supervision_response.status_code == 200, supervision_response.text
+        supervision = supervision_response.json()
+        assert supervision["title"] == "개인상담 사례 수퍼비전 보고서 초안"
+        assert supervision["reportType"] == "personal_counseling_supervision"
+        assert supervision["sections"]
+        assert any(section["title"] == "C-1. 상담진행 과정 및 회기주제" for section in supervision["sections"])
+        assert supervision["meta"]["institution"] == "리마인드 심리상담센터"
+        assert supervision["meta"]["supervisor"] == "이수현 상담심리사 1급"
+        assert supervision["aiReview"]["completionChecklist"]
+        assert supervision["aiReview"]["missingFields"]
+        assert supervision["aiReview"]["demoInputs"]
+        assert any(
+            block.get("demoValue")
+            for section in supervision["sections"]
+            for block in section.get("contentBlocks", [])
+        )
+        assert supervision["aiReview"]["suggestedSupervisionQuestions"]
+
+    print("Smoke test passed: health, note generation, temporary draft storage, cached recomposition, and supervision report generation are working.")
 
 
 if __name__ == "__main__":

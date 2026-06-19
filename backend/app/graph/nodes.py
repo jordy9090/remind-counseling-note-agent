@@ -98,11 +98,13 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     sanitized: SanitizedInput = state["sanitized_input"]
     structured: StructuredCaseData = state["structured_case_data"]
     evidence_mapped: EvidenceMappedData = state["evidence_mapped_data"]
+    requested_section_ids: list[str] = state.get("requested_section_ids") or []
+    session_topic: str = state.get("session_topic") or ""
     fallback = _mock_summary(sanitized, structured)
     if settings.stub_mode:
         return {"session_summary_draft": fallback}
 
-    prompt = _build_summary_prompt(sanitized, structured, evidence_mapped)
+    prompt = _build_summary_prompt(sanitized, structured, evidence_mapped, requested_section_ids, session_topic)
     summary = get_structured_llm(SessionSummaryDraft).invoke(prompt)
     return {"session_summary_draft": summary}
 
@@ -455,11 +457,20 @@ def _build_summary_prompt(
     sanitized: SanitizedInput,
     structured: StructuredCaseData,
     evidence_mapped: EvidenceMappedData,
+    requested_section_ids: list[str] | None = None,
+    session_topic: str = "",
 ) -> str:
+    requested_section_ids = requested_section_ids or []
     return f"""
 Generate an editable Korean counseling session summary draft.
 Each section must include evidence_type and source_refs.
 Reflection, case conceptualization, and goal attainment must remain counselor-review areas.
+The frontend will display only these requested section ids:
+{_json(requested_section_ids)}
+If requested_section_ids is not empty, rewrite the requested sections as a coherent self-contained draft
+for that exact checklist configuration. Avoid relying on omitted sections for essential context.
+For non-requested sections, keep them brief and grounded because they may be hidden by the frontend.
+Counselor-selected session topic, if provided: {session_topic or "not provided"}
 
 Sanitized input:
 {_json(sanitized)}

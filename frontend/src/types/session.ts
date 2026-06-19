@@ -169,3 +169,127 @@ export interface NoteDraftResponse {
   warnings: string[]
   full_response?: GenerateNoteResponse
 }
+
+export interface TemporaryDraftSaveRequest {
+  draft_id?: string
+  case_id: string
+  session_number: number
+  session_date: string
+  counselor_name: string
+  screen: string
+  form: SessionInput
+  session_topic: string
+  is_deidentified: boolean
+  selected_previous_session_ids: string[]
+  attachments: unknown[]
+  visible_section_ids: string[]
+  draft_sections: unknown[]
+  result?: unknown
+  final_document_type: string
+  supervision_report_draft?: unknown
+}
+
+export interface TemporaryDraftSaveResponse {
+  draft_id: string
+  case_id: string
+  session_number: number
+  saved_at: string
+  message: string
+}
+
+export interface RecomposeNoteRequest {
+  session_input: SessionInput
+  session_topic: string
+  visible_section_ids: string[]
+}
+
+export interface RecomposeNoteResponse {
+  result: GenerateNoteResponse
+  visible_section_ids: string[]
+  cache_key: string
+  cache_hit: boolean
+}
+
+export type SupervisionReportStatus = 'complete' | 'partial' | 'missing' | 'needs_review'
+export type SupervisionReviewStatus = 'unchecked' | 'confirmed' | 'edited' | 'needs_human_input'
+export type SupervisionContentBlockType = 'paragraph' | 'table' | 'transcript' | 'reflection_box' | 'placeholder'
+
+export interface SupervisionSpeakerTurn {
+  turnId: string
+  speaker: 'client' | 'counselor'
+  text: string
+  silenceSeconds?: number
+}
+
+export interface SupervisionContentBlock {
+  id: string
+  type: SupervisionContentBlockType
+  text?: string
+  rows?: Record<string, string>[]
+  speakerTurns?: SupervisionSpeakerTurn[]
+  evidenceIds: string[]
+  aiGenerated: boolean
+  demoValue: boolean
+  reviewStatus: SupervisionReviewStatus
+  warnings?: string[]
+}
+
+export interface SupervisionReportSection {
+  id: string
+  title: string
+  level: 1 | 2 | 3
+  contentBlocks: SupervisionContentBlock[]
+  status: SupervisionReportStatus
+}
+
+export interface SupervisionAiReviewPanel {
+  completionChecklist: Array<{
+    label: string
+    status: 'done' | 'partial' | 'missing'
+    reason?: string
+  }>
+  missingFields: string[]
+  demoInputs: string[]
+  needsHumanReview: Array<{
+    sectionId: string
+    message: string
+    severity: 'low' | 'medium' | 'high'
+  }>
+  unsupportedClaims: Array<{
+    blockId: string
+    claim: string
+    reason: string
+  }>
+  suggestedSupervisionQuestions: string[]
+  caution: string
+}
+
+export interface SupervisionReportDraft {
+  reportId: string
+  caseId: string
+  reportType: 'personal_counseling_supervision'
+  title: string
+  meta: {
+    clientAlias: string
+    sessionNumber: number
+    reportDate: string
+    counselorName?: string
+    institution?: string
+    supervisor?: string
+    supervisionDatePlace?: string
+  }
+  sections: SupervisionReportSection[]
+  aiReview: SupervisionAiReviewPanel
+  evidenceIndex: Record<string, { label: string; text: string }>
+}
+
+export interface SupervisionReportRequest {
+  session_input: SessionInput
+  session_summary_draft?: SessionSummaryDraft
+  demo_mode?: boolean
+  report_date?: string
+  client_alias?: string
+  institution?: string
+  supervisor?: string
+  supervision_date_place?: string
+}

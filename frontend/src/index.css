@@ -5,3 +5,101 @@
 body {
   @apply bg-gray-50;
 }
+
+:root {
+  --workspace-header-height: clamp(64px, 8vh, 84px);
+  --workspace-pad: clamp(10px, 1.25vw, 16px);
+  --workspace-gap: clamp(10px, 1.1vw, 16px);
+  --review-panel-width: clamp(268px, 24vw, 312px);
+  --input-section-gap: clamp(8px, 1.35vh, 12px);
+  --input-card-pad: clamp(12px, 1.65vh, 16px);
+  --material-row-height: clamp(38px, 6vh, 44px);
+  --process-step-height: clamp(40px, 6vh, 46px);
+}
+
+@media (max-height: 720px) {
+  :root {
+    --workspace-header-height: 68px;
+    --workspace-pad: 8px;
+    --workspace-gap: 10px;
+    --input-card-pad: 10px;
+    --input-section-gap: 8px;
+    --material-row-height: 36px;
+    --process-step-height: 40px;
+  }
+}
+
+.workspace-grid-compact {
+  display: grid;
+  min-height: calc(100vh - var(--workspace-header-height));
+  width: 100%;
+  gap: var(--workspace-gap);
+  padding: var(--workspace-pad) 0 var(--workspace-pad) var(--workspace-pad);
+  box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+  .workspace-grid-compact {
+    grid-template-columns: minmax(0, 1fr) var(--review-panel-width);
+  }
+}
+
+.workspace-main-panel {
+  min-width: 0;
+  width: min(808px, 100%);
+  justify-self: center;
+  padding-bottom: var(--workspace-pad);
+}
+
+.review-panel-compact {
+  overflow: visible;
+}
+
+@media (min-width: 768px) {
+  .review-panel-compact {
+    position: sticky;
+    top: calc(var(--workspace-header-height) + var(--workspace-pad));
+    height: calc(100vh - var(--workspace-header-height) - (var(--workspace-pad) * 2));
+    overflow: auto;
+  }
+}
+
+.session-input-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--input-section-gap);
+  min-height: calc(100vh - var(--workspace-header-height) - var(--workspace-pad));
+}
+
+.session-card {
+  padding: var(--input-card-pad);
+}
+
+.session-material-card {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-material-content {
+  flex: 0 0 auto;
+}
+
+.session-material-actions {
+  margin-top: var(--input-section-gap);
+  padding-top: 0;
+}
+
+.session-process-card {
+  flex: 1 1 auto;
+  min-height: clamp(124px, 19vh, 176px);
+}
+
+.material-row {
+  min-height: var(--material-row-height);
+}
+
+.process-step {
+  height: var(--process-step-height);
+}

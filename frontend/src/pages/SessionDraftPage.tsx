@@ -6,13 +6,18 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  ClipboardCheck,
   ClipboardList,
   Edit3,
   FileText,
   FolderOpen,
   History,
+  Info,
   List,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PenLine,
   Plus,
   RefreshCcw,
   Save,
@@ -20,9 +25,11 @@ import {
   Send,
   ShieldCheck,
   User,
+  Workflow,
   X,
+  type LucideIcon,
 } from 'lucide-react'
-import { generateNoteDraft } from '../api/client'
+import { generateNoteDraft, generateSupervisionReport, recomposeNoteDraft, saveTemporaryDraft } from '../api/client'
 import type {
   EvidenceCheckItem,
   EvidenceConfidence,
@@ -30,10 +37,20 @@ import type {
   GenerateNoteResponse,
   NoteDraftResponse,
   SessionInput,
+  SupervisionAiReviewPanel,
+  SupervisionContentBlock,
+  SupervisionReportDraft,
+  SupervisionReportSection,
 } from '../types/session'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
 const processSteps = ['입력 정제', '상담 내용 구조화', '근거 연결', '회기요약 생성', '검증 리포트 생성']
+const PLACEHOLDER_TEXT = '[상담사 확인 필요]'
+const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
+  done: '✓',
+  partial: '△',
+  missing: '·',
+}
 
 type WorkflowStep = (typeof workflowSteps)[number]
 type AppScreen = 'case_list' | 'session_input' | 'summary_draft' | 'document_transform' | 'final_document'
@@ -261,6 +278,18 @@ export default function SessionDraftPage() {
   const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(defaultVisibleSectionIds)
   const [editingSectionId, setEditingSectionId] = useState<DraftSectionId | null>(null)
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<DraftSectionId | null>(null)
+  const [temporaryDraftId, setTemporaryDraftId] = useState<string | null>(null)
+  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const [draftSaveMessage, setDraftSaveMessage] = useState<string | null>(null)
+  const [isRecomposingDraft, setIsRecomposingDraft] = useState(false)
+  const [draftRecomposeMessage, setDraftRecomposeMessage] = useState<string | null>(null)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
+  const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null)
+  const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(null)
+  const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
+  const [editingSupervisionText, setEditingSupervisionText] = useState('')
+  const [expandedSupervisionEvidenceId, setExpandedSupervisionEvidenceId] = useState<string | null>(null)
 
   const hasMaterials = Boolean(
     form.counselor_memo.trim() ||
@@ -316,6 +345,7 @@ export default function SessionDraftPage() {
     setHasSubmitted(true)
     setError(null)
     setResult(null)
+    setSupervisionReportDraft(null)
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
 
@@ -335,20 +365,43 @@ export default function SessionDraftPage() {
     }
   }
 
-  const toggleSectionVisibility = (sectionId: DraftSectionId) => {
-    setVisibleSectionIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(sectionId)) {
-        next.delete(sectionId)
-      } else {
-        next.add(sectionId)
-      }
-      return next
-    })
+  const toggleSectionVisibility = async (sectionId: DraftSectionId) => {
+    const previousVisibleSectionIds = new Set(visibleSectionIds)
+    const nextVisibleSectionIds = new Set(previousVisibleSectionIds)
+    if (nextVisibleSectionIds.has(sectionId)) {
+      nextVisibleSectionIds.delete(sectionId)
+    } else {
+      nextVisibleSectionIds.add(sectionId)
+    }
 
-    setDraftSections((prev) =>
-      prev.map((section) => (section.id === sectionId ? { ...section, visible: !section.visible } : section)),
-    )
+    if (!result) {
+      setVisibleSectionIds(nextVisibleSectionIds)
+      return
+    }
+
+    setIsRecomposingDraft(true)
+    setDraftRecomposeMessage('선택 항목 기준으로 AI 초안을 재구성 중입니다.')
+
+    try {
+      const recomposed = await recomposeNoteDraft({
+        session_input: form,
+        session_topic: sessionTopic,
+        visible_section_ids: Array.from(nextVisibleSectionIds),
+      })
+      const nextVisibleSet = new Set<DraftSectionId>(recomposed.visibleSectionIds)
+      setResult(recomposed.note)
+      setVisibleSectionIds(nextVisibleSet)
+      setDraftSections(buildDocumentSections(recomposed.note, form, sessionTopic, nextVisibleSet))
+      setExpandedEvidenceId(null)
+      setEditingSectionId(null)
+      setDraftRecomposeMessage(recomposed.cacheHit ? '저장된 재구성 초안을 사용했습니다.' : 'AI 초안을 다시 재구성했습니다.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '요약초안 재구성 중 오류가 발생했습니다.'
+      setVisibleSectionIds(previousVisibleSectionIds)
+      setDraftRecomposeMessage(`재구성 실패 · ${message}`)
+    } finally {
+      setIsRecomposingDraft(false)
+    }
   }
 
   const updateDraftSectionContent = (sectionId: DraftSectionId, content: string) => {
@@ -378,6 +431,7 @@ export default function SessionDraftPage() {
   const goBackToInput = () => {
     setCurrentScreen('session_input')
     setResult(null)
+    setSupervisionReportDraft(null)
     setDraftSections([])
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
@@ -396,24 +450,116 @@ export default function SessionDraftPage() {
     setCurrentScreen('document_transform')
   }
 
-  const openFinalDocument = (documentType: FinalDocumentType = finalDocumentType) => {
+  const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
     setFinalDocumentType(documentType)
+    setFinalDocumentError(null)
+
+    if (documentType === 'supervision_report') {
+      setIsGeneratingFinalDocument(true)
+      try {
+        const report = await generateSupervisionReport({
+          session_input: form,
+          session_summary_draft: result.full_response?.session_summary_draft,
+          demo_mode: form.case_id === 'CASE-DEMO-001',
+          report_date: form.session_date,
+          client_alias: demoClientName,
+        })
+        setSupervisionReportDraft(report)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '수퍼비전 보고서 초안 생성 중 오류가 발생했습니다.'
+        setFinalDocumentError(message)
+      } finally {
+        setIsGeneratingFinalDocument(false)
+      }
+    }
+
     setCurrentScreen('final_document')
   }
 
-  const isSummaryDraftScreen = currentScreen === 'summary_draft'
+  const beginEditSupervisionBlock = (block: SupervisionContentBlock) => {
+    setEditingSupervisionBlockId(block.id)
+    setEditingSupervisionText(supervisionBlockToEditableText(block))
+  }
+
+  const commitEditSupervisionBlock = () => {
+    if (!editingSupervisionBlockId) return
+    const blockId = editingSupervisionBlockId
+    const nextText = editingSupervisionText
+    setSupervisionReportDraft((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        sections: current.sections.map((section) => ({
+          ...section,
+          contentBlocks: section.contentBlocks.map((block) =>
+            block.id === blockId ? updateSupervisionBlockFromText(block, nextText) : block,
+          ),
+        })),
+      }
+    })
+    setEditingSupervisionBlockId(null)
+    setEditingSupervisionText('')
+  }
+
+  const handleTemporarySave = async () => {
+    setIsSavingDraft(true)
+    setDraftSaveMessage(null)
+
+    try {
+      const response = await saveTemporaryDraft({
+        draft_id: temporaryDraftId || undefined,
+        case_id: form.case_id,
+        session_number: form.session_number,
+        session_date: form.session_date,
+        counselor_name: form.counselor_name,
+        screen: currentScreen,
+        form,
+        session_topic: sessionTopic,
+        is_deidentified: isDeidentified,
+        selected_previous_session_ids: selectedPreviousSessionIds,
+        attachments,
+        visible_section_ids: Array.from(visibleSectionIds),
+        draft_sections: draftSections,
+        result,
+        final_document_type: finalDocumentType,
+        supervision_report_draft: supervisionReportDraft,
+      })
+      setTemporaryDraftId(response.draft_id)
+      setDraftSaveMessage(`임시저장 완료 · ${formatSavedTime(response.saved_at)}`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '임시저장 중 오류가 발생했습니다.'
+      setDraftSaveMessage(`임시저장 실패 · ${message}`)
+    } finally {
+      setIsSavingDraft(false)
+    }
+  }
+
+  const hasCompactSidePanel = currentScreen === 'session_input' || currentScreen === 'summary_draft' || currentScreen === 'final_document'
 
   return (
     <main className="min-h-screen bg-[#f1f2f4] text-slate-950">
-      <AppSidebar activeScreen={currentScreen} onOpenCaseList={openCaseList} onOpenSessionInput={openSessionInput} />
+      <AppSidebar
+        activeScreen={currentScreen}
+        collapsed={isSidebarCollapsed}
+        onOpenCaseList={openCaseList}
+        onOpenSessionInput={openSessionInput}
+        onToggleCollapsed={() => setIsSidebarCollapsed((current) => !current)}
+      />
 
-      <div className="min-h-screen md:pl-[180px]">
+      <div className={`min-h-screen ${isSidebarCollapsed ? 'md:pl-[56px]' : 'md:pl-[200px]'}`}>
         <TopWorkspaceBar
           activeStep={activeStep}
           currentScreen={currentScreen}
+          draftSaveMessage={draftSaveMessage}
+          isSavingDraft={isSavingDraft}
+          resultReady={Boolean(result)}
+          onGoToFinalDocument={() => openFinalDocument()}
+          onGoToSummaryDraft={() => setCurrentScreen(result ? 'summary_draft' : currentScreen)}
+          onGoToTransform={openDocumentTransform}
           onOpenCaseList={openCaseList}
           onOpenSessionInput={openSessionInput}
+          onTemporarySave={handleTemporarySave}
         />
 
         {currentScreen === 'case_list' ? (
@@ -430,18 +576,18 @@ export default function SessionDraftPage() {
             className={
               currentScreen === 'document_transform'
                 ? 'px-0 py-0'
-                : isSummaryDraftScreen
-                  ? 'grid min-h-[calc(100vh-84px)] md:grid-cols-[minmax(0,1fr)_244px]'
-                  : 'grid min-h-[calc(100vh-84px)] md:grid-cols-[minmax(0,1fr)_320px]'
+                : hasCompactSidePanel
+                  ? 'workspace-grid-compact'
+                  : 'grid min-h-[calc(100vh-84px)] gap-4 pr-4 pt-4 md:grid-cols-[minmax(0,1fr)_320px]'
             }
           >
             <section
               className={
                 currentScreen === 'document_transform'
                   ? 'min-w-0'
-                  : isSummaryDraftScreen
-                    ? 'min-w-0 px-3 py-3'
-                    : 'min-w-0 px-5 py-5'
+                  : hasCompactSidePanel
+                    ? 'workspace-main-panel'
+                    : 'min-w-0 pb-4'
               }
             >
               {currentScreen === 'session_input' && (
@@ -483,35 +629,66 @@ export default function SessionDraftPage() {
                   preview={result.full_response?.document_transform_preview}
                   selectedType={finalDocumentType}
                   sections={draftSections}
+                  onBackToDraft={() => setCurrentScreen('summary_draft')}
                   onSelectType={setFinalDocumentType}
                   onCreateFinal={openFinalDocument}
                 />
               )}
 
               {currentScreen === 'final_document' && result && (
-                <FinalDocumentWorkspace
-                  documentType={finalDocumentType}
-                  form={form}
-                  missingItems={result.missing_items}
-                  sections={draftSections.filter((section) => section.visible)}
-                />
+                finalDocumentType === 'supervision_report' ? (
+                  <SupervisionReportWorkspace
+                    editingBlockId={editingSupervisionBlockId}
+                    editingText={editingSupervisionText}
+                    error={finalDocumentError}
+                    expandedEvidenceId={expandedSupervisionEvidenceId}
+                    isLoading={isGeneratingFinalDocument}
+                    report={supervisionReportDraft}
+                    onBeginEdit={beginEditSupervisionBlock}
+                    onChangeEditingText={setEditingSupervisionText}
+                    onCommitEdit={commitEditSupervisionBlock}
+                    onToggleEvidence={setExpandedSupervisionEvidenceId}
+                  />
+                ) : (
+                  <FinalDocumentWorkspace
+                    documentType={finalDocumentType}
+                    form={form}
+                    missingItems={result.missing_items}
+                    sections={draftSections.filter((section) => section.visible)}
+                  />
+                )
               )}
             </section>
 
             {currentScreen === 'document_transform' ? null : currentScreen === 'final_document' ? (
-              <FinalReviewPanel
-                documentType={finalDocumentType}
-                missingItems={result?.missing_items || []}
-                warnings={result?.warnings || []}
-                onBack={() => setCurrentScreen('document_transform')}
-              />
+              finalDocumentType === 'supervision_report' && supervisionReportDraft ? (
+                <SupervisionReviewPanel
+                  aiReview={supervisionReportDraft.aiReview}
+                  draftSaveMessage={draftSaveMessage}
+                  isSavingDraft={isSavingDraft}
+                  onBack={() => setCurrentScreen('document_transform')}
+                  onTemporarySave={handleTemporarySave}
+                />
+              ) : (
+                <FinalReviewPanel
+                  documentType={finalDocumentType}
+                  draftSaveMessage={draftSaveMessage}
+                  isSavingDraft={isSavingDraft}
+                  missingItems={result?.missing_items || []}
+                  warnings={result?.warnings || []}
+                  onBack={() => setCurrentScreen('document_transform')}
+                  onTemporarySave={handleTemporarySave}
+                />
+              )
             ) : (
               <ReviewPanel
                 activeStep={activeStep}
                 checklistItems={checklistItems}
                 currentScreen={currentScreen}
+                draftRecomposeMessage={draftRecomposeMessage}
                 fullResponse={result?.full_response}
                 isLoading={isLoading}
+                isRecomposingDraft={isRecomposingDraft}
                 missingItems={result?.missing_items || []}
                 selectedPreviousSessionIds={selectedPreviousSessionIds}
                 resultReady={Boolean(result)}
@@ -519,7 +696,6 @@ export default function SessionDraftPage() {
                 warnings={result?.warnings || []}
                 onAddCustomSection={addCustomSection}
                 onGoBack={goBackToInput}
-                onGoToFinal={() => openFinalDocument()}
                 onGoToTransform={openDocumentTransform}
                 onTogglePreviousSession={togglePreviousSession}
                 onToggleSection={toggleSectionVisibility}
@@ -547,25 +723,50 @@ export default function SessionDraftPage() {
 
 function AppSidebar({
   activeScreen,
+  collapsed,
   onOpenCaseList,
   onOpenSessionInput,
+  onToggleCollapsed,
 }: {
   activeScreen: AppScreen
+  collapsed: boolean
   onOpenCaseList: () => void
   onOpenSessionInput: () => void
+  onToggleCollapsed: () => void
 }) {
   const caseAreaActive = activeScreen !== 'session_input'
 
   return (
-    <aside className="border-slate-200 bg-white md:fixed md:inset-y-0 md:left-0 md:z-40 md:w-[180px] md:border-r">
+    <aside
+      className={`border-slate-200 bg-white transition-[width] duration-200 md:fixed md:inset-y-0 md:left-0 md:z-40 md:border-r ${
+        collapsed ? 'md:w-[56px]' : 'md:w-[200px]'
+      }`}
+    >
       <div className="flex h-full flex-col">
-        <div className="border-b border-slate-100 px-6 py-4">
-          <p className="bg-gradient-to-r from-sky-300 to-blue-700 bg-clip-text text-[23px] font-extrabold leading-none tracking-normal text-transparent">
-            Re:mind
-          </p>
+        <div
+          className={`flex min-h-[var(--workspace-header-height)] items-center border-b border-slate-100 ${
+            collapsed ? 'justify-center px-2' : 'justify-between px-6'
+          }`}
+        >
+          {!collapsed && (
+            <img
+              src="/remind-logo.png"
+              alt="Re:mind"
+              className="h-7 max-w-[104px] object-contain"
+            />
+          )}
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            aria-label={collapsed ? '사이드바 열기' : '사이드바 닫기'}
+            title={collapsed ? '사이드바 열기' : '사이드바 닫기'}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
         </div>
 
-        <div className="space-y-4 px-3 py-3">
+        <div className={`${collapsed ? 'hidden' : 'space-y-4 px-3 py-3'}`}>
           <label className="flex h-[30px] items-center gap-2 rounded-[5px] border border-slate-200 bg-slate-50 px-3 text-[11px] text-slate-500 shadow-sm">
             <Search className="h-4 w-4" />
             <input
@@ -601,7 +802,7 @@ function AppSidebar({
           </div>
         </div>
 
-        <div className="mt-auto border-t border-slate-200 px-3 py-3">
+        <div className={`${collapsed ? 'hidden' : 'mt-auto border-t border-slate-200 px-3 py-3'}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 font-semibold text-white">
               박
@@ -681,33 +882,59 @@ function CaseListItem({
 function TopWorkspaceBar({
   activeStep,
   currentScreen,
+  draftSaveMessage,
+  isSavingDraft,
+  onGoToFinalDocument,
+  onGoToSummaryDraft,
+  onGoToTransform,
   onOpenCaseList,
   onOpenSessionInput,
+  onTemporarySave,
+  resultReady,
 }: {
   activeStep: WorkflowStep
   currentScreen: AppScreen
+  draftSaveMessage: string | null
+  isSavingDraft: boolean
+  onGoToFinalDocument: () => void
+  onGoToSummaryDraft: () => void
+  onGoToTransform: () => void
   onOpenCaseList: () => void
   onOpenSessionInput: () => void
+  onTemporarySave: () => void
+  resultReady: boolean
 }) {
   const activeIndex = workflowSteps.indexOf(activeStep)
+  const showTemporarySave = currentScreen === 'session_input' || currentScreen === 'summary_draft'
+  const goToWorkflowStep = (step: WorkflowStep) => {
+    if (step === '회기입력') {
+      onOpenSessionInput()
+      return
+    }
+    if (!resultReady) return
+    if (step === '요약초안') onGoToSummaryDraft()
+    if (step === '문서변환') onGoToTransform()
+    if (step === '최종문서') onGoToFinalDocument()
+  }
+  const canOpenWorkflowStep = (step: WorkflowStep) => step === '회기입력' || resultReady
 
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
-      <div className="flex min-h-[84px] items-center justify-between gap-4 px-7">
+      <div className="flex min-h-[var(--workspace-header-height)] items-center justify-between gap-4 px-[clamp(16px,2vw,28px)]">
         {currentScreen === 'case_list' ? (
           <div />
         ) : (
           <nav className="flex flex-wrap items-center gap-3 text-xs">
             {workflowSteps.map((step, index) => {
               const StepIcon = step === '회기입력' ? Edit3 : step === '요약초안' ? ClipboardList : step === '문서변환' ? FolderOpen : FileText
+              const enabled = canOpenWorkflowStep(step)
               return (
                 <button
                   key={step}
                   type="button"
-                  className="flex items-center gap-3"
-                  onClick={() => {
-                    if (step === '회기입력') onOpenSessionInput()
-                  }}
+                  disabled={!enabled}
+                  className={`flex items-center gap-3 ${enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-45'}`}
+                  onClick={() => goToWorkflowStep(step)}
                 >
                   <span
                     className={`inline-flex items-center gap-1.5 font-semibold ${
@@ -729,6 +956,24 @@ function TopWorkspaceBar({
         )}
 
         <div className="flex items-center gap-2">
+          {showTemporarySave && (
+            <>
+              {draftSaveMessage && (
+                <span className="hidden max-w-[168px] truncate text-[11px] font-semibold text-slate-500 xl:inline">
+                  {draftSaveMessage}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={onTemporarySave}
+                disabled={isSavingDraft}
+                className="inline-flex h-8 items-center gap-1.5 rounded-[6px] border border-dashed border-slate-400 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+              >
+                {isSavingDraft ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {isSavingDraft ? '저장중' : '임시저장'}
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={onOpenCaseList}
@@ -753,18 +998,18 @@ function CaseListWorkspace({
   onOpenCase: (caseItem: CaseSummary) => void
 }) {
   return (
-    <section className="px-9 py-7">
-      <div className="mb-9 flex flex-wrap items-center justify-between gap-3">
+    <section className="px-6 py-5">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-extrabold tracking-normal text-black">케이스 목록</h2>
+          <h2 className="text-base font-extrabold tracking-normal text-black">케이스 목록</h2>
         </div>
-        <div className="flex items-center gap-5">
-        <div className="flex gap-5 text-sm">
+        <div className="flex items-center gap-3">
+        <div className="flex gap-2 text-[11px]">
           {['전체', '진행중', '종결', '대기중'].map((filter, index) => (
             <button
               key={filter}
               type="button"
-              className={`h-9 rounded-full px-5 font-bold shadow-sm ${
+              className={`h-8 rounded-full px-3.5 font-bold shadow-sm ${
                 index === 0 ? 'bg-blue-600 text-white' : 'bg-white text-black hover:bg-slate-50'
               }`}
             >
@@ -775,15 +1020,15 @@ function CaseListWorkspace({
         <button
           type="button"
           onClick={onCreateSession}
-          className="inline-flex h-11 items-center gap-2 rounded-md bg-blue-600 px-5 text-base font-bold text-white shadow-sm hover:bg-blue-700"
+          className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
         >
-          <Plus className="h-5 w-5" />
+          <Plus className="h-4 w-4" />
           새 회기 생성
         </button>
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid max-w-[790px] gap-3 md:grid-cols-2 lg:grid-cols-3">
         {cases.map((caseItem) => (
           <CaseCard key={caseItem.id} caseItem={caseItem} onOpen={() => onOpenCase(caseItem)} />
         ))}
@@ -806,30 +1051,30 @@ function CaseCard({ caseItem, onOpen }: { caseItem: CaseSummary; onOpen: () => v
     <button
       type="button"
       onClick={onOpen}
-      className="min-h-[292px] rounded-[16px] border border-slate-200 bg-white p-8 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="min-h-[190px] rounded-[10px] border border-slate-200 bg-white p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-2xl font-extrabold text-black">{caseItem.name}</h3>
-          <p className="mt-1 text-xs text-slate-500">케이스 ID: {caseItem.id}</p>
+          <h3 className="text-base font-extrabold text-black">{caseItem.name}</h3>
+          <p className="mt-0.5 text-[9px] text-slate-500">케이스 ID: {caseItem.id}</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-sm font-bold ${statusTone}`}>{caseItem.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${statusTone}`}>{caseItem.status}</span>
       </div>
 
-      <dl className="mt-5 grid gap-4 text-base">
+      <dl className="mt-2.5 grid gap-1 text-[10px] leading-4">
         <CaseMeta label="상담 유형" value={caseItem.type} />
         <CaseMeta label="최근 회기" value={caseItem.lastDate} />
         <CaseMeta label="담당 상담사" value={caseItem.counselor} />
         <CaseMeta label="주요 이슈" value={caseItem.mainIssue} />
       </dl>
 
-      <div className="mt-7 border-t border-slate-200 pt-5">
-        <div className="mb-2 flex items-center justify-between text-base font-bold text-slate-500">
+      <div className="mt-3">
+        <div className="mb-1 flex items-center justify-between text-[11px] font-bold text-slate-500">
           <span>{caseItem.sessionCount}회기</span>
           <span className="text-blue-700">{caseItem.progressLabel}</span>
         </div>
-        <div className="h-4 rounded-full bg-slate-100">
-          <div className={`h-4 rounded-full ${progressColor}`} style={{ width: `${caseItem.progress}%` }} />
+        <div className="h-2.5 rounded-full bg-slate-100">
+          <div className={`h-2.5 rounded-full ${progressColor}`} style={{ width: `${caseItem.progress}%` }} />
         </div>
       </div>
     </button>
@@ -838,9 +1083,9 @@ function CaseCard({ caseItem, onOpen }: { caseItem: CaseSummary; onOpen: () => v
 
 function CaseMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[88px_1fr] gap-5">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="font-extrabold text-black">{value}</dd>
+    <div className="grid grid-cols-[62px_minmax(0,1fr)] items-center gap-2">
+      <dt className="whitespace-nowrap text-slate-500">{label}</dt>
+      <dd className="truncate font-extrabold text-black">{value}</dd>
     </div>
   )
 }
@@ -879,50 +1124,50 @@ function SessionInputWorkspace({
   sessionTopic: string
 }) {
   return (
-    <form id="session-input-form" onSubmit={onSubmit} className="space-y-5">
-      <section className="rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
+    <form id="session-input-form" onSubmit={onSubmit} className="session-input-form">
+      <section className="session-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <User className="h-5 w-5 text-blue-700" />
-              <p className="text-xl font-bold tracking-normal text-slate-950">내담자 / 회기 기본 정보</p>
+              <User className="h-4 w-4 text-blue-700" />
+              <p className="text-base font-bold tracking-normal text-slate-950">내담자 / 회기 기본 정보</p>
             </div>
-            <h1 className="mt-5 text-2xl font-bold tracking-normal text-slate-950">{demoClientName}</h1>
+            <h1 className="mt-3 text-xl font-bold tracking-normal text-slate-950">{demoClientName}</h1>
           </div>
           <button
             type="button"
             onClick={onEditBasicInfo}
-            className="inline-flex h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-500 hover:bg-slate-50"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
           >
-            <Edit3 className="h-4 w-4" />
+            <Edit3 className="h-3.5 w-3.5" />
             수정하기
           </button>
         </div>
-        <dl className="mt-5 grid gap-7 sm:grid-cols-[180px_minmax(0,1fr)_180px]">
+        <dl className="mt-3 grid gap-4 sm:grid-cols-[120px_minmax(0,1fr)_120px]">
           <InfoRow label="회기" value={`${form.session_number}회기`} />
           <InfoRow label="회기 주제" value={sessionTopic || '미정'} />
           <InfoRow label="날짜" value={form.session_date || '미정'} />
         </dl>
       </section>
 
-      <section className="rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
+      <section className="session-card session-material-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <FolderOpen className="h-5 w-5 text-blue-700" />
-              <h2 className="text-xl font-bold tracking-normal">상담 자료</h2>
+              <FolderOpen className="h-4 w-4 text-blue-700" />
+              <h2 className="text-lg font-bold tracking-normal">상담 자료</h2>
             </div>
-            <p className="mt-4 text-sm text-slate-500">이번 회기 요약에 사용할 자료를 한 곳에서 관리합니다.</p>
+            <p className="mt-2 text-xs text-slate-500">이번 회기 요약에 사용할 자료를 한 곳에서 관리합니다.</p>
           </div>
         </div>
 
         {!hasMaterials ? (
-          <div className="mt-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center">
-            <FileText className="mx-auto h-8 w-8 text-slate-400" aria-hidden="true" />
+          <div className="session-material-content mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
+            <FileText className="mx-auto h-7 w-7 text-slate-400" aria-hidden="true" />
             <p className="mt-3 text-sm font-medium text-slate-700">이번 회기요약에 사용할 자료를 추가해주세요.</p>
           </div>
         ) : (
-          <div className="mt-6 divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white">
+          <div className="session-material-content mt-3 divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white">
             {form.transcript_text.trim() && (
               <MaterialRow
                 label="축어록/STT"
@@ -959,71 +1204,71 @@ function SessionInputWorkspace({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={onAddMaterial}
-          className="mt-6 inline-flex h-12 w-[58%] items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-base font-bold text-white shadow-sm hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          상담 자료 추가
-        </button>
+        <div className="session-material-actions grid gap-3 sm:grid-cols-[minmax(0,1fr)_210px]">
+          <button
+            type="button"
+            onClick={onAddMaterial}
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            상담 자료 추가
+          </button>
 
-        <label className="mt-6 inline-flex h-12 w-[38%] items-center justify-between gap-3 rounded-md bg-blue-50 px-5 align-top text-blue-700 ml-5">
-          <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <ShieldCheck className="h-4 w-4 text-blue-700" />
-            개인정보 비식별화
-          </span>
-          <input
-            type="checkbox"
-            checked={isDeidentified}
-            onChange={(event) => onSetIsDeidentified(event.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-          />
-        </label>
+          <label className="inline-flex h-8 items-center justify-between gap-3 rounded-md bg-blue-50 px-3 text-blue-700">
+            <span className="flex items-center gap-2 text-xs font-semibold text-blue-700">
+              <ShieldCheck className="h-3.5 w-3.5 text-blue-700" />
+              개인정보 비식별화
+            </span>
+            <input
+              type="checkbox"
+              checked={isDeidentified}
+              onChange={(event) => onSetIsDeidentified(event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+            />
+          </label>
+        </div>
       </section>
 
-      {hasSubmitted && (
-        <section className="rounded-[16px] border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-2">
-            <RefreshCcw className="h-5 w-5 text-blue-700" />
-            <h2 className="text-xl font-bold">처리 상태</h2>
-          </div>
-          {isLoading && <p className="mt-2 text-sm font-medium text-blue-700">구조화 → 회기요약 → 검증 진행 중...</p>}
-          <div className="mt-5 grid gap-3 md:grid-cols-5">
-            {processSteps.map((step, index) => {
-              const isDone = index < completedSteps
-              const isActive = isLoading && index === completedSteps
-              return (
-                <div
-                  key={step}
-                  className={`flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-semibold ${
-                    isDone || isActive ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-slate-200 bg-slate-50 text-slate-500'
+      <section className="session-card session-process-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center gap-2">
+          <RefreshCcw className="h-4 w-4 text-blue-700" />
+          <h2 className="text-lg font-bold">처리 상태</h2>
+        </div>
+        {isLoading && <p className="mt-2 text-xs font-medium text-blue-700">구조화 → 회기요약 → 검증 진행 중...</p>}
+        <div className="mt-3 grid gap-2 md:grid-cols-5">
+          {processSteps.map((step, index) => {
+            const isDone = index < completedSteps
+            const isActive = isLoading && index === completedSteps
+            return (
+              <div
+                key={step}
+                className={`process-step flex items-center gap-1.5 rounded-md border px-2 text-xs font-semibold ${
+                  isDone || isActive ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-slate-200 bg-slate-50 text-slate-500'
+                }`}
+              >
+                <span
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                    isDone
+                      ? 'border-blue-200 bg-blue-600 text-white'
+                      : isActive
+                        ? 'border-blue-200 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 bg-white text-slate-400'
                   }`}
                 >
-                  <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
-                      isDone
-                        ? 'border-blue-200 bg-blue-600 text-white'
-                        : isActive
-                          ? 'border-blue-200 bg-blue-50 text-blue-700'
-                          : 'border-slate-200 bg-white text-slate-400'
-                    }`}
-                  >
-                    {isDone ? (
-                      <CheckCircle2 className="h-4 w-4" />
-                    ) : isActive ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      index + 1
-                    )}
-                  </span>
-                  <span className="truncate">{step}</span>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
+                  {isDone ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : isActive ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span className="truncate">{step}</span>
+              </div>
+            )
+          })}
+        </div>
+      </section>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -1203,12 +1448,14 @@ function EvidencePreview({ evidence }: { evidence: CompactEvidence[] }) {
 }
 
 function DocumentTransformWorkspace({
+  onBackToDraft,
   onCreateFinal,
   onSelectType,
   preview,
   sections,
   selectedType,
 }: {
+  onBackToDraft: () => void
   onCreateFinal: (documentType: FinalDocumentType) => void
   onSelectType: (documentType: FinalDocumentType) => void
   preview?: GenerateNoteResponse['document_transform_preview']
@@ -1216,43 +1463,49 @@ function DocumentTransformWorkspace({
   selectedType: FinalDocumentType
 }) {
   return (
-    <section className="min-h-[calc(100vh-68px)] px-16 py-28">
-      <div className="mx-auto max-w-[1120px] text-center">
-        <h1 className="text-[40px] font-extrabold leading-tight tracking-normal text-black">어떤 문서로 변환할까요?</h1>
-        <p className="mt-5 text-2xl font-bold text-slate-500">회기 요약을 원하는 문서 양식대로 변환해드려요</p>
+    <section className="min-h-[calc(100vh-var(--workspace-header-height))] px-10 py-20">
+      <div className="mx-auto max-w-[760px] text-center">
+        <h1 className="text-2xl font-extrabold leading-tight tracking-normal text-black">어떤 문서로 변환할까요?</h1>
+        <p className="mt-3 text-sm font-bold text-slate-500">회기 요약을 원하는 문서 양식대로 변환해드려요</p>
       </div>
 
-      <div className="mx-auto mt-20 grid max-w-[1120px] gap-9 lg:grid-cols-3">
+      <div className="mx-auto mt-12 grid max-w-[730px] gap-6 md:grid-cols-3">
         {transformOptions.map((option) => (
           <button
             key={option.id}
             type="button"
             onClick={() => onSelectType(option.id)}
-            className={`min-h-[340px] rounded-[12px] border bg-white p-10 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
+            className={`h-[226px] rounded-[8px] border bg-white p-6 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
               selectedType === option.id ? 'border-blue-600 bg-blue-50' : 'border-slate-300'
             }`}
           >
-            <div className="mx-auto flex h-[74px] w-[74px] items-center justify-center rounded-[18px] bg-blue-50 text-blue-700">
-              <FileText className="h-10 w-10" />
+            <div className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[12px] bg-blue-50 text-blue-700">
+              <FileText className="h-7 w-7" />
             </div>
-            <h2 className="mt-10 text-2xl font-extrabold text-black">{option.title}</h2>
-            <p className="mt-7 text-base font-semibold leading-6 text-slate-500">{option.description}</p>
+            <h2 className="mt-5 text-base font-extrabold text-black">{option.title}</h2>
+            <p className="mt-3 overflow-hidden text-xs font-semibold leading-4 text-slate-500 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3]">
+              {option.description}
+            </p>
+            <span className="mt-4 inline-flex rounded-full bg-blue-50 px-3 py-1 text-[10px] font-bold text-blue-600">
+              {getTransformOptionBadge(option.id)}
+            </span>
           </button>
         ))}
       </div>
 
-      <section className="mx-auto mt-16 max-w-[1120px]">
-        <div className="flex justify-center gap-7">
+      <section className="mx-auto mt-10 max-w-[730px]">
+        <div className="flex justify-center gap-4">
           <button
             type="button"
-            className="inline-flex h-[50px] items-center justify-center rounded-md border border-blue-600 bg-white px-8 text-xl font-bold text-blue-700 hover:bg-blue-50"
+            onClick={onBackToDraft}
+            className="inline-flex h-9 items-center justify-center rounded-md border border-blue-600 bg-white px-6 text-sm font-bold text-blue-700 hover:bg-blue-50"
           >
             초안으로 돌아가기
           </button>
           <button
             type="button"
             onClick={() => onCreateFinal(selectedType)}
-            className="inline-flex h-[50px] items-center gap-2 rounded-md bg-blue-600 px-9 text-xl font-bold text-white shadow-sm hover:bg-blue-700"
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-7 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
           >
             변환하기
             <ChevronRight className="h-4 w-4" />
@@ -1278,18 +1531,18 @@ function FinalDocumentWorkspace({
   const bodySections = buildFinalDocumentSections(documentType, sections, missingItems)
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="rounded-t-lg bg-blue-600 px-6 py-6 text-white">
+    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
+      <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-normal">{documentMeta.title}</h1>
-            <p className="mt-2 text-sm text-blue-50">
+            <h1 className="text-xl font-bold tracking-normal">{documentMeta.title}</h1>
+            <p className="mt-1.5 text-xs font-bold text-blue-50">
               내담자: {form.case_id} / 회기:{form.session_number}회기 / 날짜:{form.session_date}
             </p>
           </div>
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50"
+            className="inline-flex h-8 items-center gap-2 rounded-[5px] bg-white px-5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
           >
             <Edit3 className="h-4 w-4" />
             수정하기
@@ -1297,46 +1550,531 @@ function FinalDocumentWorkspace({
         </div>
       </div>
 
-      <div className="px-6 py-4">
-        <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-slate-600">
-          하이라이트된 문장은 AI가 생성한 문장입니다. 상담사가 검토한 뒤 최종 문서로 사용하세요.
+      <div className="px-4 py-3">
+        <p className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-slate-600">
+          <Info className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+          하이라이트된 문장은 AI가 생성한 문장입니다.
         </p>
       </div>
 
-      <div className="space-y-7 px-6 pb-8">
-        {bodySections.map((section) => (
-          <section key={section.title}>
-            <h2 className="border-b border-slate-200 pb-2 text-lg font-semibold text-blue-700">{section.title}</h2>
-            {Array.isArray(section.content) ? (
-              <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-800">
-                {section.content.map((item) => (
-                  <li key={item}>
-                    <HighlightedText text={item} />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-800">
-                <HighlightedText text={section.content} />
-              </p>
-            )}
-          </section>
+      <div className="space-y-0 px-4 pb-5">
+        {bodySections.map((section) => {
+          const SectionIcon = getFinalDocumentSectionIcon(section.title)
+
+          return (
+            <section key={section.title} className="border-b border-[#c7d0df] py-5 last:border-b-0">
+              <h2 className="flex items-center gap-1.5 pb-2 text-base font-bold text-blue-700">
+                <SectionIcon className="h-4 w-4 shrink-0" />
+                {section.title}
+              </h2>
+              {Array.isArray(section.content) ? (
+                <ul className="mt-3 list-disc space-y-2 pl-5 text-[13px] font-semibold leading-6 text-slate-900">
+                  {section.content.map((item) => (
+                    <li key={item}>
+                      <HighlightedText text={item} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 whitespace-pre-wrap text-[13px] font-semibold leading-6 text-slate-900">
+                  <HighlightedText text={section.content} />
+                </p>
+              )}
+            </section>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function getFinalDocumentSectionIcon(title: string): LucideIcon {
+  if (title.includes('심리검사')) return ClipboardCheck
+  if (title.includes('강점') || title.includes('자원')) return PenLine
+  if (title.includes('상담자') || title.includes('개입')) return Edit3
+  if (title.includes('내용') || title.includes('계획') || title.includes('요청')) return FileText
+  return Bookmark
+}
+
+function SupervisionReportWorkspace({
+  editingBlockId,
+  editingText,
+  error,
+  expandedEvidenceId,
+  isLoading,
+  onBeginEdit,
+  onChangeEditingText,
+  onCommitEdit,
+  onToggleEvidence,
+  report,
+}: {
+  editingBlockId: string | null
+  editingText: string
+  error: string | null
+  expandedEvidenceId: string | null
+  isLoading: boolean
+  onBeginEdit: (block: SupervisionContentBlock) => void
+  onChangeEditingText: (value: string) => void
+  onCommitEdit: () => void
+  onToggleEvidence: (blockId: string | null) => void
+  report: SupervisionReportDraft | null
+}) {
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded-[8px] border border-slate-200 bg-white shadow-sm">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-700" />
+          <p className="mt-4 text-sm font-bold text-slate-900">개인상담 사례 수퍼비전 보고서 초안을 생성 중입니다.</p>
+          <p className="mt-2 text-xs font-semibold text-slate-500">회기요약, 축어록, 상담자 메모의 근거를 연결하고 있습니다.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-[8px] border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-800">
+        {error}
+      </div>
+    )
+  }
+
+  if (!report) {
+    return (
+      <div className="rounded-[8px] border border-slate-200 bg-white p-6 text-center text-sm font-semibold text-slate-500 shadow-sm">
+        수퍼비전 보고서 초안이 아직 생성되지 않았습니다.
+      </div>
+    )
+  }
+
+  const tocSections = report.sections.filter((section) => section.level === 1)
+  const editableSections = report.sections.filter((section) => section.level !== 1)
+
+  return (
+    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
+      <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-normal">{report.title}</h1>
+            <p className="mt-1.5 text-xs font-bold text-blue-50">
+              내담자: {report.meta.clientAlias || PLACEHOLDER_TEXT} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-2 rounded-[5px] bg-white px-5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
+          >
+            <Edit3 className="h-4 w-4" />
+            수정하기
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
+        {[
+          ['상담자', report.meta.counselorName],
+          ['소속 상담기관', report.meta.institution],
+          ['수퍼바이저', report.meta.supervisor],
+          ['수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-[8px] bg-slate-50 px-3 py-2">
+            <p className="text-xs font-bold text-slate-500">{label}</p>
+            <p className="mt-1 text-sm font-bold text-slate-950">{value || PLACEHOLDER_TEXT}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="px-4 pb-3">
+        <p className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-slate-600">
+          <Info className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+          하이라이트된 문장은 AI가 생성한 문장입니다.
+        </p>
+      </div>
+
+      <div className="border-y border-slate-100 bg-slate-50/70 px-4 py-3">
+        <div className="flex flex-wrap gap-2">
+          {tocSections.map((section) => (
+            <span key={section.id} className="rounded-full border border-blue-100 bg-white px-3 py-1 text-xs font-bold text-blue-700">
+              {section.title}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="px-4 pb-5">
+        {report.sections.map((section) => (
+          <SupervisionReportSectionView
+            key={section.id}
+            editingBlockId={editingBlockId}
+            editingText={editingText}
+            evidenceIndex={report.evidenceIndex}
+            expandedEvidenceId={expandedEvidenceId}
+            section={section}
+            onBeginEdit={onBeginEdit}
+            onChangeEditingText={onChangeEditingText}
+            onCommitEdit={onCommitEdit}
+            onToggleEvidence={onToggleEvidence}
+          />
+        ))}
+        {!editableSections.length && (
+          <p className="py-10 text-center text-sm font-semibold text-slate-500">표시할 보고서 섹션이 없습니다.</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SupervisionReportSectionView({
+  editingBlockId,
+  editingText,
+  evidenceIndex,
+  expandedEvidenceId,
+  onBeginEdit,
+  onChangeEditingText,
+  onCommitEdit,
+  onToggleEvidence,
+  section,
+}: {
+  editingBlockId: string | null
+  editingText: string
+  evidenceIndex: SupervisionReportDraft['evidenceIndex']
+  expandedEvidenceId: string | null
+  onBeginEdit: (block: SupervisionContentBlock) => void
+  onChangeEditingText: (value: string) => void
+  onCommitEdit: () => void
+  onToggleEvidence: (blockId: string | null) => void
+  section: SupervisionReportSection
+}) {
+  if (section.level === 1) {
+    return (
+      <section className="border-b border-[#c7d0df] py-5">
+        <h2 className="text-lg font-extrabold text-slate-950">{section.title}</h2>
+      </section>
+    )
+  }
+
+  const SectionIcon = getFinalDocumentSectionIcon(section.title)
+
+  return (
+    <section className="border-b border-[#c7d0df] py-5 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="flex items-center gap-1.5 text-base font-bold text-blue-700">
+          <SectionIcon className="h-4 w-4 shrink-0" />
+          {section.title}
+        </h2>
+        <SupervisionStatusBadge status={section.status} />
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {section.contentBlocks.map((block) => (
+          <SupervisionContentBlockView
+            key={block.id}
+            block={block}
+            editing={editingBlockId === block.id}
+            editingText={editingText}
+            evidenceIndex={evidenceIndex}
+            evidenceOpen={expandedEvidenceId === block.id}
+            onBeginEdit={onBeginEdit}
+            onChangeEditingText={onChangeEditingText}
+            onCommitEdit={onCommitEdit}
+            onToggleEvidence={() => onToggleEvidence(expandedEvidenceId === block.id ? null : block.id)}
+          />
         ))}
       </div>
     </section>
   )
 }
 
+function SupervisionContentBlockView({
+  block,
+  editing,
+  editingText,
+  evidenceIndex,
+  evidenceOpen,
+  onBeginEdit,
+  onChangeEditingText,
+  onCommitEdit,
+  onToggleEvidence,
+}: {
+  block: SupervisionContentBlock
+  editing: boolean
+  editingText: string
+  evidenceIndex: SupervisionReportDraft['evidenceIndex']
+  evidenceOpen: boolean
+  onBeginEdit: (block: SupervisionContentBlock) => void
+  onChangeEditingText: (value: string) => void
+  onCommitEdit: () => void
+  onToggleEvidence: () => void
+}) {
+  return (
+    <div className="relative rounded-[8px] border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        <SupervisionBlockChip label="초안" tone="slate" />
+        {block.aiGenerated && <SupervisionBlockChip label="AI 생성" tone="blue" />}
+        {(block.reviewStatus === 'needs_human_input' || Boolean(block.warnings?.length)) && (
+          <SupervisionBlockChip label="확인 필요" tone="rose" />
+        )}
+        {block.reviewStatus === 'edited' && <SupervisionBlockChip label="수정됨" tone="amber" />}
+        {block.demoValue && <SupervisionBlockChip label="데모값" tone="amber" />}
+        {Boolean(block.evidenceIds.length) && (
+          <button type="button" onClick={onToggleEvidence} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+            {`근거 있음 ${block.evidenceIds.length}`}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <textarea
+          autoFocus
+          value={editingText}
+          onBlur={onCommitEdit}
+          onChange={(event) => onChangeEditingText(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+              onCommitEdit()
+            }
+          }}
+          className="min-h-[120px] w-full resize-y rounded-md border border-blue-200 bg-white px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => onBeginEdit(block)}
+          className="block w-full rounded-[6px] px-1 py-1 text-left hover:bg-slate-50"
+        >
+          <SupervisionBlockContent block={block} />
+        </button>
+      )}
+
+      {Boolean(block.warnings?.length) && (
+        <ul className="mt-2 space-y-1 text-[11px] font-semibold leading-4 text-amber-700">
+          {block.warnings?.map((warning) => <li key={warning}>· {warning}</li>)}
+        </ul>
+      )}
+
+      {evidenceOpen && (
+        <div className="absolute right-3 top-9 z-20 max-h-[240px] w-[260px] overflow-auto rounded-[8px] border border-slate-100 bg-white p-3 text-left shadow-[0_14px_32px_rgba(15,23,42,0.18)]">
+          <p className="text-xs font-extrabold text-slate-950">연결 근거</p>
+          {block.evidenceIds.length ? (
+            <div className="mt-2 space-y-2">
+              {block.evidenceIds.map((evidenceId) => {
+                const evidence = evidenceIndex[evidenceId]
+                return (
+                  <div key={evidenceId} className="rounded-md bg-slate-50 p-2">
+                    <p className="text-[10px] font-bold text-blue-700">{evidence?.label || evidenceId}</p>
+                    <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-700">
+                      {evidence?.text || evidenceId}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] font-semibold text-slate-500">연결된 근거가 없어 상담사 확인이 필요합니다.</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) {
+  if (block.type === 'table' && block.rows?.length) {
+    const headers = Object.keys(block.rows[0])
+    return (
+      <div className="overflow-hidden rounded-[7px] border border-slate-200">
+        <table className="w-full border-collapse text-left text-[12px] font-semibold">
+          <thead className="bg-slate-50 text-slate-500">
+            <tr>
+              {headers.map((header) => (
+                <th key={header} className="border-b border-slate-200 px-2 py-2">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="text-slate-900">
+            {block.rows.map((row, index) => (
+              <tr key={`${block.id}-${index}`} className="border-b border-slate-100 last:border-b-0">
+                {headers.map((header) => (
+                  <td key={header} className="px-2 py-2 align-top">
+                    {row[header]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  if (block.type === 'transcript' && block.speakerTurns?.length) {
+    return (
+      <div className="space-y-2">
+        {block.speakerTurns.map((turn) => (
+          <div key={turn.turnId} className="grid gap-2 rounded-md bg-slate-50 px-3 py-2 text-[13px] font-semibold leading-5 sm:grid-cols-[52px_minmax(0,1fr)]">
+            <span className="text-blue-700">{turn.speaker === 'client' ? '내담자' : '상담자'}</span>
+            <span className="text-slate-900">{turn.text}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (block.type === 'reflection_box') {
+    return (
+      <div className="rounded-[8px] border border-blue-100 bg-blue-50/70 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
+        {block.text || PLACEHOLDER_TEXT}
+      </div>
+    )
+  }
+
+  return (
+    <p className={`whitespace-pre-wrap text-[13px] font-semibold leading-6 ${block.type === 'placeholder' ? 'text-rose-700' : 'text-slate-900'}`}>
+      {block.text || PLACEHOLDER_TEXT}
+    </p>
+  )
+}
+
+function SupervisionReviewPanel({
+  aiReview,
+  draftSaveMessage,
+  isSavingDraft,
+  onBack,
+  onTemporarySave,
+}: {
+  aiReview: SupervisionAiReviewPanel
+  draftSaveMessage: string | null
+  isSavingDraft: boolean
+  onBack: () => void
+  onTemporarySave: () => void
+}) {
+  return (
+    <aside className="review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div>
+        <div className="flex items-center gap-2">
+          <Workflow className="h-4 w-4 text-blue-700" />
+          <p className="text-lg font-extrabold text-slate-950">AI 검토</p>
+        </div>
+        <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+          AI가 문서 검토 후 보완이 필요한 항목을 확인했습니다.
+        </p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-4 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          이전 단계
+        </button>
+      </div>
+
+      <SupervisionReviewGroup
+        title="양식 충족도"
+        items={aiReview.completionChecklist.map((item) => `${reviewStatusSymbol[item.status]} ${item.label}${item.reason ? ` · ${item.reason}` : ''}`)}
+      />
+      <SupervisionReviewGroup title="상담사 확인 필요" items={aiReview.needsHumanReview.map((item) => item.message)} />
+      <SupervisionReviewGroup title="데모 입력값" items={aiReview.demoInputs} />
+      <SupervisionReviewGroup title="누락된 내용" items={aiReview.missingFields} />
+      <SupervisionReviewGroup
+        title="근거 부족 문장"
+        items={aiReview.unsupportedClaims.map((item) => `${item.claim} → ${item.reason}`)}
+        emptyLabel="근거 부족 문장 없음"
+      />
+      <SupervisionReviewGroup title="수퍼비전 질문 후보" items={aiReview.suggestedSupervisionQuestions} numbered />
+      <section className="mt-4">
+        <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+          <Info className="h-3.5 w-3.5" />
+          주의 문구
+        </h3>
+        <p className="mt-2 rounded-[8px] border border-slate-200 bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-700">
+          {aiReview.caution}
+        </p>
+      </section>
+
+      <div className="mt-auto space-y-3 pt-8">
+        {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
+        <button
+          type="button"
+          onClick={onTemporarySave}
+          disabled={isSavingDraft}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-slate-400 bg-white px-3 text-sm font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+        >
+          {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {isSavingDraft ? '저장중' : '임시저장'}
+        </button>
+      </div>
+    </aside>
+  )
+}
+
+function SupervisionReviewGroup({
+  emptyLabel = '현재 표시할 항목이 없습니다.',
+  items,
+  numbered = false,
+  title,
+}: {
+  emptyLabel?: string
+  items: string[]
+  numbered?: boolean
+  title: string
+}) {
+  return (
+    <section className="mt-4">
+      <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+        <Info className="h-3.5 w-3.5 shrink-0" />
+        {title}
+      </h3>
+      <div className="mt-2 rounded-[8px] border border-slate-200 bg-white p-3 shadow-sm">
+        {items.length ? (
+          <ul className="space-y-1 text-xs font-semibold leading-5 text-slate-900">
+            {items.map((item, index) => (
+              <li key={`${title}-${item}`}>{numbered ? `${index + 1}. ` : '· '}{item}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs font-semibold text-slate-500">{emptyLabel}</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SupervisionBlockChip({ label, tone }: { label: string; tone: 'amber' | 'blue' | 'rose' | 'slate' }) {
+  const className =
+    tone === 'blue'
+      ? 'bg-blue-50 text-blue-700'
+      : tone === 'rose'
+        ? 'bg-rose-50 text-rose-700'
+        : tone === 'slate'
+          ? 'bg-slate-100 text-slate-700'
+        : 'bg-amber-50 text-amber-700'
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${className}`}>{label}</span>
+}
+
+function SupervisionStatusBadge({ status }: { status: SupervisionReportSection['status'] }) {
+  const label = status === 'complete' ? '완료' : status === 'partial' ? '부분작성' : status === 'missing' ? '누락' : '확인필요'
+  const className =
+    status === 'complete'
+      ? 'bg-emerald-50 text-emerald-700'
+      : status === 'missing'
+        ? 'bg-rose-50 text-rose-700'
+        : 'bg-amber-50 text-amber-700'
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${className}`}>{label}</span>
+}
+
 function ReviewPanel({
   activeStep,
   checklistItems,
   currentScreen,
+  draftRecomposeMessage,
   fullResponse,
   isLoading,
+  isRecomposingDraft,
   missingItems,
   onAddCustomSection,
   onGoBack,
-  onGoToFinal,
   onGoToTransform,
   onTogglePreviousSession,
   onToggleSection,
@@ -1348,12 +2086,13 @@ function ReviewPanel({
   activeStep: WorkflowStep
   checklistItems: ChecklistItem[]
   currentScreen: AppScreen
+  draftRecomposeMessage: string | null
   fullResponse?: GenerateNoteResponse
   isLoading: boolean
+  isRecomposingDraft: boolean
   missingItems: string[]
   onAddCustomSection: () => void
   onGoBack: () => void
-  onGoToFinal: () => void
   onGoToTransform: () => void
   onTogglePreviousSession: (sessionId: string) => void
   onToggleSection: (sectionId: DraftSectionId) => void
@@ -1363,11 +2102,12 @@ function ReviewPanel({
   warnings: string[]
 }) {
   const isSummaryDraft = currentScreen === 'summary_draft'
+  const isSessionInput = currentScreen === 'session_input'
 
   return (
     <aside
-      className={`flex min-h-[calc(100vh-84px)] flex-col border-l border-slate-200 bg-white md:sticky md:top-[84px] ${
-        isSummaryDraft ? 'p-5' : 'p-6'
+      className={`review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white shadow-sm ${
+        isSummaryDraft ? 'p-5' : isSessionInput ? 'p-3.5' : 'p-6'
       }`}
     >
       {currentScreen === 'session_input' ? (
@@ -1379,31 +2119,35 @@ function ReviewPanel({
         <>
           <div>
             {!isSummaryDraft && <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">{activeStep}</p>}
-            <h2 className={`${isSummaryDraft ? 'text-base' : 'mt-2 text-lg'} font-bold`}>요약에 포함할 항목</h2>
+            <h2 className={`${isSummaryDraft ? 'text-lg' : 'mt-2 text-lg'} font-bold`}>요약에 포함할 항목</h2>
+            {draftRecomposeMessage && (
+              <p className="mt-2 text-[11px] font-semibold leading-4 text-slate-500">{draftRecomposeMessage}</p>
+            )}
           </div>
 
-          <div className={isSummaryDraft ? 'mt-3 space-y-2' : 'mt-4 space-y-2'}>
+          <div className={isSummaryDraft ? 'mt-4 space-y-2.5' : 'mt-4 space-y-2'}>
             {checklistItems.map((item) => {
               const checked = visibleSectionIds.has(item.id)
               return (
                 <label
                   key={item.id}
-                  className={`flex cursor-pointer items-center gap-2.5 rounded-[8px] px-3 font-semibold ${
-                    isSummaryDraft ? 'h-[27px] text-xs' : 'py-2 text-sm'
+                  className={`flex cursor-pointer items-center rounded-[8px] font-semibold ${
+                    isSummaryDraft ? 'h-8 gap-3 px-3.5 text-sm' : 'gap-2.5 px-3 py-2 text-sm'
                   } ${checked ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}
                 >
                   <input
                     type="checkbox"
                     checked={checked}
+                    disabled={isRecomposingDraft}
                     onChange={() => onToggleSection(item.id)}
                     className="sr-only"
                   />
                   <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                    className={`flex shrink-0 items-center justify-center rounded-full ${isSummaryDraft ? 'h-[18px] w-[18px]' : 'h-4 w-4'} ${
                       checked ? 'bg-blue-600' : 'bg-slate-300'
                     }`}
                   >
-                    <Check className="h-3 w-3 text-white" />
+                    <Check className={`${isSummaryDraft ? 'h-3.5 w-3.5' : 'h-3 w-3'} text-white`} />
                   </span>
                   <span className="truncate">{item.title}</span>
                 </label>
@@ -1414,10 +2158,10 @@ function ReviewPanel({
           <button
             type="button"
             onClick={onAddCustomSection}
-            disabled={!resultReady}
+            disabled={!resultReady || isRecomposingDraft}
             className={`mt-2 inline-flex w-full items-center justify-center gap-2 border bg-white font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300 ${
               isSummaryDraft
-                ? 'h-[27px] rounded-[8px] border-slate-950 px-3 text-xs text-slate-950'
+                ? 'h-8 rounded-[8px] border-slate-950 px-3 text-sm text-slate-950'
                 : 'rounded-md border-slate-300 px-3 py-2 text-sm text-slate-700'
             }`}
           >
@@ -1427,75 +2171,40 @@ function ReviewPanel({
         </>
       )}
 
-      {isSummaryDraft ? (
-        <div className="mt-auto grid grid-cols-2 gap-2 pt-8">
+      <div className="mt-auto pt-5">
+        <div className="grid grid-cols-2 gap-2.5">
           <button
             type="button"
-            className="inline-flex h-9 w-full items-center justify-center rounded-[5px] border border-dashed border-slate-400 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50"
+            onClick={onGoBack}
+            disabled={isSessionInput}
+            className="inline-flex h-12 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-3 text-sm font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
           >
-            임시저장
+            <ArrowLeft className="h-4 w-4" />
+            이전 단계
           </button>
-          <button
-            type="button"
-            onClick={onGoToTransform}
-            disabled={!resultReady}
-            className="inline-flex h-9 items-center justify-center gap-1 rounded-[5px] bg-blue-600 px-3 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-          >
-            문서 변환
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      ) : (
-        <div className="mt-auto space-y-3 pt-8">
-          <button
-            type="button"
-            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md border border-dashed border-slate-400 bg-white px-3 text-base font-bold text-slate-500 hover:bg-slate-50"
-          >
-            <Save className="h-4 w-4" />
-            임시저장
-          </button>
-          <div className="grid grid-cols-2 gap-3">
+          {isSessionInput ? (
+            <button
+              type="submit"
+              form="session-input-form"
+              disabled={isLoading}
+              className="inline-flex h-12 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              요약초안
+            </button>
+          ) : (
             <button
               type="button"
-              onClick={onGoBack}
-              disabled={!resultReady}
-              className="inline-flex h-12 items-center justify-center gap-1 rounded-md border border-blue-600 bg-white px-3 text-base font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+              onClick={onGoToTransform}
+              disabled={!resultReady || isRecomposingDraft}
+              className="inline-flex h-12 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              <ArrowLeft className="h-4 w-4" />
-              이전 단계
+              문서 변환
+              <ChevronRight className="h-4 w-4" />
             </button>
-            {currentScreen === 'document_transform' ? (
-              <button
-                type="button"
-                onClick={onGoToFinal}
-                className="inline-flex h-12 items-center justify-center gap-1 rounded-md bg-blue-600 px-3 text-base font-bold text-white shadow-sm hover:bg-blue-700"
-              >
-                다음 단계
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            ) : resultReady ? (
-              <button
-                type="button"
-                onClick={onGoToTransform}
-                className="inline-flex h-12 items-center justify-center gap-1 rounded-md bg-blue-600 px-3 text-base font-bold text-white shadow-sm hover:bg-blue-700"
-              >
-                문서 변환
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                type="submit"
-                form="session-input-form"
-                disabled={isLoading}
-                className="inline-flex h-12 items-center justify-center gap-1 rounded-md bg-blue-600 px-3 text-base font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-              >
-                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                회기요약 생성하기
-              </button>
-            )}
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </aside>
   )
 }
@@ -1509,15 +2218,15 @@ function PreviousSessionLinkPanel({
 }) {
   return (
     <section>
-      <div className="flex items-start gap-3">
-        <History className="mt-0.5 h-8 w-8 shrink-0 text-blue-700" />
+      <div className="flex items-start gap-2.5">
+        <History className="mt-0.5 h-6 w-6 shrink-0 text-blue-700" />
         <div>
-          <h2 className="text-2xl font-bold text-slate-950">이전 회기 기록</h2>
-          <p className="mt-3 text-base leading-6 text-slate-500">클릭하면 이전 회기 내용을 불러옵니다.</p>
+          <h2 className="text-lg font-bold text-slate-950">이전 회기 기록</h2>
+          <p className="mt-1.5 whitespace-nowrap text-xs leading-5 text-slate-500">클릭하면 이전 회기 내용을 불러옵니다.</p>
         </div>
       </div>
 
-      <div className="mt-7 space-y-5">
+      <div className="mt-4 space-y-3">
         {previousSessionOptions.map((session) => {
           const selected = selectedIds.includes(session.id)
           return (
@@ -1526,20 +2235,22 @@ function PreviousSessionLinkPanel({
               type="button"
               aria-pressed={selected}
               onClick={() => onToggle(session.id)}
-              className={`w-full rounded-[12px] border p-5 text-left transition ${
+              className={`min-h-[110px] w-full rounded-[9px] border p-3.5 text-left transition ${
                 selected
                   ? 'border-blue-600 bg-blue-50 shadow-sm'
                   : 'border-slate-300 bg-white hover:border-blue-300 hover:bg-blue-50/40'
               }`}
             >
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-lg font-bold text-blue-700">{session.label}</p>
-                  <p className="mt-1 text-sm font-medium text-slate-500">{session.date}</p>
+                  <p className="text-sm font-bold text-blue-700">{session.label}</p>
+                  <p className="mt-1 text-[11px] font-medium text-slate-500">{session.date}</p>
                 </div>
                 {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-700" />}
               </div>
-              <p className="mt-4 text-sm font-semibold leading-6 text-slate-900">{session.summary}</p>
+              <p className="mt-3 overflow-hidden text-[12.5px] font-semibold leading-5 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                {session.summary}
+              </p>
             </button>
           )
         })}
@@ -1551,54 +2262,77 @@ function PreviousSessionLinkPanel({
 
 function FinalReviewPanel({
   documentType,
+  draftSaveMessage,
+  isSavingDraft,
   missingItems,
   onBack,
+  onTemporarySave,
   warnings,
 }: {
   documentType: FinalDocumentType
+  draftSaveMessage: string | null
+  isSavingDraft: boolean
   missingItems: string[]
   onBack: () => void
+  onTemporarySave: () => void
   warnings: string[]
 }) {
   return (
-    <aside className="flex min-h-[calc(100vh-68px)] flex-col border-l border-slate-200 bg-white p-6 xl:sticky xl:top-[68px]">
+    <aside className="review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
       <div>
-        <p className="text-2xl font-extrabold text-slate-950">AI 검토</p>
-        <p className="mt-4 text-sm leading-6 text-slate-500">
+        <div className="flex items-center gap-2">
+          <Workflow className="h-4 w-4 text-blue-700" />
+          <p className="text-lg font-extrabold text-slate-950">AI 검토</p>
+        </div>
+        <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
           {finalDocumentMeta[documentType].title}에서 상담사 확인이 필요한 항목입니다.
         </p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-4 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          이전 단계
+        </button>
       </div>
 
       <FinalReviewCard
-        title="수정된 내용"
-        items={['과제 수행 여부 확인 필요', '감정 변화 정도 추가 기록 권장', '다음 회기 목표 구체화 필요']}
+        title="수정 필요"
+        items={['상담 목표 표현 구체화 필요', '내담자 반응 서술 보완 권장', '다음 회기 계획 구체화 필요']}
       />
-      <FinalReviewCard title="누락된 내용 확인" items={missingItems.slice(0, 3)} />
       <FinalReviewCard
-        title="조언"
-        items={warnings.length ? warnings.slice(0, 3) : ['상담사 검토 후 최종 기록으로 확정하세요.']}
+        title="누락 가능"
+        items={
+          missingItems.length
+            ? missingItems.slice(0, 3)
+            : ['과제 수행 여부 추가 확인 필요', '감정 변화 정도 보완 필요', '상담자 개입 내용 추가 기록 권장']
+        }
+      />
+      <FinalReviewCard
+        title="근거 확인"
+        items={
+          warnings.length
+            ? warnings.slice(0, 3)
+            : ['요약 문장의 원문 근거 확인 필요', '해석 표현의 근거 보강 필요', '이전 회기와의 연결 근거 확인 필요']
+        }
       />
 
       <div className="mt-auto space-y-3 pt-8">
+        {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
         <button
           type="button"
-          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md border border-dashed border-slate-400 bg-white px-3 text-base font-bold text-slate-500 hover:bg-slate-50"
+          onClick={onTemporarySave}
+          disabled={isSavingDraft}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-slate-400 bg-white px-3 text-sm font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
         >
-          <Save className="h-4 w-4" />
-          임시저장
+          {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {isSavingDraft ? '저장중' : '임시저장'}
         </button>
-        <div className="grid grid-cols-2 gap-3">
+        <div>
           <button
             type="button"
-            onClick={onBack}
-            className="inline-flex h-12 items-center justify-center gap-1 rounded-md border border-blue-600 bg-white px-3 text-base font-bold text-blue-700 hover:bg-blue-50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            이전 단계
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-12 items-center justify-center gap-1 rounded-md bg-blue-600 px-3 text-base font-bold text-white shadow-sm hover:bg-blue-700"
+            className="inline-flex h-12 w-full items-center justify-center gap-1 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
           >
             다운로드
           </button>
@@ -1610,10 +2344,13 @@ function FinalReviewPanel({
 
 function FinalReviewCard({ items, title }: { items: string[]; title: string }) {
   return (
-    <section className="mt-5">
-      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3">
-        <ul className="space-y-1 text-sm leading-6 text-slate-700">
+    <section className="mt-4">
+      <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+        <Info className="h-3.5 w-3.5 shrink-0 text-slate-900" />
+        {title}
+      </h3>
+      <div className="mt-2 rounded-[8px] border border-slate-200 bg-white p-3 shadow-sm">
+        <ul className="space-y-1 text-xs font-semibold leading-5 text-slate-900">
           {(items.length ? items : ['현재 표시할 항목이 없습니다.']).map((item) => (
             <li key={item}>· {item}</li>
           ))}
@@ -1665,9 +2402,9 @@ function HighlightedText({ text }: { text: string }) {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 px-4 py-3">
-      <dt className="text-sm font-bold text-slate-950">{label}</dt>
-      <dd className="mt-2 truncate text-base font-semibold text-blue-700">{value}</dd>
+    <div className="rounded-[8px] bg-slate-50 px-3 py-2">
+      <dt className="text-xs font-bold text-slate-950">{label}</dt>
+      <dd className="mt-1 truncate text-xs font-semibold text-blue-700">{value}</dd>
     </div>
   )
 }
@@ -1684,15 +2421,15 @@ function MaterialRow({
   onAction: () => void
 }) {
   return (
-    <div className="flex min-h-[80px] items-center justify-between gap-3 px-5 py-3">
+    <div className="material-row flex items-center justify-between gap-3 px-3 py-1">
       <div className="min-w-0">
-        <p className="text-lg font-bold text-slate-950">{label}</p>
-        <p className="mt-2 truncate text-base text-slate-500">{meta}</p>
+        <p className="text-sm font-bold text-slate-950">{label}</p>
+        <p className="mt-0.5 truncate text-xs text-slate-500">{meta}</p>
       </div>
       <button
         type="button"
         onClick={onAction}
-        className="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50"
+        className="h-7 shrink-0 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
       >
         {actionLabel}
       </button>
@@ -1783,14 +2520,6 @@ function MaterialModal({
                   type="date"
                   value={form.session_date}
                   onChange={(event) => onUpdateField('session_date', event.target.value)}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="상담자" htmlFor="modal_counselor_name">
-                <input
-                  id="modal_counselor_name"
-                  value={form.counselor_name}
-                  onChange={(event) => onUpdateField('counselor_name', event.target.value)}
                   className={inputClass}
                 />
               </Field>
@@ -2098,6 +2827,12 @@ function formatCompactDate(value: string): string {
   return value.replace(/-/g, '.')
 }
 
+function formatSavedTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '방금'
+  return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+}
+
 function getActiveStep(screen: AppScreen): WorkflowStep {
   if (screen === 'document_transform') return '문서변환'
   if (screen === 'final_document') return '최종문서'
@@ -2168,6 +2903,76 @@ function buildFinalDocumentSections(
   ]
 }
 
+function supervisionBlockToEditableText(block: SupervisionContentBlock): string {
+  if (block.type === 'table' && block.rows?.length) {
+    const headers = Object.keys(block.rows[0])
+    return [headers.join('\t'), ...block.rows.map((row) => headers.map((header) => row[header] || '').join('\t'))].join('\n')
+  }
+  if (block.type === 'transcript' && block.speakerTurns?.length) {
+    return block.speakerTurns
+      .map((turn) => `${turn.speaker === 'client' ? '내담자' : '상담자'}: ${turn.text}`)
+      .join('\n')
+  }
+  return block.text || ''
+}
+
+function updateSupervisionBlockFromText(block: SupervisionContentBlock, text: string): SupervisionContentBlock {
+  if (block.type === 'table') {
+    return {
+      ...block,
+      rows: parseSupervisionTableText(text, block.rows || []),
+      reviewStatus: 'edited',
+    }
+  }
+
+  if (block.type === 'transcript') {
+    return {
+      ...block,
+      speakerTurns: parseSupervisionTranscriptText(text, block.id),
+      reviewStatus: 'edited',
+    }
+  }
+
+  return {
+    ...block,
+    text,
+    reviewStatus: 'edited',
+  }
+}
+
+function parseSupervisionTableText(text: string, fallbackRows: Record<string, string>[]): Record<string, string>[] {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (lines.length < 2) return fallbackRows
+
+  const headers = lines[0].split('\t').map((header) => header.trim()).filter(Boolean)
+  if (!headers.length) return fallbackRows
+
+  return lines.slice(1).map((line) => {
+    const values = line.split('\t')
+    return headers.reduce<Record<string, string>>((row, header, index) => {
+      row[header] = values[index]?.trim() || ''
+      return row
+    }, {})
+  })
+}
+
+function parseSupervisionTranscriptText(text: string, blockId: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const [speakerRaw, ...rest] = line.split(':')
+      const textValue = rest.join(':').trim() || line
+      const speaker = speakerRaw.includes('내담') || speakerRaw.toLowerCase().includes('client') ? 'client' : 'counselor'
+      return {
+        turnId: `${blockId}.edited_${index + 1}`,
+        speaker,
+        text: textValue,
+      } as const
+    })
+}
+
 interface TextModalConfig {
   field: keyof Pick<
     SessionInput,
@@ -2215,6 +3020,12 @@ const transformOptions: Array<{
     requiredFields: ['전체 회기 목록', '종결 사유', '목표 달성 정도', '향후 권고'],
   },
 ]
+
+function getTransformOptionBadge(documentType: FinalDocumentType): string {
+  if (documentType === 'session_note') return '상담 진행 기록'
+  if (documentType === 'supervision_report') return '회기 기록 기반'
+  return '케이스 전체 요약'
+}
 
 const documentPreviewLabel: Record<string, string> = {
   session_summary: '상담 내용 요약',
