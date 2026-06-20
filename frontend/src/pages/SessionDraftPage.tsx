@@ -1818,7 +1818,7 @@ function SupervisionContentBlockView({
         {block.demoValue && <SupervisionBlockChip label="데모값" tone="amber" />}
         {Boolean(block.evidenceIds.length) && (
           <button type="button" onClick={onToggleEvidence} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-            {`근거 있음 ${block.evidenceIds.length}`}
+            근거 확인
           </button>
         )}
       </div>

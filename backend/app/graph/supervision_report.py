@@ -87,10 +87,9 @@ DEMO_SESSION_ROWS = [
     },
 ]
 SUGGESTED_SUPERVISION_QUESTIONS = [
-    "내담자의 진로 불안을 자기비난, 자동사고, 비교 사고, 회피 행동의 순환으로 이해하는 것이 적절한지 검토받고 싶다.",
-    "발표 장면을 다룰 때 정서적 지지와 인지적 검토 사이의 균형을 어떻게 잡는 것이 적절한지 피드백 받고 싶다.",
-    "행동 과제를 제안하는 시점이 내담자에게 부담으로 경험될 가능성은 없는지 평가받고 싶다.",
-    "가족의 기대와 비교 경험을 현재 진로 불안의 유지요인으로 다루는 깊이와 시점이 적절한지 논의하고 싶다.",
+    "진로 불안을 자기비난-비교-회피 순환으로 보는 사례개념화가 적절한가?",
+    "정서적 지지, 인지 검토, 행동과제 제안의 균형은 적절한가?",
+    "가족 기대와 비교 경험을 어느 깊이까지 다루는 것이 좋은가?",
 ]
 
 
@@ -674,13 +673,8 @@ def clinical_safety_guard(state: SupervisionReportState) -> dict[str, Any]:
     review = state.get("ai_review") or SupervisionAiReviewPanel()
     safety_items = [
         SupervisionNeedsHumanReviewItem(
-            sectionId="B-1",
-            message="사례개념화 문장은 가설로 표시하고 진단, 위험 판단, 치료 효과로 확정하지 마세요.",
-            severity="high",
-        ),
-        SupervisionNeedsHumanReviewItem(
-            sectionId="A-7",
-            message="심리검사 결과는 상담 목표 설정을 위한 참고자료이며 진단적 해석은 상담사가 최종 확인해야 합니다.",
+            sectionId="safety",
+            message="사례개념화, 위험 판단, 심리검사 해석은 확정 표현으로 쓰지 마세요.",
             severity="high",
         ),
     ]
@@ -694,28 +688,18 @@ def generate_ai_review_panel(state: SupervisionReportState) -> dict[str, Any]:
     demo_mode = context["demo_mode"]
 
     review.completionChecklist = [
-        SupervisionCompletionChecklistItem(label="주 호소문제 작성됨", status="done"),
-        SupervisionCompletionChecklistItem(label="상담진행 과정 표 작성됨", status="done"),
-        SupervisionCompletionChecklistItem(label="1~5회기 상담내용 반영", status="done"),
-        SupervisionCompletionChecklistItem(label="수퍼비전 질문 작성됨", status="done"),
-        SupervisionCompletionChecklistItem(label="가족관계 세부정보 추가 확인 필요", status="partial"),
-        SupervisionCompletionChecklistItem(label="이전 상담 경험 확인 필요", status="partial"),
-        SupervisionCompletionChecklistItem(label="완전 축어록 제출 여부 확인 필요", status="partial"),
+        SupervisionCompletionChecklistItem(label="핵심 양식 작성됨", status="done", reason="주호소·회기표·상담내용·질문"),
+        SupervisionCompletionChecklistItem(label="1~5회기 내용 반영", status="done"),
+        SupervisionCompletionChecklistItem(label="세부정보 추가 확인 필요", status="partial", reason="가족·이전상담·축어록"),
     ]
     review.missingFields = [
-        "거주형태",
-        "종교",
-        "구체적인 가족 구성 정보",
-        "구체적인 학과/전공 정보",
-        "상담신청경위의 자발/비자발 여부",
-        "이전 상담 경험 유무",
-        "완전 축어록 제출 여부",
+        "거주형태·종교",
+        "가족 구성·학과/전공",
+        "자발성·이전 상담·완전 축어록",
     ]
     review.demoInputs = (
         [
-            "소속 상담기관, 수퍼바이저, 수퍼비전 일시 및 장소는 시연용 기본값으로 입력되었습니다.",
-            "실제 사용 시 상담사가 생성 전 입력하거나 생성 후 수정해야 합니다.",
-            "인적사항 일부는 synthetic demo profile을 사용했습니다.",
+            "기관·수퍼바이저·일시와 일부 인적사항은 데모값입니다. 실제 사용 전 수정하세요.",
         ]
         if demo_mode
         else []
@@ -724,34 +708,23 @@ def generate_ai_review_panel(state: SupervisionReportState) -> dict[str, Any]:
         *review.needsHumanReview,
         SupervisionNeedsHumanReviewItem(
             sectionId="A-1",
-            message="거주형태, 종교, 가족 구성 세부정보를 접수면접 기록과 대조해야 합니다.",
-            severity="medium",
-        ),
-        SupervisionNeedsHumanReviewItem(
-            sectionId="A-2",
-            message="구체적인 상담신청경위와 자발/비자발 여부를 확인해야 합니다.",
-            severity="medium",
-        ),
-        SupervisionNeedsHumanReviewItem(
-            sectionId="A-4",
-            message="이전 상담 경험 유무와 당시 다루었던 주제를 확인해야 합니다.",
+            message="인적사항, 가족관계, 의뢰경위, 이전 상담 경험을 접수면접 기록과 대조하세요.",
             severity="medium",
         ),
         SupervisionNeedsHumanReviewItem(
             sectionId="A-7",
-            message="심리검사 원점수, 척도, 해석 책임은 상담사가 최종 확인해야 합니다.",
+            message="심리검사 원점수, 척도, 해석 책임을 최종 확인하세요.",
             severity="high",
         ),
         SupervisionNeedsHumanReviewItem(
             sectionId="C-2-5",
-            message="상담자 reflection은 실제 내적 경험을 바탕으로 상담자가 직접 수정해야 합니다.",
+            message="사례개념화와 reflection은 상담자가 직접 검토·수정하세요.",
             severity="medium",
         ),
     ]
     review.suggestedSupervisionQuestions = state["suggested_questions"]
     review.caution = (
-        "AI 초안은 상담사의 검토 전 최종 회기 기록이나 수퍼비전 제출 문서로 사용되지 않습니다. "
-        "사례개념화, 위험 판단, 심리검사 해석, 상담목표 확정은 상담사가 최종 확인해야 합니다."
+        "AI 초안은 검토용입니다. 제출 전 사실관계, 위험 판단, 심리검사 해석은 상담사가 확인해야 합니다."
     )
     return {"ai_review": review}
 
