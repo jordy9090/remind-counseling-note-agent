@@ -1,0 +1,119 @@
+{
+  "notes": [
+    "Demo seed content only. Do not paste copyrighted manuals, paid test material, or real counseling records.",
+    "Use these chunks for documentation structure and privacy review, not diagnosis or treatment recommendations."
+  ],
+  "documents": [
+    {
+      "slug": "template_session_note",
+      "title": "Session note template checklist",
+      "source_type": "session_note",
+      "doc_category": "document_template",
+      "authority_level": "internal_demo",
+      "allowed_use": "documentation_structure_only",
+      "chunks": [
+        {
+          "chunk_type": "template_fields",
+          "chunk_text": "Session notes should separate presenting issue, session theme, key content, counselor intervention, client response, and next plan.",
+          "metadata_json": {
+            "required_fields": ["주호소", "회기 주제", "상담 내용", "상담자 개입", "내담자 반응", "다음 계획"],
+            "optional_fields": ["비언어 관찰", "상담 목표", "심리검사 메모"],
+            "counselor_review_fields": ["상담자 reflection", "사례개념화", "목표 달성 정도"],
+            "missing_field_checklist": ["위험 신호 확인", "상담자 최종 확인"]
+          }
+        }
+      ]
+    },
+    {
+      "slug": "template_supervision_report",
+      "title": "Supervision report template checklist",
+      "source_type": "supervision_report",
+      "doc_category": "document_template",
+      "authority_level": "internal_demo",
+      "allowed_use": "documentation_structure_only",
+      "chunks": [
+        {
+          "chunk_type": "template_fields",
+          "chunk_text": "Supervision reports need case background, presenting issue, counseling progress, intervention questions, and items the counselor wants to discuss.",
+          "metadata_json": {
+            "required_fields": ["내담자 기본 정보", "상담신청경위", "주호소", "상담 진행 과정", "슈퍼비전 요청사항"],
+            "optional_fields": ["가족관계", "이전 상담 경험", "심리검사 결과 요약"],
+            "counselor_review_fields": ["사례개념화", "상담 목표와 전략", "슈퍼비전 질문"],
+            "missing_field_checklist": ["가족관계", "상담 목표와 전략", "슈퍼비전 요청사항"]
+          }
+        }
+      ]
+    },
+    {
+      "slug": "template_termination_report",
+      "title": "Termination report template checklist",
+      "source_type": "termination_report",
+      "doc_category": "document_template",
+      "authority_level": "internal_demo",
+      "allowed_use": "documentation_structure_only",
+      "chunks": [
+        {
+          "chunk_type": "template_fields",
+          "chunk_text": "Termination reports summarize overall goals, session course, observed changes, termination reason, and follow-up plan.",
+          "metadata_json": {
+            "required_fields": ["상담 목표", "전체 회기 진행 요약", "주요 변화", "종결 사유", "향후 계획"],
+            "optional_fields": ["의뢰 또는 연계 계획", "추수 상담 일정"],
+            "counselor_review_fields": ["목표 달성 정도", "종합 소견", "향후 권고"],
+            "missing_field_checklist": ["종결 사유", "목표 달성 정도", "향후 권고"]
+          }
+        }
+      ]
+    },
+    {
+      "slug": "privacy_minimization",
+      "title": "Privacy minimization principle",
+      "source_type": "privacy",
+      "doc_category": "privacy_rule",
+      "authority_level": "public_principle_paraphrase",
+      "allowed_use": "verification_warnings_only",
+      "chunks": [
+        {
+          "chunk_type": "privacy_warning",
+          "chunk_text": "Collect and store only the minimum personal information needed for the documented counseling purpose.",
+          "metadata_json": {
+            "warning": "저장 전 불필요한 실명, 연락처, 기관명, 학교명은 비식별화 필요 여부를 확인하세요."
+          }
+        }
+      ]
+    },
+    {
+      "slug": "ethics_consent_records",
+      "title": "Consent and counseling records principle",
+      "source_type": "ethics",
+      "doc_category": "ethics_rule",
+      "authority_level": "professional_ethics_paraphrase",
+      "allowed_use": "verification_warnings_only",
+      "chunks": [
+        {
+          "chunk_type": "ethics_warning",
+          "chunk_text": "Recording, retaining, or sharing counseling records should be handled with client consent and counselor review.",
+          "metadata_json": {
+            "warning": "녹음/STT 원문 저장 또는 기록 공유 전 동의와 접근 권한을 확인하세요."
+          }
+        }
+      ]
+    },
+    {
+      "slug": "security_access_control",
+      "title": "Access control principle",
+      "source_type": "security",
+      "doc_category": "security_rule",
+      "authority_level": "internal_demo",
+      "allowed_use": "verification_warnings_only",
+      "chunks": [
+        {
+          "chunk_type": "security_warning",
+          "chunk_text": "Counseling records should be protected by role-based access, audit logs, and retention limits before production use.",
+          "metadata_json": {
+            "warning": "운영 전 사용자별 접근권한, 감사 로그, 보관기간 정책을 설정해야 합니다."
+          }
+        }
+      ]
+    }
+  ]
+}

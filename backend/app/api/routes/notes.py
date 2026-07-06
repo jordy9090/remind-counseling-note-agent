@@ -21,6 +21,7 @@ from app.schemas.note import (
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
+from app.services.supabase_storage import persist_generated_note
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
@@ -80,13 +81,17 @@ async def list_note_drafts(case_id: str | None = None) -> list[TemporaryDraftRec
 
 def _run_pipeline_with_stub_fallback(session_input: SessionInput) -> GenerateNoteResponse:
     try:
-        return run_note_pipeline(session_input)
+        result = run_note_pipeline(session_input)
+        result.persistence_report = persist_generated_note(session_input, result)
+        return result
     except Exception as error:
         traceback.print_exc()
         original_use_stub = settings.use_stub
         try:
             settings.use_stub = True
-            return run_note_pipeline(session_input)
+            result = run_note_pipeline(session_input)
+            result.persistence_report = persist_generated_note(session_input, result)
+            return result
         except Exception:
             traceback.print_exc()
             raise HTTPException(

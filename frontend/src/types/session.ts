@@ -3,9 +3,12 @@ export type EvidenceType =
   | 'inferred'
   | 'counselor_input'
   | 'previous_context'
+  | 'prior_context_based'
   | 'needs_review'
   | 'mixed'
   | 'model_inference'
+
+export type TargetDocumentType = 'session_note' | 'supervision_report' | 'termination_report'
 
 export interface SessionInput {
   case_id: string
@@ -19,6 +22,8 @@ export interface SessionInput {
   psychological_test_summary?: string
   key_issue_tags?: string[]
   nonverbal_notes?: string
+  target_document_type?: TargetDocumentType
+  persist?: boolean
 }
 
 export interface SensitiveInfoCandidate {
@@ -135,6 +140,60 @@ export interface DocumentTransformPreview {
   notice: string
 }
 
+export interface RetrievedEvidenceItem {
+  id?: string | null
+  source_type: string
+  source_ref: string
+  source_text: string
+  linked_field: string
+}
+
+export interface RetrievedCaseContextItem {
+  source_ref: string
+  session_id: string
+  session_number?: number | null
+  session_date: string
+  summary: string
+  confirmed_note: Record<string, unknown>
+  evidence_items: RetrievedEvidenceItem[]
+}
+
+export interface RetrievedTemplateContext {
+  target_document_type: TargetDocumentType
+  required_fields: string[]
+  optional_fields: string[]
+  counselor_review_fields: string[]
+  missing_field_checklist: string[]
+  source_refs: string[]
+}
+
+export interface RetrievedPrivacyRule {
+  source_ref: string
+  title: string
+  category: string
+  rule: string
+  warning: string
+}
+
+export interface RetrievalReport {
+  enabled: boolean
+  case_context_count: number
+  template_context_found: boolean
+  privacy_rule_count: number
+  failures: string[]
+  notices: string[]
+}
+
+export interface PersistenceReport {
+  enabled: boolean
+  requested: boolean
+  stored: boolean
+  case_id?: string | null
+  session_id?: string | null
+  note_id?: string | null
+  message: string
+}
+
 export interface GenerateNoteResponse {
   structured_case_data: StructuredCaseData
   evidence_mapped_data: EvidenceMappedData
@@ -143,10 +202,22 @@ export interface GenerateNoteResponse {
   document_transform_preview: DocumentTransformPreview
   confirmed_session_note: Record<string, unknown>
   sanitized_input: SanitizedInput
+  retrieved_case_context: RetrievedCaseContextItem[]
+  retrieved_template_context?: RetrievedTemplateContext | null
+  retrieved_privacy_context: RetrievedPrivacyRule[]
+  retrieval_report: RetrievalReport
+  persistence_report: PersistenceReport
   stub: boolean
 }
 
-export type EvidenceSourceType = 'transcript' | 'counselor_memo' | 'previous_summary' | 'ai_inference'
+export type EvidenceSourceType =
+  | 'transcript'
+  | 'counselor_memo'
+  | 'previous_summary'
+  | 'retrieved_context'
+  | 'template_context'
+  | 'privacy_context'
+  | 'ai_inference'
 export type EvidenceConfidence = 'high' | 'medium' | 'low'
 
 export interface EvidenceCheckItem {

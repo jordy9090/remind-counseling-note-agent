@@ -1,4 +1,4 @@
-"""LangGraph wiring for the Re:mind MVP V0 six-agent workflow."""
+"""LangGraph wiring for the Re:mind V1 retrieval-aware workflow."""
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -8,6 +8,7 @@ from langgraph.graph import END, StateGraph
 from app.graph.nodes import (
     generate_summary,
     map_evidence,
+    retrieve_context,
     sanitize_input,
     structure_session,
     transform_document_preview,
@@ -17,6 +18,10 @@ from app.schemas.note import (
     DocumentTransformPreview,
     EvidenceMappedData,
     GenerateNoteResponse,
+    RetrievedCaseContextItem,
+    RetrievedPrivacyRule,
+    RetrievedTemplateContext,
+    RetrievalReport,
     SanitizedInput,
     SessionInput,
     SessionSummaryDraft,
@@ -30,6 +35,10 @@ class NoteGraphState(TypedDict, total=False):
     requested_section_ids: list[str]
     session_topic: str
     sanitized_input: SanitizedInput
+    retrieved_case_context: list[RetrievedCaseContextItem]
+    retrieved_template_context: RetrievedTemplateContext | None
+    retrieved_privacy_context: list[RetrievedPrivacyRule]
+    retrieval_report: RetrievalReport
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
@@ -42,6 +51,7 @@ class NoteGraphState(TypedDict, total=False):
 def create_note_graph():
     workflow = StateGraph(NoteGraphState)
     workflow.add_node("sanitize_input", sanitize_input)
+    workflow.add_node("retrieve_context", retrieve_context)
     workflow.add_node("structure_session", structure_session)
     workflow.add_node("map_evidence", map_evidence)
     workflow.add_node("generate_summary", generate_summary)
@@ -49,7 +59,8 @@ def create_note_graph():
     workflow.add_node("transform_document_preview", transform_document_preview)
 
     workflow.set_entry_point("sanitize_input")
-    workflow.add_edge("sanitize_input", "structure_session")
+    workflow.add_edge("sanitize_input", "retrieve_context")
+    workflow.add_edge("retrieve_context", "structure_session")
     workflow.add_edge("structure_session", "map_evidence")
     workflow.add_edge("map_evidence", "generate_summary")
     workflow.add_edge("generate_summary", "verify_output")
@@ -81,6 +92,10 @@ def run_note_pipeline(
         verification_report=state["verification_report"],
         document_transform_preview=state["document_transform_preview"],
         confirmed_session_note=confirmed_session_note,
+        retrieved_case_context=state.get("retrieved_case_context") or [],
+        retrieved_template_context=state.get("retrieved_template_context"),
+        retrieved_privacy_context=state.get("retrieved_privacy_context") or [],
+        retrieval_report=state.get("retrieval_report") or RetrievalReport(),
         stub=bool(state.get("stub", False)),
     )
 

@@ -1,6 +1,6 @@
 # API Contract
 
-The MVP V0-alpha end-to-end demo uses FastAPI as the backend and React/Vite as the frontend.
+The MVP V1 end-to-end demo uses FastAPI as the backend, React/Vite as the frontend, and optional Supabase-backed retrieval.
 
 ## Health Check
 
@@ -22,7 +22,7 @@ Response:
 POST /api/notes/generate
 ```
 
-The endpoint runs the six-agent note generation workflow and returns the full Pydantic-validated `GenerateNoteResponse`. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output. The React frontend maps this full response into its screen-specific display state.
+The endpoint runs the retrieval-aware LangGraph note generation workflow and returns the full Pydantic-validated `GenerateNoteResponse`. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output. If Supabase or RAG settings are missing, retrieval and persistence are skipped while the response shape remains stable. The React frontend maps this full response into its screen-specific display state.
 
 ### Request
 
@@ -32,7 +32,9 @@ The endpoint runs the six-agent note generation workflow and returns the full Py
   "session_number": 3,
   "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함.",
   "transcript": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
-  "previous_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸."
+  "previous_summary": "이전 회기에서는 자기이해와 진로 가치 탐색을 중심으로 다룸.",
+  "target_document_type": "session_note",
+  "persist": false
 }
 ```
 
@@ -41,10 +43,12 @@ Accepted input aliases:
 - `transcript_text` is also accepted for `transcript`.
 - `previous_session_summary` and `prev_summary` are also accepted for `previous_summary`.
 - `session_no` is also accepted for `session_number`.
+- `document_type` is also accepted for `target_document_type`.
+- `persist=true` stores the generated note only when `ENABLE_PERSISTENCE=1` and Supabase credentials are configured.
 
 ### Frontend Display Projection
 
-The full API response includes `sanitized_input`, `structured_case_data`, `evidence_mapped_data`, `session_summary_draft`, `verification_report`, `document_transform_preview`, `confirmed_session_note`, and `stub`. The frontend derives the following compact display fields from that full response:
+The full API response includes `sanitized_input`, `retrieved_case_context`, `retrieved_template_context`, `retrieved_privacy_context`, `retrieval_report`, `structured_case_data`, `evidence_mapped_data`, `session_summary_draft`, `verification_report`, `document_transform_preview`, `confirmed_session_note`, `persistence_report`, and `stub`. The frontend derives the following compact display fields from that full response:
 
 ```json
 {
@@ -70,7 +74,7 @@ The full API response includes `sanitized_input`, `structured_case_data`, `evide
 
 Field notes:
 
-- `source_type`: `transcript`, `counselor_memo`, `previous_summary`, or `ai_inference`
+- `source_type`: `transcript`, `counselor_memo`, `previous_summary`, `retrieved_context`, `template_context`, `privacy_context`, or `ai_inference`
 - `confidence`: `high`, `medium`, or `low`
 - `missing_items`: fields that may require additional counselor input or review
 - `warnings`: safety and review notices shown to the counselor

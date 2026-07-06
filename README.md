@@ -2,7 +2,7 @@
 
 Re:mind는 심리상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
 
-MVP V0의 주 경로는 **React + FastAPI + LangGraph**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
+MVP V1의 주 경로는 **React + FastAPI + LangGraph + optional Supabase retrieval**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
 
 ## 제품 원칙
 
@@ -12,27 +12,32 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 - AI 추론, 근거 부족, 상담사 확인 필요 영역을 분리합니다.
 - `reflection`, `case_conceptualization`, `goal_attainment`는 상담사 확인 필요 영역으로 표시합니다.
 - 생성된 초안은 상담사 검토 전 최종 기록으로 사용하지 않습니다.
+- RAG는 상담 판단 보강이 아니라 `case memory`, `document template`, `privacy/ethics/security guardrail`에만 사용합니다.
+- 진단, 임상적 위험도 점수화, 치료 권고, 심리검사 자동 해석은 생성하지 않습니다.
 
-## MVP V0 기능 범위
+## MVP V1 기능 범위
 
 포함:
 
 1. 회기 자료 입력
 2. 입력 정제와 민감정보 후보 탐지
-3. 상담 내용 구조화
-4. 근거 매핑
-5. 회기요약 초안 생성
-6. 검증 리포트 생성
-7. 문서 변환 preview
-8. 상담사 수정용 회기요약 textarea UI
+3. Supabase 기반 선택적 저장
+4. `case_id` 기반 이전 회기 retrieval
+5. 상담 문서 양식 KB retrieval
+6. 개인정보/윤리/보안 규칙 retrieval
+7. 상담 내용 구조화
+8. 근거 매핑
+9. 회기요약 초안 생성
+10. 검증 리포트 생성
+11. 문서 변환 preview
+12. 상담사 수정용 회기요약 textarea UI
 
 제외:
 
-- DB 저장
 - 인증/회원가입
 - 파일 업로드
 - 음성 업로드 또는 실시간 STT
-- Vector DB/RAG
+- pgvector 기반 의미 검색
 - 정식 문서 export
 - 결제/예약/관리자 기능
 - AI 슈퍼비전 또는 자동 사례개념화
@@ -48,7 +53,7 @@ POST /api/notes/generate
 
 `POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드를 클라이언트에서 변환합니다.
 
-OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. 따라서 API key 없이도 데모와 smoke test를 실행할 수 있습니다.
+OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. Supabase 환경변수가 없거나 `ENABLE_RAG=0`, `ENABLE_PERSISTENCE=0`이면 기존처럼 요청 단위 처리만 수행합니다. 따라서 API key와 Supabase credentials 없이도 데모와 smoke test를 실행할 수 있습니다.
 
 ## 프로젝트 구조
 
@@ -62,6 +67,8 @@ remind-counseling-note-agent/
 │   ├── schema.md
 │   ├── api_contract.md
 │   ├── demo_scenario.md
+│   ├── supabase_schema.sql
+│   ├── kb_seed_examples.json
 │   └── development_plan.md
 ├── sample_data/
 │   ├── session_input_001.json
@@ -87,7 +94,9 @@ remind-counseling-note-agent/
 │       ├── schemas/
 │       │   └── note.py
 │       └── services/
-│           └── llm.py
+│           ├── llm.py
+│           ├── retrieval.py
+│           └── supabase_storage.py
 └── frontend/
     ├── package.json
     ├── vite.config.ts
@@ -128,6 +137,19 @@ OPENAI_API_KEY=sk-proj-your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 USE_STUB=0
 ```
+
+Supabase 저장과 lightweight RAG를 켜려면 Supabase SQL editor에서 [docs/supabase_schema.sql](docs/supabase_schema.sql)을 실행한 뒤 backend `.env`에 다음을 설정합니다.
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+ENABLE_PERSISTENCE=1
+ENABLE_RAG=1
+```
+
+`POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
+
+KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 있습니다. 유료 검사 매뉴얼, 저작권 있는 상담 자료, 실제 내담자 기록은 seed에 넣지 않습니다.
 
 ### Frontend
 

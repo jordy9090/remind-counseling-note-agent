@@ -7,11 +7,12 @@ import os
 import tempfile
 from pathlib import Path
 
+from app.core.config import settings
 from app.graph.graph import run_note_pipeline
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
 
 
-CACHE_VERSION = "recompose-v1"
+CACHE_VERSION = "recompose-v2-retrieval"
 
 
 def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteResponse:
@@ -44,6 +45,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteRes
 def build_recompose_cache_key(request: RecomposeNoteRequest, visible_section_ids: list[str] | None = None) -> str:
     payload = {
         "version": CACHE_VERSION,
+        "enable_rag": settings.enable_rag,
         "session_input": request.session_input.model_dump(mode="json"),
         "session_topic": request.session_topic,
         "visible_section_ids": visible_section_ids or _normalize_section_ids(request.visible_section_ids),

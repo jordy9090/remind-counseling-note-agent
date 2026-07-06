@@ -44,7 +44,7 @@ import type {
 } from '../types/session'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
-const processSteps = ['입력 정제', '상담 내용 구조화', '근거 연결', '회기요약 생성', '검증 리포트 생성']
+const processSteps = ['입력 정제', 'RAG 컨텍스트 검색', '상담 내용 구조화', '근거 연결', '회기요약 생성', '검증 리포트 생성']
 const PLACEHOLDER_TEXT = '[상담사 확인 필요]'
 const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
   done: '✓',
@@ -80,7 +80,17 @@ type DraftSectionId =
   | 'supervision_memo'
   | string
 
-type SourceBadgeKind = 'memo' | 'transcript' | 'previous' | 'attachment' | 'ai' | 'editable' | 'needs_review'
+type SourceBadgeKind =
+  | 'memo'
+  | 'transcript'
+  | 'previous'
+  | 'case_memory'
+  | 'template'
+  | 'privacy'
+  | 'attachment'
+  | 'ai'
+  | 'editable'
+  | 'needs_review'
 
 interface AttachmentItem {
   id: string
@@ -259,6 +269,8 @@ const initialForm: SessionInput = {
   key_issue_tags: ['진로불안', '자기비난', '비교사고', '회피행동', '수행불안'],
   nonverbal_notes:
     "발표 장면을 말할 때 눈물이 고였고 시선을 아래로 둠. '완전히 망했다'고 말할 때 목소리가 작아졌음. 후반부에 실행 과제를 정할 때는 고개를 끄덕이고 말의 속도가 안정됨.",
+  target_document_type: 'session_note',
+  persist: false,
 }
 
 export default function SessionDraftPage() {
@@ -2168,6 +2180,8 @@ function ReviewPanel({
             <Plus className="h-4 w-4" />
             항목 추가
           </button>
+
+          {isSummaryDraft && fullResponse && <RetrievalContextPanel fullResponse={fullResponse} />}
         </>
       )}
 
@@ -2206,6 +2220,82 @@ function ReviewPanel({
         </div>
       </div>
     </aside>
+  )
+}
+
+function RetrievalContextPanel({ fullResponse }: { fullResponse: GenerateNoteResponse }) {
+  const caseContext = fullResponse.retrieved_case_context || []
+  const template = fullResponse.retrieved_template_context
+  const privacyRules = fullResponse.retrieved_privacy_context || []
+  const report = fullResponse.retrieval_report
+  const templateMissing = template?.missing_field_checklist || []
+  const notices = report?.notices || []
+
+  return (
+    <div className="mt-5 space-y-4 border-t border-slate-200 pt-4">
+      <RetrievalMiniSection
+        icon={<History className="h-4 w-4 text-blue-700" />}
+        title="이전 회기에서 참고된 근거"
+        items={
+          caseContext.length
+            ? caseContext.slice(0, 3).map((item) =>
+                `${item.session_number ? `${item.session_number}회기` : '이전 회기'} · ${
+                  item.summary || '저장된 회기 기록'
+                }`,
+              )
+            : ['연결된 이전 회기 근거 없음']
+        }
+      />
+      <RetrievalMiniSection
+        icon={<ClipboardList className="h-4 w-4 text-blue-700" />}
+        title="문서 양식 기준 누락 항목"
+        items={
+          templateMissing.length
+            ? templateMissing.slice(0, 5)
+            : template
+              ? ['현재 양식 KB에서 추가 누락 항목 없음']
+              : ['문서 양식 KB 미연결']
+        }
+      />
+      <RetrievalMiniSection
+        icon={<ShieldCheck className="h-4 w-4 text-blue-700" />}
+        title="개인정보/윤리 검토 경고"
+        items={
+          privacyRules.length
+            ? privacyRules.slice(0, 4).map((item) => item.warning)
+            : ['개인정보/윤리 KB 미연결']
+        }
+      />
+      {Boolean(notices.length) && (
+        <p className="text-[11px] font-semibold leading-4 text-slate-500">{notices.slice(0, 2).join(' · ')}</p>
+      )}
+    </div>
+  )
+}
+
+function RetrievalMiniSection({
+  icon,
+  items,
+  title,
+}: {
+  icon: ReactNode
+  items: string[]
+  title: string
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2">
+        {icon}
+        <h3 className="text-xs font-extrabold text-slate-950">{title}</h3>
+      </div>
+      <ul className="mt-2 space-y-1.5">
+        {items.map((item) => (
+          <li key={item} className="text-[11px] font-semibold leading-4 text-slate-600">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -3066,6 +3156,9 @@ const sourceTypeToBadge: Record<EvidenceSourceType, SourceBadgeKind> = {
   transcript: 'transcript',
   counselor_memo: 'memo',
   previous_summary: 'previous',
+  retrieved_context: 'case_memory',
+  template_context: 'template',
+  privacy_context: 'privacy',
   ai_inference: 'ai',
 }
 
@@ -3073,6 +3166,9 @@ const sourceTypeLabel: Record<EvidenceSourceType, string> = {
   transcript: '축어록/STT',
   counselor_memo: '상담사 메모',
   previous_summary: '이전 회기 요약',
+  retrieved_context: '저장된 이전 회기',
+  template_context: '문서 양식 KB',
+  privacy_context: '개인정보/윤리 KB',
   ai_inference: 'AI 추론',
 }
 
@@ -3080,6 +3176,9 @@ const sourceBadgeMeta: Record<SourceBadgeKind, { className: string; label: strin
   memo: { label: '메모 기반', className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
   transcript: { label: '축어록 기반', className: 'bg-blue-50 text-blue-700 ring-blue-200' },
   previous: { label: '이전 회기 기반', className: 'bg-sky-50 text-sky-700 ring-sky-200' },
+  case_memory: { label: '저장 회기 기반', className: 'bg-cyan-50 text-cyan-700 ring-cyan-200' },
+  template: { label: '양식 기준', className: 'bg-indigo-50 text-indigo-700 ring-indigo-200' },
+  privacy: { label: '윤리 검토', className: 'bg-teal-50 text-teal-700 ring-teal-200' },
   attachment: { label: '첨부자료 기반', className: 'bg-violet-50 text-violet-700 ring-violet-200' },
   ai: { label: 'AI 생성', className: 'bg-amber-50 text-amber-700 ring-amber-200' },
   editable: { label: '', className: '' },

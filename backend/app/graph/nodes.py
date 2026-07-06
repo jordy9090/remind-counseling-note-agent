@@ -1,4 +1,4 @@
-"""Node functions for the Re:mind MVP V0 six-agent pipeline."""
+"""Node functions for the Re:mind V1 retrieval-aware pipeline."""
 from __future__ import annotations
 
 import json
@@ -14,6 +14,10 @@ from app.schemas.note import (
     EvidenceMappedItem,
     GroundedItem,
     InputSources,
+    RetrievedCaseContextItem,
+    RetrievedPrivacyRule,
+    RetrievedTemplateContext,
+    RetrievalReport,
     ReviewableClaim,
     SanitizedInput,
     SensitiveInfoCandidate,
@@ -25,6 +29,7 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
+from app.services.retrieval import retrieve_case_context, retrieve_document_template, retrieve_privacy_rules
 
 
 PHONE_RE = re.compile(r"(?:010[-.\s]?\d{4}[-.\s]?\d{4}|\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{4})")
@@ -59,14 +64,72 @@ def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     return {"sanitized_input": sanitized, "stub": settings.stub_mode}
 
 
+def retrieve_context(state: dict[str, Any]) -> dict[str, Any]:
+    """Collect optional case-memory, template, and privacy context for downstream nodes."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    session_input: SessionInput = state["session_input"]
+    report = RetrievalReport(enabled=settings.enable_rag)
+    if not settings.enable_rag:
+        report.notices.append("ENABLE_RAG is false; retrieval skipped.")
+        return _empty_retrieval_state(report)
+    if not settings.supabase_configured:
+        report.notices.append("Supabase credentials are missing; retrieval continued with empty context.")
+
+    case_context: list[RetrievedCaseContextItem] = []
+    template_context: RetrievedTemplateContext | None = None
+    privacy_context: list[RetrievedPrivacyRule] = []
+
+    try:
+        case_context = retrieve_case_context(sanitized.case_id, max_sessions=3)
+    except Exception as error:
+        report.failures.append(f"case_context: {error}")
+
+    try:
+        template_context = retrieve_document_template(session_input.target_document_type)
+    except Exception as error:
+        report.failures.append(f"document_template: {error}")
+
+    try:
+        privacy_context = retrieve_privacy_rules()
+    except Exception as error:
+        report.failures.append(f"privacy_rules: {error}")
+
+    report.case_context_count = len(case_context)
+    report.template_context_found = bool(
+        template_context
+        and (
+            template_context.required_fields
+            or template_context.optional_fields
+            or template_context.counselor_review_fields
+            or template_context.source_refs
+        )
+    )
+    report.privacy_rule_count = len(privacy_context)
+    if not case_context:
+        report.notices.append("No prior case-memory context was retrieved.")
+    if template_context is None or not report.template_context_found:
+        report.notices.append("No document-template KB context was retrieved.")
+    if not privacy_context:
+        report.notices.append("No privacy or ethics KB context was retrieved.")
+
+    return {
+        "retrieved_case_context": case_context,
+        "retrieved_template_context": template_context,
+        "retrieved_privacy_context": privacy_context,
+        "retrieval_report": report,
+    }
+
+
 def structure_session(state: dict[str, Any]) -> dict[str, Any]:
     """Convert sanitized materials into counseling documentation fields."""
     sanitized: SanitizedInput = state["sanitized_input"]
-    fallback = _mock_structured_case(sanitized)
+    case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
+    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
+    fallback = _mock_structured_case(sanitized, case_context)
     if settings.stub_mode:
         return {"structured_case_data": fallback}
 
-    prompt = _build_structure_prompt(sanitized)
+    prompt = _build_structure_prompt(sanitized, case_context, template_context)
     structured = get_structured_llm(StructuredCaseData).invoke(prompt)
     return {"structured_case_data": structured}
 
@@ -86,7 +149,7 @@ def map_evidence(state: dict[str, Any]) -> dict[str, Any]:
                     evidence_type=evidence_type,
                     source_refs=item["source_refs"],
                     requires_review=evidence_type
-                    in {"inferred", "model_inference", "needs_review", "counselor_input"},
+                    in {"inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based"},
                 )
             )
 
@@ -100,11 +163,21 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     evidence_mapped: EvidenceMappedData = state["evidence_mapped_data"]
     requested_section_ids: list[str] = state.get("requested_section_ids") or []
     session_topic: str = state.get("session_topic") or ""
+    case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
+    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
     fallback = _mock_summary(sanitized, structured)
     if settings.stub_mode:
         return {"session_summary_draft": fallback}
 
-    prompt = _build_summary_prompt(sanitized, structured, evidence_mapped, requested_section_ids, session_topic)
+    prompt = _build_summary_prompt(
+        sanitized,
+        structured,
+        evidence_mapped,
+        requested_section_ids,
+        session_topic,
+        case_context,
+        template_context,
+    )
     summary = get_structured_llm(SessionSummaryDraft).invoke(prompt)
     return {"session_summary_draft": summary}
 
@@ -115,11 +188,12 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     structured: StructuredCaseData = state["structured_case_data"]
     evidence_mapped: EvidenceMappedData = state["evidence_mapped_data"]
     summary: SessionSummaryDraft = state["session_summary_draft"]
-    fallback = _mock_verification(sanitized, evidence_mapped)
+    privacy_context: list[RetrievedPrivacyRule] = state.get("retrieved_privacy_context") or []
+    fallback = _mock_verification(sanitized, evidence_mapped, privacy_context)
     if settings.stub_mode:
         return {"verification_report": fallback}
 
-    prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary)
+    prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context)
     verification = get_structured_llm(VerificationReport).invoke(prompt)
     return {"verification_report": verification}
 
@@ -128,6 +202,7 @@ def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
     """Preview later document transformations from a confirmed session note."""
     sanitized: SanitizedInput = state["sanitized_input"]
     summary: SessionSummaryDraft = state["session_summary_draft"]
+    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
     preview_sections = {
         "session_summary": summary.session_content.text,
         "client_main_issue": summary.presenting_problem.text,
@@ -151,15 +226,31 @@ def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
     else:
         missing_required_fields.append("심리검사 결과")
 
+    if template_context:
+        missing_required_fields = _unique_strings(
+            missing_required_fields + template_context.missing_field_checklist
+        )
+        for field in template_context.counselor_review_fields:
+            partially_available_fields.setdefault(field, "문서 양식 KB 기준으로 상담사 직접 확인이 필요한 항목")
+
     preview = DocumentTransformPreview(
         document_type="preview",
         available_transforms=["supervision_report", "termination_report"],
         preview_sections=preview_sections,
         partially_available_fields=partially_available_fields,
         missing_required_fields=missing_required_fields,
-        notice="MVP V0에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다.",
+        notice="현재 MVP에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다.",
     )
     return {"document_transform_preview": preview}
+
+
+def _empty_retrieval_state(report: RetrievalReport) -> dict[str, Any]:
+    return {
+        "retrieved_case_context": [],
+        "retrieved_template_context": None,
+        "retrieved_privacy_context": [],
+        "retrieval_report": report,
+    }
 
 
 def _detect_sensitive_info(session_input: SessionInput) -> list[SensitiveInfoCandidate]:
@@ -192,11 +283,18 @@ def _detect_sensitive_info(session_input: SessionInput) -> list[SensitiveInfoCan
     return candidates
 
 
-def _mock_structured_case(sanitized: SanitizedInput) -> StructuredCaseData:
+def _mock_structured_case(
+    sanitized: SanitizedInput,
+    case_context: list[RetrievedCaseContextItem] | None = None,
+) -> StructuredCaseData:
     tags = ", ".join(sanitized.sources.key_issue_tags) or "진로 불안과 자기비난 사고"
     transcript_ref = "transcript_text"
     memo_ref = "counselor_memo"
     prev_ref = "previous_session_summary"
+    case_context = case_context or []
+    session_content_refs = [memo_ref, transcript_ref, prev_ref]
+    if case_context:
+        session_content_refs.append(case_context[0].source_ref)
 
     return StructuredCaseData(
         presenting_problem=[
@@ -217,7 +315,7 @@ def _mock_structured_case(sanitized: SanitizedInput) -> StructuredCaseData:
             EvidenceItem(
                 content=_build_session_content_summary(sanitized),
                 evidence_type="mixed",
-                source_refs=[memo_ref, transcript_ref, prev_ref],
+                source_refs=session_content_refs,
             )
         ],
         counselor_interventions=[
@@ -287,6 +385,7 @@ def _mock_summary(sanitized: SanitizedInput, structured: StructuredCaseData) -> 
 def _mock_verification(
     sanitized: SanitizedInput,
     evidence_mapped: EvidenceMappedData,
+    privacy_context: list[RetrievedPrivacyRule] | None = None,
 ) -> VerificationReport:
     grounded = [
         GroundedItem(claim=item.content, source_refs=item.source_refs)
@@ -300,11 +399,12 @@ def _mock_verification(
             recommendation="상담사가 유지, 수정, 삭제 여부를 판단",
         )
         for item in evidence_mapped.items
-        if item.evidence_type in {"mixed", "inferred"}
+        if item.evidence_type in {"mixed", "inferred", "prior_context_based"}
     ][:5]
+    privacy_context = privacy_context or []
     counselor_review_fields = [
         CounselorReviewField(field="reflection", reason="상담자 내적 경험과 임상적 판단 영역"),
-        CounselorReviewField(field="case_conceptualization", reason="MVP V0 자동 생성 대상이 아님"),
+        CounselorReviewField(field="case_conceptualization", reason="현재 MVP 자동 생성 대상이 아님"),
         CounselorReviewField(field="goal_attainment", reason="목표 달성 정도는 상담사 확인 필요"),
     ]
     if sanitized.sources.psychological_test_summary:
@@ -320,9 +420,17 @@ def _mock_verification(
         unsupported_or_risky_claims=[
             ReviewableClaim(
                 claim="사례개념화, 위험 판단, 목표 달성 정도를 자동으로 확정하지 않음.",
-                reason="MVP V0의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
+                reason="현재 MVP의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
                 recommendation="상담사가 직접 작성하거나 별도 확인 필드로 분리",
             )
+        ]
+        + [
+            ReviewableClaim(
+                claim=rule.warning,
+                reason=f"개인정보/윤리 KB 검토 항목: {rule.title}",
+                recommendation="저장, 공유, export 전에 상담사가 동의와 비식별화 필요 여부를 확인",
+            )
+            for rule in privacy_context[:3]
         ],
         sensitive_info_items=sanitized.sensitive_info_candidates,
         requires_counselor_review=counselor_review_fields,
@@ -407,7 +515,7 @@ def _section_from_first(items: list[EvidenceItem], fallback: str) -> SummarySect
         evidence_type=item.evidence_type,
         source_refs=item.source_refs,
         requires_review=item.evidence_type
-        in {"inferred", "model_inference", "needs_review", "counselor_input"},
+        in {"inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based"},
     )
 
 
@@ -438,18 +546,43 @@ def _ensure_sentence(text: str) -> str:
 def _json(data: Any) -> str:
     if hasattr(data, "model_dump"):
         data = data.model_dump()
+    elif isinstance(data, list):
+        data = [item.model_dump() if hasattr(item, "model_dump") else item for item in data]
+    elif isinstance(data, dict):
+        data = {
+            key: value.model_dump() if hasattr(value, "model_dump") else value
+            for key, value in data.items()
+        }
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def _build_structure_prompt(sanitized: SanitizedInput) -> str:
+def _build_structure_prompt(
+    sanitized: SanitizedInput,
+    case_context: list[RetrievedCaseContextItem],
+    template_context: RetrievedTemplateContext | None,
+) -> str:
     return f"""
-You are generating structured counseling documentation data for Re:mind MVP V0.
+You are generating structured counseling documentation data for Re:mind V1.
 Return only fields allowed by the Pydantic schema.
 Do not diagnose, evaluate risk, or replace counselor judgment.
 If a claim is not directly grounded, mark it as inferred or needs_review.
+Re:mind is not a diagnosis tool, treatment recommendation tool, or counselor evaluation tool.
+
+Retrieved prior-session context is background only. Use it only when it is relevant to the current session.
+Every claim must cite current input source_refs or retrieved prior-session source_refs.
+If a claim depends on prior sessions, set evidence_type to prior_context_based and include the stored source_ref.
+If support is weak, set needs_review or another review-sensitive evidence type.
+
+Document template context can be used only to identify missing fields and counselor-review fields.
 
 Sanitized input:
 {_json(sanitized)}
+
+Retrieved case context:
+{_json(case_context)}
+
+Retrieved document template context:
+{_json(template_context)}
 """
 
 
@@ -459,12 +592,21 @@ def _build_summary_prompt(
     evidence_mapped: EvidenceMappedData,
     requested_section_ids: list[str] | None = None,
     session_topic: str = "",
+    case_context: list[RetrievedCaseContextItem] | None = None,
+    template_context: RetrievedTemplateContext | None = None,
 ) -> str:
     requested_section_ids = requested_section_ids or []
+    case_context = case_context or []
     return f"""
 Generate an editable Korean counseling session summary draft.
 Each section must include evidence_type and source_refs.
 Reflection, case conceptualization, and goal attainment must remain counselor-review areas.
+Do not generate diagnosis, clinical risk scoring, treatment recommendation, psychological test interpretation,
+or counselor performance evaluation.
+Retrieved prior sessions may be used only as traceable background context.
+If a section uses prior-session context, set evidence_type to prior_context_based or mixed and include
+stored_session_note:<session_id> or stored_evidence:<id> in source_refs.
+Do not treat privacy/ethics/template rules as clinical evidence.
 The frontend will display only these requested section ids:
 {_json(requested_section_ids)}
 If requested_section_ids is not empty, rewrite the requested sections as a coherent self-contained draft
@@ -480,6 +622,12 @@ Structured case data:
 
 Evidence mapped data:
 {_json(evidence_mapped)}
+
+Retrieved case context:
+{_json(case_context)}
+
+Retrieved document template context:
+{_json(template_context)}
 """
 
 
@@ -488,12 +636,17 @@ def _build_verification_prompt(
     structured: StructuredCaseData,
     evidence_mapped: EvidenceMappedData,
     summary: SessionSummaryDraft,
+    privacy_context: list[RetrievedPrivacyRule] | None = None,
 ) -> str:
+    privacy_context = privacy_context or []
     return f"""
 Verify the generated counseling note draft.
 Separate grounded items, weakly grounded items, unsupported/risky claims,
 sensitive information candidates, and counselor-review-required fields.
 Do not make clinical judgments on behalf of the counselor.
+Use retrieved privacy, ethics, and security rules only to flag review items.
+Do not claim legal compliance. Flag sensitive data, consent issues, raw audio storage risk,
+unsupported claims, and counselor-review-needed fields.
 
 Sanitized input:
 {_json(sanitized)}
@@ -506,4 +659,19 @@ Evidence mapped data:
 
 Summary draft:
 {_json(summary)}
+
+Retrieved privacy/ethics/security context:
+{_json(privacy_context)}
 """
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result

@@ -1,25 +1,27 @@
 # 개발 계획
 
-이 문서는 현재 구현 상태와 다음 작업을 맞추기 위한 MVP V0 개발 체크리스트입니다.
+이 문서는 현재 구현 상태와 다음 작업을 맞추기 위한 MVP V1 개발 체크리스트입니다.
 
 ## 현재 완료된 checkpoint
 
 ### 1. 문서/제품 방향 정리
 
-- README와 핵심 docs를 MVP V0 방향으로 정리
-- Re:mind의 주 경로를 React + FastAPI + LangGraph로 정의
+- README와 핵심 docs를 MVP V1 방향으로 정리
+- Re:mind의 주 경로를 React + FastAPI + LangGraph + optional Supabase retrieval로 정의
 
-### 2. Backend MVP V0 pipeline
+### 2. Backend MVP V1 pipeline
 
-- `backend/app/schemas/note.py`에 MVP V0 Pydantic schema 정의
+- `backend/app/schemas/note.py`에 MVP V1 Pydantic schema 정의
 - `backend/app/graph/graph.py`에 LangGraph workflow 구현
-- `backend/app/graph/nodes.py`에 6-agent node 구현
+- `backend/app/graph/nodes.py`에 retrieval-aware node 구현
 - `POST /api/notes/generate` 구현
 - `GET /api/health` 구현
 - OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic stub output으로 동작
+- `ENABLE_RAG=1`일 때 case memory, document template, privacy/ethics/security retrieval 시도
+- `ENABLE_PERSISTENCE=1`과 `persist=true`일 때 Supabase 저장 시도
 - `backend/smoke_test.py` 추가
 
-### 3. Frontend MVP V0 demo
+### 3. Frontend MVP V1 demo
 
 - `frontend/src/pages/SessionDraftPage.tsx`에 한 페이지 데모 구현
 - 회기 자료 입력
@@ -27,6 +29,7 @@
 - 구조화 결과 탭
 - 회기요약 초안 textarea 편집
 - 검증 리포트 탭
+- retrieval 요약 패널
 - 문서 변환 preview 탭
 - Raw JSON 확인
 
@@ -64,13 +67,12 @@ npm run build
 3. Document Transform preview의 부족 필드 구조 정교화
 4. 사용자 인터뷰 기반 회기요약 section label 조정
 
-## MVP V0에서 계속 제외할 것
+## MVP V1에서 계속 제외할 것
 
-- DB 저장
 - 인증/회원가입
 - 파일 업로드
 - 음성 업로드 또는 실시간 STT
-- Vector DB/RAG
+- pgvector 기반 의미 검색
 - AI 슈퍼비전
 - 자동 사례개념화
 - 정식 Word/HWP export

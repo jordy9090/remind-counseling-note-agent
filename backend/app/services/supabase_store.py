@@ -17,7 +17,7 @@ def _client():
     """Supabase 클라이언트(서비스 키 사용). 최초 호출 시에만 생성한다."""
     from supabase import create_client
 
-    return create_client(settings.supabase_url, settings.supabase_service_key)
+    return create_client(settings.supabase_url, settings.effective_supabase_key)
 
 
 def _table():

@@ -1,6 +1,6 @@
 # Schema
 
-현재 MVP V0 schema의 기준 파일은 `backend/app/schemas/note.py`입니다. 이 문서는 해당 Pydantic schema와 같은 계약을 설명합니다.
+현재 MVP V1 schema의 기준 파일은 `backend/app/schemas/note.py`입니다. 이 문서는 해당 Pydantic schema와 같은 계약을 설명합니다.
 
 ## 1. EvidenceType
 
@@ -30,7 +30,9 @@ model_inference
   "counseling_goal": "진로 선택 과정에서 자기이해를 높이고 실행 가능한 준비 계획을 세움.",
   "psychological_test_summary": "",
   "key_issue_tags": ["진로불안", "자기비난", "취업준비"],
-  "nonverbal_notes": ""
+  "nonverbal_notes": "",
+  "target_document_type": "session_note",
+  "persist": false
 }
 ```
 
@@ -48,6 +50,9 @@ model_inference
 - `session_no` → `session_number`
 - `transcript` → `transcript_text`
 - `prev_summary` → `previous_session_summary`
+- `document_type` → `target_document_type`
+
+`target_document_type`는 `session_note`, `supervision_report`, `termination_report` 중 하나입니다. `persist=true`는 Supabase 설정과 `ENABLE_PERSISTENCE=1`이 있을 때만 저장을 요청합니다.
 
 ## 3. SanitizedInput
 
@@ -211,7 +216,7 @@ model_inference
   "unsupported_or_risky_claims": [
     {
       "claim": "사례개념화, 위험 판단, 목표 달성 정도를 자동으로 확정하지 않음.",
-      "reason": "MVP V0의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
+      "reason": "현재 MVP의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
       "recommendation": "상담사가 직접 작성하거나 별도 확인 필드로 분리"
     }
   ],
@@ -223,7 +228,7 @@ model_inference
     },
     {
       "field": "case_conceptualization",
-      "reason": "MVP V0 자동 생성 대상이 아님"
+      "reason": "현재 MVP 자동 생성 대상이 아님"
     },
     {
       "field": "goal_attainment",
@@ -235,7 +240,7 @@ model_inference
 
 ## 8. DocumentTransformPreview
 
-MVP V0에서 preview 수준으로 제공하는 문서 변환 결과입니다.
+MVP V1에서 preview 수준으로 제공하는 문서 변환 결과입니다.
 
 ```json
 {
@@ -258,11 +263,64 @@ MVP V0에서 preview 수준으로 제공하는 문서 변환 결과입니다.
     "사례개념화 및 상담방향성",
     "슈퍼비전 요청사항"
   ],
-  "notice": "MVP V0에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다."
+  "notice": "현재 MVP에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다."
 }
 ```
 
-## 9. GenerateNoteResponse
+## 9. Retrieval Context
+
+`ENABLE_RAG=1`과 Supabase 설정이 있을 때 다음 필드가 채워질 수 있습니다. 없으면 빈 배열 또는 `null`로 반환되어 기존 동작을 유지합니다.
+
+```json
+{
+  "retrieved_case_context": [
+    {
+      "source_ref": "stored_session_note:<session_id>",
+      "session_id": "<session_id>",
+      "session_number": 2,
+      "session_date": "2026-05-03",
+      "summary": "이전 회기 요약",
+      "confirmed_note": {},
+      "evidence_items": [
+        {
+          "id": "<evidence_id>",
+          "source_type": "direct",
+          "source_ref": "stored_evidence:<evidence_id>",
+          "source_text": "이전 회기의 근거 문장",
+          "linked_field": "session_content"
+        }
+      ]
+    }
+  ],
+  "retrieved_template_context": {
+    "target_document_type": "session_note",
+    "required_fields": ["주호소", "상담 내용", "다음 계획"],
+    "optional_fields": [],
+    "counselor_review_fields": ["사례개념화"],
+    "missing_field_checklist": ["목표 달성 정도"],
+    "source_refs": ["kb_template:<chunk_id>"]
+  },
+  "retrieved_privacy_context": [
+    {
+      "source_ref": "kb_privacy:<chunk_id>",
+      "title": "Privacy minimization principle",
+      "category": "privacy_rule",
+      "rule": "필요 최소한의 정보만 저장한다는 원칙",
+      "warning": "저장 전 비식별화와 동의 필요 여부를 확인하세요."
+    }
+  ],
+  "retrieval_report": {
+    "enabled": true,
+    "case_context_count": 1,
+    "template_context_found": true,
+    "privacy_rule_count": 1,
+    "failures": [],
+    "notices": []
+  }
+}
+```
+
+## 10. GenerateNoteResponse
 
 ```json
 {
@@ -273,13 +331,19 @@ MVP V0에서 preview 수준으로 제공하는 문서 변환 결과입니다.
   "document_transform_preview": {},
   "confirmed_session_note": {},
   "sanitized_input": {},
+  "retrieved_case_context": [],
+  "retrieved_template_context": null,
+  "retrieved_privacy_context": [],
+  "retrieval_report": {},
+  "persistence_report": {},
   "stub": true
 }
 ```
 
-## 10. 원칙
+## 11. 원칙
 
 - 모든 LLM 출력은 Pydantic model로 검증합니다.
 - 입력에 없는 정보는 확정적으로 추론하지 않습니다.
 - 진단, 위험 평가, 상담사 평가, 사례개념화의 최종 판단은 자동화하지 않습니다.
 - `reflection`, `case_conceptualization`, `goal_attainment`는 상담사 확인 필요로 표시합니다.
+- RAG는 이전 회기 기록, 문서 양식, 개인정보/윤리/보안 경계 검토에만 사용합니다.

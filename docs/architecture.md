@@ -2,7 +2,7 @@
 
 ## 1. 개요
 
-Re:mind MVP V0의 주 경로는 React frontend, FastAPI backend, LangGraph 기반 6-agent workflow입니다.
+Re:mind MVP V1의 주 경로는 React frontend, FastAPI backend, LangGraph 기반 workflow, optional Supabase retrieval입니다.
 
 ```text
 React Frontend
@@ -10,6 +10,8 @@ React Frontend
 FastAPI
   ↓
 LangGraph Workflow
+  ↓
+Optional Supabase retrieval
   ↓
 OpenAI API 또는 deterministic stub
   ↓
@@ -57,6 +59,7 @@ Backend 책임:
 
 - Pydantic 입력/출력 검증
 - LangGraph workflow 실행
+- Supabase 저장 및 lightweight retrieval은 환경변수가 켜진 경우에만 수행
 - OpenAI API 또는 deterministic stub 호출
 - 구조화된 JSON 응답 반환
 
@@ -73,6 +76,8 @@ POST /api/notes/generate
 
 ```text
 sanitize_input
+  ↓
+retrieve_context
   ↓
 structure_session
   ↓
@@ -92,6 +97,13 @@ transform_document_preview
 - 입력 자료 정제
 - 상담사 메모, 축어록/STT, 이전 회기 요약 분리
 - 전화번호, 이메일, 학교명, 실명 후보 탐지
+
+### retrieve_context
+
+- `case_id` 기준 최근 이전 회기 기록 retrieval
+- 문서 목적별 양식 KB retrieval
+- 개인정보/윤리/보안 규칙 KB retrieval
+- Supabase 또는 RAG가 꺼져 있으면 빈 context로 계속 진행
 
 ### structure_session
 
@@ -118,13 +130,13 @@ transform_document_preview
 ### transform_document_preview
 
 - 확정된 회기요약을 슈퍼비전 보고서 또는 종결 보고서로 확장하기 위한 preview 제공
-- MVP V0에서는 정식 문서 변환/export가 아니라 부족 필드와 일부 preview section만 반환
+- 현재 MVP에서는 정식 문서 변환/export가 아니라 부족 필드와 일부 preview section만 반환
 
 ## 6. 데이터 저장
 
-MVP V0에서는 세션 데이터를 데이터베이스에 저장하지 않습니다.
+MVP V1에서는 `ENABLE_PERSISTENCE=1`, Supabase credentials, 요청의 `persist=true`가 모두 있을 때만 생성 결과를 Supabase에 저장합니다.
 
-모든 데이터는 요청 단위로 처리합니다. DB 저장, 인증, RAG, 파일 업로드, 음성 저장은 MVP V0 제외 범위입니다.
+인증, 사용자별 Row Level Security, 감사 로그, 보관기간 정책은 아직 production 범위가 아닙니다. Supabase가 설정되지 않으면 모든 데이터는 기존처럼 요청 단위로 처리됩니다.
 
 ## 7. 출력 검증 원칙
 

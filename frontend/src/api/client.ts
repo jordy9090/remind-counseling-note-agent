@@ -35,6 +35,8 @@ export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftR
     psychological_test_summary: input.psychological_test_summary || '',
     key_issue_tags: input.key_issue_tags || [],
     nonverbal_notes: input.nonverbal_notes || '',
+    target_document_type: input.target_document_type || 'session_note',
+    persist: Boolean(input.persist),
   })
   return toNoteDraftResponse(response.data)
 }
@@ -92,12 +94,18 @@ function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftRespo
     evidence_check: buildEvidenceCheck(fullResponse),
     missing_items: unique([
       ...fullResponse.document_transform_preview.missing_required_fields,
+      ...(fullResponse.retrieved_template_context?.missing_field_checklist || []),
       ...verification.requires_counselor_review.map((item) => item.field),
     ]),
     warnings: unique([
       'AI 초안은 상담사의 검토 전 최종 회기 기록으로 사용되지 않습니다.',
       ...verification.unsupported_or_risky_claims.map((item) => item.claim),
       ...verification.sensitive_info_items.map((item) => `민감정보 후보: ${item.text}`),
+      ...(fullResponse.retrieved_privacy_context || []).map((item) => item.warning),
+      ...(fullResponse.retrieval_report?.failures || []).map((item) => `검색 실패: ${item}`),
+      ...(fullResponse.persistence_report?.requested && !fullResponse.persistence_report?.stored
+        ? [fullResponse.persistence_report.message]
+        : []),
     ]),
     full_response: fullResponse,
   }
@@ -119,6 +127,11 @@ function buildEvidenceCheck(fullResponse: GenerateNoteResponse): EvidenceCheckIt
 }
 
 function getSourceType(evidenceType: EvidenceType, refs: string[]): EvidenceSourceType {
+  if (refs.some((ref) => ref.startsWith('stored_session_note:') || ref.startsWith('stored_evidence:'))) {
+    return 'retrieved_context'
+  }
+  if (refs.some((ref) => ref.startsWith('kb_template:'))) return 'template_context'
+  if (refs.some((ref) => ref.startsWith('kb_privacy:'))) return 'privacy_context'
   if (['inferred', 'model_inference', 'needs_review'].includes(evidenceType)) {
     return 'ai_inference'
   }
@@ -130,7 +143,13 @@ function getSourceType(evidenceType: EvidenceType, refs: string[]): EvidenceSour
 
 function getSourceExcerpt(fullResponse: GenerateNoteResponse, sourceType: EvidenceSourceType, refs: string[]): string {
   const sources = fullResponse.sanitized_input.sources
-  const sourceText = refs.includes('nonverbal_notes')
+  const sourceText = sourceType === 'retrieved_context'
+    ? getRetrievedContextExcerpt(fullResponse, refs)
+    : sourceType === 'template_context'
+      ? getTemplateContextExcerpt(fullResponse)
+      : sourceType === 'privacy_context'
+        ? getPrivacyContextExcerpt(fullResponse, refs)
+        : refs.includes('nonverbal_notes')
     ? sources.nonverbal_notes
     : sourceType === 'transcript'
       ? sources.transcript_text
@@ -146,8 +165,41 @@ function getSourceExcerpt(fullResponse: GenerateNoteResponse, sourceType: Eviden
 
 function getConfidence(evidenceType: EvidenceType): EvidenceConfidence {
   if (evidenceType === 'direct') return 'high'
-  if (['mixed', 'counselor_input', 'previous_context'].includes(evidenceType)) return 'medium'
+  if (['mixed', 'counselor_input', 'previous_context', 'prior_context_based'].includes(evidenceType)) return 'medium'
   return 'low'
+}
+
+function getRetrievedContextExcerpt(fullResponse: GenerateNoteResponse, refs: string[]): string {
+  const contexts = fullResponse.retrieved_case_context || []
+  const sessionRef = refs.find((ref) => ref.startsWith('stored_session_note:'))
+  if (sessionRef) {
+    const context = contexts.find((item) => item.source_ref === sessionRef)
+    if (context?.summary) return context.summary
+  }
+
+  const evidenceRef = refs.find((ref) => ref.startsWith('stored_evidence:'))
+  if (evidenceRef) {
+    for (const context of contexts) {
+      const evidence = context.evidence_items.find((item) => item.source_ref === evidenceRef)
+      if (evidence?.source_text) return evidence.source_text
+    }
+  }
+  return '저장된 이전 회기 기록을 참고한 문장입니다. 원문 연결을 확인해주세요.'
+}
+
+function getTemplateContextExcerpt(fullResponse: GenerateNoteResponse): string {
+  const template = fullResponse.retrieved_template_context
+  if (!template) return '문서 양식 KB에서 가져온 기준입니다.'
+  return [
+    template.required_fields.length ? `필수: ${template.required_fields.join(', ')}` : '',
+    template.counselor_review_fields.length ? `상담사 확인: ${template.counselor_review_fields.join(', ')}` : '',
+  ].filter(Boolean).join(' / ') || '문서 양식 KB에서 가져온 기준입니다.'
+}
+
+function getPrivacyContextExcerpt(fullResponse: GenerateNoteResponse, refs: string[]): string {
+  const ref = refs.find((item) => item.startsWith('kb_privacy:'))
+  const rule = (fullResponse.retrieved_privacy_context || []).find((item) => item.source_ref === ref)
+  return rule ? `${rule.rule} ${rule.warning}` : '개인정보/윤리 KB에서 가져온 검토 기준입니다.'
 }
 
 function unique(items: string[]): string[] {

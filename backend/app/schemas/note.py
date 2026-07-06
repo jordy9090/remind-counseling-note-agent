@@ -11,10 +11,13 @@ EvidenceType = Literal[
     "inferred",
     "counselor_input",
     "previous_context",
+    "prior_context_based",
     "needs_review",
     "mixed",
     "model_inference",
 ]
+
+TargetDocumentType = Literal["session_note", "supervision_report", "termination_report"]
 
 
 class SessionInput(BaseModel):
@@ -36,6 +39,11 @@ class SessionInput(BaseModel):
     psychological_test_summary: str = ""
     key_issue_tags: list[str] = Field(default_factory=list)
     nonverbal_notes: str = ""
+    target_document_type: TargetDocumentType = Field(
+        default="session_note",
+        validation_alias=AliasChoices("target_document_type", "document_type"),
+    )
+    persist: bool = False
 
 
 class SensitiveInfoCandidate(BaseModel):
@@ -152,6 +160,60 @@ class DocumentTransformPreview(BaseModel):
     notice: str
 
 
+class RetrievedEvidenceItem(BaseModel):
+    id: str | None = None
+    source_type: str = ""
+    source_ref: str
+    source_text: str
+    linked_field: str = ""
+
+
+class RetrievedCaseContextItem(BaseModel):
+    source_ref: str
+    session_id: str
+    session_number: int | None = None
+    session_date: str = ""
+    summary: str = ""
+    confirmed_note: dict[str, Any] = Field(default_factory=dict)
+    evidence_items: list[RetrievedEvidenceItem] = Field(default_factory=list)
+
+
+class RetrievedTemplateContext(BaseModel):
+    target_document_type: TargetDocumentType = "session_note"
+    required_fields: list[str] = Field(default_factory=list)
+    optional_fields: list[str] = Field(default_factory=list)
+    counselor_review_fields: list[str] = Field(default_factory=list)
+    missing_field_checklist: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class RetrievedPrivacyRule(BaseModel):
+    source_ref: str
+    title: str
+    category: str = "privacy_rule"
+    rule: str
+    warning: str
+
+
+class RetrievalReport(BaseModel):
+    enabled: bool = False
+    case_context_count: int = 0
+    template_context_found: bool = False
+    privacy_rule_count: int = 0
+    failures: list[str] = Field(default_factory=list)
+    notices: list[str] = Field(default_factory=list)
+
+
+class PersistenceReport(BaseModel):
+    enabled: bool = False
+    requested: bool = False
+    stored: bool = False
+    case_id: str | None = None
+    session_id: str | None = None
+    note_id: str | None = None
+    message: str = ""
+
+
 class GenerateNoteResponse(BaseModel):
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
@@ -160,6 +222,11 @@ class GenerateNoteResponse(BaseModel):
     document_transform_preview: DocumentTransformPreview
     confirmed_session_note: dict[str, Any] = Field(default_factory=dict)
     sanitized_input: SanitizedInput
+    retrieved_case_context: list[RetrievedCaseContextItem] = Field(default_factory=list)
+    retrieved_template_context: RetrievedTemplateContext | None = None
+    retrieved_privacy_context: list[RetrievedPrivacyRule] = Field(default_factory=list)
+    retrieval_report: RetrievalReport = Field(default_factory=RetrievalReport)
+    persistence_report: PersistenceReport = Field(default_factory=PersistenceReport)
     stub: bool = False
 
 

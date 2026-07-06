@@ -1,6 +1,6 @@
-# MVP V0 스펙
+# MVP V1 스펙
 
-이 문서는 현재 구현된 MVP V0 기준의 스펙입니다.
+이 문서는 현재 구현된 MVP V1 기준의 스펙입니다.
 
 ## 1. 주 경로
 
@@ -9,7 +9,9 @@ React Frontend
   ↓
 FastAPI Backend
   ↓
-LangGraph 6-agent Workflow
+LangGraph Retrieval-aware Workflow
+  ↓
+Optional Supabase Retrieval/Persistence
   ↓
 Pydantic validated JSON
 ```
@@ -27,6 +29,8 @@ Workflow:
 
 ```text
 sanitize_input
+  ↓
+retrieve_context
   ↓
 structure_session
   ↓
@@ -49,6 +53,8 @@ API key 처리:
 
 - `OPENAI_API_KEY`가 있고 `USE_STUB=0`이면 OpenAI API 사용
 - `OPENAI_API_KEY`가 없거나 `USE_STUB=1`이면 deterministic stub output 사용
+- `ENABLE_RAG=1`과 Supabase credentials가 있으면 case memory/template/privacy KB retrieval 사용
+- `ENABLE_PERSISTENCE=1`과 요청의 `persist=true`가 있으면 Supabase 저장 시도
 
 ## 3. Frontend
 
@@ -65,6 +71,7 @@ frontend/src/pages/SessionDraftPage.tsx
 - 구조화 결과 탭
 - 회기요약 초안 textarea 편집
 - 검증 리포트 탭
+- retrieval 요약 패널
 - 문서 변환 Preview 탭
 - Raw JSON 탭
 
@@ -79,12 +86,11 @@ sample_data/session_output_001.json
 
 ## 5. 제외 항목
 
-- DB 저장
 - 인증
 - 파일 업로드
 - 음성 업로드
 - 실시간 STT
-- Vector DB/RAG
+- pgvector 기반 의미 검색
 - AI 슈퍼비전
 - 자동 사례개념화
 - 정식 문서 export

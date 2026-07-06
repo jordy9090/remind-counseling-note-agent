@@ -2,7 +2,7 @@
 
 ## 1. 데모 목표
 
-Re:mind MVP V0가 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 받아 6-agent backend pipeline을 실행하고, React 화면에서 결과를 확인하는 흐름을 보여줍니다.
+Re:mind MVP V1이 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 받아 retrieval-aware backend workflow를 실행하고, React 화면에서 결과를 확인하는 흐름을 보여줍니다.
 
 ## 2. 실행 준비
 
@@ -117,7 +117,7 @@ reflection, 사례개념화, 목표 달성 정도는 상담사 확인 필요 영
 
 문서 변환 Preview 탭에서는 슈퍼비전 보고서와 종결 보고서로 확장할 때 필요한 추가 필드를 확인합니다.
 
-MVP V0에서는 정식 문서 변환/export가 아니라 preview 수준임을 설명합니다.
+현재 MVP에서는 정식 문서 변환/export가 아니라 preview 수준임을 설명합니다.
 
 ## 5. 강조할 점
 
