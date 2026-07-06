@@ -141,19 +141,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
         session_rows = storage.upsert(
             "sessions",
-            [
-                {
-                    "case_id": session_input.case_id,
-                    "session_number": session_input.session_number,
-                    "session_date": session_input.session_date or None,
-                    "session_title": _session_title(session_input),
-                    "raw_input_text": _raw_input_text(session_input),
-                    "sanitized_input_text": json.dumps(
-                        result.sanitized_input.model_dump(mode="json"),
-                        ensure_ascii=False,
-                    ),
-                }
-            ],
+            [_build_session_row(session_input, result)],
             on_conflict="case_id,session_number",
         )
         session_id = str(session_rows[0]["id"]) if session_rows else None
@@ -202,7 +190,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
 
         report.stored = True
-        report.message = "Generated note was stored in Supabase."
+        report.message = _stored_message()
     except Exception as error:
         report.message = f"Supabase persistence failed; generation response was preserved: {error}"
     return report
@@ -226,3 +214,26 @@ def _raw_input_text(session_input: SessionInput) -> str:
         "nonverbal_notes": session_input.nonverbal_notes,
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse) -> dict[str, Any]:
+    return {
+        "case_id": session_input.case_id,
+        "session_number": session_input.session_number,
+        "session_date": session_input.session_date or None,
+        "session_title": _session_title(session_input),
+        "raw_input_text": _raw_input_text(session_input) if settings.save_raw_input else None,
+        "sanitized_input_text": json.dumps(
+            result.sanitized_input.model_dump(mode="json"),
+            ensure_ascii=False,
+        ),
+    }
+
+
+def _stored_message() -> str:
+    if settings.save_raw_input:
+        return (
+            "Generated note was stored in Supabase with raw_input_text because SAVE_RAW_INPUT=true. "
+            "Use demo/synthetic data only unless consent, RLS, audit logging, and retention policy are in place."
+        )
+    return "Generated note was stored in Supabase without raw_input_text; sanitized input and metadata were stored."

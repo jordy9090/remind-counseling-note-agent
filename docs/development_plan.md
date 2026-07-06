@@ -7,7 +7,8 @@
 ### 1. 문서/제품 방향 정리
 
 - README와 핵심 docs를 MVP V1 방향으로 정리
-- Re:mind의 주 경로를 React + FastAPI + LangGraph + optional Supabase retrieval로 정의
+- Re:mind의 주 경로를 React + FastAPI + LangGraph 기반 lightweight retrieval-aware workflow로 정의
+- `docs/security_checklist.md`에 실제 상담 데이터 저장 전 보안 요구사항 정리
 
 ### 2. Backend MVP V1 pipeline
 
@@ -19,7 +20,9 @@
 - OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic stub output으로 동작
 - `ENABLE_RAG=1`일 때 case memory, document template, privacy/ethics/security retrieval 시도
 - `ENABLE_PERSISTENCE=1`과 `persist=true`일 때 Supabase 저장 시도
+- `SAVE_RAW_INPUT=0` 기본값으로 raw counselor memo/transcript 저장 방지
 - `backend/smoke_test.py` 추가
+- `.github/workflows/backend-smoke.yml`로 backend smoke test 자동화
 
 ### 3. Frontend MVP V1 demo
 
@@ -37,6 +40,7 @@
 
 - `sample_data/session_input_001.json`을 `SessionInput` schema에 맞춤
 - `sample_data/session_output_001.json`을 `/api/notes/generate`의 full API response에 맞춤
+- `docs/kb_seed_examples.json`과 `scripts/seed_kb_examples.py`로 demo KB seed 경로 제공
 
 ## 현재 검증 명령
 

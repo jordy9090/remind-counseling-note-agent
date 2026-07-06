@@ -45,6 +45,7 @@ Accepted input aliases:
 - `session_no` is also accepted for `session_number`.
 - `document_type` is also accepted for `target_document_type`.
 - `persist=true` stores the generated note only when `ENABLE_PERSISTENCE=1` and Supabase credentials are configured.
+- `SAVE_RAW_INPUT=0` is the default; raw counselor memo/transcript payloads are not stored unless `SAVE_RAW_INPUT=1`.
 
 ### Frontend Display Projection
 

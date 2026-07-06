@@ -2,7 +2,7 @@
 
 Re:mind는 심리상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
 
-MVP V1의 주 경로는 **React + FastAPI + LangGraph + optional Supabase retrieval**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
+MVP V1의 주 경로는 **React + FastAPI + LangGraph 기반 lightweight retrieval-aware workflow**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
 
 ## 제품 원칙
 
@@ -14,6 +14,7 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 - 생성된 초안은 상담사 검토 전 최종 기록으로 사용하지 않습니다.
 - RAG는 상담 판단 보강이 아니라 `case memory`, `document template`, `privacy/ethics/security guardrail`에만 사용합니다.
 - 진단, 임상적 위험도 점수화, 치료 권고, 심리검사 자동 해석은 생성하지 않습니다.
+- 현재 구현은 production-ready RAG나 실서비스 상담 기록 저장소가 아닙니다. 실제 상담 데이터는 인증, RLS, 감사 로그, 보관기간 정책 전에는 저장하지 않습니다.
 
 ## MVP V1 기능 범위
 
@@ -67,9 +68,12 @@ remind-counseling-note-agent/
 │   ├── schema.md
 │   ├── api_contract.md
 │   ├── demo_scenario.md
+│   ├── security_checklist.md
 │   ├── supabase_schema.sql
 │   ├── kb_seed_examples.json
 │   └── development_plan.md
+├── scripts/
+│   └── seed_kb_examples.py
 ├── sample_data/
 │   ├── session_input_001.json
 │   └── session_output_001.json
@@ -96,6 +100,7 @@ remind-counseling-note-agent/
 │       └── services/
 │           ├── llm.py
 │           ├── retrieval.py
+│           ├── supabase_store.py
 │           └── supabase_storage.py
 └── frontend/
     ├── package.json
@@ -145,11 +150,18 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ENABLE_PERSISTENCE=1
 ENABLE_RAG=1
+SAVE_RAW_INPUT=0
 ```
 
-`POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
+`POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. `SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 저장하지 않고 sanitized input과 metadata만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
 
-KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 있습니다. 유료 검사 매뉴얼, 저작권 있는 상담 자료, 실제 내담자 기록은 seed에 넣지 않습니다.
+KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 있습니다. 유료 검사 매뉴얼, 저작권 있는 상담 자료, 실제 내담자 기록은 seed에 넣지 않습니다. Supabase schema를 만든 뒤 demo KB를 넣으려면 repository root에서 다음을 실행합니다.
+
+```bash
+python scripts/seed_kb_examples.py
+```
+
+보안 경계는 [docs/security_checklist.md](docs/security_checklist.md)를 기준으로 확인합니다.
 
 ### Frontend
 
@@ -199,3 +211,4 @@ Sample data는 [sample_data/session_input_001.json](sample_data/session_input_00
 - [아키텍처](docs/architecture.md)
 - [스키마](docs/schema.md)
 - [API 계약](docs/api_contract.md)
+- [보안 체크리스트](docs/security_checklist.md)

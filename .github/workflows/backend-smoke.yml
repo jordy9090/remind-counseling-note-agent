@@ -1,0 +1,35 @@
+name: Backend smoke test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-smoke:
+    runs-on: ubuntu-latest
+    env:
+      USE_STUB: "1"
+      ENABLE_RAG: "0"
+      ENABLE_PERSISTENCE: "0"
+      SAVE_RAW_INPUT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --link-mode=copy
+
+      - name: Run backend smoke test
+        working-directory: backend
+        run: uv run python smoke_test.py

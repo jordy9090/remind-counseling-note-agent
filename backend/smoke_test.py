@@ -16,11 +16,14 @@ from app.core.config import settings
 from app.graph import nodes as graph_nodes
 from app.main import app
 from app.schemas.note import (
+    GenerateNoteResponse,
     RetrievedCaseContextItem,
     RetrievedEvidenceItem,
     RetrievedPrivacyRule,
     RetrievedTemplateContext,
+    SessionInput,
 )
+from app.services.supabase_storage import _build_session_row
 
 
 def main() -> None:
@@ -30,6 +33,8 @@ def main() -> None:
     settings.enable_rag = False
     settings.supabase_url = None
     settings.supabase_service_role_key = None
+    settings.supabase_service_key = None
+    settings.save_raw_input = False
 
     client = TestClient(app)
     health = client.get("/api/health")
@@ -55,6 +60,14 @@ def main() -> None:
         assert data["retrieval_report"]["enabled"] is False
         assert data["retrieved_case_context"] == []
         assert data["persistence_report"]["requested"] is False
+
+        session_row = _build_session_row(SessionInput(**payload), GenerateNoteResponse(**data))
+        assert session_row["raw_input_text"] is None
+        assert session_row["sanitized_input_text"]
+        settings.save_raw_input = True
+        raw_session_row = _build_session_row(SessionInput(**payload), GenerateNoteResponse(**data))
+        assert raw_session_row["raw_input_text"]
+        settings.save_raw_input = False
 
         persist_without_supabase = client.post("/api/notes/generate", json={**payload, "persist": True})
         assert persist_without_supabase.status_code == 200, persist_without_supabase.text

@@ -9,6 +9,7 @@ direct
 inferred
 counselor_input
 previous_context
+prior_context_based
 needs_review
 mixed
 model_inference
@@ -52,7 +53,7 @@ model_inference
 - `prev_summary` → `previous_session_summary`
 - `document_type` → `target_document_type`
 
-`target_document_type`는 `session_note`, `supervision_report`, `termination_report` 중 하나입니다. `persist=true`는 Supabase 설정과 `ENABLE_PERSISTENCE=1`이 있을 때만 저장을 요청합니다.
+`target_document_type`는 `session_note`, `supervision_report`, `termination_report` 중 하나입니다. `persist=true`는 Supabase 설정과 `ENABLE_PERSISTENCE=1`이 있을 때만 저장을 요청합니다. 기본 설정인 `SAVE_RAW_INPUT=0`에서는 원본 상담사 메모/축어록 JSON을 저장하지 않고 sanitized input과 metadata만 저장합니다.
 
 ## 3. SanitizedInput
 
@@ -340,7 +341,27 @@ MVP V1에서 preview 수준으로 제공하는 문서 변환 결과입니다.
 }
 ```
 
-## 11. 원칙
+## 11. Persistence Policy
+
+`persistence_report`는 Supabase 저장 요청과 결과를 설명합니다.
+
+```json
+{
+  "enabled": true,
+  "requested": true,
+  "stored": true,
+  "case_id": "CASE001",
+  "session_id": "<session_id>",
+  "note_id": "<note_id>",
+  "message": "Generated note was stored in Supabase without raw_input_text; sanitized input and metadata were stored."
+}
+```
+
+- `SAVE_RAW_INPUT=0`: `sessions.raw_input_text`는 `NULL`로 저장됩니다.
+- `SAVE_RAW_INPUT=1`: synthetic/demo data 또는 명시적으로 승인된 테스트에서만 사용합니다.
+- 실제 상담 데이터 저장 전 인증, RLS, audit log, retention policy가 필요합니다.
+
+## 12. 원칙
 
 - 모든 LLM 출력은 Pydantic model로 검증합니다.
 - 입력에 없는 정보는 확정적으로 추론하지 않습니다.

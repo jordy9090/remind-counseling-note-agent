@@ -18,6 +18,9 @@ create table if not exists sessions (
   session_number integer not null,
   session_date date,
   session_title text,
+  -- Kept nullable by design. The app stores NULL unless SAVE_RAW_INPUT=1.
+  -- Do not store real counselor memo/transcript text before auth, RLS,
+  -- audit logging, explicit consent, and retention policy are in place.
   raw_input_text text,
   sanitized_input_text text,
   created_at timestamptz not null default now(),

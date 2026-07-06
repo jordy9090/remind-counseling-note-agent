@@ -2,7 +2,7 @@
 
 ## 1. 개요
 
-Re:mind MVP V1의 주 경로는 React frontend, FastAPI backend, LangGraph 기반 workflow, optional Supabase retrieval입니다.
+Re:mind MVP V1의 주 경로는 React frontend, FastAPI backend, LangGraph 기반 lightweight retrieval-aware workflow, optional Supabase retrieval입니다.
 
 ```text
 React Frontend
@@ -136,7 +136,9 @@ transform_document_preview
 
 MVP V1에서는 `ENABLE_PERSISTENCE=1`, Supabase credentials, 요청의 `persist=true`가 모두 있을 때만 생성 결과를 Supabase에 저장합니다.
 
-인증, 사용자별 Row Level Security, 감사 로그, 보관기간 정책은 아직 production 범위가 아닙니다. Supabase가 설정되지 않으면 모든 데이터는 기존처럼 요청 단위로 처리됩니다.
+`SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 `NULL`로 저장됩니다. `SAVE_RAW_INPUT=1`은 synthetic/demo data 또는 명시적으로 승인된 테스트에서만 사용합니다.
+
+인증, 사용자별 Row Level Security, 감사 로그, 보관기간 정책은 아직 production 범위가 아닙니다. Supabase가 설정되지 않으면 모든 데이터는 기존처럼 요청 단위로 처리됩니다. 자세한 운영 전 체크리스트는 `docs/security_checklist.md`를 따릅니다.
 
 ## 7. 출력 검증 원칙
 

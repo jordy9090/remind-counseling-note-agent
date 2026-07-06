@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     supabase_drafts_table: str = "counseling_drafts"
     enable_persistence: bool = False
     enable_rag: bool = False
+    save_raw_input: bool = False
 
     class Config:
         env_file = ".env"
