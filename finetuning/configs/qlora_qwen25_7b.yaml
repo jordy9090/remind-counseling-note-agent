@@ -1,0 +1,29 @@
+# QLoRA SFT config — Qwen2.5-7B-Instruct (Apache-2.0, 한국어 성능 우수)
+# 대안 베이스 모델:
+#   google/gemma-2-9b-it            (Gemma license — 상업 이용 가능, 정책 준수 필요)
+#   meta-llama/Llama-3.1-8B-Instruct (Llama community license, HF 승인 필요)
+#   Qwen/Qwen2.5-14B-Instruct        (VRAM 여유 시 품질 상승)
+
+base_model: Qwen/Qwen2.5-7B-Instruct
+data_dir: finetuning/data/processed
+output_dir: finetuning/output/qwen25-7b-remind-note-qlora
+
+# AI Hub 71806 실측 (Qwen 토크나이저): 축어록+노트 p50=15.8k, p90=19k 토큰.
+# build_sft_dataset.py --max-chars 28000 으로 초과분을 제외하고 20k 컨텍스트로 학습.
+# 20k 시퀀스 QLoRA는 A100 40GB 이상 권장 (T4/L4 불가). VRAM이 부족하면
+# --max-chars 를 낮추고 max_seq_length 를 함께 줄이세요 (예: 16000 / 11264).
+max_seq_length: 20480
+epochs: 2
+batch_size: 1
+gradient_accumulation: 16   # 유효 배치 16
+learning_rate: 2.0e-4
+eval_steps: 100
+save_steps: 200
+report_to: none             # wandb 사용 시 "wandb"
+use_liger: true             # fused CE로 logits 메모리 제거 (긴 시퀀스 OOM 방지)
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]

@@ -204,6 +204,11 @@ npm run build
 
 Sample data는 [sample_data/session_input_001.json](sample_data/session_input_001.json)과 [sample_data/session_output_001.json](sample_data/session_output_001.json)을 사용합니다.
 
+## 모델 파인튜닝
+
+회기요약 생성 모델을 자체 오픈 LLM(QLoRA SFT)으로 대체하기 위한 데이터 파이프라인과
+학습 스크립트는 [finetuning/README.md](finetuning/README.md)를 참고합니다.
+
 ## 문서
 
 - [제품 명세](docs/product_spec.md)

@@ -1,0 +1,4 @@
+# 데이터 파이프라인용 (CPU에서 실행 가능)
+datasets>=3.0
+huggingface_hub
+openai>=1.40   # data/synthesize_notes.py 에만 필요

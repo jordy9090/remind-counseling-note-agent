@@ -1,0 +1,10 @@
+# GPU 학습 환경용 (Colab/RunPod 등). 데이터 파이프라인만 돌릴 땐 requirements.txt 사용.
+torch>=2.4
+transformers>=4.49
+trl>=0.17
+peft>=0.14
+bitsandbytes>=0.45
+datasets>=3.0
+accelerate>=1.0
+liger-kernel>=0.5   # 긴 시퀀스(20k) 학습 시 logits 메모리 제거 — 사실상 필수
+pyyaml
