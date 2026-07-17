@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -32,13 +32,18 @@ import {
 } from 'lucide-react'
 import {
   downloadDocumentExport,
+  extractDocumentMaterial,
+  getAudioCapabilities,
   getDocumentCapabilities,
   generateNoteDraft,
   generateSupervisionReport,
   recomposeNoteDraft,
   saveTemporaryDraft,
+  transcribeAudio,
 } from '../api/client'
 import type {
+  AudioCapabilitiesResponse,
+  AudioSegment,
   DocumentCapabilitiesResponse,
   DocumentExportFormat,
   DocumentExportRequest,
@@ -72,6 +77,11 @@ type MaterialModalMode =
   | 'basic_info'
   | 'paste_text'
   | 'file_upload'
+  | 'document_upload'
+  | 'audio_upload'
+  | 'document_preview'
+  | 'material_apply'
+  | 'audio_review'
   | 'load_previous'
   | 'write_memo'
   | 'write_test'
@@ -104,9 +114,39 @@ type SourceBadgeKind =
   | 'editable'
   | 'needs_review'
 
-interface AttachmentItem {
+type UploadedMaterialKind = 'document' | 'audio'
+type UploadedMaterialStatus =
+  | 'uploading'
+  | 'completed'
+  | 'warning'
+  | 'selected'
+  | 'transcribing'
+  | 'transcribed'
+  | 'failed'
+type MaterialApplyTarget =
+  | 'transcript_text'
+  | 'counselor_memo'
+  | 'previous_session_summary'
+  | 'psychological_test_summary'
+type MaterialApplyMode = 'append' | 'replace'
+
+interface UploadedMaterial {
   id: string
-  name: string
+  kind: UploadedMaterialKind
+  filename: string
+  mediaType?: string
+  status: UploadedMaterialStatus
+  characterCount?: number
+  pageCount?: number | null
+  extractedText?: string
+  warnings: string[]
+  error?: string
+  file?: File
+  objectUrl?: string
+  transcriptText?: string
+  segments?: AudioSegment[]
+  durationSeconds?: number | null
+  language?: string | null
 }
 
 interface CompactEvidence {
@@ -299,9 +339,11 @@ export default function SessionDraftPage() {
   const [sessionTopic, setSessionTopic] = useState('발표 이후 비교사고와 회피 행동 점검')
   const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>('session_note')
   const [isDeidentified, setIsDeidentified] = useState(true)
-  const [attachments, setAttachments] = useState<AttachmentItem[]>([])
+  const [materials, setMaterials] = useState<UploadedMaterial[]>([])
+  const objectUrlsRef = useRef<Set<string>>(new Set())
   const [selectedPreviousSessionIds, setSelectedPreviousSessionIds] = useState<string[]>(defaultPreviousSessionIds)
   const [materialModal, setMaterialModal] = useState<MaterialModalMode | null>(null)
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -328,13 +370,22 @@ export default function SessionDraftPage() {
   const [documentExportStatus, setDocumentExportStatus] = useState<string | null>(null)
   const [documentCapabilities, setDocumentCapabilities] = useState<DocumentCapabilitiesResponse | null>(null)
   const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
+  const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
+  const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
 
   const hasMaterials = Boolean(
     form.counselor_memo.trim() ||
       form.transcript_text.trim() ||
       form.psychological_test_summary?.trim() ||
-      attachments.length,
+      materials.length,
   )
+
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      objectUrlsRef.current.clear()
+    }
+  }, [])
 
   const activeStep = getActiveStep(currentScreen)
   const completedSteps = useMemo(() => {
@@ -364,17 +415,185 @@ export default function SessionDraftPage() {
     })
   }
 
-  const addAttachments = (files: FileList | null) => {
+  const uploadDocumentFiles = async (files: FileList | null) => {
     if (!files?.length) return
-    const nextFiles = Array.from(files).map((file) => ({
-      id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-      name: file.name,
+    const selectedFiles = Array.from(files)
+    const pendingMaterials: UploadedMaterial[] = selectedFiles.map((file) => ({
+      id: makeMaterialId(file),
+      kind: 'document',
+      filename: file.name,
+      mediaType: file.type,
+      status: 'uploading',
+      warnings: [],
     }))
-    setAttachments((prev) => [...prev, ...nextFiles])
+    setMaterials((prev) => [...pendingMaterials, ...prev])
+
+    await Promise.all(
+      selectedFiles.map(async (file, index) => {
+        const localId = pendingMaterials[index].id
+        try {
+          const extracted = await extractDocumentMaterial(file)
+          setMaterials((prev) =>
+            prev.map((material) =>
+              material.id === localId
+                ? {
+                    ...material,
+                    id: extracted.material_id || localId,
+                    filename: extracted.filename,
+                    mediaType: extracted.media_type,
+                    status: extracted.warnings.length ? 'warning' : 'completed',
+                    characterCount: extracted.character_count,
+                    pageCount: extracted.page_count,
+                    extractedText: extracted.extracted_text,
+                    warnings: extracted.warnings,
+                    error: undefined,
+                  }
+                : material,
+            ),
+          )
+        } catch (err) {
+          const message = err instanceof Error ? err.message : '문서 내용을 추출하지 못했습니다.'
+          setMaterials((prev) =>
+            prev.map((material) =>
+              material.id === localId ? { ...material, status: 'failed', error: message } : material,
+            ),
+          )
+        }
+      }),
+    )
   }
 
-  const removeAttachment = (attachmentId: string) => {
-    setAttachments((prev) => prev.filter((item) => item.id !== attachmentId))
+  const addAudioFiles = async (files: FileList | null) => {
+    if (!files?.length) return
+    await refreshAudioCapabilities()
+    const nextMaterials = Array.from(files).map((file) => {
+      const objectUrl = URL.createObjectURL(file)
+      objectUrlsRef.current.add(objectUrl)
+      return {
+        id: makeMaterialId(file),
+        kind: 'audio' as const,
+        filename: file.name,
+        mediaType: file.type,
+        status: 'selected' as const,
+        warnings: [],
+        file,
+        objectUrl,
+      }
+    })
+    setMaterials((prev) => [...nextMaterials, ...prev])
+  }
+
+  const removeMaterial = (materialId: string) => {
+    setMaterials((prev) => {
+      const target = prev.find((material) => material.id === materialId)
+      revokeObjectUrl(target?.objectUrl)
+      return prev.filter((item) => item.id !== materialId)
+    })
+    if (selectedMaterialId === materialId) {
+      setSelectedMaterialId(null)
+    }
+  }
+
+  const refreshAudioCapabilities = async () => {
+    setAudioCapabilitiesError(null)
+    try {
+      const capabilities = await getAudioCapabilities()
+      setAudioCapabilities(capabilities)
+      return capabilities
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '음성 업로드 지원 상태를 확인하지 못했습니다.'
+      setAudioCapabilitiesError(message)
+      const fallback: AudioCapabilitiesResponse = {
+        upload: { available: true },
+        transcription: { available: false, reason: message },
+        speaker_diarization: { available: false, reason: '화자 분리는 현재 지원하지 않습니다.' },
+      }
+      setAudioCapabilities(fallback)
+      return fallback
+    }
+  }
+
+  const transcribeAudioMaterial = async (materialId: string) => {
+    const target = materials.find((material) => material.id === materialId)
+    if (!target?.file) return
+    setMaterials((prev) =>
+      prev.map((material) => (material.id === materialId ? { ...material, status: 'transcribing', error: undefined } : material)),
+    )
+    try {
+      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe')
+      setMaterials((prev) =>
+        prev.map((material) =>
+          material.id === materialId
+            ? {
+                ...material,
+                status: 'transcribed',
+                transcriptText: transcription.transcript_text,
+                segments: transcription.segments,
+                durationSeconds: transcription.duration_seconds,
+                language: transcription.language,
+                warnings: transcription.warnings,
+                error: undefined,
+                file: undefined,
+              }
+            : material,
+        ),
+      )
+      setSelectedMaterialId(materialId)
+      setMaterialModal('audio_review')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '음성 축어록을 생성하지 못했습니다.'
+      setMaterials((prev) =>
+        prev.map((material) =>
+          material.id === materialId ? { ...material, status: 'failed', error: message } : material,
+        ),
+      )
+    }
+  }
+
+  const updateAudioTranscript = (materialId: string, text: string) => {
+    setMaterials((prev) =>
+      prev.map((material) => (material.id === materialId ? { ...material, transcriptText: text } : material)),
+    )
+  }
+
+  const updateAudioSegmentText = (materialId: string, segmentId: number, text: string) => {
+    setMaterials((prev) =>
+      prev.map((material) =>
+        material.id === materialId
+          ? {
+              ...material,
+              segments: (material.segments || []).map((segment) =>
+                segment.id === segmentId ? { ...segment, text } : segment,
+              ),
+              transcriptText: (material.segments || [])
+                .map((segment) => (segment.id === segmentId ? text : segment.text))
+                .join('\n'),
+            }
+          : material,
+      ),
+    )
+  }
+
+  const openMaterialPreview = (materialId: string, mode: 'document_preview' | 'audio_review' | 'material_apply') => {
+    setSelectedMaterialId(materialId)
+    setMaterialModal(mode)
+  }
+
+  const applyMaterialToForm = (materialId: string, target: MaterialApplyTarget, mode: MaterialApplyMode) => {
+    const material = materials.find((item) => item.id === materialId)
+    const text = getMaterialText(material)
+    if (!text.trim()) return
+    setForm((prev) => ({
+      ...prev,
+      [target]: mergeMaterialText(String(prev[target] || ''), text, mode),
+    }))
+    setMaterialModal(null)
+  }
+
+  const revokeObjectUrl = (objectUrl?: string) => {
+    if (!objectUrl) return
+    URL.revokeObjectURL(objectUrl)
+    objectUrlsRef.current.delete(objectUrl)
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -589,7 +808,7 @@ export default function SessionDraftPage() {
         session_topic: sessionTopic,
         is_deidentified: isDeidentified,
         selected_previous_session_ids: selectedPreviousSessionIds,
-        attachments,
+        attachments: serializeMaterialsForDraft(materials),
         visible_section_ids: Array.from(visibleSectionIds),
         draft_sections: draftSections,
         final_document_sections: finalDocumentSections,
@@ -711,13 +930,16 @@ export default function SessionDraftPage() {
                   hasSubmitted={hasSubmitted}
                   isDeidentified={isDeidentified}
                   isLoading={isLoading}
-                  attachments={attachments}
+                  materials={materials}
+                  audioCapabilities={audioCapabilities}
                   sessionTopic={sessionTopic}
                   onAddMaterial={() => setMaterialModal('add')}
                   onEditBasicInfo={() => setMaterialModal('basic_info')}
                   onEditMaterial={setMaterialModal}
-                  onRemoveAttachment={removeAttachment}
+                  onOpenMaterial={openMaterialPreview}
+                  onRemoveMaterial={removeMaterial}
                   onSetIsDeidentified={setIsDeidentified}
+                  onTranscribeAudio={transcribeAudioMaterial}
                   onSubmit={handleSubmit}
                 />
               )}
@@ -842,7 +1064,17 @@ export default function SessionDraftPage() {
           onModeChange={setMaterialModal}
           onUpdateField={updateField}
           onUpdateSessionTopic={setSessionTopic}
-          onAddAttachments={addAttachments}
+          materials={materials}
+          selectedMaterial={materials.find((material) => material.id === selectedMaterialId) || null}
+          audioCapabilities={audioCapabilities}
+          audioCapabilitiesError={audioCapabilitiesError}
+          onAddAudioFiles={addAudioFiles}
+          onApplyMaterial={applyMaterialToForm}
+          onRefreshAudioCapabilities={refreshAudioCapabilities}
+          onTranscribeAudio={transcribeAudioMaterial}
+          onUpdateAudioSegmentText={updateAudioSegmentText}
+          onUpdateAudioTranscript={updateAudioTranscript}
+          onUploadDocumentFiles={uploadDocumentFiles}
         />
       )}
     </main>
@@ -1219,7 +1451,7 @@ function CaseMeta({ label, value }: { label: string; value: string }) {
 }
 
 function SessionInputWorkspace({
-  attachments,
+  audioCapabilities,
   completedSteps,
   error,
   form,
@@ -1230,12 +1462,15 @@ function SessionInputWorkspace({
   onAddMaterial,
   onEditBasicInfo,
   onEditMaterial,
-  onRemoveAttachment,
+  onOpenMaterial,
+  onRemoveMaterial,
   onSetIsDeidentified,
+  onTranscribeAudio,
   onSubmit,
+  materials,
   sessionTopic,
 }: {
-  attachments: AttachmentItem[]
+  audioCapabilities: AudioCapabilitiesResponse | null
   completedSteps: number
   error: string | null
   form: SessionInput
@@ -1246,9 +1481,12 @@ function SessionInputWorkspace({
   onAddMaterial: () => void
   onEditBasicInfo: () => void
   onEditMaterial: (mode: MaterialModalMode) => void
-  onRemoveAttachment: (attachmentId: string) => void
+  onOpenMaterial: (materialId: string, mode: 'document_preview' | 'audio_review' | 'material_apply') => void
+  onRemoveMaterial: (materialId: string) => void
   onSetIsDeidentified: (value: boolean) => void
+  onTranscribeAudio: (materialId: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  materials: UploadedMaterial[]
   sessionTopic: string
 }) {
   return (
@@ -1320,13 +1558,16 @@ function SessionInputWorkspace({
                 onAction={() => onEditMaterial('edit_test')}
               />
             )}
-            {attachments.map((attachment) => (
-              <MaterialRow
-                key={attachment.id}
-                label="첨부 파일"
-                meta={attachment.name}
-                actionLabel="삭제"
-                onAction={() => onRemoveAttachment(attachment.id)}
+            {materials.map((material) => (
+              <UploadedMaterialRow
+                key={material.id}
+                material={material}
+                transcriptionAvailable={Boolean(audioCapabilities?.transcription.available)}
+                transcriptionReason={audioCapabilities?.transcription.reason || null}
+                onApply={() => onOpenMaterial(material.id, 'material_apply')}
+                onDelete={() => onRemoveMaterial(material.id)}
+                onPreview={() => onOpenMaterial(material.id, material.kind === 'audio' ? 'audio_review' : 'document_preview')}
+                onTranscribe={() => onTranscribeAudio(material.id)}
               />
             ))}
           </div>
@@ -1339,7 +1580,7 @@ function SessionInputWorkspace({
             className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
           >
             <Plus className="h-3.5 w-3.5" />
-            상담 자료 추가
+            상담 자료 업로드
           </button>
 
           <label className="inline-flex h-8 items-center justify-between gap-3 rounded-md bg-blue-50 px-3 text-blue-700">
@@ -2720,26 +2961,184 @@ function MaterialRow({
   )
 }
 
+function UploadedMaterialRow({
+  material,
+  onApply,
+  onDelete,
+  onPreview,
+  onTranscribe,
+  transcriptionAvailable,
+  transcriptionReason,
+}: {
+  material: UploadedMaterial
+  onApply: () => void
+  onDelete: () => void
+  onPreview: () => void
+  onTranscribe: () => void
+  transcriptionAvailable: boolean
+  transcriptionReason: string | null
+}) {
+  const isDocumentReady = material.kind === 'document' && ['completed', 'warning'].includes(material.status)
+  const isAudioReady = material.kind === 'audio' && material.status === 'transcribed'
+  const canApply = isDocumentReady || isAudioReady
+  const canPreview = canApply
+  const canTranscribe =
+    material.kind === 'audio' &&
+    material.status !== 'transcribed' &&
+    material.status !== 'transcribing' &&
+    transcriptionAvailable
+
+  return (
+    <div className="material-row px-3 py-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-slate-950">
+            {material.kind === 'document' ? '📄' : '🎧'} {material.filename}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">{materialMetaText(material)}</p>
+          {material.error && <p className="mt-1 text-xs font-semibold text-rose-600">{material.error}</p>}
+          {material.kind === 'audio' && !transcriptionAvailable && material.status !== 'transcribed' && (
+            <p className="mt-1 text-xs text-slate-500">{transcriptionReason || '음성 자동 축어록은 현재 비활성화되어 있습니다.'}</p>
+          )}
+        </div>
+        {material.status === 'uploading' || material.status === 'transcribing' ? (
+          <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-blue-600" />
+        ) : material.status === 'failed' ? (
+          <AlertTriangle className="mt-1 h-4 w-4 shrink-0 text-rose-600" />
+        ) : (
+          <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-emerald-600" />
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        {canPreview && (
+          <button
+            type="button"
+            onClick={onPreview}
+            className="h-7 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            {material.kind === 'audio' ? '축어록 확인' : '내용 확인'}
+          </button>
+        )}
+        {canApply && (
+          <button
+            type="button"
+            onClick={onApply}
+            className="h-7 rounded-md border border-blue-200 bg-blue-50 px-2.5 text-xs font-bold text-blue-700 hover:bg-blue-100"
+          >
+            자료에 반영
+          </button>
+        )}
+        {material.kind === 'audio' && material.status !== 'transcribed' && (
+          <button
+            type="button"
+            onClick={onTranscribe}
+            disabled={!canTranscribe}
+            className="h-7 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            축어록 생성
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onDelete}
+          className="h-7 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+        >
+          삭제
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function MaterialUploadList({ materials }: { materials: UploadedMaterial[] }) {
+  if (!materials.length) {
+    return <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-500">아직 선택된 파일이 없습니다.</p>
+  }
+  return (
+    <div className="divide-y divide-slate-200 rounded-lg border border-slate-200">
+      {materials.map((material) => (
+        <div key={material.id} className="px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-slate-900">{material.filename}</p>
+              <p className="mt-0.5 text-xs text-slate-500">{materialMetaText(material)}</p>
+            </div>
+            {material.status === 'uploading' || material.status === 'transcribing' ? (
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+            ) : material.status === 'failed' ? (
+              <AlertTriangle className="h-4 w-4 text-rose-600" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            )}
+          </div>
+          {material.error && <p className="mt-1 text-xs font-semibold text-rose-600">{material.error}</p>}
+          {material.warnings.length > 0 && (
+            <p className="mt-1 text-xs text-amber-700">{material.warnings.join(' ')}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function MaterialSummary({ material }: { material: UploadedMaterial }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <p className="truncate text-sm font-bold text-slate-950">{material.filename}</p>
+      <p className="mt-1 text-xs text-slate-500">{materialMetaText(material)}</p>
+      {material.warnings.length > 0 && (
+        <p className="mt-2 text-xs font-medium text-amber-700">{material.warnings.join(' ')}</p>
+      )}
+    </div>
+  )
+}
+
 function MaterialModal({
+  audioCapabilities,
+  audioCapabilitiesError,
   form,
+  materials,
   mode,
-  onAddAttachments,
+  onAddAudioFiles,
+  onApplyMaterial,
   onClose,
   onModeChange,
+  onRefreshAudioCapabilities,
+  onTranscribeAudio,
+  onUpdateAudioSegmentText,
+  onUpdateAudioTranscript,
   onUpdateField,
   onUpdateSessionTopic,
+  onUploadDocumentFiles,
+  selectedMaterial,
   sessionTopic,
 }: {
+  audioCapabilities: AudioCapabilitiesResponse | null
+  audioCapabilitiesError: string | null
   form: SessionInput
+  materials: UploadedMaterial[]
   mode: MaterialModalMode
-  onAddAttachments: (files: FileList | null) => void
+  onAddAudioFiles: (files: FileList | null) => void
+  onApplyMaterial: (materialId: string, target: MaterialApplyTarget, mode: MaterialApplyMode) => void
   onClose: () => void
   onModeChange: (mode: MaterialModalMode) => void
+  onRefreshAudioCapabilities: () => Promise<AudioCapabilitiesResponse>
+  onTranscribeAudio: (materialId: string) => void
+  onUpdateAudioSegmentText: (materialId: string, segmentId: number, text: string) => void
+  onUpdateAudioTranscript: (materialId: string, text: string) => void
   onUpdateField: (field: keyof SessionInput, value: string | number) => void
   onUpdateSessionTopic: (value: string) => void
+  onUploadDocumentFiles: (files: FileList | null) => Promise<void>
+  selectedMaterial: UploadedMaterial | null
   sessionTopic: string
 }) {
   const textModalConfig = getTextModalConfig(mode)
+  const [audioConsent, setAudioConsent] = useState(false)
+  const [applyTarget, setApplyTarget] = useState<MaterialApplyTarget>('counselor_memo')
+  const [applyMode, setApplyMode] = useState<MaterialApplyMode>('append')
+  const selectedText = getMaterialText(selectedMaterial)
+  const transcriptionAvailable = Boolean(audioCapabilities?.transcription.available)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
@@ -2760,19 +3159,17 @@ function MaterialModal({
           {mode === 'add' && (
             <div className="grid gap-5">
               <AddOption
-                title="텍스트 붙여넣기"
-                description="축어록이나 STT 텍스트를 붙여넣습니다."
-                onClick={() => onModeChange('paste_text')}
+                title="문서 업로드"
+                description="문서 내용을 추출해 상담 자료에 반영합니다."
+                onClick={() => onModeChange('document_upload')}
               />
               <AddOption
-                title="파일 업로드"
-                description="상담 자료나 검사 결과 파일을 연결합니다."
-                onClick={() => onModeChange('file_upload')}
-              />
-              <AddOption
-                title="심리검사 메모"
-                description="검사 결과 요약과 상담적 해석 메모를 추가합니다."
-                onClick={() => onModeChange('write_test')}
+                title="음성 업로드"
+                description="상담 음성을 축어록 초안으로 변환합니다."
+                onClick={() => {
+                  onModeChange('audio_upload')
+                  void onRefreshAudioCapabilities()
+                }}
               />
             </div>
           )}
@@ -2836,22 +3233,196 @@ function MaterialModal({
             />
           )}
 
-          {mode === 'file_upload' && (
+          {mode === 'document_upload' && (
             <div className="space-y-4">
               <label className="block rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
                 <FileText className="mx-auto h-7 w-7 text-slate-400" />
-                <span className="mt-3 block text-sm font-medium text-slate-700">첨부할 파일 선택</span>
+                <span className="mt-3 block text-sm font-medium text-slate-700">PDF, DOCX, TXT 문서 선택</span>
+                <span className="mt-1 block text-xs text-slate-500">추출된 내용은 미리보기 후 원하는 입력칸에 반영합니다.</span>
                 <input
                   type="file"
                   multiple
+                  accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
                   className="sr-only"
                   onChange={(event) => {
-                    onAddAttachments(event.target.files)
+                    void onUploadDocumentFiles(event.target.files)
                     event.target.value = ''
                   }}
                 />
               </label>
+              <MaterialUploadList materials={materials.filter((material) => material.kind === 'document')} />
               <ModalDoneButton onClick={onClose} />
+            </div>
+          )}
+
+          {mode === 'file_upload' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => onModeChange('document_upload')}
+                className="w-full rounded-lg border border-slate-300 px-4 py-3 text-left text-sm font-bold hover:bg-slate-50"
+              >
+                문서 업로드
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onModeChange('audio_upload')
+                  void onRefreshAudioCapabilities()
+                }}
+                className="w-full rounded-lg border border-slate-300 px-4 py-3 text-left text-sm font-bold hover:bg-slate-50"
+              >
+                음성 업로드
+              </button>
+            </div>
+          )}
+
+          {mode === 'audio_upload' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                원본 음성은 저장하지 않으며, 자동 축어록은 서버 런타임이 활성화된 경우에만 실행됩니다.
+              </div>
+              <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={audioConsent}
+                  onChange={(event) => setAudioConsent(event.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                />
+                상담 음성 업로드 및 임시 처리에 필요한 동의를 확인했습니다.
+              </label>
+              <label
+                className={`block rounded-lg border border-dashed px-4 py-8 text-center ${
+                  audioConsent ? 'border-slate-300 bg-slate-50' : 'border-slate-200 bg-slate-100 opacity-70'
+                }`}
+              >
+                <FileText className="mx-auto h-7 w-7 text-slate-400" />
+                <span className="mt-3 block text-sm font-medium text-slate-700">MP3, M4A, WAV 음성 선택</span>
+                <input
+                  type="file"
+                  multiple
+                  accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/wav,audio/x-wav"
+                  disabled={!audioConsent}
+                  className="sr-only"
+                  onChange={(event) => {
+                    void onAddAudioFiles(event.target.files)
+                    event.target.value = ''
+                  }}
+                />
+              </label>
+              {audioCapabilitiesError && <p className="text-xs font-semibold text-rose-600">{audioCapabilitiesError}</p>}
+              {audioCapabilities && (
+                <p className="text-xs text-slate-500">
+                  자동 축어록: {transcriptionAvailable ? '사용 가능' : audioCapabilities.transcription.reason || '비활성화'}
+                </p>
+              )}
+              <MaterialUploadList materials={materials.filter((material) => material.kind === 'audio')} />
+              <ModalDoneButton onClick={onClose} />
+            </div>
+          )}
+
+          {mode === 'document_preview' && selectedMaterial && (
+            <div className="space-y-4">
+              <MaterialSummary material={selectedMaterial} />
+              <textarea value={selectedText} readOnly className={`${textareaClass} min-h-[320px] bg-slate-50`} />
+              <ModalDoneButton onClick={onClose} />
+            </div>
+          )}
+
+          {mode === 'material_apply' && selectedMaterial && (
+            <div className="space-y-4">
+              <MaterialSummary material={selectedMaterial} />
+              <Field label="반영 대상" htmlFor="material_apply_target">
+                <select
+                  id="material_apply_target"
+                  value={applyTarget}
+                  onChange={(event) => setApplyTarget(event.target.value as MaterialApplyTarget)}
+                  className={inputClass}
+                >
+                  <option value="transcript_text">축어록</option>
+                  <option value="counselor_memo">상담사 메모</option>
+                  <option value="previous_session_summary">이전 회기 요약</option>
+                  <option value="psychological_test_summary">심리검사 요약</option>
+                </select>
+              </Field>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setApplyMode('append')}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+                    applyMode === 'append' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'
+                  }`}
+                >
+                  기존 내용 뒤에 추가
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setApplyMode('replace')}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+                    applyMode === 'replace' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'
+                  }`}
+                >
+                  기존 내용 교체
+                </button>
+              </div>
+              <textarea value={selectedText} readOnly className={`${textareaClass} min-h-[220px] bg-slate-50`} />
+              <button
+                type="button"
+                onClick={() => onApplyMaterial(selectedMaterial.id, applyTarget, applyMode)}
+                className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+              >
+                자료에 반영
+              </button>
+            </div>
+          )}
+
+          {mode === 'audio_review' && selectedMaterial && (
+            <div className="space-y-4">
+              <MaterialSummary material={selectedMaterial} />
+              {selectedMaterial.objectUrl && <audio controls src={selectedMaterial.objectUrl} className="w-full" />}
+              {selectedMaterial.status !== 'transcribed' && (
+                <button
+                  type="button"
+                  disabled={!transcriptionAvailable || selectedMaterial.status === 'transcribing'}
+                  onClick={() => onTranscribeAudio(selectedMaterial.id)}
+                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {selectedMaterial.status === 'transcribing' ? '축어록 생성 중' : '축어록 생성'}
+                </button>
+              )}
+              {(selectedMaterial.segments || []).length > 0 && (
+                <div className="space-y-2">
+                  {(selectedMaterial.segments || []).map((segment) => (
+                    <label key={segment.id} className="block rounded-md border border-slate-200 p-3">
+                      <span className="text-xs font-semibold text-slate-500">
+                        {formatSeconds(segment.start)} - {formatSeconds(segment.end)}
+                      </span>
+                      <input
+                        value={segment.text}
+                        onChange={(event) => onUpdateAudioSegmentText(selectedMaterial.id, segment.id, event.target.value)}
+                        className={inputClass}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <Field label="전체 축어록" htmlFor="audio_transcript_text">
+                <textarea
+                  id="audio_transcript_text"
+                  value={selectedMaterial.transcriptText || ''}
+                  onChange={(event) => onUpdateAudioTranscript(selectedMaterial.id, event.target.value)}
+                  className={`${textareaClass} min-h-[220px]`}
+                />
+              </Field>
+              {selectedMaterial.status === 'transcribed' && (
+                <button
+                  type="button"
+                  onClick={() => onApplyMaterial(selectedMaterial.id, 'transcript_text', 'append')}
+                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                >
+                  축어록에 반영
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -3436,6 +4007,66 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+function makeMaterialId(file: File): string {
+  return `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`
+}
+
+function getMaterialText(material: UploadedMaterial | null | undefined): string {
+  if (!material) return ''
+  if (material.kind === 'audio') {
+    if (material.transcriptText) return material.transcriptText
+    if (material.segments?.length) {
+      return material.segments.map((segment) => segment.text).filter(Boolean).join('\n')
+    }
+    return ''
+  }
+  return material.extractedText || ''
+}
+
+function mergeMaterialText(current: string, incoming: string, mode: MaterialApplyMode): string {
+  const cleanIncoming = incoming.trim()
+  if (mode === 'replace' || !current.trim()) return cleanIncoming
+  return `${current.trim()}\n\n${cleanIncoming}`
+}
+
+function materialMetaText(material: UploadedMaterial): string {
+  if (material.status === 'uploading') return '텍스트 추출 중'
+  if (material.status === 'selected') return '음성 파일 선택 완료'
+  if (material.status === 'transcribing') return '축어록 생성 중'
+  if (material.status === 'failed') return '처리 실패'
+  if (material.kind === 'audio') {
+    const duration = material.durationSeconds ? ` · ${formatSeconds(material.durationSeconds)}` : ''
+    const count = countCharacters(material.transcriptText || '')
+    return material.status === 'transcribed' ? `축어록 생성 완료 · ${count}자${duration}` : `음성 자료${duration}`
+  }
+  const count = material.characterCount ?? countCharacters(material.extractedText || '')
+  const pageCount = material.pageCount ? ` · ${material.pageCount}쪽` : ''
+  return `텍스트 추출 완료 · ${count.toLocaleString('ko-KR')}자${pageCount}`
+}
+
+function formatSeconds(value: number): string {
+  const totalSeconds = Math.max(0, Math.round(value))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
+  return materials.map((material) => ({
+    id: material.id,
+    kind: material.kind,
+    filename: material.filename,
+    mediaType: material.mediaType,
+    status: material.status,
+    characterCount: material.characterCount,
+    pageCount: material.pageCount,
+    warnings: material.warnings,
+    error: material.error,
+    durationSeconds: material.durationSeconds,
+    language: material.language,
+  }))
+}
+
 interface TextModalConfig {
   field: keyof Pick<
     SessionInput,
@@ -3445,10 +4076,15 @@ interface TextModalConfig {
 }
 
 const modalTitle: Record<MaterialModalMode, string> = {
-  add: '상담 자료 추가',
+  add: '상담 자료 업로드',
   basic_info: '회기 기본 정보 수정',
   paste_text: '텍스트 붙여넣기',
   file_upload: '파일 업로드',
+  document_upload: '문서 업로드',
+  audio_upload: '음성 업로드',
+  document_preview: '문서 내용 확인',
+  material_apply: '자료에 반영',
+  audio_review: '축어록 확인',
   load_previous: '이전 회기 불러오기',
   write_memo: '상담사 메모 작성',
   write_test: '심리검사 메모 작성',

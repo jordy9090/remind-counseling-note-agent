@@ -34,18 +34,22 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 12. 상담사 수정용 회기요약 textarea UI
 13. 최종 문서 DOCX 내보내기
 14. PDF 내보내기 서버 capability 확인과 지원 환경에서의 PDF 내보내기
+15. PDF/DOCX/TXT 문서 업로드 텍스트 추출
+16. 음성 업로드 UI와 자동 축어록 capability 확인
 
 제외:
 
 - 인증/회원가입
-- 실제 파일 업로드 처리와 파일 본문 파싱
-- 음성 업로드 또는 실시간 STT
+- 스캔 이미지 PDF OCR
+- 기본 활성화된 음성 STT, 실시간 녹음, 화자 분리
 - pgvector 기반 의미 검색
 - 검증된 HWPX 템플릿 기반 내보내기
 - 결제/예약/관리자 기능
 - AI 슈퍼비전 또는 자동 사례개념화
 
-현재 파일 업로드 UI는 데모용 상태만 제공합니다. 선택한 PDF, Word, 음성 파일의 파일명과 임시 ID는 frontend React state에 보관되지만, 파일 본문은 backend로 전송되지 않고 실제 파싱, OCR, STT, 문서 추출은 수행하지 않습니다. 현재 입력으로 처리되는 자료는 텍스트 영역에 붙여넣은 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약, 심리검사 메모입니다.
+문서 업로드는 원본 파일을 저장하지 않고 임시 파일에서 텍스트만 추출한 뒤 정리합니다. TXT는 UTF-8/BOM, DOCX는 문단과 표, PDF는 텍스트 레이어만 지원합니다. 스캔 이미지 PDF는 OCR을 지원하지 않으며 경고를 반환합니다. 음성 자동 축어록은 `ENABLE_AUDIO_TRANSCRIPTION=1`과 `faster-whisper` 런타임이 설정된 로컬/서버에서만 동작합니다. 기본값은 비활성화이며 가짜 축어록을 만들지 않습니다.
+
+현재 MVP에는 인증이 없습니다. 공개 배포나 공유 데모 환경에는 실제 내담자를 식별할 수 있는 상담 자료, 원본 음성, 심리검사 자료를 업로드하지 마세요.
 
 ## API 계약 요약
 
@@ -56,6 +60,9 @@ GET  /api/health
 POST /api/notes/generate
 GET  /api/documents/capabilities
 POST /api/documents/export
+POST /api/materials/documents/extract
+GET  /api/audio/capabilities
+POST /api/audio/transcribe
 ```
 
 `POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드를 클라이언트에서 변환합니다.
@@ -63,6 +70,10 @@ POST /api/documents/export
 `GET /api/documents/capabilities`는 서버가 DOCX/PDF/HWPX 내보내기를 실제로 지원할 수 있는지 반환합니다. PDF는 WeasyPrint와 Pango/GObject 계열 시스템 라이브러리, 한국어 fallback 폰트가 준비된 환경에서만 활성화됩니다.
 
 `POST /api/documents/export`는 최종문서 화면에서 수정된 최신 섹션을 DOCX 또는 PDF byte stream으로 반환합니다. HWPX는 스키마와 exporter 인터페이스만 준비되어 있으며, 검증된 HWPX 템플릿이 추가되기 전까지는 422를 반환합니다.
+
+`POST /api/materials/documents/extract`는 multipart `file` 필드로 PDF/DOCX/TXT를 받아 텍스트를 추출합니다. 기본 문서 업로드 제한은 20MB이며 `DOCUMENT_UPLOAD_MAX_BYTES`로 조정할 수 있습니다.
+
+`GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`를 받으며 기본 음성 업로드 제한은 500MB입니다. `AUDIO_UPLOAD_MAX_BYTES`, `ENABLE_AUDIO_TRANSCRIPTION`, `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` 환경변수로 제어합니다.
 
 OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. Supabase 환경변수가 없거나 `ENABLE_RAG=0`, `ENABLE_PERSISTENCE=0`이면 기존처럼 요청 단위 처리만 수행합니다. 따라서 API key와 Supabase credentials 없이도 데모와 smoke test를 실행할 수 있습니다.
 
@@ -199,6 +210,8 @@ uv sync --link-mode=copy
 uv run python smoke_test.py
 ```
 
+Smoke test에는 노트 생성, 임시저장, DOCX/PDF export 계약, 문서 업로드 추출, 음성 capability/비활성화 응답, 업로드 크기 제한, 임시파일 정리 검증이 포함됩니다.
+
 PDF export까지 강제 검증하려면 Linux/Ubuntu 환경에서 WeasyPrint 시스템 의존성과 한국어 폰트를 설치한 뒤 실행합니다. GitHub Actions의 `backend-pdf-export` job은 `fonts-noto-cjk`, Pango/GObject 관련 패키지를 설치하고 `REQUIRE_PDF_EXPORT=1 uv run python smoke_test.py`를 실행합니다.
 
 Frontend build:
@@ -215,6 +228,14 @@ npm run build
 ```
 
 Sample data는 [sample_data/session_input_001.json](sample_data/session_input_001.json)과 [sample_data/session_output_001.json](sample_data/session_output_001.json)을 사용합니다.
+
+문서 업로드를 로컬에서 직접 확인하려면 backend 서버를 켠 뒤 실행합니다.
+
+```bash
+printf "상담 메모\n둘째 줄\n" > sample_data/upload_sample.txt
+curl -F "file=@sample_data/upload_sample.txt;type=text/plain" http://localhost:8000/api/materials/documents/extract
+curl http://localhost:8000/api/audio/capabilities
+```
 
 ## 문서
 

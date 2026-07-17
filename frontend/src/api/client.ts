@@ -1,9 +1,12 @@
 import axios from 'axios'
 import type {
+  AudioCapabilitiesResponse,
+  AudioTranscriptionResponse,
   DocumentCapabilitiesResponse,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
+  DocumentExtractionResponse,
   DocumentExportRequest,
   EvidenceType,
   GenerateNoteResponse,
@@ -111,8 +114,61 @@ export const getDocumentCapabilities = async (): Promise<DocumentCapabilitiesRes
   return response.data
 }
 
+export const extractDocumentMaterial = async (file: File): Promise<DocumentExtractionResponse> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  try {
+    const response = await client.post<DocumentExtractionResponse>('/api/materials/documents/extract', formData, {
+      timeout: 120000,
+    })
+    return response.data
+  } catch (error) {
+    throw normalizeApiError(error, '문서 내용을 추출하지 못했습니다.')
+  }
+}
+
+export const getAudioCapabilities = async (): Promise<AudioCapabilitiesResponse> => {
+  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities')
+  return response.data
+}
+
+export const transcribeAudio = async (
+  file: File,
+  language = 'ko',
+  task = 'transcribe',
+): Promise<AudioTranscriptionResponse> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('language', language)
+  formData.append('task', task)
+  try {
+    const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
+      timeout: 900000,
+    })
+    return response.data
+  } catch (error) {
+    throw normalizeApiError(error, '음성 축어록을 생성하지 못했습니다.')
+  }
+}
+
 export { API_BASE_URL }
 export default client
+
+function normalizeApiError(error: unknown, fallback: string): Error {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return new Error(detail)
+    }
+    if (Array.isArray(detail) && detail.length) {
+      return new Error(detail.map((item) => item?.msg || String(item)).join('\n'))
+    }
+    if (typeof error.message === 'string' && error.message.trim()) {
+      return new Error(error.message)
+    }
+  }
+  return error instanceof Error ? error : new Error(fallback)
+}
 
 function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftResponse {
   const draft = fullResponse.session_summary_draft
