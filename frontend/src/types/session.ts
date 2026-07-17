@@ -447,6 +447,7 @@ export interface AudioWord {
   start?: number | null
   end?: number | null
   text: string
+  speaker?: string | null
   probability?: number | null
 }
 
@@ -470,6 +471,10 @@ export interface AudioTranscriptionResponse {
   filename: string
   status: 'completed'
   runtime_mode: 'stub' | 'real'
+  transcription_engine?: 'whisperx' | 'stub' | null
+  alignment_model?: string | null
+  diarization_model?: string | null
+  alignment_status?: 'completed' | 'fallback' | 'disabled' | null
   diarization_status: 'completed' | 'fallback' | 'disabled'
   duration_seconds?: number | null
   language?: string | null

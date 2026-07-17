@@ -46,6 +46,7 @@ import {
   buildNonverbalNotes,
   buildTranscriptText,
   getSegmentSpeakerKey,
+  replaceAppliedAudioBlock,
   type SpeakerRole,
   type SpeakerRoleMap,
 } from '../lib/audioTranscriptWorkflow'
@@ -171,6 +172,9 @@ interface UploadedMaterial {
   nonverbalNotes?: string
   dirtySinceApply?: boolean
   expectedSpeakers?: number
+  lastAppliedTranscriptText?: string
+  lastAppliedNonverbalNotes?: string
+  lastAppliedMode?: MaterialApplyMode
   appliedTargets: MaterialApplyTarget[]
 }
 
@@ -704,10 +708,38 @@ export default function SessionDraftPage() {
     const nonverbalNotes = buildNonverbalNotes(material.segments || [], speakerRoleMap) || material.nonverbalNotes || ''
     if (!transcriptText.trim()) return
 
+    const isReapply =
+      Boolean(material.dirtySinceApply) &&
+      (material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined)
+    const nextTranscriptText = isReapply
+      ? replaceAppliedAudioBlock(form.transcript_text, material.lastAppliedTranscriptText || '', transcriptText)
+      : mergeMaterialText(form.transcript_text, transcriptText, mode)
+    const nextNonverbalNotes = isReapply
+      ? replaceAppliedAudioBlock(
+          form.nonverbal_notes || '',
+          material.lastAppliedNonverbalNotes || '',
+          nonverbalNotes,
+        )
+      : mergeMaterialText(form.nonverbal_notes || '', nonverbalNotes, mode)
+
+    if (nextTranscriptText === null || nextNonverbalNotes === null) {
+      setMaterials((prev) =>
+        prev.map((item) =>
+          item.id === materialId
+            ? {
+                ...item,
+                error: '이전에 반영한 오디오 블록이 회기 입력에서 수정되어 자동으로 교체할 수 없습니다. 현재 입력을 확인한 뒤 다시 반영해주세요.',
+              }
+            : item,
+        ),
+      )
+      return
+    }
+
     setForm((prev) => ({
       ...prev,
-      transcript_text: mergeMaterialText(prev.transcript_text, transcriptText, mode),
-      nonverbal_notes: mergeMaterialText(prev.nonverbal_notes || '', nonverbalNotes, mode),
+      transcript_text: nextTranscriptText,
+      nonverbal_notes: nextNonverbalNotes,
     }))
     setMaterials((prev) =>
       prev.map((item) =>
@@ -718,6 +750,9 @@ export default function SessionDraftPage() {
               nonverbalNotes,
               appliedTargets: Array.from(new Set([...item.appliedTargets, ...AUDIO_APPLY_TARGETS])),
               dirtySinceApply: false,
+              lastAppliedTranscriptText: transcriptText,
+              lastAppliedNonverbalNotes: nonverbalNotes,
+              lastAppliedMode: isReapply ? item.lastAppliedMode || mode : mode,
               error: undefined,
             }
           : item,

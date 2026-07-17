@@ -13,7 +13,6 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
 from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
@@ -161,13 +160,6 @@ def _make_mp3_bytes() -> bytes:
 
 def _make_m4a_bytes() -> bytes:
     return b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A mp42"
-
-
-class _FakeWhisperSegment:
-    def __init__(self, start: float, end: float, text: str) -> None:
-        self.start = start
-        self.end = end
-        self.text = text
 
 
 def _upload_file(client: TestClient, name: str, body: bytes, content_type: str):
@@ -478,95 +470,379 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
 
 
 def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
+    from app.schemas.audio import AudioSegment
     from app.services import audio_transcription as audio_service
     from app.services.upload_validation import ValidatedUpload
 
-    previous_enable = os.environ.get("ENABLE_AUDIO_TRANSCRIPTION")
-    previous_stub = os.environ.get("AUDIO_TRANSCRIPTION_STUB")
-    previous_diarization = os.environ.get("ENABLE_AUDIO_DIARIZATION")
-    previous_hf_token = os.environ.get("HF_TOKEN")
-    os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "1"
-    os.environ["AUDIO_TRANSCRIPTION_STUB"] = "0"
-    os.environ["ENABLE_AUDIO_DIARIZATION"] = "0"
+    env_names = [
+        "ENABLE_AUDIO_TRANSCRIPTION",
+        "AUDIO_TRANSCRIPTION_STUB",
+        "AUDIO_TRANSCRIPTION_ENGINE",
+        "WHISPERX_MODEL",
+        "WHISPERX_LANGUAGE",
+        "WHISPERX_DEVICE",
+        "WHISPERX_COMPUTE_TYPE",
+        "WHISPERX_BATCH_SIZE",
+        "WHISPERX_ALIGN_MODEL",
+        "ENABLE_AUDIO_DIARIZATION",
+        "WHISPERX_DIARIZATION_MODEL",
+        "HF_TOKEN",
+        "AUDIO_MAX_DURATION_SECONDS",
+        "AUDIO_MAX_CONCURRENT_JOBS",
+    ]
+    previous_env = {name: os.environ.get(name) for name in env_names}
+    os.environ.update(
+        {
+            "ENABLE_AUDIO_TRANSCRIPTION": "1",
+            "AUDIO_TRANSCRIPTION_STUB": "0",
+            "AUDIO_TRANSCRIPTION_ENGINE": "whisperx",
+            "WHISPERX_MODEL": "large-v3",
+            "WHISPERX_LANGUAGE": "ko",
+            "WHISPERX_DEVICE": "auto",
+            "WHISPERX_COMPUTE_TYPE": "float16",
+            "WHISPERX_BATCH_SIZE": "4",
+            "WHISPERX_ALIGN_MODEL": "kresnik/wav2vec2-large-xlsr-korean",
+            "ENABLE_AUDIO_DIARIZATION": "1",
+            "WHISPERX_DIARIZATION_MODEL": "pyannote/speaker-diarization-community-1",
+            "HF_TOKEN": "hf-test-token",
+            "AUDIO_MAX_DURATION_SECONDS": "7200",
+            "AUDIO_MAX_CONCURRENT_JOBS": "1",
+        }
+    )
 
-    init_count = {"value": 0}
+    class FakeCuda:
+        def __init__(self, available: bool) -> None:
+            self.available = available
 
-    class SuccessfulFakeWhisperModel:
-        def __init__(self, model_size: str, device: str, compute_type: str) -> None:
-            init_count["value"] += 1
-            self.model_size = model_size
-            self.device = device
-            self.compute_type = compute_type
+        def is_available(self) -> bool:
+            return self.available
 
-        def transcribe(self, path: str, language: str | None = None, task: str = "transcribe"):
-            return iter([_FakeWhisperSegment(0.0, 1.5, "첫 번째 발화")]), SimpleNamespace(
-                duration=1.5,
-                language=language or "ko",
-            )
+    class FakeTorch:
+        def __init__(self, cuda_available: bool) -> None:
+            self.cuda = FakeCuda(cuda_available)
+
+    class FakeAsrModel:
+        def __init__(self, owner: "FakeWhisperX") -> None:
+            self.owner = owner
+
+        def transcribe(self, audio, **kwargs):
+            self.owner.calls.append(("asr_transcribe", kwargs))
+            if self.owner.fail_asr:
+                raise RuntimeError("unsafe asr failure with server details")
+            return {
+                "language": self.owner.detected_language,
+                "language_probability": 0.98,
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 2.2,
+                        "text": "첫 번째 발화 상담자 반영",
+                        "words": [
+                            {"start": 0.0, "end": 0.4, "word": "첫", "score": 0.91},
+                            {"start": 0.4, "end": 0.9, "word": "번째 발화", "score": 0.92},
+                            {"start": 1.2, "end": 1.7, "word": "상담자", "score": 0.93},
+                            {"start": 1.7, "end": 2.2, "word": "반영", "score": 0.94},
+                        ],
+                    }
+                ],
+            }
+
+    class FakeWhisperX:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, object]] = []
+            self.audio = [0.05] * 30
+            self.detected_language = "ko"
+            self.fail_asr = False
+            self.fail_alignment = False
+            self.fail_diarization = False
+
+        def load_audio(self, path: str):
+            self.calls.append(("load_audio", path))
+            return self.audio
+
+        def load_model(self, model_name: str, device: str, **kwargs):
+            self.calls.append(("load_model", {"model_name": model_name, "device": device, **kwargs}))
+            return FakeAsrModel(self)
+
+        def load_align_model(self, **kwargs):
+            self.calls.append(("load_align_model", kwargs))
+            return object(), {"language": kwargs["language_code"]}
+
+        def align(self, segments, model, metadata, audio, device, **kwargs):
+            self.calls.append(("align", {"segments": segments, "device": device, **kwargs}))
+            if self.fail_alignment:
+                raise RuntimeError("unsafe alignment failure")
+            return {"language": self.detected_language, "segments": segments}
+
+        def assign_word_speakers(self, diarization_result, aligned_result):
+            self.calls.append(("assign_word_speakers", diarization_result))
+            assigned_segments = []
+            for segment in aligned_result["segments"]:
+                words = []
+                for word in segment.get("words", []):
+                    speaker = "SPEAKER_00" if word["start"] < 1.1 else "SPEAKER_01"
+                    words.append({**word, "speaker": speaker})
+                assigned_segments.append(
+                    {
+                        **segment,
+                        "speaker": words[0]["speaker"] if words else "SPEAKER_00",
+                        "words": words,
+                    }
+                )
+            return {"language": self.detected_language, "segments": assigned_segments}
+
+    class FakeDiarizationPipeline:
+        def __init__(self, owner: FakeWhisperX) -> None:
+            self.owner = owner
+
+        def __call__(self, audio, **kwargs):
+            self.owner.calls.append(("diarization_call", kwargs))
+            if self.owner.fail_diarization:
+                raise RuntimeError("unsafe diarization failure")
+            return {"speaker_turns": "mock"}
+
+    fake_whisperx = FakeWhisperX()
+
+    def fake_diarization_factory(**kwargs):
+        fake_whisperx.calls.append(("diarization_factory", kwargs))
+        return FakeDiarizationPipeline(fake_whisperx)
+
+    runtime = audio_service.WhisperXRuntime(
+        whisperx=fake_whisperx,
+        diarization_pipeline_factory=fake_diarization_factory,
+        torch=FakeTorch(cuda_available=True),
+        sample_rate=10,
+    )
+
+    def make_validated_audio() -> tuple[ValidatedUpload, Path]:
+        temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_file.write(_make_wav_bytes())
+        temp_file.close()
+        path = Path(temp_file.name)
+        return (
+            ValidatedUpload(
+                filename="session.wav",
+                media_type="audio/wav",
+                suffix=".wav",
+                size_bytes=path.stat().st_size,
+                temp_path=path,
+            ),
+            path,
+        )
 
     try:
-        audio_service.set_whisper_model_factory_for_testing(SuccessfulFakeWhisperModel)
+        audio_service.set_whisperx_runtime_for_testing(runtime)
         first_service = audio_service.get_transcription_service()
         second_service = audio_service.get_transcription_service()
         assert first_service is second_service
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            temp_file.write(_make_wav_bytes())
-            audio_path = Path(temp_file.name)
+        validated, audio_path = make_validated_audio()
         try:
-            validated = ValidatedUpload(
-                filename="session.wav",
-                media_type="audio/wav",
-                suffix=".wav",
-                size_bytes=audio_path.stat().st_size,
-                temp_path=audio_path,
+            first_result = first_service.transcribe(
+                validated,
+                language="ko",
+                task="transcribe",
+                expected_speakers=2,
             )
-            first_result = first_service.transcribe(validated, language="ko", task="transcribe")
-            second_result = second_service.transcribe(validated, language="ko", task="transcribe")
-            assert first_result.transcript_text == "첫 번째 발화"
-            assert second_result.transcript_text == "첫 번째 발화"
-            assert first_result.runtime_mode == "real"
-            assert init_count["value"] == 1
+            second_result = second_service.transcribe(
+                validated,
+                language="ko",
+                task="transcribe",
+                expected_speakers=2,
+            )
         finally:
             audio_path.unlink(missing_ok=True)
 
-        class FailingGeneratorWhisperModel:
-            def __init__(self, model_size: str, device: str, compute_type: str) -> None:
-                return None
+        assert first_result.runtime_mode == "real"
+        assert first_result.transcription_engine == "whisperx"
+        assert first_result.alignment_model == "kresnik/wav2vec2-large-xlsr-korean"
+        assert first_result.diarization_model == "pyannote/speaker-diarization-community-1"
+        assert first_result.alignment_status == "completed"
+        assert first_result.diarization_status == "completed"
+        assert len(first_result.segments) == 2
+        assert [segment.speaker for segment in first_result.segments] == ["SPEAKER_00", "SPEAKER_01"]
+        assert [word.speaker for segment in first_result.segments for word in segment.words] == [
+            "SPEAKER_00",
+            "SPEAKER_00",
+            "SPEAKER_01",
+            "SPEAKER_01",
+        ]
+        assert sum(name == "load_model" for name, _ in fake_whisperx.calls) == 1
+        assert sum(name == "load_align_model" for name, _ in fake_whisperx.calls) == 1
+        assert sum(name == "diarization_factory" for name, _ in fake_whisperx.calls) == 1
 
-            def transcribe(self, path: str, language: str | None = None, task: str = "transcribe"):
-                def failing_segments():
-                    yield _FakeWhisperSegment(0.0, 0.5, "부분 발화")
-                    raise RuntimeError(f"unsafe failure path={path}")
+        load_model_call = next(data for name, data in fake_whisperx.calls if name == "load_model")
+        assert load_model_call == {
+            "model_name": "large-v3",
+            "device": "cuda",
+            "compute_type": "float16",
+            "language": "ko",
+            "task": "transcribe",
+        }
+        transcribe_call = next(data for name, data in fake_whisperx.calls if name == "asr_transcribe")
+        assert transcribe_call["batch_size"] == 4
+        assert transcribe_call["language"] == "ko"
+        align_model_call = next(data for name, data in fake_whisperx.calls if name == "load_align_model")
+        assert align_model_call == {
+            "language_code": "ko",
+            "device": "cuda",
+            "model_name": "kresnik/wav2vec2-large-xlsr-korean",
+        }
+        align_call = next(data for name, data in fake_whisperx.calls if name == "align")
+        assert align_call["return_char_alignments"] is False
+        diarization_factory_call = next(
+            data for name, data in fake_whisperx.calls if name == "diarization_factory"
+        )
+        assert diarization_factory_call == {
+            "model_name": "pyannote/speaker-diarization-community-1",
+            "token": "hf-test-token",
+            "device": "cuda",
+        }
+        diarization_call = next(data for name, data in fake_whisperx.calls if name == "diarization_call")
+        assert diarization_call["num_speakers"] == 2
+        assert any(name == "assign_word_speakers" for name, _ in fake_whisperx.calls)
 
-                return failing_segments(), SimpleNamespace(duration=0.5, language=language or "ko")
+        gap_turns = audio_service._normalize_whisperx_turns(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 2.0,
+                        "speaker": "SPEAKER_00",
+                        "words": [
+                            {"start": 0.0, "end": 0.2, "word": "첫 발화", "speaker": "SPEAKER_00"},
+                            {
+                                "start": 1.3,
+                                "end": 1.8,
+                                "word": "긴 간격 뒤 발화",
+                                "speaker": "SPEAKER_00",
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+        assert len(gap_turns) == 2
 
-        audio_service.set_whisper_model_factory_for_testing(FailingGeneratorWhisperModel)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            temp_file.write(_make_wav_bytes())
-            failing_audio_path = Path(temp_file.name)
+        acoustic_segments = [
+            AudioSegment(id=1, start=0.0, end=1.0, text="천천히", speaker="SPEAKER_00"),
+            AudioSegment(id=2, start=1.5, end=2.5, text="보통 속도", speaker="SPEAKER_00"),
+            AudioSegment(id=3, start=2.6, end=3.0, text="아주 빠른 말 속도", speaker="SPEAKER_00"),
+        ]
+        acoustic_audio = ([0.01] * 10) + ([0.1] * 5) + ([0.1] * 10) + ([1.0] * 5)
+        acoustic_result = audio_service._apply_deterministic_audio_features(
+            acoustic_segments,
+            acoustic_audio,
+            10,
+        )
+        assert acoustic_result[1].pause_before_seconds == 0.5
+        assert acoustic_result[0].speech_rate_level == "slow"
+        assert acoustic_result[2].speech_rate_level == "fast"
+        assert acoustic_result[0].volume_level == "low"
+        assert acoustic_result[2].volume_level == "high"
+        assert first_result.segments[0].speech_rate_level is None
+        assert first_result.segments[0].volume_level is None
+
+        fake_whisperx.fail_alignment = True
+        os.environ["ENABLE_AUDIO_DIARIZATION"] = "0"
+        audio_service.reset_transcription_service_cache_for_testing()
+        validated, audio_path = make_validated_audio()
         try:
-            failing_validated = ValidatedUpload(
-                filename="session.wav",
-                media_type="audio/wav",
-                suffix=".wav",
-                size_bytes=failing_audio_path.stat().st_size,
-                temp_path=failing_audio_path,
-            )
-            try:
-                audio_service.get_transcription_service().transcribe(
-                    failing_validated,
-                    language="ko",
-                    task="transcribe",
-                )
-                raise AssertionError("generator failure should be converted")
-            except audio_service.AudioTranscriptionRuntimeError as error:
-                assert str(error) == "음성 축어록 생성 중 오류가 발생했습니다."
-                assert "unsafe failure" not in str(error)
-                assert str(failing_audio_path) not in str(error)
+            alignment_fallback = audio_service.get_transcription_service().transcribe(validated)
         finally:
-            failing_audio_path.unlink(missing_ok=True)
+            audio_path.unlink(missing_ok=True)
+        assert alignment_fallback.alignment_status == "fallback"
+        assert alignment_fallback.transcript_text
+        assert "한국어 단어 정렬에 실패" in " ".join(alignment_fallback.warnings)
+        fake_whisperx.fail_alignment = False
 
+        fake_whisperx.fail_diarization = True
+        os.environ["ENABLE_AUDIO_DIARIZATION"] = "1"
+        audio_service.set_whisperx_runtime_for_testing(runtime)
+        validated, audio_path = make_validated_audio()
+        try:
+            diarization_fallback = audio_service.get_transcription_service().transcribe(
+                validated,
+                expected_speakers=2,
+            )
+        finally:
+            audio_path.unlink(missing_ok=True)
+        assert diarization_fallback.diarization_status == "fallback"
+        assert {segment.speaker for segment in diarization_fallback.segments} == {"SPEAKER_00"}
+        assert "화자 분리를 사용할 수 없어" in " ".join(diarization_fallback.warnings)
+        assert "hf-test-token" not in diarization_fallback.model_dump_json()
+        fake_whisperx.fail_diarization = False
+
+        os.environ.pop("HF_TOKEN", None)
+        audio_service.reset_transcription_service_cache_for_testing()
+        validated, audio_path = make_validated_audio()
+        try:
+            missing_token_fallback = audio_service.get_transcription_service().transcribe(validated)
+        finally:
+            audio_path.unlink(missing_ok=True)
+        assert missing_token_fallback.diarization_status == "fallback"
+        assert missing_token_fallback.transcript_text
+        assert {segment.speaker for segment in missing_token_fallback.segments} == {"SPEAKER_00"}
+        os.environ["HF_TOKEN"] = "hf-test-token"
+
+        fake_whisperx.detected_language = "en"
+        audio_service.reset_transcription_service_cache_for_testing()
+        validated, audio_path = make_validated_audio()
+        try:
+            language_mismatch = audio_service.get_transcription_service().transcribe(validated)
+        finally:
+            audio_path.unlink(missing_ok=True)
+        assert "인식된 언어가 한국어 설정과 일치하지 않아" in " ".join(language_mismatch.warnings)
+        fake_whisperx.detected_language = "ko"
+
+        cpu_whisperx = FakeWhisperX()
+        cpu_runtime = audio_service.WhisperXRuntime(
+            whisperx=cpu_whisperx,
+            diarization_pipeline_factory=lambda **kwargs: FakeDiarizationPipeline(cpu_whisperx),
+            torch=FakeTorch(cuda_available=False),
+            sample_rate=10,
+        )
+        os.environ["ENABLE_AUDIO_DIARIZATION"] = "0"
+        audio_service.set_whisperx_runtime_for_testing(cpu_runtime)
+        validated, audio_path = make_validated_audio()
+        try:
+            audio_service.get_transcription_service().transcribe(validated)
+        finally:
+            audio_path.unlink(missing_ok=True)
+        cpu_load_call = next(data for name, data in cpu_whisperx.calls if name == "load_model")
+        assert cpu_load_call["device"] == "cpu"
+        assert cpu_load_call["compute_type"] == "int8"
+
+        os.environ["AUDIO_MAX_DURATION_SECONDS"] = "1"
+        audio_service.set_whisperx_runtime_for_testing(runtime)
+        validated, audio_path = make_validated_audio()
+        try:
+            try:
+                audio_service.get_transcription_service().transcribe(validated)
+                raise AssertionError("duration limit must reject long audio")
+            except audio_service.AudioDurationLimitError as error:
+                assert str(error) == "음성 길이가 허용된 최대 처리 시간을 초과했습니다."
+        finally:
+            audio_path.unlink(missing_ok=True)
+        os.environ["AUDIO_MAX_DURATION_SECONDS"] = "7200"
+
+        audio_service.reset_transcription_service_cache_for_testing()
+        busy_service = audio_service.get_transcription_service()
+        semaphore = audio_service._get_audio_job_semaphore(1)
+        assert semaphore.acquire(blocking=False)
+        validated, audio_path = make_validated_audio()
+        try:
+            try:
+                busy_service.transcribe(validated)
+                raise AssertionError("concurrent job guard must reject excess work")
+            except audio_service.AudioTranscriptionBusyError as error:
+                assert str(error) == "다른 음성 축어록 작업이 진행 중입니다. 잠시 후 다시 시도해주세요."
+        finally:
+            semaphore.release()
+            audio_path.unlink(missing_ok=True)
+
+        fake_whisperx.fail_asr = True
+        audio_service.set_whisperx_runtime_for_testing(runtime)
         with tempfile.TemporaryDirectory() as upload_temp_dir:
             previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
             os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
@@ -579,105 +855,42 @@ def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
                 assert route_failure.status_code == 500, route_failure.text
                 assert route_failure.json()["detail"] == "음성 축어록 생성 중 오류가 발생했습니다."
                 assert upload_temp_dir not in route_failure.text
-                assert "unsafe failure" not in route_failure.text
+                assert "unsafe asr failure" not in route_failure.text
                 assert not list(Path(upload_temp_dir).iterdir())
             finally:
                 if previous_tmp_dir is None:
                     os.environ.pop("UPLOAD_TMP_DIR", None)
                 else:
                     os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+        fake_whisperx.fail_asr = False
 
-        audio_service.set_whisper_model_factory_for_testing(SuccessfulFakeWhisperModel)
-        os.environ["AUDIO_TRANSCRIPTION_STUB"] = "0"
-        os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "1"
-        os.environ["ENABLE_AUDIO_DIARIZATION"] = "1"
-        os.environ.pop("HF_TOKEN", None)
-        audio_service.reset_transcription_service_cache_for_testing()
-
-        with tempfile.TemporaryDirectory() as upload_temp_dir:
-            previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
-            os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
-            try:
-                diarization_fallback = client.post(
-                    "/api/audio/transcribe",
-                    files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
-                    data={"language": "ko", "task": "transcribe", "expected_speakers": "2"},
-                )
-                assert diarization_fallback.status_code == 200, diarization_fallback.text
-                fallback_data = diarization_fallback.json()
-                assert fallback_data["runtime_mode"] == "real"
-                assert fallback_data["diarization_status"] == "fallback"
-                assert {segment["speaker"] for segment in fallback_data["segments"]} == {"speaker_1"}
-                assert "화자 분리를 사용할 수 없어 단일 화자로 처리했습니다." in " ".join(
-                    fallback_data["warnings"]
-                )
-                assert "HF_TOKEN" not in diarization_fallback.text
-                assert upload_temp_dir not in diarization_fallback.text
-                assert not list(Path(upload_temp_dir).iterdir())
-            finally:
-                if previous_tmp_dir is None:
-                    os.environ.pop("UPLOAD_TMP_DIR", None)
-                else:
-                    os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
-
-        class RaisingWhisperModel:
-            def __init__(self, model_size: str, device: str, compute_type: str) -> None:
-                raise AssertionError("stub mode must not initialize a real Whisper model")
-
-        audio_service.set_whisper_model_factory_for_testing(RaisingWhisperModel)
+        calls_before_stub = len(fake_whisperx.calls)
         os.environ["AUDIO_TRANSCRIPTION_STUB"] = "1"
         os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "0"
         audio_service.reset_transcription_service_cache_for_testing()
-
-        stub_capabilities = client.get("/api/audio/capabilities")
-        assert stub_capabilities.status_code == 200, stub_capabilities.text
-        assert stub_capabilities.json()["runtime_mode"] == "stub"
-        assert stub_capabilities.json()["transcription"]["available"] is True
-
-        with tempfile.TemporaryDirectory() as upload_temp_dir:
-            previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
-            os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
-            try:
-                stub_response = client.post(
-                    "/api/audio/transcribe",
-                    files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
-                    data={"language": "ko", "task": "transcribe", "expected_speakers": "3"},
-                )
-                assert stub_response.status_code == 200, stub_response.text
-                stub_data = stub_response.json()
-                assert stub_data["runtime_mode"] == "stub"
-                assert stub_data["diarization_status"] == "fallback"
-                assert "시연용 예시 축어록" in " ".join(stub_data["warnings"])
-                assert {segment["speaker"] for segment in stub_data["segments"]} == {
-                    "speaker_1",
-                    "speaker_2",
-                    "speaker_3",
-                }
-                assert not list(Path(upload_temp_dir).iterdir())
-            finally:
-                if previous_tmp_dir is None:
-                    os.environ.pop("UPLOAD_TMP_DIR", None)
-                else:
-                    os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+        stub_response = client.post(
+            "/api/audio/transcribe",
+            files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+            data={"language": "ko", "task": "transcribe", "expected_speakers": "3"},
+        )
+        assert stub_response.status_code == 200, stub_response.text
+        stub_data = stub_response.json()
+        assert stub_data["runtime_mode"] == "stub"
+        assert stub_data["transcription_engine"] == "stub"
+        assert "시연용 예시 축어록" in " ".join(stub_data["warnings"])
+        assert {segment["speaker"] for segment in stub_data["segments"]} == {
+            "speaker_1",
+            "speaker_2",
+            "speaker_3",
+        }
+        assert len(fake_whisperx.calls) == calls_before_stub
     finally:
-        audio_service.set_whisper_model_factory_for_testing(None)
-        if previous_enable is None:
-            os.environ.pop("ENABLE_AUDIO_TRANSCRIPTION", None)
-        else:
-            os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = previous_enable
-        if previous_stub is None:
-            os.environ.pop("AUDIO_TRANSCRIPTION_STUB", None)
-        else:
-            os.environ["AUDIO_TRANSCRIPTION_STUB"] = previous_stub
-        if previous_diarization is None:
-            os.environ.pop("ENABLE_AUDIO_DIARIZATION", None)
-        else:
-            os.environ["ENABLE_AUDIO_DIARIZATION"] = previous_diarization
-        if previous_hf_token is None:
-            os.environ.pop("HF_TOKEN", None)
-        else:
-            os.environ["HF_TOKEN"] = previous_hf_token
-
+        audio_service.set_whisperx_runtime_for_testing(None)
+        for name, value in previous_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 class _BytesTextWriter:
     def __init__(self, buffer: BytesIO) -> None:

@@ -273,7 +273,7 @@ Scanned/image-only PDFs return 200 with `status: "warning"` and a warning that O
 GET /api/audio/capabilities
 ```
 
-Returns whether this runtime can accept audio uploads, whether automatic transcription is configured, and which runtime mode is active. Upload is available by default. `AUDIO_TRANSCRIPTION_STUB=1` enables a demo transcript that does not analyze uploaded audio. Real transcription requires `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, and the optional faster-whisper runtime. Speaker diarization is opt-in with `ENABLE_AUDIO_DIARIZATION=1` and optional pyannote dependencies.
+Returns whether this runtime can accept audio uploads, whether automatic transcription is configured, and which runtime mode is active. Upload is available by default. `AUDIO_TRANSCRIPTION_STUB=1` enables a demo transcript that does not analyze uploaded audio. Real transcription requires `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, `AUDIO_TRANSCRIPTION_ENGINE=whisperx`, and the optional `audio-whisperx` dependency group. Speaker diarization is opt-in with `ENABLE_AUDIO_DIARIZATION=1` and `HF_TOKEN`.
 
 ```json
 {
@@ -286,7 +286,7 @@ Returns whether this runtime can accept audio uploads, whether automatic transcr
   },
   "speaker_diarization": {
     "available": false,
-    "reason": "실제 화자 분리는 H100 런타임에서 별도 pyannote 설정 후 활성화됩니다."
+    "reason": "실제 화자 분리는 WhisperX 런타임에서 별도 설정 후 활성화됩니다."
   },
   "runtime_mode": "disabled"
 }
@@ -296,11 +296,13 @@ Returns whether this runtime can accept audio uploads, whether automatic transcr
 POST /api/audio/transcribe
 ```
 
-Accepts multipart `file`, optional `language`, optional `task`, and optional `expected_speakers`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`.
+Accepts multipart `file`, optional `language`, optional `task`, and optional `expected_speakers`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`. Runtime duration and process-level concurrency default to 7200 seconds and one job, controlled by `AUDIO_MAX_DURATION_SECONDS` and `AUDIO_MAX_CONCURRENT_JOBS`.
 
 `expected_speakers` defaults to 2 and must be between 1 and 4. When transcription is unavailable, the endpoint returns 503. In stub mode, the endpoint returns a clearly marked demo transcript with warning text: `시연용 예시 축어록이며 업로드 음성을 분석한 결과가 아닙니다.`
 
-`pause_before_seconds` is based on the previous chronological transcript segment end time. `speech_rate_wps` is segment words per second, and `speech_rate_level` is speaker-relative when enough samples exist. `volume_level` is returned only when the runtime supplies normalized speaker-relative loudness. The API does not infer emotion, depression, anxiety, risk, diagnosis, or treatment effect from audio.
+Real mode uses WhisperX 3.8.6 for ASR, the explicit `kresnik/wav2vec2-large-xlsr-korean` forced-alignment model, Community-1 diarization, and WhisperX speaker assignment. Alignment failure retains ASR segment timestamps. Diarization failure retains transcription as one `SPEAKER_00` speaker.
+
+`pause_before_seconds` is based on the previous chronological transcript turn end time. `speech_rate_wps` is turn words per second, and `speech_rate_level` is speaker-relative when enough samples exist. `volume_level` is computed from the already-decoded waveform and compared within the same speaker when enough turns exist. The API does not infer emotion, depression, anxiety, risk, diagnosis, tremor, or treatment effect from audio.
 
 ### Response
 
@@ -310,6 +312,10 @@ Accepts multipart `file`, optional `language`, optional `task`, and optional `ex
   "filename": "session.wav",
   "status": "completed",
   "runtime_mode": "real",
+  "transcription_engine": "whisperx",
+  "alignment_model": "kresnik/wav2vec2-large-xlsr-korean",
+  "diarization_model": "pyannote/speaker-diarization-community-1",
+  "alignment_status": "completed",
   "diarization_status": "disabled",
   "duration_seconds": 142.3,
   "language": "ko",
@@ -320,7 +326,7 @@ Accepts multipart `file`, optional `language`, optional `task`, and optional `ex
       "start": 0.0,
       "end": 4.2,
       "text": "상담자 발화...",
-      "speaker": "speaker_1",
+      "speaker": "SPEAKER_00",
       "pause_before_seconds": 0.8,
       "duration_seconds": 4.2,
       "speech_rate_wps": 1.7,

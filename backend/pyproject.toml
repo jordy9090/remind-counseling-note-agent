@@ -20,12 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-audio-stt = [
-    "faster-whisper>=1,<2",
+audio-whisperx = [
+    "whisperx==3.8.6",
     "numpy>=1.26,<3",
-]
-audio-diarization = [
-    "pyannote.audio>=4,<5",
 ]
 
 [tool.uv]

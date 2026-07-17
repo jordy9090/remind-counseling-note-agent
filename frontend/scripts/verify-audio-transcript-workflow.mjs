@@ -23,6 +23,7 @@ const {
   formatTimestamp,
   getAudioSeekTarget,
   getNotableAcousticObservations,
+  replaceAppliedAudioBlock,
 } = await import(pathToFileURL(outputPath).href)
 
 function assert(condition, message) {
@@ -80,6 +81,14 @@ const nonverbal = buildNonverbalNotes(segments, speakerRoleMap)
 assert(nonverbal.includes('1.3초 멈춤 후 발화'), 'pause observation must be included in nonverbal notes')
 assert(nonverbal.includes('낮은 음량'), 'low volume observation must be included in nonverbal notes')
 
+const reapplied = replaceAppliedAudioBlock('상담사 메모\n\n이전 축어록', '이전 축어록', '수정된 축어록')
+assert(reapplied === '상담사 메모\n\n수정된 축어록', 're-apply must replace the previous audio block')
+assert(!reapplied.includes('이전 축어록'), 're-apply must not append duplicate transcript blocks')
+assert(
+  replaceAppliedAudioBlock('상담사 메모\n\n직접 수정한 축어록', '이전 축어록', '수정된 축어록') === null,
+  're-apply must stop when the previous block was edited in the form',
+)
+
 const clientSource = fs.readFileSync(path.resolve('src/api/client.ts'), 'utf8')
 assert(clientSource.includes('expectedSpeakers = 2'), 'transcribeAudio must default expectedSpeakers to 2')
 assert(
@@ -89,10 +98,14 @@ assert(
 
 const pageSource = fs.readFileSync(path.resolve('src/pages/SessionDraftPage.tsx'), 'utf8')
 assert(pageSource.includes('applyAudioTranscriptToForm'), 'audio must use a dedicated atomic apply function')
-assert(pageSource.includes('transcript_text: mergeMaterialText'), 'audio apply must update transcript_text')
-assert(pageSource.includes('nonverbal_notes: mergeMaterialText'), 'audio apply must update nonverbal_notes')
+assert(pageSource.includes('transcript_text: nextTranscriptText'), 'audio apply must update transcript_text')
+assert(pageSource.includes('nonverbal_notes: nextNonverbalNotes'), 'audio apply must update nonverbal_notes')
 assert(pageSource.includes("...AUDIO_APPLY_TARGETS"), 'audio apply must mark transcript and nonverbal targets together')
 assert(pageSource.includes('dirtySinceApply: true'), 'audio edits and re-runs must mark material stale')
+assert(pageSource.includes('lastAppliedTranscriptText'), 'audio re-apply must remember the previous transcript block')
+assert(pageSource.includes('lastAppliedNonverbalNotes'), 'audio re-apply must remember the previous acoustic block')
+assert(pageSource.includes('lastAppliedMode'), 'audio re-apply must remember the original apply mode')
+assert(pageSource.includes('replaceAppliedAudioBlock'), 'audio re-apply must replace the previous block safely')
 assert(pageSource.includes('축어록 수정사항이 회기 입력에 아직 다시 반영되지 않았습니다.'), 'stale audio warning must be visible')
 assert(!pageSource.includes('file: undefined'), 'audio File reference must be kept after transcription success')
 assert(pageSource.includes('URL.revokeObjectURL'), 'object URLs must be revoked on delete and unmount')

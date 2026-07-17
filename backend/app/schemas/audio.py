@@ -22,6 +22,7 @@ class AudioWord(BaseModel):
     start: float | None = Field(default=None, ge=0)
     end: float | None = Field(default=None, ge=0)
     text: str
+    speaker: str | None = None
     probability: float | None = Field(default=None, ge=0, le=1)
 
 
@@ -48,6 +49,10 @@ class AudioTranscriptionResponse(BaseModel):
     filename: str
     status: AudioTranscriptionStatus = "completed"
     runtime_mode: Literal["stub", "real"]
+    transcription_engine: Literal["whisperx", "stub"] | None = None
+    alignment_model: str | None = None
+    diarization_model: str | None = None
+    alignment_status: Literal["completed", "fallback", "disabled"] = "disabled"
     diarization_status: Literal["completed", "fallback", "disabled"] = "disabled"
     duration_seconds: float | None = Field(default=None, ge=0)
     language: str | None = None

@@ -76,6 +76,34 @@ export function getSpeakerRoleLabel(role: SpeakerRole): string {
   return roleLabels[role]
 }
 
+export function replaceAppliedAudioBlock(current: string, previous: string, next: string): string | null {
+  const currentText = current.trim()
+  const previousText = previous.trim()
+  const nextText = next.trim()
+  if (!previousText) {
+    if (!nextText) return currentText
+    return currentText ? `${currentText}\n\n${nextText}` : nextText
+  }
+
+  const matches: number[] = []
+  let searchFrom = 0
+  while (searchFrom <= currentText.length - previousText.length) {
+    const index = currentText.indexOf(previousText, searchFrom)
+    if (index < 0) break
+    const end = index + previousText.length
+    const startsAtBoundary = index === 0 || currentText.slice(index - 2, index) === '\n\n'
+    const endsAtBoundary = end === currentText.length || currentText.slice(end, end + 2) === '\n\n'
+    if (startsAtBoundary && endsAtBoundary) matches.push(index)
+    searchFrom = index + previousText.length
+  }
+  if (matches.length !== 1) return null
+
+  const index = matches[0]
+  const before = currentText.slice(0, index).trim()
+  const after = currentText.slice(index + previousText.length).trim()
+  return [before, nextText, after].filter(Boolean).join('\n\n')
+}
+
 function roundOneDecimal(value: number): string {
   return (Math.round(value * 10) / 10).toFixed(1)
 }
