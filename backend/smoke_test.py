@@ -48,7 +48,20 @@ def _download_filename(content_disposition: str) -> str:
     return fallback.group(1) if fallback else ""
 
 
+def _assert_pdf_response(content: bytes, content_type: str, expected_texts: list[str]) -> None:
+    from pypdf import PdfReader
+
+    assert content.startswith(b"%PDF")
+    assert content_type.startswith("application/pdf")
+    reader = PdfReader(BytesIO(content))
+    assert len(reader.pages) >= 1
+    extracted_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    if extracted_text.strip():
+        assert any(expected in extracted_text for expected in expected_texts), extracted_text
+
+
 def main() -> None:
+    require_pdf_export = os.getenv("REQUIRE_PDF_EXPORT") == "1"
     settings.use_stub = True
     settings.openai_api_key = None
     settings.enable_persistence = False
@@ -62,6 +75,16 @@ def main() -> None:
     health = client.get("/api/health")
     assert health.status_code == 200, health.text
     assert health.json() == {"status": "ok"}
+
+    capabilities_response = client.get("/api/documents/capabilities")
+    assert capabilities_response.status_code == 200, capabilities_response.text
+    capabilities = capabilities_response.json()
+    assert capabilities["docx"]["available"] is True
+    assert capabilities["hwpx"]["available"] is False
+    if os.name == "nt" and not require_pdf_export:
+        assert capabilities["pdf"]["available"] is False, capabilities
+    if require_pdf_export:
+        assert capabilities["pdf"]["available"] is True, capabilities
 
     with tempfile.TemporaryDirectory() as temp_dir:
         os.environ["TEMP_DRAFT_DIR"] = temp_dir
@@ -248,6 +271,8 @@ def main() -> None:
             "metadata": {
                 "client_alias": "가명 은하",
                 "counselor_name": "박상담사",
+                "missing_items": ["상담 목표 표현 구체화 필요"],
+                "warnings": ["근거 부족 검토 문구"],
             },
             "sections": [
                 {
@@ -258,7 +283,7 @@ def main() -> None:
                 {
                     "id": "session_content",
                     "title": "상담 내용",
-                    "content": "첫 줄 상담 내용\n둘째 줄 상담 내용\n- 목록 항목",
+                    "content": "첫 줄 상담 내용\n둘째 줄 상담 내용\n- 목록 항목\n최종 수정 내용이 반영됨.",
                 },
             ],
         }
@@ -276,6 +301,21 @@ def main() -> None:
         assert "가명 은하" in docx_text
         assert "첫 줄 상담 내용" in docx_text
         assert "둘째 줄 상담 내용" in docx_text
+        assert "최종 수정 내용이 반영됨." in docx_text
+        assert "missing_items" not in docx_text
+        assert "상담 목표 표현 구체화 필요" not in docx_text
+        assert "근거 부족 검토 문구" not in docx_text
+
+        real_case_without_alias_payload = {
+            **session_export_payload,
+            "case_id": "CASE-REAL-002",
+            "metadata": {"counselor_name": "박상담사"},
+        }
+        real_case_response = client.post("/api/documents/export", json=real_case_without_alias_payload)
+        assert real_case_response.status_code == 200, real_case_response.text
+        real_case_text = _extract_docx_text(real_case_response.content)
+        assert "가명 은하" not in real_case_text
+        assert "내담자 가명" not in real_case_text
 
         supervision_export_payload = {
             "format": "docx",
@@ -299,7 +339,7 @@ def main() -> None:
                         {
                             "id": "paragraph-1",
                             "type": "paragraph",
-                            "text": "불안 자동사고를 사건-생각-감정-행동으로 구분함.",
+                            "text": "수정된 pending edit: 불안 자동사고를 사건-생각-감정-행동으로 구분함.",
                         },
                         {
                             "id": "table-1",
@@ -330,19 +370,49 @@ def main() -> None:
         assert supervision_docx_response.status_code == 200, supervision_docx_response.text
         supervision_docx_text = _extract_docx_text(supervision_docx_response.content)
         assert "개인상담 사례 수퍼비전 보고서" in supervision_docx_text
-        assert "불안 자동사고" in supervision_docx_text
+        assert "수정된 pending edit" in supervision_docx_text
         assert "내담자: 계속 망했다는 생각이 들어요." in supervision_docx_text
         assert "영역" in supervision_docx_text
         assert "불안 80" in supervision_docx_text
 
-        pdf_response = client.post("/api/documents/export", json={**session_export_payload, "format": "pdf"})
-        if pdf_response.status_code == 200:
-            assert pdf_response.content.startswith(b"%PDF")
-            assert pdf_response.headers["content-type"].startswith("application/pdf")
+        termination_export_payload = {
+            "format": "docx",
+            "document_type": "termination_report",
+            "case_id": payload["case_id"],
+            "session_number": payload["session_number"],
+            "session_date": payload["session_date"],
+            "title": "종결 보고서",
+            "metadata": {"counselor_name": "박상담사"},
+            "sections": [
+                {"id": "termination_goal_process", "title": "상담 목표 및 진행 과정", "content": "진행 과정"},
+                {"id": "termination_changes", "title": "주요 변화", "content": "주요 변화"},
+                {"id": "termination_reason", "title": "종결 사유", "content": "합의 종결"},
+                {"id": "termination_recommendation", "title": "향후 권고", "content": "향후 권고"},
+                {"id": "termination_counselor_opinion", "title": "상담자 종합소견", "content": "종합소견"},
+            ],
+        }
+        termination_docx_response = client.post("/api/documents/export", json=termination_export_payload)
+        assert termination_docx_response.status_code == 200, termination_docx_response.text
+        termination_docx_text = _extract_docx_text(termination_docx_response.content)
+        for expected_section in [
+            "상담 목표 및 진행 과정",
+            "주요 변화",
+            "종결 사유",
+            "향후 권고",
+            "상담자 종합소견",
+        ]:
+            assert expected_section in termination_docx_text
+
+        if capabilities["pdf"]["available"] or require_pdf_export:
+            pdf_response = client.post("/api/documents/export", json={**session_export_payload, "format": "pdf"})
+            assert pdf_response.status_code == 200, pdf_response.text
+            _assert_pdf_response(
+                pdf_response.content,
+                pdf_response.headers["content-type"],
+                ["상담 회기 기록", "첫 줄 상담 내용"],
+            )
         else:
-            assert pdf_response.status_code == 500, pdf_response.text
-            assert "WeasyPrint" in pdf_response.text
-            print("PDF export runtime check skipped: WeasyPrint native libraries are unavailable in this environment.")
+            print(f"PDF export not exercised: {capabilities['pdf'].get('reason')}")
 
         invalid_format_response = client.post(
             "/api/documents/export",

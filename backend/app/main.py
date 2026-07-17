@@ -35,5 +35,6 @@ async def root():
         "docs": "/docs",
         "health": "/api/health",
         "generate": "/api/notes/generate",
+        "document_capabilities": "/api/documents/capabilities",
         "export": "/api/documents/export",
     }

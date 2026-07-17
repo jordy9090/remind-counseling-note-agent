@@ -32,7 +32,8 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 10. 검증 리포트 생성
 11. 문서 변환 preview
 12. 상담사 수정용 회기요약 textarea UI
-13. 최종 문서 DOCX/PDF 내보내기
+13. 최종 문서 DOCX 내보내기
+14. PDF 내보내기 서버 capability 확인과 지원 환경에서의 PDF 내보내기
 
 제외:
 
@@ -53,10 +54,13 @@ Primary API:
 ```text
 GET  /api/health
 POST /api/notes/generate
+GET  /api/documents/capabilities
 POST /api/documents/export
 ```
 
 `POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드를 클라이언트에서 변환합니다.
+
+`GET /api/documents/capabilities`는 서버가 DOCX/PDF/HWPX 내보내기를 실제로 지원할 수 있는지 반환합니다. PDF는 WeasyPrint와 Pango/GObject 계열 시스템 라이브러리, 한국어 fallback 폰트가 준비된 환경에서만 활성화됩니다.
 
 `POST /api/documents/export`는 최종문서 화면에서 수정된 최신 섹션을 DOCX 또는 PDF byte stream으로 반환합니다. HWPX는 스키마와 exporter 인터페이스만 준비되어 있으며, 검증된 HWPX 템플릿이 추가되기 전까지는 422를 반환합니다.
 
@@ -194,6 +198,8 @@ cd backend
 uv sync --link-mode=copy
 uv run python smoke_test.py
 ```
+
+PDF export까지 강제 검증하려면 Linux/Ubuntu 환경에서 WeasyPrint 시스템 의존성과 한국어 폰트를 설치한 뒤 실행합니다. GitHub Actions의 `backend-pdf-export` job은 `fonts-noto-cjk`, Pango/GObject 관련 패키지를 설치하고 `REQUIRE_PDF_EXPORT=1 uv run python smoke_test.py`를 실행합니다.
 
 Frontend build:
 

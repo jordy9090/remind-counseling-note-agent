@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type {
+  DocumentCapabilitiesResponse,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
@@ -26,6 +27,7 @@ const client = axios.create({
 export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftResponse> => {
   const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
     case_id: input.case_id,
+    client_alias: input.client_alias || '',
     session_number: input.session_number,
     session_date: input.session_date,
     counselor_name: input.counselor_name,
@@ -102,6 +104,11 @@ export const downloadDocumentExport = async (
     }
     throw error
   }
+}
+
+export const getDocumentCapabilities = async (): Promise<DocumentCapabilitiesResponse> => {
+  const response = await client.get<DocumentCapabilitiesResponse>('/api/documents/capabilities')
+  return response.data
 }
 
 export { API_BASE_URL }

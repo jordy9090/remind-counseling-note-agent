@@ -7,6 +7,7 @@ import re
 import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from string import Template
@@ -29,6 +30,17 @@ REVIEW_NOTICE = (
     "이 문서는 Re:mind AI가 생성한 초안을 바탕으로 작성되었습니다. "
     "상담사가 원자료, 윤리 기준, 개인정보 보호 기준을 검토한 뒤 최종 문서로 사용하세요."
 )
+
+BLOCKED_METADATA_KEYS = {
+    "missing_items",
+    "warnings",
+    "unsupported_claims",
+    "unsupported_or_risky_claims",
+    "ai_review",
+    "aiReview",
+    "needs_human_review",
+    "completion_checklist",
+}
 
 
 class DocumentExportError(Exception):
@@ -208,6 +220,17 @@ class DocumentExportService:
             filename=build_download_filename(request, exporter.extension),
         )
 
+    def capabilities(self) -> dict[str, dict[str, str | bool | None]]:
+        pdf_available, pdf_reason = check_pdf_runtime()
+        return {
+            "docx": {"available": True, "reason": None},
+            "pdf": {"available": pdf_available, "reason": None if pdf_available else pdf_reason},
+            "hwpx": {
+                "available": False,
+                "reason": "Verified HWPX template is not configured.",
+            },
+        }
+
 
 def build_metadata_rows(request: DocumentExportRequest) -> list[tuple[str, str]]:
     rows = [
@@ -217,10 +240,26 @@ def build_metadata_rows(request: DocumentExportRequest) -> list[tuple[str, str]]
         ("날짜", request.session_date or "미기재"),
     ]
     for key, value in request.metadata.items():
+        if key in BLOCKED_METADATA_KEYS:
+            continue
         if value is None or value == "":
             continue
         rows.append((humanize_metadata_key(key), stringify_cell_value(value)))
     return rows
+
+
+@lru_cache(maxsize=1)
+def check_pdf_runtime() -> tuple[bool, str | None]:
+    try:
+        from weasyprint import HTML
+        from weasyprint.text.fonts import FontConfiguration
+
+        HTML(string="<html><body><p>pdf capability check</p></body></html>").write_pdf(
+            font_config=FontConfiguration(),
+        )
+    except Exception:
+        return False, "WeasyPrint native runtime is unavailable."
+    return True, None
 
 
 def humanize_metadata_key(key: str) -> str:

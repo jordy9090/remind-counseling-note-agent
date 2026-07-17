@@ -11,6 +11,17 @@ DocumentExportType = Literal["session_note", "supervision_report", "termination_
 DocumentBlockType = Literal["paragraph", "table", "transcript", "reflection_box", "placeholder"]
 
 
+class DocumentFormatCapability(BaseModel):
+    available: bool
+    reason: str | None = None
+
+
+class DocumentCapabilitiesResponse(BaseModel):
+    docx: DocumentFormatCapability
+    pdf: DocumentFormatCapability
+    hwpx: DocumentFormatCapability
+
+
 class DocumentTranscriptTurn(BaseModel):
     """One speaker turn in an exported transcript block."""
 

@@ -12,6 +12,7 @@ export type TargetDocumentType = 'session_note' | 'supervision_report' | 'termin
 
 export interface SessionInput {
   case_id: string
+  client_alias?: string
   session_number: number
   session_date: string
   counselor_name: string
@@ -84,6 +85,7 @@ export interface EvidenceMappedData {
 
 export interface SessionInfo {
   case_id: string
+  client_alias?: string
   session_number: number
   session_date: string
   counselor_name: string
@@ -255,6 +257,7 @@ export interface TemporaryDraftSaveRequest {
   attachments: unknown[]
   visible_section_ids: string[]
   draft_sections: unknown[]
+  final_document_sections?: unknown[]
   result?: unknown
   final_document_type: string
   supervision_report_draft?: unknown
@@ -404,4 +407,15 @@ export interface DocumentExportRequest {
   title: string
   metadata: Record<string, unknown>
   sections: DocumentExportSection[]
+}
+
+export interface DocumentFormatCapability {
+  available: boolean
+  reason?: string | null
+}
+
+export interface DocumentCapabilitiesResponse {
+  docx: DocumentFormatCapability
+  pdf: DocumentFormatCapability
+  hwpx: DocumentFormatCapability
 }

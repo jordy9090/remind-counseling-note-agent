@@ -47,6 +47,7 @@ def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     session_input: SessionInput = state["session_input"]
     sanitized = SanitizedInput(
         case_id=session_input.case_id,
+        client_alias=session_input.client_alias,
         session_number=session_input.session_number,
         session_date=session_input.session_date,
         counselor_name=session_input.counselor_name,
@@ -357,6 +358,7 @@ def _mock_summary(sanitized: SanitizedInput, structured: StructuredCaseData) -> 
     return SessionSummaryDraft(
         session_info=SessionInfo(
             case_id=sanitized.case_id,
+            client_alias=sanitized.client_alias,
             session_number=sanitized.session_number,
             session_date=sanitized.session_date,
             counselor_name=sanitized.counselor_name,
