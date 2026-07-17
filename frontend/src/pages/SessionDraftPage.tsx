@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   ClipboardList,
+  Download,
   Edit3,
   FileText,
   FolderOpen,
@@ -29,8 +30,19 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { generateNoteDraft, generateSupervisionReport, recomposeNoteDraft, saveTemporaryDraft } from '../api/client'
+import {
+  downloadDocumentExport,
+  getDocumentCapabilities,
+  generateNoteDraft,
+  generateSupervisionReport,
+  recomposeNoteDraft,
+  saveTemporaryDraft,
+} from '../api/client'
 import type {
+  DocumentCapabilitiesResponse,
+  DocumentExportFormat,
+  DocumentExportRequest,
+  DocumentExportSection,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
@@ -114,6 +126,13 @@ interface DraftSection {
   visible: boolean
   editable: boolean
   toggleable: boolean
+}
+
+interface FinalDocumentSection {
+  id: string
+  title: string
+  content: string
+  contentKind: 'paragraph' | 'list'
 }
 
 interface ChecklistItem {
@@ -254,6 +273,7 @@ const caseSummaries: CaseSummary[] = [
 
 const initialForm: SessionInput = {
   case_id: 'CASE-DEMO-001',
+  client_alias: demoClientName,
   session_number: 5,
   session_date: '2026-05-24',
   counselor_name: '박상담사',
@@ -287,6 +307,7 @@ export default function SessionDraftPage() {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<NoteDraftResponse | null>(null)
   const [draftSections, setDraftSections] = useState<DraftSection[]>([])
+  const [finalDocumentSections, setFinalDocumentSections] = useState<FinalDocumentSection[]>([])
   const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(defaultVisibleSectionIds)
   const [editingSectionId, setEditingSectionId] = useState<DraftSectionId | null>(null)
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<DraftSectionId | null>(null)
@@ -302,6 +323,11 @@ export default function SessionDraftPage() {
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
   const [expandedSupervisionEvidenceId, setExpandedSupervisionEvidenceId] = useState<string | null>(null)
+  const [isExportingDocument, setIsExportingDocument] = useState(false)
+  const [documentExportError, setDocumentExportError] = useState<string | null>(null)
+  const [documentExportStatus, setDocumentExportStatus] = useState<string | null>(null)
+  const [documentCapabilities, setDocumentCapabilities] = useState<DocumentCapabilitiesResponse | null>(null)
+  const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
 
   const hasMaterials = Boolean(
     form.counselor_memo.trim() ||
@@ -445,6 +471,7 @@ export default function SessionDraftPage() {
     setResult(null)
     setSupervisionReportDraft(null)
     setDraftSections([])
+    setFinalDocumentSections([])
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
   }
@@ -462,12 +489,35 @@ export default function SessionDraftPage() {
     setCurrentScreen('document_transform')
   }
 
+  const refreshDocumentCapabilities = async () => {
+    setDocumentCapabilitiesError(null)
+    try {
+      const capabilities = await getDocumentCapabilities()
+      setDocumentCapabilities(capabilities)
+      return capabilities
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '문서 내보내기 지원 상태를 확인하지 못했습니다.'
+      setDocumentCapabilitiesError(message)
+      const fallback: DocumentCapabilitiesResponse = {
+        docx: { available: true },
+        pdf: { available: false, reason: '문서 내보내기 지원 상태를 확인하지 못했습니다.' },
+        hwpx: { available: false, reason: '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.' },
+      }
+      setDocumentCapabilities(fallback)
+      return fallback
+    }
+  }
+
   const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
     setFinalDocumentType(documentType)
     setFinalDocumentError(null)
+    setDocumentExportError(null)
+    setDocumentExportStatus(null)
+    await refreshDocumentCapabilities()
 
     if (documentType === 'supervision_report') {
+      setFinalDocumentSections([])
       setIsGeneratingFinalDocument(true)
       try {
         const report = await generateSupervisionReport({
@@ -475,7 +525,7 @@ export default function SessionDraftPage() {
           session_summary_draft: result.full_response?.session_summary_draft,
           demo_mode: form.case_id === 'CASE-DEMO-001',
           report_date: form.session_date,
-          client_alias: demoClientName,
+          client_alias: getClientAlias(form),
         })
         setSupervisionReportDraft(report)
       } catch (err) {
@@ -484,6 +534,15 @@ export default function SessionDraftPage() {
       } finally {
         setIsGeneratingFinalDocument(false)
       }
+    } else {
+      setSupervisionReportDraft(null)
+      setFinalDocumentSections(
+        buildFinalDocumentSections(
+          documentType,
+          draftSections.filter((section) => section.visible),
+          result.missing_items,
+        ),
+      )
     }
 
     setCurrentScreen('final_document')
@@ -533,6 +592,7 @@ export default function SessionDraftPage() {
         attachments,
         visible_section_ids: Array.from(visibleSectionIds),
         draft_sections: draftSections,
+        final_document_sections: finalDocumentSections,
         result,
         final_document_type: finalDocumentType,
         supervision_report_draft: supervisionReportDraft,
@@ -544,6 +604,46 @@ export default function SessionDraftPage() {
       setDraftSaveMessage(`임시저장 실패 · ${message}`)
     } finally {
       setIsSavingDraft(false)
+    }
+  }
+
+  const handleDownloadDocument = async (format: DocumentExportFormat) => {
+    if (!result) return
+    if (format === 'pdf' && (!documentCapabilities || documentCapabilities.pdf.available === false)) {
+      setDocumentExportError(
+        documentCapabilities
+          ? capabilityReasonToKorean(documentCapabilities.pdf.reason)
+          : '문서 내보내기 지원 상태를 확인한 뒤 PDF를 사용할 수 있습니다.',
+      )
+      return
+    }
+    setIsExportingDocument(true)
+    setDocumentExportError(null)
+    setDocumentExportStatus(null)
+
+    try {
+      const request = buildDocumentExportRequest({
+        documentType: finalDocumentType,
+        editingSupervisionBlockId,
+        editingSupervisionText,
+        finalDocumentSections,
+        form,
+        format,
+        supervisionReportDraft,
+      })
+
+      if (!request.sections.length) {
+        throw new Error('내보낼 수 있는 문서 내용이 없습니다. 표시된 섹션에 내용을 입력해주세요.')
+      }
+
+      const { blob, filename } = await downloadDocumentExport(request)
+      triggerBlobDownload(blob, filename)
+      setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : 'Word'} 다운로드를 시작했습니다.`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '문서 내보내기 중 오류가 발생했습니다.'
+      setDocumentExportError(message)
+    } finally {
+      setIsExportingDocument(false)
     }
   }
 
@@ -665,8 +765,12 @@ export default function SessionDraftPage() {
                   <FinalDocumentWorkspace
                     documentType={finalDocumentType}
                     form={form}
-                    missingItems={result.missing_items}
-                    sections={draftSections.filter((section) => section.visible)}
+                    sections={finalDocumentSections}
+                    onChangeSectionContent={(sectionId, content) =>
+                      setFinalDocumentSections((current) =>
+                        current.map((section) => (section.id === sectionId ? { ...section, content } : section)),
+                      )
+                    }
                   />
                 )
               )}
@@ -676,19 +780,31 @@ export default function SessionDraftPage() {
               finalDocumentType === 'supervision_report' && supervisionReportDraft ? (
                 <SupervisionReviewPanel
                   aiReview={supervisionReportDraft.aiReview}
+                  capabilities={documentCapabilities}
+                  capabilitiesError={documentCapabilitiesError}
                   draftSaveMessage={draftSaveMessage}
+                  exportError={documentExportError}
+                  exportStatus={documentExportStatus}
+                  isExporting={isExportingDocument}
                   isSavingDraft={isSavingDraft}
                   onBack={() => setCurrentScreen('document_transform')}
+                  onDownload={handleDownloadDocument}
                   onTemporarySave={handleTemporarySave}
                 />
               ) : (
                 <FinalReviewPanel
                   documentType={finalDocumentType}
+                  capabilities={documentCapabilities}
+                  capabilitiesError={documentCapabilitiesError}
                   draftSaveMessage={draftSaveMessage}
+                  exportError={documentExportError}
+                  exportStatus={documentExportStatus}
+                  isExporting={isExportingDocument}
                   isSavingDraft={isSavingDraft}
                   missingItems={result?.missing_items || []}
                   warnings={result?.warnings || []}
                   onBack={() => setCurrentScreen('document_transform')}
+                  onDownload={handleDownloadDocument}
                   onTemporarySave={handleTemporarySave}
                 />
               )
@@ -1144,7 +1260,7 @@ function SessionInputWorkspace({
               <User className="h-4 w-4 text-blue-700" />
               <p className="text-base font-bold tracking-normal text-slate-950">내담자 / 회기 기본 정보</p>
             </div>
-            <h1 className="mt-3 text-xl font-bold tracking-normal text-slate-950">{demoClientName}</h1>
+            <h1 className="mt-3 text-xl font-bold tracking-normal text-slate-950">{getClientDisplayName(form)}</h1>
           </div>
           <button
             type="button"
@@ -1334,7 +1450,7 @@ function SummaryDraftWorkspace({
               <h1 className="text-xl font-bold tracking-normal">요약 초안</h1>
             </div>
             <p className="mt-1.5 text-xs font-bold text-blue-50">
-              {demoClientName} · {form.session_number}회기 · {formatCompactDate(form.session_date)}
+              {getClientDisplayName(form)} · {form.session_number}회기 · {formatCompactDate(form.session_date)}
             </p>
           </div>
           <button
@@ -1531,16 +1647,15 @@ function DocumentTransformWorkspace({
 function FinalDocumentWorkspace({
   documentType,
   form,
-  missingItems,
+  onChangeSectionContent,
   sections,
 }: {
   documentType: FinalDocumentType
   form: SessionInput
-  missingItems: string[]
-  sections: DraftSection[]
+  onChangeSectionContent: (sectionId: string, content: string) => void
+  sections: FinalDocumentSection[]
 }) {
   const documentMeta = finalDocumentMeta[documentType]
-  const bodySections = buildFinalDocumentSections(documentType, sections, missingItems)
 
   return (
     <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
@@ -1549,52 +1664,41 @@ function FinalDocumentWorkspace({
           <div>
             <h1 className="text-xl font-bold tracking-normal">{documentMeta.title}</h1>
             <p className="mt-1.5 text-xs font-bold text-blue-50">
-              내담자: {form.case_id} / 회기:{form.session_number}회기 / 날짜:{form.session_date}
+              내담자: {getClientDisplayName(form)} / 회기:{form.session_number}회기 / 날짜:{form.session_date}
             </p>
           </div>
-          <button
-            type="button"
-            className="inline-flex h-8 items-center gap-2 rounded-[5px] bg-white px-5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
-          >
-            <Edit3 className="h-4 w-4" />
-            수정하기
-          </button>
         </div>
       </div>
 
       <div className="px-4 py-3">
         <p className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-slate-600">
           <Info className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-          하이라이트된 문장은 AI가 생성한 문장입니다.
+          아래 내용은 최종 파일에 그대로 반영됩니다.
         </p>
       </div>
 
       <div className="space-y-0 px-4 pb-5">
-        {bodySections.map((section) => {
+        {sections.map((section) => {
           const SectionIcon = getFinalDocumentSectionIcon(section.title)
 
           return (
-            <section key={section.title} className="border-b border-[#c7d0df] py-5 last:border-b-0">
-              <h2 className="flex items-center gap-1.5 pb-2 text-base font-bold text-blue-700">
+            <section key={section.id} className="border-b border-[#c7d0df] py-5 last:border-b-0">
+              <label htmlFor={`final-section-${section.id}`} className="flex items-center gap-1.5 pb-2 text-base font-bold text-blue-700">
                 <SectionIcon className="h-4 w-4 shrink-0" />
                 {section.title}
-              </h2>
-              {Array.isArray(section.content) ? (
-                <ul className="mt-3 list-disc space-y-2 pl-5 text-[13px] font-semibold leading-6 text-slate-900">
-                  {section.content.map((item) => (
-                    <li key={item}>
-                      <HighlightedText text={item} />
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-3 whitespace-pre-wrap text-[13px] font-semibold leading-6 text-slate-900">
-                  <HighlightedText text={section.content} />
-                </p>
-              )}
+              </label>
+              <textarea
+                id={`final-section-${section.id}`}
+                value={section.content}
+                onChange={(event) => onChangeSectionContent(section.id, event.target.value)}
+                className="mt-3 min-h-[110px] w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
             </section>
           )
         })}
+        {!sections.length && (
+          <p className="py-10 text-center text-sm font-semibold text-slate-500">표시할 최종문서 섹션이 없습니다.</p>
+        )}
       </div>
     </section>
   )
@@ -1951,15 +2055,27 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
 
 function SupervisionReviewPanel({
   aiReview,
+  capabilities,
+  capabilitiesError,
   draftSaveMessage,
+  exportError,
+  exportStatus,
+  isExporting,
   isSavingDraft,
   onBack,
+  onDownload,
   onTemporarySave,
 }: {
   aiReview: SupervisionAiReviewPanel
+  capabilities: DocumentCapabilitiesResponse | null
+  capabilitiesError: string | null
   draftSaveMessage: string | null
+  exportError: string | null
+  exportStatus: string | null
+  isExporting: boolean
   isSavingDraft: boolean
   onBack: () => void
+  onDownload: (format: DocumentExportFormat) => void
   onTemporarySave: () => void
 }) {
   return (
@@ -2016,6 +2132,14 @@ function SupervisionReviewPanel({
           {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {isSavingDraft ? '저장중' : '임시저장'}
         </button>
+        <DownloadControls
+          capabilities={capabilities}
+          capabilitiesError={capabilitiesError}
+          error={exportError}
+          isExporting={isExporting}
+          status={exportStatus}
+          onDownload={onDownload}
+        />
       </div>
     </aside>
   )
@@ -2352,18 +2476,30 @@ function PreviousSessionLinkPanel({
 
 function FinalReviewPanel({
   documentType,
+  capabilities,
+  capabilitiesError,
   draftSaveMessage,
+  exportError,
+  exportStatus,
+  isExporting,
   isSavingDraft,
   missingItems,
   onBack,
+  onDownload,
   onTemporarySave,
   warnings,
 }: {
   documentType: FinalDocumentType
+  capabilities: DocumentCapabilitiesResponse | null
+  capabilitiesError: string | null
   draftSaveMessage: string | null
+  exportError: string | null
+  exportStatus: string | null
+  isExporting: boolean
   isSavingDraft: boolean
   missingItems: string[]
   onBack: () => void
+  onDownload: (format: DocumentExportFormat) => void
   onTemporarySave: () => void
   warnings: string[]
 }) {
@@ -2419,16 +2555,73 @@ function FinalReviewPanel({
           {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {isSavingDraft ? '저장중' : '임시저장'}
         </button>
-        <div>
-          <button
-            type="button"
-            className="inline-flex h-12 w-full items-center justify-center gap-1 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
-          >
-            다운로드
-          </button>
-        </div>
+        <DownloadControls
+          capabilities={capabilities}
+          capabilitiesError={capabilitiesError}
+          error={exportError}
+          isExporting={isExporting}
+          status={exportStatus}
+          onDownload={onDownload}
+        />
       </div>
     </aside>
+  )
+}
+
+function DownloadControls({
+  capabilities,
+  capabilitiesError,
+  error,
+  isExporting,
+  onDownload,
+  status,
+}: {
+  capabilities: DocumentCapabilitiesResponse | null
+  capabilitiesError: string | null
+  error: string | null
+  isExporting: boolean
+  onDownload: (format: DocumentExportFormat) => void
+  status: string | null
+}) {
+  const pdfUnavailableReason = !capabilities
+    ? '문서 내보내기 지원 상태를 확인한 뒤 PDF를 사용할 수 있습니다.'
+    : capabilities.pdf.available === false
+      ? capabilityReasonToKorean(capabilities.pdf.reason)
+      : capabilitiesError
+        ? '문서 내보내기 지원 상태를 확인하지 못해 PDF 다운로드를 비활성화했습니다.'
+        : null
+  const pdfDisabled = isExporting || Boolean(pdfUnavailableReason)
+
+  return (
+    <div className="rounded-[8px] border border-slate-200 bg-slate-50 p-3">
+      <div className="flex items-center gap-2 text-sm font-extrabold text-slate-950">
+        <Download className="h-4 w-4 text-blue-700" />
+        다운로드
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onDownload('docx')}
+          disabled={isExporting}
+          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+        >
+          {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+          Word(.docx)
+        </button>
+        <button
+          type="button"
+          onClick={() => onDownload('pdf')}
+          disabled={pdfDisabled}
+          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+        >
+          {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
+          PDF(.pdf)
+        </button>
+      </div>
+      {pdfUnavailableReason && <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">{pdfUnavailableReason}</p>}
+      {status && <p className="mt-2 text-xs font-semibold text-emerald-700">{status}</p>}
+      {error && <p className="mt-2 text-xs font-semibold leading-5 text-red-700">{error}</p>}
+    </div>
   )
 }
 
@@ -2592,6 +2785,15 @@ function MaterialModal({
                   value={form.case_id}
                   onChange={(event) => onUpdateField('case_id', event.target.value)}
                   className={inputClass}
+                />
+              </Field>
+              <Field label="내담자 가명" htmlFor="modal_client_alias">
+                <input
+                  id="modal_client_alias"
+                  value={form.client_alias || ''}
+                  onChange={(event) => onUpdateField('client_alias', event.target.value)}
+                  className={inputClass}
+                  placeholder="비워두면 케이스 ID로 표시됩니다."
                 />
               </Field>
               <Field label="회기 번호" htmlFor="modal_session_number">
@@ -2917,6 +3119,14 @@ function formatCompactDate(value: string): string {
   return value.replace(/-/g, '.')
 }
 
+function getClientAlias(form: SessionInput): string {
+  return (form.client_alias || '').trim()
+}
+
+function getClientDisplayName(form: SessionInput): string {
+  return getClientAlias(form) || form.case_id
+}
+
 function formatSavedTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '방금'
@@ -2934,62 +3144,61 @@ function buildFinalDocumentSections(
   documentType: FinalDocumentType,
   sections: DraftSection[],
   missingItems: string[],
-): Array<{ title: string; content: string | string[] }> {
+): FinalDocumentSection[] {
   const getSection = (id: DraftSectionId, fallback: string) =>
     sections.find((section) => section.id === id)?.content || fallback
+  const makeSection = (
+    id: string,
+    title: string,
+    content: string | string[],
+  ): FinalDocumentSection => ({
+    id,
+    title,
+    content: Array.isArray(content) ? content.join('\n') : content,
+    contentKind: Array.isArray(content) ? 'list' : 'paragraph',
+  })
 
   if (documentType === 'supervision_report') {
     return [
-      {
-        title: '주요 호소',
-        content: [
+      makeSection(
+        'main_issue',
+        '주요 호소',
+        [
           getSection('main_issue', '주요 호소 내용을 상담사가 확인해야 합니다.'),
           '진로 및 취업 준비 과정에서의 불안과 자기비난 사고를 중심으로 보고함.',
         ],
-      },
-      {
-        title: '상담 내용',
-        content: getSection('session_content', '상담 내용을 확인해야 합니다.'),
-      },
-      {
-        title: '상담사 개입',
-        content: [
+      ),
+      makeSection('session_content', '상담 내용', getSection('session_content', '상담 내용을 확인해야 합니다.')),
+      makeSection(
+        'counselor_intervention',
+        '상담사 개입',
+        [
           getSection('counselor_intervention', '상담자 개입 내용을 확인해야 합니다.'),
           '자동사고와 감정 반응의 연결을 탐색하는 방향으로 진행함.',
         ],
-      },
-      {
-        title: '심리검사 결과 및 해석',
-        content: getSection('psychological_test', '심리검사 결과와 상담적 해석은 상담사가 확인해야 합니다.'),
-      },
-      {
-        title: '슈퍼비전 요청사항',
-        content:
-          '내담자의 자기비난 사고를 다룰 때 정서 확인과 행동 계획 사이의 균형을 어떻게 잡을지 슈퍼비전에서 논의가 필요합니다.',
-      },
-      {
-        title: '추가 확인 필요',
-        content: missingItems.length ? missingItems : ['가족관계, 심리검사 결과, 상담 목표 달성 정도 확인 필요'],
-      },
+      ),
+      makeSection('psychological_test', '심리검사 결과 및 해석', getSection('psychological_test', '심리검사 결과와 상담적 해석은 상담사가 확인해야 합니다.')),
+      makeSection('supervision_request', '슈퍼비전 요청사항', '내담자의 자기비난 사고를 다룰 때 정서 확인과 행동 계획 사이의 균형을 어떻게 잡을지 슈퍼비전에서 논의가 필요합니다.'),
+      makeSection('additional_review', '추가 확인 필요', missingItems.length ? missingItems : ['가족관계, 심리검사 결과, 상담 목표 달성 정도 확인 필요']),
     ]
   }
 
   if (documentType === 'termination_report') {
     return [
-      { title: '상담 목표 및 진행 과정', content: getSection('session_content', '상담 진행 과정을 확인해야 합니다.') },
-      { title: '주요 변화', content: getSection('client_response', '내담자 변화 내용을 상담사가 확인해야 합니다.') },
-      { title: '종결 사유', content: '종결 사유는 상담사가 직접 입력해야 합니다.' },
-      { title: '향후 권고', content: getSection('next_plan', '향후 권고 사항을 확인해야 합니다.') },
-      { title: '상담자 종합소견', content: '상담자 종합소견은 임상 판단 영역이므로 직접 작성이 필요합니다.' },
+      makeSection('termination_goal_process', '상담 목표 및 진행 과정', getSection('session_content', '상담 진행 과정을 확인해야 합니다.')),
+      makeSection('termination_changes', '주요 변화', getSection('client_response', '내담자 변화 내용을 상담사가 확인해야 합니다.')),
+      makeSection('termination_reason', '종결 사유', '종결 사유는 상담사가 직접 입력해야 합니다.'),
+      makeSection('termination_recommendation', '향후 권고', getSection('next_plan', '향후 권고 사항을 확인해야 합니다.')),
+      makeSection('termination_counselor_opinion', '상담자 종합소견', '상담자 종합소견은 임상 판단 영역이므로 직접 작성이 필요합니다.'),
     ]
   }
 
   return [
-    { title: '주요 호소', content: getSection('main_issue', '주요 호소 내용을 확인해야 합니다.') },
-    { title: '상담 내용', content: getSection('session_content', '상담 내용을 확인해야 합니다.') },
-    { title: '상담사 개입', content: getSection('counselor_intervention', '상담자 개입 내용을 확인해야 합니다.') },
-    { title: '내담자 반응', content: getSection('client_response', '내담자 반응을 확인해야 합니다.') },
-    { title: '다음 계획', content: getSection('next_plan', '다음 계획을 확인해야 합니다.') },
+    makeSection('main_issue', '주요 호소', getSection('main_issue', '주요 호소 내용을 확인해야 합니다.')),
+    makeSection('session_content', '상담 내용', getSection('session_content', '상담 내용을 확인해야 합니다.')),
+    makeSection('counselor_intervention', '상담사 개입', getSection('counselor_intervention', '상담자 개입 내용을 확인해야 합니다.')),
+    makeSection('client_response', '내담자 반응', getSection('client_response', '내담자 반응을 확인해야 합니다.')),
+    makeSection('next_plan', '다음 계획', getSection('next_plan', '다음 계획을 확인해야 합니다.')),
   ]
 }
 
@@ -3061,6 +3270,170 @@ function parseSupervisionTranscriptText(text: string, blockId: string) {
         text: textValue,
       } as const
     })
+}
+
+function splitEditableList(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*[-*•]\s+/, '').trim())
+    .filter(Boolean)
+}
+
+function cleanExportMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => {
+      if (value === null || value === undefined) return false
+      if (typeof value === 'string') return value.trim().length > 0
+      if (Array.isArray(value)) return value.length > 0
+      return true
+    }),
+  )
+}
+
+function capabilityReasonToKorean(reason?: string | null): string {
+  if (!reason) return 'PDF 내보내기를 사용할 수 없습니다.'
+  if (reason.includes('WeasyPrint native runtime')) {
+    return '이 서버에는 PDF 생성을 위한 WeasyPrint 네이티브 런타임이 없어 PDF 다운로드를 사용할 수 없습니다.'
+  }
+  if (reason.includes('HWPX')) {
+    return '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.'
+  }
+  return reason
+}
+
+function buildDocumentExportRequest({
+  documentType,
+  editingSupervisionBlockId,
+  editingSupervisionText,
+  finalDocumentSections,
+  form,
+  format,
+  supervisionReportDraft,
+}: {
+  documentType: FinalDocumentType
+  editingSupervisionBlockId: string | null
+  editingSupervisionText: string
+  finalDocumentSections: FinalDocumentSection[]
+  form: SessionInput
+  format: DocumentExportFormat
+  supervisionReportDraft: SupervisionReportDraft | null
+}): DocumentExportRequest {
+  if (documentType === 'supervision_report') {
+    if (!supervisionReportDraft) {
+      throw new Error('수퍼비전 보고서 초안이 아직 준비되지 않았습니다.')
+    }
+    const report = applyPendingSupervisionEdit(
+      supervisionReportDraft,
+      editingSupervisionBlockId,
+      editingSupervisionText,
+    )
+
+    return {
+      format,
+      document_type: documentType,
+      case_id: report.caseId || form.case_id,
+      session_number: report.meta.sessionNumber || form.session_number,
+      session_date: report.meta.reportDate || form.session_date,
+      title: report.title,
+      metadata: cleanExportMetadata({
+        client_alias: getClientAlias(form),
+        counselor_name: report.meta.counselorName || form.counselor_name,
+        institution: report.meta.institution,
+        supervisor: report.meta.supervisor,
+        supervision_date_place: report.meta.supervisionDatePlace,
+      }),
+      sections: buildSupervisionExportSections(report),
+    }
+  }
+
+  return {
+    format,
+    document_type: documentType,
+    case_id: form.case_id,
+    session_number: form.session_number,
+    session_date: form.session_date,
+    title: finalDocumentMeta[documentType].title,
+    metadata: cleanExportMetadata({
+      client_alias: getClientAlias(form),
+      counselor_name: form.counselor_name,
+    }),
+    sections: buildGeneralExportSections(finalDocumentSections),
+  }
+}
+
+function buildGeneralExportSections(sections: FinalDocumentSection[]): DocumentExportSection[] {
+  return sections
+    .filter((section) => section.content.trim())
+    .map((section) => ({
+      id: section.id,
+      title: section.title,
+      content: section.contentKind === 'list' ? splitEditableList(section.content) : section.content,
+      level: 2,
+    }))
+}
+
+function buildSupervisionExportSections(report: SupervisionReportDraft): DocumentExportSection[] {
+  return report.sections
+    .map((section) => {
+      const contentBlocks = section.contentBlocks
+        .filter(supervisionBlockHasExportableContent)
+        .map((block) => ({
+          id: block.id,
+          type: block.type,
+          text: block.text || null,
+          rows: block.rows,
+          speaker_turns: block.speakerTurns?.map((turn) => ({
+            turn_id: turn.turnId,
+            speaker: turn.speaker,
+            text: turn.text,
+            silence_seconds: turn.silenceSeconds ?? null,
+          })),
+          warnings: block.warnings || [],
+        }))
+
+      return {
+        id: section.id,
+        title: section.title,
+        content_blocks: contentBlocks,
+        level: section.level,
+      }
+    })
+    .filter((section) => section.level <= 1 || Boolean(section.content_blocks?.length))
+}
+
+function supervisionBlockHasExportableContent(block: SupervisionContentBlock): boolean {
+  if (block.text?.trim()) return true
+  if (block.rows?.length) return true
+  return Boolean(block.speakerTurns?.some((turn) => turn.text.trim()))
+}
+
+function applyPendingSupervisionEdit(
+  report: SupervisionReportDraft,
+  editingBlockId: string | null,
+  editingText: string,
+): SupervisionReportDraft {
+  if (!editingBlockId) return report
+
+  return {
+    ...report,
+    sections: report.sections.map((section) => ({
+      ...section,
+      contentBlocks: section.contentBlocks.map((block) =>
+        block.id === editingBlockId ? updateSupervisionBlockFromText(block, editingText) : block,
+      ),
+    })),
+  }
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 interface TextModalConfig {

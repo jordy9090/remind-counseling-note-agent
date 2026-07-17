@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, notes
+from app.api.routes import documents, health, notes
 
 app = FastAPI(
     title="Re:mind MVP V0 API",
@@ -25,6 +25,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(notes.router)
+app.include_router(documents.router)
 
 
 @app.get("/")
@@ -34,4 +35,6 @@ async def root():
         "docs": "/docs",
         "health": "/api/health",
         "generate": "/api/notes/generate",
+        "document_capabilities": "/api/documents/capabilities",
+        "export": "/api/documents/export",
     }

@@ -29,6 +29,7 @@ The endpoint runs the retrieval-aware LangGraph note generation workflow and ret
 ```json
 {
   "case_id": "CASE001",
+  "client_alias": "가명 은하",
   "session_number": 3,
   "counselor_memo": "이번 회기는 진로 불안과 자기비난 사고를 중심으로 진행함.",
   "transcript": "C: 지난 회기 이후 어떻게 지내셨나요?\nCl: 여전히 진로가 불확실해서 불안해요.",
@@ -94,6 +95,7 @@ When the counselor changes the "요약에 포함할 항목" checklist, the front
 {
   "session_input": {
     "case_id": "CASE001",
+    "client_alias": "가명 은하",
     "session_number": 3,
     "session_date": "2026-05-17",
     "counselor_name": "박상담사",
@@ -160,6 +162,76 @@ If `draft_id` is included, the backend updates that temporary draft. If it is om
   "message": "임시저장되었습니다."
 }
 ```
+
+## Export Final Document
+
+```text
+GET /api/documents/capabilities
+```
+
+Returns server-side export availability. PDF availability is checked by importing WeasyPrint and rendering a minimal PDF, so clients can disable PDF download before sending an export request.
+
+Response:
+
+```json
+{
+  "docx": {
+    "available": true
+  },
+  "pdf": {
+    "available": false,
+    "reason": "WeasyPrint native runtime is unavailable."
+  },
+  "hwpx": {
+    "available": false,
+    "reason": "Verified HWPX template is not configured."
+  }
+}
+```
+
+```text
+POST /api/documents/export
+```
+
+Generates a downloadable file from the counselor's latest final-document draft. The frontend sends only visible, non-empty sections. For supervision reports, `contentBlocks` preserve paragraph, table, transcript, and reflection box structure.
+
+AI review fields such as `missing_items`, warnings, unsupported claims, and human-review prompts remain screen-only review data. They are not automatically included in exported document metadata.
+
+### Request
+
+```json
+{
+  "format": "docx",
+  "document_type": "session_note",
+  "case_id": "CASE-DEMO-001",
+  "session_number": 5,
+  "session_date": "2026-05-24",
+  "title": "상담 회기 기록",
+  "metadata": {
+    "client_alias": "가명 은하",
+    "counselor_name": "박상담사"
+  },
+  "sections": [
+    {
+      "id": "main_issue",
+      "title": "주요 호소",
+      "content": "진로 불안과 자기비난 사고를 호소함."
+    }
+  ]
+}
+```
+
+Supported `format` values are `docx`, `pdf`, and `hwpx`. DOCX and PDF return a file byte stream. HWPX currently returns 422 until a verified HWPX template ZIP structure is available.
+
+### Response
+
+```text
+200 OK
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="document_export.docx"; filename*=UTF-8''...
+```
+
+PDF responses use `application/pdf`. Filenames follow `{문서유형}_{case_id}_{회기번호}_{날짜}.{확장자}` with unsafe filename characters replaced by `_`.
 
 ## Local Run
 

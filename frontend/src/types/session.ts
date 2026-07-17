@@ -12,6 +12,7 @@ export type TargetDocumentType = 'session_note' | 'supervision_report' | 'termin
 
 export interface SessionInput {
   case_id: string
+  client_alias?: string
   session_number: number
   session_date: string
   counselor_name: string
@@ -84,6 +85,7 @@ export interface EvidenceMappedData {
 
 export interface SessionInfo {
   case_id: string
+  client_alias?: string
   session_number: number
   session_date: string
   counselor_name: string
@@ -255,6 +257,7 @@ export interface TemporaryDraftSaveRequest {
   attachments: unknown[]
   visible_section_ids: string[]
   draft_sections: unknown[]
+  final_document_sections?: unknown[]
   result?: unknown
   final_document_type: string
   supervision_report_draft?: unknown
@@ -363,4 +366,56 @@ export interface SupervisionReportRequest {
   institution?: string
   supervisor?: string
   supervision_date_place?: string
+}
+
+export type DocumentExportFormat = 'docx' | 'pdf' | 'hwpx'
+
+export interface DocumentExportTranscriptTurn {
+  turn_id?: string
+  turnId?: string
+  speaker: 'client' | 'counselor' | 'other'
+  text: string
+  silence_seconds?: number | null
+  silenceSeconds?: number | null
+}
+
+export interface DocumentExportContentBlock {
+  id: string
+  type: SupervisionContentBlockType
+  text?: string | null
+  rows?: Record<string, unknown>[]
+  speaker_turns?: DocumentExportTranscriptTurn[]
+  speakerTurns?: DocumentExportTranscriptTurn[]
+  warnings?: string[]
+}
+
+export interface DocumentExportSection {
+  id: string
+  title: string
+  content?: string | string[] | null
+  content_blocks?: DocumentExportContentBlock[]
+  contentBlocks?: DocumentExportContentBlock[]
+  level?: number
+}
+
+export interface DocumentExportRequest {
+  format: DocumentExportFormat
+  document_type: TargetDocumentType
+  case_id: string
+  session_number: number
+  session_date: string
+  title: string
+  metadata: Record<string, unknown>
+  sections: DocumentExportSection[]
+}
+
+export interface DocumentFormatCapability {
+  available: boolean
+  reason?: string | null
+}
+
+export interface DocumentCapabilitiesResponse {
+  docx: DocumentFormatCapability
+  pdf: DocumentFormatCapability
+  hwpx: DocumentFormatCapability
 }

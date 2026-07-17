@@ -33,3 +33,45 @@ jobs:
       - name: Run backend smoke test
         working-directory: backend
         run: uv run python smoke_test.py
+
+  backend-pdf-export:
+    runs-on: ubuntu-latest
+    env:
+      USE_STUB: "1"
+      ENABLE_RAG: "0"
+      ENABLE_PERSISTENCE: "0"
+      SAVE_RAW_INPUT: "0"
+      REQUIRE_PDF_EXPORT: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install WeasyPrint system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libcairo2 \
+            libffi8 \
+            libgdk-pixbuf-2.0-0 \
+            libglib2.0-0 \
+            libharfbuzz-subset0 \
+            libpango-1.0-0 \
+            libpangoft2-1.0-0 \
+            shared-mime-info \
+            fonts-noto-cjk
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --link-mode=copy
+
+      - name: Run PDF-required backend smoke test
+        working-directory: backend
+        run: uv run python smoke_test.py

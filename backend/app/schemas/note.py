@@ -26,6 +26,7 @@ class SessionInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     case_id: str
+    client_alias: str = ""
     session_number: int = Field(validation_alias=AliasChoices("session_number", "session_no"))
     session_date: str = ""
     counselor_name: str = ""
@@ -65,6 +66,7 @@ class InputSources(BaseModel):
 
 class SanitizedInput(BaseModel):
     case_id: str
+    client_alias: str = ""
     session_number: int
     session_date: str
     counselor_name: str
@@ -104,6 +106,7 @@ class EvidenceMappedData(BaseModel):
 
 class SessionInfo(BaseModel):
     case_id: str
+    client_alias: str = ""
     session_number: int
     session_date: str
     counselor_name: str = ""
@@ -246,6 +249,7 @@ class TemporaryDraftSaveRequest(BaseModel):
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     visible_section_ids: list[str] = Field(default_factory=list)
     draft_sections: list[dict[str, Any]] = Field(default_factory=list)
+    final_document_sections: list[dict[str, Any]] = Field(default_factory=list)
     result: dict[str, Any] | None = None
     final_document_type: str = "session_note"
     supervision_report_draft: dict[str, Any] | None = None

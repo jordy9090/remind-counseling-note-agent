@@ -32,16 +32,20 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 10. 검증 리포트 생성
 11. 문서 변환 preview
 12. 상담사 수정용 회기요약 textarea UI
+13. 최종 문서 DOCX 내보내기
+14. PDF 내보내기 서버 capability 확인과 지원 환경에서의 PDF 내보내기
 
 제외:
 
 - 인증/회원가입
-- 파일 업로드
+- 실제 파일 업로드 처리와 파일 본문 파싱
 - 음성 업로드 또는 실시간 STT
 - pgvector 기반 의미 검색
-- 정식 문서 export
+- 검증된 HWPX 템플릿 기반 내보내기
 - 결제/예약/관리자 기능
 - AI 슈퍼비전 또는 자동 사례개념화
+
+현재 파일 업로드 UI는 데모용 상태만 제공합니다. 선택한 PDF, Word, 음성 파일의 파일명과 임시 ID는 frontend React state에 보관되지만, 파일 본문은 backend로 전송되지 않고 실제 파싱, OCR, STT, 문서 추출은 수행하지 않습니다. 현재 입력으로 처리되는 자료는 텍스트 영역에 붙여넣은 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약, 심리검사 메모입니다.
 
 ## API 계약 요약
 
@@ -50,9 +54,15 @@ Primary API:
 ```text
 GET  /api/health
 POST /api/notes/generate
+GET  /api/documents/capabilities
+POST /api/documents/export
 ```
 
 `POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드를 클라이언트에서 변환합니다.
+
+`GET /api/documents/capabilities`는 서버가 DOCX/PDF/HWPX 내보내기를 실제로 지원할 수 있는지 반환합니다. PDF는 WeasyPrint와 Pango/GObject 계열 시스템 라이브러리, 한국어 fallback 폰트가 준비된 환경에서만 활성화됩니다.
+
+`POST /api/documents/export`는 최종문서 화면에서 수정된 최신 섹션을 DOCX 또는 PDF byte stream으로 반환합니다. HWPX는 스키마와 exporter 인터페이스만 준비되어 있으며, 검증된 HWPX 템플릿이 추가되기 전까지는 422를 반환합니다.
 
 OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. Supabase 환경변수가 없거나 `ENABLE_RAG=0`, `ENABLE_PERSISTENCE=0`이면 기존처럼 요청 단위 처리만 수행합니다. 따라서 API key와 Supabase credentials 없이도 데모와 smoke test를 실행할 수 있습니다.
 
@@ -188,6 +198,8 @@ cd backend
 uv sync --link-mode=copy
 uv run python smoke_test.py
 ```
+
+PDF export까지 강제 검증하려면 Linux/Ubuntu 환경에서 WeasyPrint 시스템 의존성과 한국어 폰트를 설치한 뒤 실행합니다. GitHub Actions의 `backend-pdf-export` job은 `fonts-noto-cjk`, Pango/GObject 관련 패키지를 설치하고 `REQUIRE_PDF_EXPORT=1 uv run python smoke_test.py`를 실행합니다.
 
 Frontend build:
 

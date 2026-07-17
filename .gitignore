@@ -30,6 +30,7 @@ build/
 .codex*/
 HW1_remind_submission.zip
 remind-counseling-note-agent/
+sample_exports/
 __pycache__/
 
 # OS
