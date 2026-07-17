@@ -161,6 +161,50 @@ If `draft_id` is included, the backend updates that temporary draft. If it is om
 }
 ```
 
+## Export Final Document
+
+```text
+POST /api/documents/export
+```
+
+Generates a downloadable file from the counselor's latest final-document draft. The frontend sends only visible, non-empty sections. For supervision reports, `contentBlocks` preserve paragraph, table, transcript, and reflection box structure.
+
+### Request
+
+```json
+{
+  "format": "docx",
+  "document_type": "session_note",
+  "case_id": "CASE-DEMO-001",
+  "session_number": 5,
+  "session_date": "2026-05-24",
+  "title": "상담 회기 기록",
+  "metadata": {
+    "client_alias": "가명 은하",
+    "counselor_name": "박상담사"
+  },
+  "sections": [
+    {
+      "id": "main_issue",
+      "title": "주요 호소",
+      "content": "진로 불안과 자기비난 사고를 호소함."
+    }
+  ]
+}
+```
+
+Supported `format` values are `docx`, `pdf`, and `hwpx`. DOCX and PDF return a file byte stream. HWPX currently returns 422 until a verified HWPX template ZIP structure is available.
+
+### Response
+
+```text
+200 OK
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="document_export.docx"; filename*=UTF-8''...
+```
+
+PDF responses use `application/pdf`. Filenames follow `{문서유형}_{case_id}_{회기번호}_{날짜}.{확장자}` with unsafe filename characters replaced by `_`.
+
 ## Local Run
 
 Backend:

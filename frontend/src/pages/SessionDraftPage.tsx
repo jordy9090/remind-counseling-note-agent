@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   ClipboardList,
+  Download,
   Edit3,
   FileText,
   FolderOpen,
@@ -29,8 +30,17 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { generateNoteDraft, generateSupervisionReport, recomposeNoteDraft, saveTemporaryDraft } from '../api/client'
+import {
+  downloadDocumentExport,
+  generateNoteDraft,
+  generateSupervisionReport,
+  recomposeNoteDraft,
+  saveTemporaryDraft,
+} from '../api/client'
 import type {
+  DocumentExportFormat,
+  DocumentExportRequest,
+  DocumentExportSection,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
@@ -302,6 +312,9 @@ export default function SessionDraftPage() {
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
   const [expandedSupervisionEvidenceId, setExpandedSupervisionEvidenceId] = useState<string | null>(null)
+  const [isExportingDocument, setIsExportingDocument] = useState(false)
+  const [documentExportError, setDocumentExportError] = useState<string | null>(null)
+  const [documentExportStatus, setDocumentExportStatus] = useState<string | null>(null)
 
   const hasMaterials = Boolean(
     form.counselor_memo.trim() ||
@@ -466,6 +479,8 @@ export default function SessionDraftPage() {
     if (!result) return
     setFinalDocumentType(documentType)
     setFinalDocumentError(null)
+    setDocumentExportError(null)
+    setDocumentExportStatus(null)
 
     if (documentType === 'supervision_report') {
       setIsGeneratingFinalDocument(true)
@@ -544,6 +559,39 @@ export default function SessionDraftPage() {
       setDraftSaveMessage(`임시저장 실패 · ${message}`)
     } finally {
       setIsSavingDraft(false)
+    }
+  }
+
+  const handleDownloadDocument = async (format: DocumentExportFormat) => {
+    if (!result) return
+    setIsExportingDocument(true)
+    setDocumentExportError(null)
+    setDocumentExportStatus(null)
+
+    try {
+      const request = buildDocumentExportRequest({
+        documentType: finalDocumentType,
+        draftSections,
+        editingSupervisionBlockId,
+        editingSupervisionText,
+        form,
+        format,
+        result,
+        supervisionReportDraft,
+      })
+
+      if (!request.sections.length) {
+        throw new Error('내보낼 수 있는 문서 내용이 없습니다. 표시된 섹션에 내용을 입력해주세요.')
+      }
+
+      const { blob, filename } = await downloadDocumentExport(request)
+      triggerBlobDownload(blob, filename)
+      setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : 'Word'} 다운로드를 시작했습니다.`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '문서 내보내기 중 오류가 발생했습니다.'
+      setDocumentExportError(message)
+    } finally {
+      setIsExportingDocument(false)
     }
   }
 
@@ -677,18 +725,26 @@ export default function SessionDraftPage() {
                 <SupervisionReviewPanel
                   aiReview={supervisionReportDraft.aiReview}
                   draftSaveMessage={draftSaveMessage}
+                  exportError={documentExportError}
+                  exportStatus={documentExportStatus}
+                  isExporting={isExportingDocument}
                   isSavingDraft={isSavingDraft}
                   onBack={() => setCurrentScreen('document_transform')}
+                  onDownload={handleDownloadDocument}
                   onTemporarySave={handleTemporarySave}
                 />
               ) : (
                 <FinalReviewPanel
                   documentType={finalDocumentType}
                   draftSaveMessage={draftSaveMessage}
+                  exportError={documentExportError}
+                  exportStatus={documentExportStatus}
+                  isExporting={isExportingDocument}
                   isSavingDraft={isSavingDraft}
                   missingItems={result?.missing_items || []}
                   warnings={result?.warnings || []}
                   onBack={() => setCurrentScreen('document_transform')}
+                  onDownload={handleDownloadDocument}
                   onTemporarySave={handleTemporarySave}
                 />
               )
@@ -1952,14 +2008,22 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
 function SupervisionReviewPanel({
   aiReview,
   draftSaveMessage,
+  exportError,
+  exportStatus,
+  isExporting,
   isSavingDraft,
   onBack,
+  onDownload,
   onTemporarySave,
 }: {
   aiReview: SupervisionAiReviewPanel
   draftSaveMessage: string | null
+  exportError: string | null
+  exportStatus: string | null
+  isExporting: boolean
   isSavingDraft: boolean
   onBack: () => void
+  onDownload: (format: DocumentExportFormat) => void
   onTemporarySave: () => void
 }) {
   return (
@@ -2016,6 +2080,12 @@ function SupervisionReviewPanel({
           {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {isSavingDraft ? '저장중' : '임시저장'}
         </button>
+        <DownloadControls
+          error={exportError}
+          isExporting={isExporting}
+          status={exportStatus}
+          onDownload={onDownload}
+        />
       </div>
     </aside>
   )
@@ -2353,17 +2423,25 @@ function PreviousSessionLinkPanel({
 function FinalReviewPanel({
   documentType,
   draftSaveMessage,
+  exportError,
+  exportStatus,
+  isExporting,
   isSavingDraft,
   missingItems,
   onBack,
+  onDownload,
   onTemporarySave,
   warnings,
 }: {
   documentType: FinalDocumentType
   draftSaveMessage: string | null
+  exportError: string | null
+  exportStatus: string | null
+  isExporting: boolean
   isSavingDraft: boolean
   missingItems: string[]
   onBack: () => void
+  onDownload: (format: DocumentExportFormat) => void
   onTemporarySave: () => void
   warnings: string[]
 }) {
@@ -2419,16 +2497,57 @@ function FinalReviewPanel({
           {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {isSavingDraft ? '저장중' : '임시저장'}
         </button>
-        <div>
-          <button
-            type="button"
-            className="inline-flex h-12 w-full items-center justify-center gap-1 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
-          >
-            다운로드
-          </button>
-        </div>
+        <DownloadControls
+          error={exportError}
+          isExporting={isExporting}
+          status={exportStatus}
+          onDownload={onDownload}
+        />
       </div>
     </aside>
+  )
+}
+
+function DownloadControls({
+  error,
+  isExporting,
+  onDownload,
+  status,
+}: {
+  error: string | null
+  isExporting: boolean
+  onDownload: (format: DocumentExportFormat) => void
+  status: string | null
+}) {
+  return (
+    <div className="rounded-[8px] border border-slate-200 bg-slate-50 p-3">
+      <div className="flex items-center gap-2 text-sm font-extrabold text-slate-950">
+        <Download className="h-4 w-4 text-blue-700" />
+        다운로드
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onDownload('docx')}
+          disabled={isExporting}
+          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+        >
+          {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+          Word(.docx)
+        </button>
+        <button
+          type="button"
+          onClick={() => onDownload('pdf')}
+          disabled={isExporting}
+          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+        >
+          {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
+          PDF(.pdf)
+        </button>
+      </div>
+      {status && <p className="mt-2 text-xs font-semibold text-emerald-700">{status}</p>}
+      {error && <p className="mt-2 text-xs font-semibold leading-5 text-red-700">{error}</p>}
+    </div>
   )
 }
 
@@ -3061,6 +3180,144 @@ function parseSupervisionTranscriptText(text: string, blockId: string) {
         text: textValue,
       } as const
     })
+}
+
+function buildDocumentExportRequest({
+  documentType,
+  draftSections,
+  editingSupervisionBlockId,
+  editingSupervisionText,
+  form,
+  format,
+  result,
+  supervisionReportDraft,
+}: {
+  documentType: FinalDocumentType
+  draftSections: DraftSection[]
+  editingSupervisionBlockId: string | null
+  editingSupervisionText: string
+  form: SessionInput
+  format: DocumentExportFormat
+  result: NoteDraftResponse
+  supervisionReportDraft: SupervisionReportDraft | null
+}): DocumentExportRequest {
+  if (documentType === 'supervision_report') {
+    if (!supervisionReportDraft) {
+      throw new Error('수퍼비전 보고서 초안이 아직 준비되지 않았습니다.')
+    }
+    const report = applyPendingSupervisionEdit(
+      supervisionReportDraft,
+      editingSupervisionBlockId,
+      editingSupervisionText,
+    )
+
+    return {
+      format,
+      document_type: documentType,
+      case_id: report.caseId || form.case_id,
+      session_number: report.meta.sessionNumber || form.session_number,
+      session_date: report.meta.reportDate || form.session_date,
+      title: report.title,
+      metadata: {
+        client_alias: report.meta.clientAlias,
+        counselor_name: report.meta.counselorName || form.counselor_name,
+        institution: report.meta.institution,
+        supervisor: report.meta.supervisor,
+        supervision_date_place: report.meta.supervisionDatePlace,
+      },
+      sections: buildSupervisionExportSections(report),
+    }
+  }
+
+  return {
+    format,
+    document_type: documentType,
+    case_id: form.case_id,
+    session_number: form.session_number,
+    session_date: form.session_date,
+    title: finalDocumentMeta[documentType].title,
+    metadata: {
+      client_alias: demoClientName,
+      counselor_name: form.counselor_name,
+      missing_items: result.missing_items,
+    },
+    sections: buildDraftExportSections(draftSections),
+  }
+}
+
+function buildDraftExportSections(sections: DraftSection[]): DocumentExportSection[] {
+  return sections
+    .filter((section) => section.visible && section.content.trim())
+    .map((section) => ({
+      id: section.id,
+      title: section.title,
+      content: section.content,
+      level: 2,
+    }))
+}
+
+function buildSupervisionExportSections(report: SupervisionReportDraft): DocumentExportSection[] {
+  return report.sections
+    .map((section) => {
+      const contentBlocks = section.contentBlocks
+        .filter(supervisionBlockHasExportableContent)
+        .map((block) => ({
+          id: block.id,
+          type: block.type,
+          text: block.text || null,
+          rows: block.rows,
+          speaker_turns: block.speakerTurns?.map((turn) => ({
+            turn_id: turn.turnId,
+            speaker: turn.speaker,
+            text: turn.text,
+            silence_seconds: turn.silenceSeconds ?? null,
+          })),
+          warnings: block.warnings || [],
+        }))
+
+      return {
+        id: section.id,
+        title: section.title,
+        content_blocks: contentBlocks,
+        level: section.level,
+      }
+    })
+    .filter((section) => section.level <= 1 || Boolean(section.content_blocks?.length))
+}
+
+function supervisionBlockHasExportableContent(block: SupervisionContentBlock): boolean {
+  if (block.text?.trim()) return true
+  if (block.rows?.length) return true
+  return Boolean(block.speakerTurns?.some((turn) => turn.text.trim()))
+}
+
+function applyPendingSupervisionEdit(
+  report: SupervisionReportDraft,
+  editingBlockId: string | null,
+  editingText: string,
+): SupervisionReportDraft {
+  if (!editingBlockId) return report
+
+  return {
+    ...report,
+    sections: report.sections.map((section) => ({
+      ...section,
+      contentBlocks: section.contentBlocks.map((block) =>
+        block.id === editingBlockId ? updateSupervisionBlockFromText(block, editingText) : block,
+      ),
+    })),
+  }
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 interface TextModalConfig {

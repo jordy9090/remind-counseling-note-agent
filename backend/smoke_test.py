@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+from io import BytesIO
 from pathlib import Path
+from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
 
@@ -24,6 +27,25 @@ from app.schemas.note import (
     SessionInput,
 )
 from app.services.supabase_storage import _build_session_row
+
+
+def _extract_docx_text(content: bytes) -> str:
+    from docx import Document
+
+    document = Document(BytesIO(content))
+    parts = [paragraph.text for paragraph in document.paragraphs if paragraph.text]
+    for table in document.tables:
+        for row in table.rows:
+            parts.extend(cell.text for cell in row.cells if cell.text)
+    return "\n".join(parts)
+
+
+def _download_filename(content_disposition: str) -> str:
+    match = re.search(r"filename\*=UTF-8''([^;]+)", content_disposition)
+    if match:
+        return unquote(match.group(1))
+    fallback = re.search(r'filename="?([^";]+)"?', content_disposition)
+    return fallback.group(1) if fallback else ""
 
 
 def main() -> None:
@@ -216,7 +238,132 @@ def main() -> None:
         )
         assert supervision["aiReview"]["suggestedSupervisionQuestions"]
 
-    print("Smoke test passed: health, note generation, temporary draft storage, cached recomposition, and supervision report generation are working.")
+        session_export_payload = {
+            "format": "docx",
+            "document_type": "session_note",
+            "case_id": "CASE/DEMO:*001",
+            "session_number": 5,
+            "session_date": "2026-05-24",
+            "title": "상담 회기 기록",
+            "metadata": {
+                "client_alias": "가명 은하",
+                "counselor_name": "박상담사",
+            },
+            "sections": [
+                {
+                    "id": "main_issue",
+                    "title": "주요 호소",
+                    "content": "진로 불안과 자기비난 사고를 호소함.",
+                },
+                {
+                    "id": "session_content",
+                    "title": "상담 내용",
+                    "content": "첫 줄 상담 내용\n둘째 줄 상담 내용\n- 목록 항목",
+                },
+            ],
+        }
+        docx_response = client.post("/api/documents/export", json=session_export_payload)
+        assert docx_response.status_code == 200, docx_response.text
+        assert docx_response.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        filename = _download_filename(docx_response.headers["content-disposition"])
+        assert filename.endswith(".docx")
+        assert "CASE_DEMO__001" in filename
+        assert not any(char in filename for char in '<>:"/\\|?*')
+        docx_text = _extract_docx_text(docx_response.content)
+        assert "상담 회기 기록" in docx_text
+        assert "가명 은하" in docx_text
+        assert "첫 줄 상담 내용" in docx_text
+        assert "둘째 줄 상담 내용" in docx_text
+
+        supervision_export_payload = {
+            "format": "docx",
+            "document_type": "supervision_report",
+            "case_id": payload["case_id"],
+            "session_number": payload["session_number"],
+            "session_date": payload["session_date"],
+            "title": "개인상담 사례 수퍼비전 보고서",
+            "metadata": {
+                "client_alias": "가명 은하",
+                "counselor_name": "박상담사",
+                "supervisor": "이수현 상담심리사 1급",
+            },
+            "sections": [
+                {"id": "part-c", "title": "C. 상담 과정", "level": 1},
+                {
+                    "id": "process",
+                    "title": "C-1. 상담진행 과정 및 회기주제",
+                    "level": 2,
+                    "contentBlocks": [
+                        {
+                            "id": "paragraph-1",
+                            "type": "paragraph",
+                            "text": "불안 자동사고를 사건-생각-감정-행동으로 구분함.",
+                        },
+                        {
+                            "id": "table-1",
+                            "type": "table",
+                            "rows": [
+                                {"영역": "정서", "내용": "불안 80"},
+                                {"영역": "행동", "내용": "지원 전 회피"},
+                            ],
+                        },
+                        {
+                            "id": "transcript-1",
+                            "type": "transcript",
+                            "speakerTurns": [
+                                {"turnId": "t1", "speaker": "client", "text": "계속 망했다는 생각이 들어요."},
+                                {"turnId": "t2", "speaker": "counselor", "text": "그 생각의 근거를 함께 보겠습니다."},
+                            ],
+                        },
+                        {
+                            "id": "reflection-1",
+                            "type": "reflection_box",
+                            "text": "상담자는 정서 확인과 행동 계획의 균형을 점검할 필요가 있음.",
+                        },
+                    ],
+                },
+            ],
+        }
+        supervision_docx_response = client.post("/api/documents/export", json=supervision_export_payload)
+        assert supervision_docx_response.status_code == 200, supervision_docx_response.text
+        supervision_docx_text = _extract_docx_text(supervision_docx_response.content)
+        assert "개인상담 사례 수퍼비전 보고서" in supervision_docx_text
+        assert "불안 자동사고" in supervision_docx_text
+        assert "내담자: 계속 망했다는 생각이 들어요." in supervision_docx_text
+        assert "영역" in supervision_docx_text
+        assert "불안 80" in supervision_docx_text
+
+        pdf_response = client.post("/api/documents/export", json={**session_export_payload, "format": "pdf"})
+        if pdf_response.status_code == 200:
+            assert pdf_response.content.startswith(b"%PDF")
+            assert pdf_response.headers["content-type"].startswith("application/pdf")
+        else:
+            assert pdf_response.status_code == 500, pdf_response.text
+            assert "WeasyPrint" in pdf_response.text
+            print("PDF export runtime check skipped: WeasyPrint native libraries are unavailable in this environment.")
+
+        invalid_format_response = client.post(
+            "/api/documents/export",
+            json={**session_export_payload, "format": "xlsx"},
+        )
+        assert invalid_format_response.status_code == 422
+
+        empty_sections_response = client.post(
+            "/api/documents/export",
+            json={**session_export_payload, "format": "docx", "sections": []},
+        )
+        assert empty_sections_response.status_code == 422
+
+        hwpx_response = client.post("/api/documents/export", json={**session_export_payload, "format": "hwpx"})
+        assert hwpx_response.status_code == 422
+        assert "HWPX" in hwpx_response.text
+
+    print(
+        "Smoke test passed: health, note generation, temporary draft storage, cached recomposition, "
+        "supervision report generation, and document export checks are working."
+    )
 
 
 if __name__ == "__main__":

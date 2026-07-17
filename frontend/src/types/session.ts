@@ -364,3 +364,44 @@ export interface SupervisionReportRequest {
   supervisor?: string
   supervision_date_place?: string
 }
+
+export type DocumentExportFormat = 'docx' | 'pdf' | 'hwpx'
+
+export interface DocumentExportTranscriptTurn {
+  turn_id?: string
+  turnId?: string
+  speaker: 'client' | 'counselor' | 'other'
+  text: string
+  silence_seconds?: number | null
+  silenceSeconds?: number | null
+}
+
+export interface DocumentExportContentBlock {
+  id: string
+  type: SupervisionContentBlockType
+  text?: string | null
+  rows?: Record<string, unknown>[]
+  speaker_turns?: DocumentExportTranscriptTurn[]
+  speakerTurns?: DocumentExportTranscriptTurn[]
+  warnings?: string[]
+}
+
+export interface DocumentExportSection {
+  id: string
+  title: string
+  content?: string | string[] | null
+  content_blocks?: DocumentExportContentBlock[]
+  contentBlocks?: DocumentExportContentBlock[]
+  level?: number
+}
+
+export interface DocumentExportRequest {
+  format: DocumentExportFormat
+  document_type: TargetDocumentType
+  case_id: string
+  session_number: number
+  session_date: string
+  title: string
+  metadata: Record<string, unknown>
+  sections: DocumentExportSection[]
+}

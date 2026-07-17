@@ -3,6 +3,7 @@ import type {
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
+  DocumentExportRequest,
   EvidenceType,
   GenerateNoteResponse,
   NoteDraftResponse,
@@ -74,6 +75,33 @@ export const generateSupervisionReport = async (
 ): Promise<SupervisionReportDraft> => {
   const response = await client.post<SupervisionReportDraft>('/api/notes/supervision-report', request)
   return response.data
+}
+
+export const downloadDocumentExport = async (
+  request: DocumentExportRequest,
+): Promise<{ blob: Blob; filename: string }> => {
+  try {
+    const response = await client.post<Blob>('/api/documents/export', request, {
+      responseType: 'blob',
+    })
+    return {
+      blob: response.data,
+      filename: extractFilename(response.headers['content-disposition']) || buildFallbackExportFilename(request),
+    }
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+      const bodyText = await error.response.data.text()
+      let message = bodyText
+      try {
+        const parsed = JSON.parse(bodyText)
+        message = parsed.detail || message
+      } catch {
+        message = bodyText
+      }
+      throw new Error(message || '문서 내보내기 중 오류가 발생했습니다.')
+    }
+    throw error
+  }
 }
 
 export { API_BASE_URL }
@@ -204,4 +232,23 @@ function getPrivacyContextExcerpt(fullResponse: GenerateNoteResponse, refs: stri
 
 function unique(items: string[]): string[] {
   return Array.from(new Set(items.filter(Boolean)))
+}
+
+function extractFilename(contentDisposition: string | undefined): string | null {
+  if (!contentDisposition) return null
+  const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (encodedMatch?.[1]) {
+    try {
+      return decodeURIComponent(encodedMatch[1])
+    } catch {
+      return encodedMatch[1]
+    }
+  }
+  const fallbackMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return fallbackMatch?.[1] || null
+}
+
+function buildFallbackExportFilename(request: DocumentExportRequest): string {
+  const extension = request.format === 'pdf' ? 'pdf' : request.format === 'hwpx' ? 'hwpx' : 'docx'
+  return `${request.document_type}_${request.case_id}_${request.session_number}회기_${request.session_date || 'date'}.${extension}`
 }

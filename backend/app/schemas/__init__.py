@@ -15,8 +15,10 @@ from app.schemas.note import (
     StructuredCaseData,
     VerificationReport,
 )
+from app.schemas.document import DocumentExportRequest
 
 __all__ = [
+    "DocumentExportRequest",
     "DocumentTransformPreview",
     "EvidenceMappedData",
     "GenerateNoteResponse",
