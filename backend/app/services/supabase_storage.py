@@ -64,10 +64,14 @@ class SupabaseStorage:
         )
         return result if isinstance(result, list) else []
 
+    def rpc(self, function_name: str, params: dict[str, Any]) -> Any:
+        """Call a Supabase PostgREST RPC function."""
+        return self._request("POST", f"rpc/{function_name}", body=params)
+
     def _request(
         self,
         method: str,
-        table: str,
+        path: str,
         *,
         query: dict[str, str | int] | None = None,
         body: Any | None = None,
@@ -77,7 +81,7 @@ class SupabaseStorage:
             raise SupabaseStorageError("Supabase is not configured.")
 
         query_string = f"?{urlencode(query)}" if query else ""
-        url = f"{settings.normalized_supabase_url}/rest/v1/{table}{query_string}"
+        url = f"{settings.normalized_supabase_url}/rest/v1/{path}{query_string}"
         key = settings.effective_supabase_key or ""
         headers = {
             "apikey": key,

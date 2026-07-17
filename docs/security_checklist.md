@@ -22,6 +22,8 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 ## Retrieval Boundaries
 
 - RAG is limited to case-level memory, document templates, and privacy/ethics/security guardrails.
+- Dense retrieval is opt-in with `ENABLE_DENSE_RETRIEVAL=1`; real counseling records must not be embedded by default.
+- Case-memory retrieval must filter by counselor and case before ranking to prevent cross-case leakage.
 - Do not use RAG to generate diagnosis, clinical risk scoring, treatment recommendations, psychological test interpretation, or counselor performance evaluation.
 - KB seed files must not contain copyrighted manuals, paid psychological test material, or real counseling records.
 - Use `docs/kb_seed_examples.json` as a short paraphrased demo seed only.
@@ -29,6 +31,7 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 ## Supabase Data Controls
 
 - Apply RLS to `cases`, `sessions`, `generated_notes`, `evidence_items`, `verification_reports`, `kb_documents`, `kb_chunks`, and `counseling_drafts`.
+- Apply RLS to `case_memory_chunks` before any real case memory is stored.
 - Restrict `kb_documents` and `kb_chunks` writes to trusted backend/admin paths.
 - Separate tenant or counselor data by authenticated owner fields before production use.
 - Add deletion/export procedures before storing real client data.

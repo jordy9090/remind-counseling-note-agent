@@ -6,9 +6,12 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.graph.nodes import (
+    formulate_retrieval_query,
+    fuse_and_rerank,
     generate_summary,
     map_evidence,
-    retrieve_context,
+    retrieve_authoritative_kb,
+    retrieve_case_memory,
     sanitize_input,
     structure_session,
     transform_document_preview,
@@ -35,7 +38,10 @@ class NoteGraphState(TypedDict, total=False):
     requested_section_ids: list[str]
     session_topic: str
     sanitized_input: SanitizedInput
+    retrieval_query: str
     retrieved_case_context: list[RetrievedCaseContextItem]
+    retrieved_case_memory_chunks: list[Any]
+    retrieved_authoritative_kb_chunks: list[Any]
     retrieved_template_context: RetrievedTemplateContext | None
     retrieved_privacy_context: list[RetrievedPrivacyRule]
     retrieval_report: RetrievalReport
@@ -51,7 +57,10 @@ class NoteGraphState(TypedDict, total=False):
 def create_note_graph():
     workflow = StateGraph(NoteGraphState)
     workflow.add_node("sanitize_input", sanitize_input)
-    workflow.add_node("retrieve_context", retrieve_context)
+    workflow.add_node("formulate_retrieval_query", formulate_retrieval_query)
+    workflow.add_node("retrieve_case_memory", retrieve_case_memory)
+    workflow.add_node("retrieve_authoritative_kb", retrieve_authoritative_kb)
+    workflow.add_node("fuse_and_rerank", fuse_and_rerank)
     workflow.add_node("structure_session", structure_session)
     workflow.add_node("map_evidence", map_evidence)
     workflow.add_node("generate_summary", generate_summary)
@@ -59,8 +68,11 @@ def create_note_graph():
     workflow.add_node("transform_document_preview", transform_document_preview)
 
     workflow.set_entry_point("sanitize_input")
-    workflow.add_edge("sanitize_input", "retrieve_context")
-    workflow.add_edge("retrieve_context", "structure_session")
+    workflow.add_edge("sanitize_input", "formulate_retrieval_query")
+    workflow.add_edge("formulate_retrieval_query", "retrieve_case_memory")
+    workflow.add_edge("retrieve_case_memory", "retrieve_authoritative_kb")
+    workflow.add_edge("retrieve_authoritative_kb", "fuse_and_rerank")
+    workflow.add_edge("fuse_and_rerank", "structure_session")
     workflow.add_edge("structure_session", "map_evidence")
     workflow.add_edge("map_evidence", "generate_summary")
     workflow.add_edge("generate_summary", "verify_output")

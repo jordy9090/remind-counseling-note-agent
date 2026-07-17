@@ -1,12 +1,11 @@
--- Re:mind V1 Supabase schema
--- Reference snapshot only. Versioned non-destructive migrations live in
--- supabase/migrations and should be used for shared remote DB changes.
--- Intended for synthetic/demo counseling documentation data until auth, RLS,
+-- Re:mind baseline schema.
+-- Non-destructive: creates missing tables/indexes only.
+-- Intended for demo/synthetic counseling documentation data until auth, RLS,
 -- retention, and audit policies are finalized.
 
 create extension if not exists pgcrypto;
 
-create table if not exists cases (
+create table if not exists public.cases (
   id text primary key,
   case_alias text,
   counselor_id text,
@@ -14,25 +13,22 @@ create table if not exists cases (
   created_at timestamptz not null default now()
 );
 
-create table if not exists sessions (
+create table if not exists public.sessions (
   id uuid primary key default gen_random_uuid(),
-  case_id text not null references cases(id) on delete cascade,
+  case_id text not null references public.cases(id) on delete cascade,
   session_number integer not null,
   session_date date,
   session_title text,
-  -- Kept nullable by design. The app stores NULL unless SAVE_RAW_INPUT=1.
-  -- Do not store real counselor memo/transcript text before auth, RLS,
-  -- audit logging, explicit consent, and retention policy are in place.
   raw_input_text text,
   sanitized_input_text text,
   created_at timestamptz not null default now(),
   unique(case_id, session_number)
 );
 
-create table if not exists generated_notes (
+create table if not exists public.generated_notes (
   id uuid primary key default gen_random_uuid(),
-  case_id text not null references cases(id) on delete cascade,
-  session_id uuid references sessions(id) on delete cascade,
+  case_id text not null references public.cases(id) on delete cascade,
+  session_id uuid references public.sessions(id) on delete cascade,
   note_type text not null default 'session_note',
   draft_json jsonb not null default '{}'::jsonb,
   confirmed_json jsonb not null default '{}'::jsonb,
@@ -41,10 +37,10 @@ create table if not exists generated_notes (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists evidence_items (
+create table if not exists public.evidence_items (
   id uuid primary key default gen_random_uuid(),
-  case_id text not null references cases(id) on delete cascade,
-  session_id uuid references sessions(id) on delete cascade,
+  case_id text not null references public.cases(id) on delete cascade,
+  session_id uuid references public.sessions(id) on delete cascade,
   source_type text not null default '',
   source_ref text not null default '',
   source_text text not null default '',
@@ -54,58 +50,54 @@ create table if not exists evidence_items (
   created_at timestamptz not null default now()
 );
 
-create table if not exists verification_reports (
+create table if not exists public.verification_reports (
   id uuid primary key default gen_random_uuid(),
-  case_id text not null references cases(id) on delete cascade,
-  session_id uuid references sessions(id) on delete cascade,
-  note_id uuid references generated_notes(id) on delete cascade,
+  case_id text not null references public.cases(id) on delete cascade,
+  session_id uuid references public.sessions(id) on delete cascade,
+  note_id uuid references public.generated_notes(id) on delete cascade,
   report_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
-create table if not exists kb_documents (
+create table if not exists public.kb_documents (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   source_type text not null default '',
   authority_level text not null default 'internal_demo',
-  doc_category text not null check (
-    doc_category in (
-      'document_template',
-      'ethics_rule',
-      'privacy_rule',
-      'security_rule',
-      'writing_example',
-      'internal_policy'
-    )
-  ),
+  doc_category text not null,
   source_url text,
   effective_date date,
   allowed_use text not null default 'verification_and_documentation_support_only',
   created_at timestamptz not null default now()
 );
 
-create table if not exists kb_chunks (
+create table if not exists public.kb_chunks (
   id uuid primary key default gen_random_uuid(),
-  document_id uuid not null references kb_documents(id) on delete cascade,
+  document_id uuid not null references public.kb_documents(id) on delete cascade,
   chunk_text text not null,
   chunk_type text not null default 'guideline',
   metadata_json jsonb not null default '{}'::jsonb
 );
 
--- pgvector/hybrid RAG additions, case_memory_chunks, and RPC functions are in:
--- supabase/migrations/20260717000200_pgvector_hybrid_rag.sql
+create table if not exists public.counseling_drafts (
+  id uuid primary key default gen_random_uuid(),
+  draft_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
 
 create index if not exists idx_sessions_case_recent
-  on sessions(case_id, session_number desc, created_at desc);
+  on public.sessions(case_id, session_number desc, created_at desc);
 
 create index if not exists idx_generated_notes_session_recent
-  on generated_notes(session_id, created_at desc);
+  on public.generated_notes(session_id, created_at desc);
 
 create index if not exists idx_evidence_items_session
-  on evidence_items(session_id, linked_field);
+  on public.evidence_items(session_id, linked_field);
 
 create index if not exists idx_kb_documents_category
-  on kb_documents(doc_category, source_type);
+  on public.kb_documents(doc_category, source_type);
 
 create index if not exists idx_kb_chunks_document
-  on kb_chunks(document_id, chunk_type);
+  on public.kb_chunks(document_id, chunk_type);
+

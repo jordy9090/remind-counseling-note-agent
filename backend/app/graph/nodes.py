@@ -29,7 +29,17 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
-from app.services.retrieval import retrieve_case_context, retrieve_document_template, retrieve_privacy_rules
+from app.services.retrieval import (
+    chunks_to_case_context,
+    chunks_to_privacy_rules,
+    chunks_to_template_context,
+    retrieval_query_from_input,
+    retrieve_authoritative_kb_chunks,
+    retrieve_case_context,
+    retrieve_case_memory_chunks,
+    retrieve_document_template,
+    retrieve_privacy_rules,
+)
 
 
 PHONE_RE = re.compile(r"(?:010[-.\s]?\d{4}[-.\s]?\d{4}|\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{4})")
@@ -118,6 +128,143 @@ def retrieve_context(state: dict[str, Any]) -> dict[str, Any]:
         "retrieved_privacy_context": privacy_context,
         "retrieval_report": report,
     }
+
+
+def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
+    """Build one retrieval query from sanitized session materials."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    session_input: SessionInput = state["session_input"]
+    report = RetrievalReport(enabled=settings.enable_rag)
+    if not settings.enable_rag:
+        report.notices.append("ENABLE_RAG is false; retrieval skipped.")
+    elif not settings.supabase_configured:
+        report.notices.append("Supabase credentials are missing; retrieval continued with empty context.")
+    if settings.enable_rag and not settings.enable_dense_retrieval:
+        report.notices.append("ENABLE_DENSE_RETRIEVAL is false; using lightweight retrieval only.")
+    return {
+        "retrieval_query": retrieval_query_from_input(session_input.target_document_type, sanitized.sources),
+        "retrieval_report": report,
+    }
+
+
+def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve prior-session context without crossing counselor/case boundaries."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    session_input: SessionInput = state["session_input"]
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    query_text = state.get("retrieval_query") or ""
+    case_context: list[RetrievedCaseContextItem] = []
+    chunks: list[Any] = []
+
+    if not settings.enable_rag:
+        return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
+
+    try:
+        counselor_id = session_input.counselor_name.strip()
+        if settings.enable_dense_retrieval and counselor_id:
+            chunks = retrieve_case_memory_chunks(
+                query_text=query_text,
+                counselor_id=counselor_id,
+                case_id=sanitized.case_id,
+                max_chunks=5,
+            )
+            case_context = chunks_to_case_context(chunks)
+        elif settings.enable_dense_retrieval:
+            report.notices.append("Dense case-memory retrieval skipped because counselor_id is missing.")
+
+        if not case_context:
+            case_context = retrieve_case_context(sanitized.case_id, max_sessions=3)
+    except Exception as error:
+        report.failures.append(f"case_memory: {error}")
+
+    return {
+        "retrieved_case_context": case_context,
+        "retrieved_case_memory_chunks": chunks,
+        "retrieval_report": report,
+    }
+
+
+def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve template KB and warning-only ethics/privacy/security KB."""
+    session_input: SessionInput = state["session_input"]
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    query_text = state.get("retrieval_query") or ""
+    template_context: RetrievedTemplateContext | None = None
+    privacy_context: list[RetrievedPrivacyRule] = []
+    chunks: list[Any] = []
+
+    if not settings.enable_rag:
+        return {
+            "retrieved_template_context": template_context,
+            "retrieved_privacy_context": privacy_context,
+            "retrieved_authoritative_kb_chunks": chunks,
+            "retrieval_report": report,
+        }
+
+    try:
+        fallback_template = retrieve_document_template(session_input.target_document_type)
+    except Exception as error:
+        report.failures.append(f"document_template: {error}")
+        fallback_template = None
+
+    try:
+        fallback_privacy = retrieve_privacy_rules()
+    except Exception as error:
+        report.failures.append(f"privacy_rules: {error}")
+        fallback_privacy = []
+
+    try:
+        if settings.enable_dense_retrieval:
+            chunks = retrieve_authoritative_kb_chunks(
+                query_text=query_text,
+                target_document_type=session_input.target_document_type,
+                include_warning_rules=True,
+                max_chunks=8,
+            )
+    except Exception as error:
+        report.failures.append(f"authoritative_kb: {error}")
+
+    template_context = chunks_to_template_context(
+        session_input.target_document_type,
+        chunks,
+        fallback=fallback_template,
+    )
+    privacy_context = chunks_to_privacy_rules(chunks, fallback=fallback_privacy)
+
+    return {
+        "retrieved_template_context": template_context,
+        "retrieved_privacy_context": privacy_context,
+        "retrieved_authoritative_kb_chunks": chunks,
+        "retrieval_report": report,
+    }
+
+
+def fuse_and_rerank(state: dict[str, Any]) -> dict[str, Any]:
+    """Finalize retrieval report while preserving the existing API fields."""
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
+    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
+    privacy_context: list[RetrievedPrivacyRule] = state.get("retrieved_privacy_context") or []
+
+    report.case_context_count = len(case_context)
+    report.template_context_found = bool(
+        template_context
+        and (
+            template_context.required_fields
+            or template_context.optional_fields
+            or template_context.counselor_review_fields
+            or template_context.source_refs
+        )
+    )
+    report.privacy_rule_count = len(privacy_context)
+    if settings.enable_rag:
+        if not case_context:
+            report.notices.append("No prior case-memory context was retrieved.")
+        if template_context is None or not report.template_context_found:
+            report.notices.append("No document-template KB context was retrieved.")
+        if not privacy_context:
+            report.notices.append("No privacy or ethics KB context was retrieved.")
+    return {"retrieval_report": report}
 
 
 def structure_session(state: dict[str, Any]) -> dict[str, Any]:

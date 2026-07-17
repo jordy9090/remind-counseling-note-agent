@@ -150,6 +150,10 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ENABLE_PERSISTENCE=1
 ENABLE_RAG=1
+ENABLE_DENSE_RETRIEVAL=0
+ENABLE_HYBRID_RETRIEVAL=1
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
 SAVE_RAW_INPUT=0
 ```
 
@@ -159,6 +163,44 @@ KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 �
 
 ```bash
 python scripts/seed_kb_examples.py
+python scripts/embed_kb_chunks.py
+python scripts/check_supabase_remote.py
+```
+
+### Supabase pgvector workflow
+
+Shared project ref: `bgjapctiawosgpjcyfuq`
+
+This repo now keeps non-destructive Supabase migrations under
+`supabase/migrations`. The remote project is the source of truth, so pull before
+push whenever Supabase credentials are available.
+
+```bash
+npx supabase login
+npx supabase link --project-ref bgjapctiawosgpjcyfuq
+npx supabase db pull
+npx supabase db push
+```
+
+Do not run `supabase db reset` against the shared project. Review pending
+migrations before applying them. In this Codex session, Supabase CLI auth was
+not available, so remote DB pull/push, row counts, seed insertion, and sample
+remote retrieval queries were not executed.
+
+Dense retrieval is still opt-in:
+
+```env
+ENABLE_RAG=1
+ENABLE_DENSE_RETRIEVAL=1
+ENABLE_HYBRID_RETRIEVAL=1
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+```
+
+Synthetic retrieval evaluation does not require Supabase or OpenAI:
+
+```bash
+python scripts/evaluate_retrieval.py
 ```
 
 보안 경계는 [docs/security_checklist.md](docs/security_checklist.md)를 기준으로 확인합니다.

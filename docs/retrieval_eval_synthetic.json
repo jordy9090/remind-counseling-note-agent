@@ -1,0 +1,33 @@
+{
+  "description": "Synthetic retrieval evaluation for Re:mind. No real counseling records.",
+  "items": [
+    {
+      "id": "kb-session-template",
+      "query": "What fields should a session note include?",
+      "expected_document_category": "session_note_template",
+      "expected_source_ref": "kb:session-note-template-v1:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": []
+    },
+    {
+      "id": "kb-privacy-warning",
+      "query": "Does counseling text with health details need sensitive information review?",
+      "expected_document_category": "privacy_law",
+      "expected_source_ref": "kb:privacy-law-sensitive-info-demo:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": []
+    },
+    {
+      "id": "case-memory-next-plan",
+      "query": "What next plan was discussed for the same career anxiety case?",
+      "expected_document_category": null,
+      "expected_source_ref": "synthetic_case_memory:demo-case-001:1:3",
+      "expected_field_type": "next_plan",
+      "case_id": "demo-case-001",
+      "forbidden_case_ids": ["other-case-999"]
+    }
+  ]
+}
+

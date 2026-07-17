@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     enable_persistence: bool = False
     enable_rag: bool = False
     save_raw_input: bool = False
+    enable_dense_retrieval: bool = False
+    enable_hybrid_retrieval: bool = True
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
 
     class Config:
         env_file = ".env"

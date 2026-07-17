@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import hashlib
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -24,6 +25,8 @@ DEFAULT_SEED_PATH = ROOT / "docs" / "kb_seed_examples.json"
 
 
 def main() -> None:
+    load_env_file(ROOT / ".env")
+    load_env_file(ROOT / "backend" / ".env")
     seed_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SEED_PATH
     config = SupabaseConfig.from_env()
     seed = json.loads(seed_path.read_text(encoding="utf-8"))
@@ -45,6 +48,7 @@ def main() -> None:
                 body=[
                     {
                         "title": document["title"],
+                        "source_org": document.get("source_org", ""),
                         "source_type": document.get("source_type", ""),
                         "authority_level": document.get("authority_level", "internal_demo"),
                         "doc_category": document["doc_category"],
@@ -54,6 +58,8 @@ def main() -> None:
                             "allowed_use",
                             "verification_and_documentation_support_only",
                         ),
+                        "checksum": checksum_json(document),
+                        "metadata_json": {"slug": document.get("slug", "")},
                     }
                 ],
                 prefer="return=representation",
@@ -69,9 +75,16 @@ def main() -> None:
                 "document_id": document_id,
                 "chunk_text": chunk["chunk_text"],
                 "chunk_type": chunk.get("chunk_type", "guideline"),
+                "section_path": chunk.get("section_path", ""),
+                "document_type": chunk.get("document_type", document.get("source_type", "")),
+                "allowed_use": chunk.get("allowed_use", document.get("allowed_use", "")),
+                "counselor_review_required": bool(chunk.get("counselor_review_required", False)),
+                "source_ref": chunk.get("source_ref")
+                or f"kb:{document.get('slug') or document_id}:{index + 1}",
+                "content_hash": content_hash(chunk["chunk_text"], document.get("slug", "")),
                 "metadata_json": chunk.get("metadata_json", {}),
             }
-            for chunk in document.get("chunks", [])
+            for index, chunk in enumerate(document.get("chunks", []))
         ]
         if chunks:
             request(config, "POST", "kb_chunks", body=chunks, prefer="return=minimal")
@@ -83,6 +96,17 @@ def main() -> None:
         f"{skipped_documents} existing document(s) reused, "
         f"{inserted_chunks} chunk(s) inserted."
     )
+
+
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 class SupabaseConfig:
@@ -128,6 +152,16 @@ def has_chunks(config: SupabaseConfig, document_id: str) -> bool:
         query={"document_id": f"eq.{document_id}", "select": "id", "limit": "1"},
     )
     return bool(rows)
+
+
+def checksum_json(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def content_hash(text: str, salt: str = "") -> str:
+    payload = f"{salt}\n{' '.join(text.split())}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def request(

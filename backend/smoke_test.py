@@ -23,6 +23,7 @@ from app.schemas.note import (
     RetrievedTemplateContext,
     SessionInput,
 )
+from app.services.retrieval import RetrievalChunk
 from app.services.supabase_storage import _build_session_row
 
 
@@ -77,8 +78,11 @@ def main() -> None:
 
         original_enable_rag = settings.enable_rag
         original_case_retrieval = graph_nodes.retrieve_case_context
+        original_case_memory_chunks = graph_nodes.retrieve_case_memory_chunks
+        original_authoritative_kb_chunks = graph_nodes.retrieve_authoritative_kb_chunks
         original_template_retrieval = graph_nodes.retrieve_document_template
         original_privacy_retrieval = graph_nodes.retrieve_privacy_rules
+        original_enable_dense = settings.enable_dense_retrieval
         try:
             settings.enable_rag = True
 
@@ -135,9 +139,69 @@ def main() -> None:
             assert rag_data["retrieved_case_context"][0]["source_ref"] == "stored_session_note:prior-session-1"
             assert rag_data["retrieved_template_context"]["missing_field_checklist"]
             assert rag_data["retrieved_privacy_context"][0]["warning"]
+
+            def fake_case_memory_chunks(**kwargs):
+                return [
+                    RetrievalChunk(
+                        chunk_id="case-memory-chunk-1",
+                        session_id="prior-session-dense-1",
+                        source_ref="case_memory:prior-session-dense-1:session_theme",
+                        field_type="session_theme",
+                        chunk_text="Dense prior-session memory matched career anxiety.",
+                        retrieval_method="case_memory_dense",
+                        similarity_score=0.82,
+                        session_number=1,
+                        session_date="2026-05-01",
+                    )
+                ]
+
+            def fake_authoritative_kb_chunks(**kwargs):
+                return [
+                    RetrievalChunk(
+                        chunk_id="kb-template-chunk-1",
+                        document_id="kb-template-doc-1",
+                        source_ref="kb:session-note-template-v1:1",
+                        title="Session note template",
+                        doc_category="session_note_template",
+                        document_type="session_note",
+                        allowed_use="documentation_structure_only",
+                        authority_level="internal_demo",
+                        chunk_text="Session notes require session content and next plan.",
+                        retrieval_method="hybrid:dense+keyword",
+                        similarity_score=0.7,
+                        metadata={
+                            "required_fields": ["session_content", "next_plan"],
+                            "missing_field_checklist": ["next_plan"],
+                        },
+                    ),
+                    RetrievalChunk(
+                        chunk_id="kb-privacy-chunk-1",
+                        document_id="kb-privacy-doc-1",
+                        source_ref="kb:privacy-law-sensitive-info-demo:1",
+                        title="Privacy warning",
+                        doc_category="privacy_law",
+                        chunk_text="Sensitive information requires consent and safety review.",
+                        retrieval_method="hybrid:dense+keyword",
+                        similarity_score=0.66,
+                        metadata={"warning": "Review sensitive information before storage."},
+                    ),
+                ]
+
+            settings.enable_dense_retrieval = True
+            graph_nodes.retrieve_case_memory_chunks = fake_case_memory_chunks
+            graph_nodes.retrieve_authoritative_kb_chunks = fake_authoritative_kb_chunks
+            dense_response = client.post("/api/notes/generate", json=payload)
+            assert dense_response.status_code == 200, dense_response.text
+            dense_data = dense_response.json()
+            assert dense_data["retrieved_case_context"][0]["source_ref"].startswith("case_memory:")
+            assert "kb:session-note-template-v1:1" in dense_data["retrieved_template_context"]["source_refs"]
+            assert dense_data["retrieved_privacy_context"][0]["source_ref"]
         finally:
             settings.enable_rag = original_enable_rag
+            settings.enable_dense_retrieval = original_enable_dense
             graph_nodes.retrieve_case_context = original_case_retrieval
+            graph_nodes.retrieve_case_memory_chunks = original_case_memory_chunks
+            graph_nodes.retrieve_authoritative_kb_chunks = original_authoritative_kb_chunks
             graph_nodes.retrieve_document_template = original_template_retrieval
             graph_nodes.retrieve_privacy_rules = original_privacy_retrieval
 
