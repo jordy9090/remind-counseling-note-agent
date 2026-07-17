@@ -41,6 +41,7 @@ import {
   saveTemporaryDraft,
   transcribeAudio,
 } from '../api/client'
+import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -392,6 +393,7 @@ export default function SessionDraftPage() {
     hasUsableNoteInput ||
       materials.length,
   )
+  const unappliedReadyMaterials = useMemo(() => getUnappliedReadyMaterials(materials), [materials])
 
   useEffect(() => {
     return () => {
@@ -662,6 +664,11 @@ export default function SessionDraftPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (unappliedReadyMaterials.length > 0) {
+      setHasSubmitted(true)
+      setError('아직 회기 입력에 반영되지 않은 업로드 자료가 있습니다. 자료에 반영하거나 삭제한 뒤 요약초안을 생성해주세요.')
+      return
+    }
     if (materials.length && !hasUsableNoteInput) {
       setHasSubmitted(true)
       setError('업로드한 자료가 아직 회기 입력에 반영되지 않았습니다. 자료에 반영할 항목을 선택해주세요.')
@@ -4136,18 +4143,6 @@ function buildFailedMaterial(file: File, kind: UploadedMaterialKind, error: stri
 function getFileExtension(filename: string): string {
   const index = filename.lastIndexOf('.')
   return index >= 0 ? filename.slice(index).toLowerCase() : ''
-}
-
-function getMaterialText(material: UploadedMaterial | null | undefined): string {
-  if (!material) return ''
-  if (material.kind === 'audio') {
-    if (material.transcriptText) return material.transcriptText
-    if (material.segments?.length) {
-      return material.segments.map((segment) => segment.text).filter(Boolean).join('\n')
-    }
-    return ''
-  }
-  return material.extractedText || ''
 }
 
 function mergeMaterialText(current: string, incoming: string, mode: MaterialApplyMode): string {

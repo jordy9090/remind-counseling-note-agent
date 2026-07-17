@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
@@ -160,6 +161,13 @@ def _make_mp3_bytes() -> bytes:
 
 def _make_m4a_bytes() -> bytes:
     return b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A mp42"
+
+
+class _FakeWhisperSegment:
+    def __init__(self, start: float, end: float, text: str) -> None:
+        self.start = start
+        self.end = end
+        self.text = text
 
 
 def _upload_file(client: TestClient, name: str, body: bytes, content_type: str):
@@ -457,6 +465,119 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
         data={"language": "../secret", "task": "transcribe"},
     )
     assert invalid_language.status_code == 422
+
+    _run_audio_transcription_runtime_smoke_tests(client)
+
+
+def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
+    from app.services import audio_transcription as audio_service
+    from app.services.upload_validation import ValidatedUpload
+
+    previous_enable = os.environ.get("ENABLE_AUDIO_TRANSCRIPTION")
+    os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "1"
+
+    init_count = {"value": 0}
+
+    class SuccessfulFakeWhisperModel:
+        def __init__(self, model_size: str, device: str, compute_type: str) -> None:
+            init_count["value"] += 1
+            self.model_size = model_size
+            self.device = device
+            self.compute_type = compute_type
+
+        def transcribe(self, path: str, language: str | None = None, task: str = "transcribe"):
+            return iter([_FakeWhisperSegment(0.0, 1.5, "첫 번째 발화")]), SimpleNamespace(
+                duration=1.5,
+                language=language or "ko",
+            )
+
+    try:
+        audio_service.set_whisper_model_factory_for_testing(SuccessfulFakeWhisperModel)
+        first_service = audio_service.get_transcription_service()
+        second_service = audio_service.get_transcription_service()
+        assert first_service is second_service
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_file.write(_make_wav_bytes())
+            audio_path = Path(temp_file.name)
+        try:
+            validated = ValidatedUpload(
+                filename="session.wav",
+                media_type="audio/wav",
+                suffix=".wav",
+                size_bytes=audio_path.stat().st_size,
+                temp_path=audio_path,
+            )
+            first_result = first_service.transcribe(validated, language="ko", task="transcribe")
+            second_result = second_service.transcribe(validated, language="ko", task="transcribe")
+            assert first_result.transcript_text == "첫 번째 발화"
+            assert second_result.transcript_text == "첫 번째 발화"
+            assert init_count["value"] == 1
+        finally:
+            audio_path.unlink(missing_ok=True)
+
+        class FailingGeneratorWhisperModel:
+            def __init__(self, model_size: str, device: str, compute_type: str) -> None:
+                return None
+
+            def transcribe(self, path: str, language: str | None = None, task: str = "transcribe"):
+                def failing_segments():
+                    yield _FakeWhisperSegment(0.0, 0.5, "부분 발화")
+                    raise RuntimeError(f"unsafe failure path={path}")
+
+                return failing_segments(), SimpleNamespace(duration=0.5, language=language or "ko")
+
+        audio_service.set_whisper_model_factory_for_testing(FailingGeneratorWhisperModel)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_file.write(_make_wav_bytes())
+            failing_audio_path = Path(temp_file.name)
+        try:
+            failing_validated = ValidatedUpload(
+                filename="session.wav",
+                media_type="audio/wav",
+                suffix=".wav",
+                size_bytes=failing_audio_path.stat().st_size,
+                temp_path=failing_audio_path,
+            )
+            try:
+                audio_service.get_transcription_service().transcribe(
+                    failing_validated,
+                    language="ko",
+                    task="transcribe",
+                )
+                raise AssertionError("generator failure should be converted")
+            except audio_service.AudioTranscriptionRuntimeError as error:
+                assert str(error) == "음성 축어록 생성 중 오류가 발생했습니다."
+                assert "unsafe failure" not in str(error)
+                assert str(failing_audio_path) not in str(error)
+        finally:
+            failing_audio_path.unlink(missing_ok=True)
+
+        with tempfile.TemporaryDirectory() as upload_temp_dir:
+            previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+            os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+            try:
+                route_failure = client.post(
+                    "/api/audio/transcribe",
+                    files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+                    data={"language": "ko", "task": "transcribe"},
+                )
+                assert route_failure.status_code == 500, route_failure.text
+                assert route_failure.json()["detail"] == "음성 축어록 생성 중 오류가 발생했습니다."
+                assert upload_temp_dir not in route_failure.text
+                assert "unsafe failure" not in route_failure.text
+                assert not list(Path(upload_temp_dir).iterdir())
+            finally:
+                if previous_tmp_dir is None:
+                    os.environ.pop("UPLOAD_TMP_DIR", None)
+                else:
+                    os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+    finally:
+        audio_service.set_whisper_model_factory_for_testing(None)
+        if previous_enable is None:
+            os.environ.pop("ENABLE_AUDIO_TRANSCRIPTION", None)
+        else:
+            os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = previous_enable
 
 
 class _BytesTextWriter:
