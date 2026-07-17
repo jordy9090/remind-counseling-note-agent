@@ -233,6 +233,95 @@ Content-Disposition: attachment; filename="document_export.docx"; filename*=UTF-
 
 PDF responses use `application/pdf`. Filenames follow `{문서유형}_{case_id}_{회기번호}_{날짜}.{확장자}` with unsafe filename characters replaced by `_`.
 
+## Extract Uploaded Materials
+
+```text
+POST /api/materials/documents/extract
+```
+
+Accepts a multipart `file` field and extracts text without permanently storing the raw upload. Supported formats are TXT, DOCX, and text-layer PDF. Default size limit is 20MB and can be changed with `DOCUMENT_UPLOAD_MAX_BYTES`. DOCX uploads are additionally checked with `DOCX_MAX_ARCHIVE_MEMBERS`, `DOCX_MAX_UNCOMPRESSED_BYTES`, and `DOCX_MAX_COMPRESSION_RATIO` before parsing.
+
+The backend validates extension, `Content-Type`, and file signature. Empty files return 400, oversized files return 413, and unsupported or mismatched formats return 415.
+
+### Request
+
+```text
+Content-Type: multipart/form-data
+file=@case-note.docx
+```
+
+### Response
+
+```json
+{
+  "material_id": "material_abc123",
+  "filename": "case-note.docx",
+  "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "status": "completed",
+  "character_count": 3421,
+  "page_count": null,
+  "extracted_text": "상담 메모...",
+  "warnings": []
+}
+```
+
+Scanned/image-only PDFs return 200 with `status: "warning"` and a warning that OCR is not currently supported.
+
+## Audio Capabilities and Transcription
+
+```text
+GET /api/audio/capabilities
+```
+
+Returns whether this runtime can accept audio uploads and whether automatic transcription is configured. Upload is available by default, but transcription is disabled unless `ENABLE_AUDIO_TRANSCRIPTION=1` and `faster-whisper` are available. Speaker diarization is not included in this MVP.
+
+```json
+{
+  "upload": {
+    "available": true
+  },
+  "transcription": {
+    "available": false,
+    "reason": "음성 자동 축어록 런타임이 비활성화되어 있습니다."
+  },
+  "speaker_diarization": {
+    "available": false,
+    "reason": "화자 분리 기능은 이번 MVP 범위에 포함되어 있지 않습니다."
+  }
+}
+```
+
+```text
+POST /api/audio/transcribe
+```
+
+Accepts multipart `file`, optional `language`, and optional `task`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`.
+
+When transcription is unavailable, the endpoint returns 503 instead of a fake transcript.
+
+### Response
+
+```json
+{
+  "transcription_id": "transcription_abc123",
+  "filename": "session.wav",
+  "status": "completed",
+  "duration_seconds": 142.3,
+  "language": "ko",
+  "segments": [
+    {
+      "id": 1,
+      "start": 0.0,
+      "end": 4.2,
+      "text": "상담자 발화..."
+    }
+  ],
+  "transcript_text": "상담자 발화...",
+  "nonverbal_notes": "",
+  "warnings": []
+}
+```
+
 ## Local Run
 
 Backend:

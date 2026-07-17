@@ -5,12 +5,15 @@ Run from the backend directory:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import tempfile
+import zipfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
@@ -62,8 +65,537 @@ def _assert_pdf_response(content: bytes, content_type: str, expected_texts: list
         print("PDF text extraction did not preserve expected Korean text; page-count validation passed.")
 
 
+def _make_docx_bytes() -> bytes:
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("상담 메모 첫 문단")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "영역"
+    table.cell(0, 1).text = "내용"
+    table.cell(1, 0).text = "정서"
+    table.cell(1, 1).text = "불안 80"
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_text_pdf_bytes(text: str = "Hello counseling note PDF text") -> bytes:
+    safe_text = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT /F1 12 Tf 72 720 Td ({safe_text}) Tj ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    content = b"%PDF-1.4\n"
+    offsets = []
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(content))
+        content += f"{index} 0 obj\n".encode("ascii") + obj + b"\nendobj\n"
+    xref_offset = len(content)
+    content += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii")
+    for offset in offsets:
+        content += f"{offset:010d} 00000 n \n".encode("ascii")
+    content += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n"
+    ).encode("ascii")
+    return content
+
+
+def _make_blank_pdf_bytes() -> bytes:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _make_encrypted_pdf_bytes() -> bytes:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt("secret")
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _make_zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def _make_wav_bytes(payload_size: int = 16) -> bytes:
+    data = b"\x00" * payload_size
+    return (
+        b"RIFF"
+        + (36 + len(data)).to_bytes(4, "little")
+        + b"WAVEfmt "
+        + (16).to_bytes(4, "little")
+        + (1).to_bytes(2, "little")
+        + (1).to_bytes(2, "little")
+        + (16000).to_bytes(4, "little")
+        + (32000).to_bytes(4, "little")
+        + (2).to_bytes(2, "little")
+        + (16).to_bytes(2, "little")
+        + b"data"
+        + len(data).to_bytes(4, "little")
+        + data
+    )
+
+
+def _make_mp3_bytes() -> bytes:
+    return b"ID3\x04\x00\x00\x00\x00\x00\x10" + (b"\x00" * 32)
+
+
+def _make_m4a_bytes() -> bytes:
+    return b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A mp42"
+
+
+class _FakeWhisperSegment:
+    def __init__(self, start: float, end: float, text: str) -> None:
+        self.start = start
+        self.end = end
+        self.text = text
+
+
+def _upload_file(client: TestClient, name: str, body: bytes, content_type: str):
+    return client.post(
+        "/api/materials/documents/extract",
+        files={"file": (name, BytesIO(body), content_type)},
+    )
+
+
+def _assert_signature_checks_are_streaming() -> None:
+    from app.services.upload_validation import signature_matches
+
+    samples = [
+        (".wav", "audio", _make_wav_bytes(1024)),
+        (".mp3", "audio", _make_mp3_bytes()),
+        (".m4a", "audio", _make_m4a_bytes()),
+        (".pdf", "document", _make_text_pdf_bytes()),
+    ]
+
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+    read_sizes: list[int] = []
+
+    def fail_read_bytes(self: Path) -> bytes:
+        raise AssertionError("Path.read_bytes() must not be used for upload signature checks")
+
+    class GuardedFile:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return self.handle.__exit__(exc_type, exc, traceback)
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            assert 0 <= size <= 64, f"signature check read too much: {size}"
+            return self.handle.read(size)
+
+        def __getattr__(self, name: str):
+            return getattr(self.handle, name)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        watched_paths: set[Path] = set()
+        for suffix, kind, content in samples:
+            sample_path = Path(temp_dir) / f"sample{suffix}"
+            sample_path.write_bytes(content)
+            watched_paths.add(sample_path)
+
+        def guarded_open(self: Path, *args, **kwargs):
+            handle = original_open(self, *args, **kwargs)
+            if self in watched_paths:
+                return GuardedFile(handle)
+            return handle
+
+        try:
+            Path.read_bytes = fail_read_bytes
+            Path.open = guarded_open
+            for suffix, kind, _content in samples:
+                assert signature_matches(Path(temp_dir) / f"sample{suffix}", suffix, kind)
+        finally:
+            Path.read_bytes = original_read_bytes
+            Path.open = original_open
+
+    assert read_sizes and all(size == 64 for size in read_sizes)
+
+
+def _run_material_upload_smoke_tests(client: TestClient) -> None:
+    _assert_signature_checks_are_streaming()
+
+    txt_response = _upload_file(
+        client,
+        "memo.txt",
+        "\ufeff상담 메모\n둘째 줄".encode("utf-8"),
+        "text/plain",
+    )
+    assert txt_response.status_code == 200, txt_response.text
+    txt_data = txt_response.json()
+    assert txt_data["status"] == "completed"
+    assert "상담 메모" in txt_data["extracted_text"]
+    assert "둘째 줄" in txt_data["extracted_text"]
+    assert txt_data["character_count"] >= 8
+    assert txt_response.headers["cache-control"] == "no-store"
+
+    docx_response = _upload_file(
+        client,
+        "case-note.docx",
+        _make_docx_bytes(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert docx_response.status_code == 200, docx_response.text
+    docx_text = docx_response.json()["extracted_text"]
+    assert "상담 메모 첫 문단" in docx_text
+    assert "영역\t내용" in docx_text
+    assert "정서\t불안 80" in docx_text
+
+    pdf_response = _upload_file(client, "note.pdf", _make_text_pdf_bytes(), "application/pdf")
+    assert pdf_response.status_code == 200, pdf_response.text
+    pdf_data = pdf_response.json()
+    assert pdf_data["page_count"] == 1
+    assert "Hello counseling note PDF text" in pdf_data["extracted_text"]
+
+    image_pdf_response = _upload_file(client, "scan.pdf", _make_blank_pdf_bytes(), "application/pdf")
+    assert image_pdf_response.status_code == 200, image_pdf_response.text
+    image_pdf_data = image_pdf_response.json()
+    assert image_pdf_data["status"] == "warning"
+    assert "OCR" in " ".join(image_pdf_data["warnings"])
+
+    corrupt_docx_response = _upload_file(
+        client,
+        "broken.docx",
+        b"PK\x03\x04not a readable zip archive",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert corrupt_docx_response.status_code == 422
+    assert "DOCX 파일을 읽을 수 없습니다" in corrupt_docx_response.text
+
+    corrupt_pdf_response = _upload_file(client, "broken.pdf", b"%PDF-1.4\nbroken", "application/pdf")
+    assert corrupt_pdf_response.status_code == 422
+    assert "PDF 파일을 읽을 수 없습니다" in corrupt_pdf_response.text
+
+    encrypted_pdf_response = _upload_file(client, "encrypted.pdf", _make_encrypted_pdf_bytes(), "application/pdf")
+    assert encrypted_pdf_response.status_code == 422
+    assert "암호화된 PDF" in encrypted_pdf_response.text
+
+    original_docx_member_limit = os.environ.get("DOCX_MAX_ARCHIVE_MEMBERS")
+    os.environ["DOCX_MAX_ARCHIVE_MEMBERS"] = "2"
+    try:
+        too_many_members = _upload_file(
+            client,
+            "too-many.docx",
+            _make_zip_bytes(
+                {
+                    "[Content_Types].xml": b"<Types/>",
+                    "word/document.xml": b"<document/>",
+                    "word/extra.xml": b"<extra/>",
+                }
+            ),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert too_many_members.status_code == 413
+    finally:
+        if original_docx_member_limit is None:
+            os.environ.pop("DOCX_MAX_ARCHIVE_MEMBERS", None)
+        else:
+            os.environ["DOCX_MAX_ARCHIVE_MEMBERS"] = original_docx_member_limit
+
+    original_docx_size_limit = os.environ.get("DOCX_MAX_UNCOMPRESSED_BYTES")
+    os.environ["DOCX_MAX_UNCOMPRESSED_BYTES"] = "30"
+    try:
+        too_large_docx = _upload_file(
+            client,
+            "too-large.docx",
+            _make_zip_bytes(
+                {
+                    "[Content_Types].xml": b"<Types/>",
+                    "word/document.xml": b"<document/>",
+                    "word/large.bin": b"x" * 64,
+                }
+            ),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert too_large_docx.status_code == 413
+    finally:
+        if original_docx_size_limit is None:
+            os.environ.pop("DOCX_MAX_UNCOMPRESSED_BYTES", None)
+        else:
+            os.environ["DOCX_MAX_UNCOMPRESSED_BYTES"] = original_docx_size_limit
+
+    original_docx_ratio_limit = os.environ.get("DOCX_MAX_COMPRESSION_RATIO")
+    os.environ["DOCX_MAX_COMPRESSION_RATIO"] = "2"
+    try:
+        high_ratio_docx = _upload_file(
+            client,
+            "high-ratio.docx",
+            _make_zip_bytes(
+                {
+                    "[Content_Types].xml": b"<Types/>",
+                    "word/document.xml": b"<document/>",
+                    "word/repeated.txt": b"a" * 4096,
+                }
+            ),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert high_ratio_docx.status_code == 413
+    finally:
+        if original_docx_ratio_limit is None:
+            os.environ.pop("DOCX_MAX_COMPRESSION_RATIO", None)
+        else:
+            os.environ["DOCX_MAX_COMPRESSION_RATIO"] = original_docx_ratio_limit
+
+    unsupported_response = _upload_file(client, "note.rtf", b"{\\rtf1}", "application/rtf")
+    assert unsupported_response.status_code == 415
+
+    mismatch_response = _upload_file(client, "note.pdf", _make_text_pdf_bytes(), "text/plain")
+    assert mismatch_response.status_code == 415
+
+    empty_response = _upload_file(client, "empty.txt", b"", "text/plain")
+    assert empty_response.status_code == 400
+
+    original_doc_limit = os.environ.get("DOCUMENT_UPLOAD_MAX_BYTES")
+    os.environ["DOCUMENT_UPLOAD_MAX_BYTES"] = "8"
+    try:
+        too_large_response = _upload_file(client, "large.txt", b"0123456789", "text/plain")
+        assert too_large_response.status_code == 413
+    finally:
+        if original_doc_limit is None:
+            os.environ.pop("DOCUMENT_UPLOAD_MAX_BYTES", None)
+        else:
+            os.environ["DOCUMENT_UPLOAD_MAX_BYTES"] = original_doc_limit
+
+    with tempfile.TemporaryDirectory() as upload_temp_dir:
+        previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+        os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+        try:
+            cleanup_response = _upload_file(client, "cleanup.txt", b"temporary cleanup text", "text/plain")
+            assert cleanup_response.status_code == 200, cleanup_response.text
+            assert not list(Path(upload_temp_dir).iterdir())
+        finally:
+            if previous_tmp_dir is None:
+                os.environ.pop("UPLOAD_TMP_DIR", None)
+            else:
+                os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+
+    with tempfile.TemporaryDirectory() as upload_temp_dir:
+        previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+        os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+        try:
+            cleanup_after_parser_failure = _upload_file(
+                client,
+                "cleanup-broken.pdf",
+                b"%PDF-1.4\nbroken",
+                "application/pdf",
+            )
+            assert cleanup_after_parser_failure.status_code == 422
+            assert not list(Path(upload_temp_dir).iterdir())
+        finally:
+            if previous_tmp_dir is None:
+                os.environ.pop("UPLOAD_TMP_DIR", None)
+            else:
+                os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+
+    stdout_buffer = BytesIO()
+    stderr_buffer = BytesIO()
+    secret_text = "RAW_SECRET_CONTENT_SHOULD_NOT_BE_LOGGED"
+    with contextlib.redirect_stdout(_BytesTextWriter(stdout_buffer)), contextlib.redirect_stderr(
+        _BytesTextWriter(stderr_buffer)
+    ):
+        raw_log_response = _upload_file(client, "secret.txt", secret_text.encode("utf-8"), "text/plain")
+    assert raw_log_response.status_code == 200, raw_log_response.text
+    assert secret_text.encode("utf-8") not in stdout_buffer.getvalue()
+    assert secret_text.encode("utf-8") not in stderr_buffer.getvalue()
+
+    capabilities = client.get("/api/audio/capabilities")
+    assert capabilities.status_code == 200, capabilities.text
+    audio_capabilities = capabilities.json()
+    assert audio_capabilities["upload"]["available"] is True
+    assert audio_capabilities["transcription"]["available"] is False
+    assert audio_capabilities["speaker_diarization"]["available"] is False
+
+    original_audio_limit = os.environ.get("AUDIO_UPLOAD_MAX_BYTES")
+    os.environ["AUDIO_UPLOAD_MAX_BYTES"] = "20"
+    try:
+        audio_too_large = client.post(
+            "/api/audio/transcribe",
+            files={"file": ("session.wav", BytesIO(_make_wav_bytes(128)), "audio/wav")},
+        )
+        assert audio_too_large.status_code == 413
+    finally:
+        if original_audio_limit is None:
+            os.environ.pop("AUDIO_UPLOAD_MAX_BYTES", None)
+        else:
+            os.environ["AUDIO_UPLOAD_MAX_BYTES"] = original_audio_limit
+
+    audio_unavailable = client.post(
+        "/api/audio/transcribe",
+        files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"language": "ko", "task": "transcribe"},
+    )
+    assert audio_unavailable.status_code == 503
+
+    invalid_task = client.post(
+        "/api/audio/transcribe",
+        files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"language": "ko", "task": "summarize"},
+    )
+    assert invalid_task.status_code == 422
+
+    invalid_language = client.post(
+        "/api/audio/transcribe",
+        files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"language": "../secret", "task": "transcribe"},
+    )
+    assert invalid_language.status_code == 422
+
+    _run_audio_transcription_runtime_smoke_tests(client)
+
+
+def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
+    from app.services import audio_transcription as audio_service
+    from app.services.upload_validation import ValidatedUpload
+
+    previous_enable = os.environ.get("ENABLE_AUDIO_TRANSCRIPTION")
+    os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "1"
+
+    init_count = {"value": 0}
+
+    class SuccessfulFakeWhisperModel:
+        def __init__(self, model_size: str, device: str, compute_type: str) -> None:
+            init_count["value"] += 1
+            self.model_size = model_size
+            self.device = device
+            self.compute_type = compute_type
+
+        def transcribe(self, path: str, language: str | None = None, task: str = "transcribe"):
+            return iter([_FakeWhisperSegment(0.0, 1.5, "첫 번째 발화")]), SimpleNamespace(
+                duration=1.5,
+                language=language or "ko",
+            )
+
+    try:
+        audio_service.set_whisper_model_factory_for_testing(SuccessfulFakeWhisperModel)
+        first_service = audio_service.get_transcription_service()
+        second_service = audio_service.get_transcription_service()
+        assert first_service is second_service
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_file.write(_make_wav_bytes())
+            audio_path = Path(temp_file.name)
+        try:
+            validated = ValidatedUpload(
+                filename="session.wav",
+                media_type="audio/wav",
+                suffix=".wav",
+                size_bytes=audio_path.stat().st_size,
+                temp_path=audio_path,
+            )
+            first_result = first_service.transcribe(validated, language="ko", task="transcribe")
+            second_result = second_service.transcribe(validated, language="ko", task="transcribe")
+            assert first_result.transcript_text == "첫 번째 발화"
+            assert second_result.transcript_text == "첫 번째 발화"
+            assert init_count["value"] == 1
+        finally:
+            audio_path.unlink(missing_ok=True)
+
+        class FailingGeneratorWhisperModel:
+            def __init__(self, model_size: str, device: str, compute_type: str) -> None:
+                return None
+
+            def transcribe(self, path: str, language: str | None = None, task: str = "transcribe"):
+                def failing_segments():
+                    yield _FakeWhisperSegment(0.0, 0.5, "부분 발화")
+                    raise RuntimeError(f"unsafe failure path={path}")
+
+                return failing_segments(), SimpleNamespace(duration=0.5, language=language or "ko")
+
+        audio_service.set_whisper_model_factory_for_testing(FailingGeneratorWhisperModel)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_file.write(_make_wav_bytes())
+            failing_audio_path = Path(temp_file.name)
+        try:
+            failing_validated = ValidatedUpload(
+                filename="session.wav",
+                media_type="audio/wav",
+                suffix=".wav",
+                size_bytes=failing_audio_path.stat().st_size,
+                temp_path=failing_audio_path,
+            )
+            try:
+                audio_service.get_transcription_service().transcribe(
+                    failing_validated,
+                    language="ko",
+                    task="transcribe",
+                )
+                raise AssertionError("generator failure should be converted")
+            except audio_service.AudioTranscriptionRuntimeError as error:
+                assert str(error) == "음성 축어록 생성 중 오류가 발생했습니다."
+                assert "unsafe failure" not in str(error)
+                assert str(failing_audio_path) not in str(error)
+        finally:
+            failing_audio_path.unlink(missing_ok=True)
+
+        with tempfile.TemporaryDirectory() as upload_temp_dir:
+            previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+            os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+            try:
+                route_failure = client.post(
+                    "/api/audio/transcribe",
+                    files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+                    data={"language": "ko", "task": "transcribe"},
+                )
+                assert route_failure.status_code == 500, route_failure.text
+                assert route_failure.json()["detail"] == "음성 축어록 생성 중 오류가 발생했습니다."
+                assert upload_temp_dir not in route_failure.text
+                assert "unsafe failure" not in route_failure.text
+                assert not list(Path(upload_temp_dir).iterdir())
+            finally:
+                if previous_tmp_dir is None:
+                    os.environ.pop("UPLOAD_TMP_DIR", None)
+                else:
+                    os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+    finally:
+        audio_service.set_whisper_model_factory_for_testing(None)
+        if previous_enable is None:
+            os.environ.pop("ENABLE_AUDIO_TRANSCRIPTION", None)
+        else:
+            os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = previous_enable
+
+
+class _BytesTextWriter:
+    def __init__(self, buffer: BytesIO) -> None:
+        self.buffer = buffer
+
+    def write(self, value: str) -> int:
+        data = value.encode("utf-8", errors="replace")
+        self.buffer.write(data)
+        return len(value)
+
+    def flush(self) -> None:
+        return None
+
+
 def main() -> None:
     require_pdf_export = os.getenv("REQUIRE_PDF_EXPORT") == "1"
+    os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "0"
     settings.use_stub = True
     settings.openai_api_key = None
     settings.enable_persistence = False
@@ -87,6 +619,8 @@ def main() -> None:
         assert capabilities["pdf"]["available"] is False, capabilities
     if require_pdf_export:
         assert capabilities["pdf"]["available"] is True, capabilities
+
+    _run_material_upload_smoke_tests(client)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         os.environ["TEMP_DRAFT_DIR"] = temp_dir
@@ -434,7 +968,7 @@ def main() -> None:
 
     print(
         "Smoke test passed: health, note generation, temporary draft storage, cached recomposition, "
-        "supervision report generation, and document export checks are working."
+        "supervision report generation, document export, and material upload checks are working."
     )
 
 

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "verify:material-workflow": "node scripts/verify-material-workflow.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

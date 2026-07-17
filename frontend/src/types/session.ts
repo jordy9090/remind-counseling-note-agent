@@ -419,3 +419,44 @@ export interface DocumentCapabilitiesResponse {
   pdf: DocumentFormatCapability
   hwpx: DocumentFormatCapability
 }
+
+export interface DocumentExtractionResponse {
+  material_id: string
+  filename: string
+  media_type: string
+  status: 'completed' | 'warning'
+  character_count: number
+  page_count?: number | null
+  extracted_text: string
+  warnings: string[]
+}
+
+export interface AudioCapability {
+  available: boolean
+  reason?: string | null
+}
+
+export interface AudioCapabilitiesResponse {
+  upload: AudioCapability
+  transcription: AudioCapability
+  speaker_diarization: AudioCapability
+}
+
+export interface AudioSegment {
+  id: number
+  start: number
+  end: number
+  text: string
+}
+
+export interface AudioTranscriptionResponse {
+  transcription_id: string
+  filename: string
+  status: 'completed'
+  duration_seconds?: number | null
+  language?: string | null
+  segments: AudioSegment[]
+  transcript_text: string
+  nonverbal_notes: string
+  warnings: string[]
+}

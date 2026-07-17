@@ -16,8 +16,11 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 - `SAVE_RAW_INPUT=0` must remain the default.
 - With `SAVE_RAW_INPUT=0`, `sessions.raw_input_text` is stored as `NULL`; only sanitized input and metadata are persisted.
 - `SAVE_RAW_INPUT=1` is for synthetic/demo data or explicitly approved test cases only.
+- Uploaded PDF/DOCX/TXT files are streamed to temporary files for extraction and deleted after the request. Do not add raw upload persistence without authentication, access control, retention, and deletion policy review.
+- Scanned PDF OCR is not supported in the MVP. Do not route image-only clinical records to third-party OCR services without a reviewed data processing agreement.
 - Do not store real audio in this MVP.
-- Do not use browser/STT transcripts from real counseling sessions without explicit consent and a storage policy.
+- Automatic audio transcription is disabled by default. Do not enable `ENABLE_AUDIO_TRANSCRIPTION=1` for real counseling sessions without explicit consent, authentication, storage limits, model/runtime review, and a retention policy.
+- Public demo deployments have no authentication. Do not upload identifiable counseling materials, psychological test records, or original session audio to public deployments.
 
 ## Retrieval Boundaries
 
