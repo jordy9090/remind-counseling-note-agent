@@ -440,6 +440,14 @@ export interface AudioCapabilitiesResponse {
   upload: AudioCapability
   transcription: AudioCapability
   speaker_diarization: AudioCapability
+  runtime_mode: 'disabled' | 'stub' | 'real'
+}
+
+export interface AudioWord {
+  start?: number | null
+  end?: number | null
+  text: string
+  probability?: number | null
 }
 
 export interface AudioSegment {
@@ -447,14 +455,25 @@ export interface AudioSegment {
   start: number
   end: number
   text: string
+  speaker?: string | null
+  pause_before_seconds?: number | null
+  duration_seconds?: number | null
+  speech_rate_wps?: number | null
+  speech_rate_level?: 'slow' | 'typical' | 'fast' | null
+  volume_level?: 'low' | 'typical' | 'high' | null
+  confidence?: number | null
+  words?: AudioWord[]
 }
 
 export interface AudioTranscriptionResponse {
   transcription_id: string
   filename: string
   status: 'completed'
+  runtime_mode: 'stub' | 'real'
+  diarization_status: 'completed' | 'fallback' | 'disabled'
   duration_seconds?: number | null
   language?: string | null
+  language_probability?: number | null
   segments: AudioSegment[]
   transcript_text: string
   nonverbal_notes: string

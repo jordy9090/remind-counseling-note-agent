@@ -136,11 +136,13 @@ export const transcribeAudio = async (
   file: File,
   language = 'ko',
   task = 'transcribe',
+  expectedSpeakers = 2,
 ): Promise<AudioTranscriptionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('language', language)
   formData.append('task', task)
+  formData.append('expected_speakers', String(expectedSpeakers))
   try {
     const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
       timeout: 900000,

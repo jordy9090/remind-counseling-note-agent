@@ -273,7 +273,7 @@ Scanned/image-only PDFs return 200 with `status: "warning"` and a warning that O
 GET /api/audio/capabilities
 ```
 
-Returns whether this runtime can accept audio uploads and whether automatic transcription is configured. Upload is available by default, but transcription is disabled unless `ENABLE_AUDIO_TRANSCRIPTION=1` and `faster-whisper` are available. Speaker diarization is not included in this MVP.
+Returns whether this runtime can accept audio uploads, whether automatic transcription is configured, and which runtime mode is active. Upload is available by default. `AUDIO_TRANSCRIPTION_STUB=1` enables a demo transcript that does not analyze uploaded audio. Real transcription requires `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, and the optional faster-whisper runtime. Speaker diarization is opt-in with `ENABLE_AUDIO_DIARIZATION=1` and optional pyannote dependencies.
 
 ```json
 {
@@ -286,8 +286,9 @@ Returns whether this runtime can accept audio uploads and whether automatic tran
   },
   "speaker_diarization": {
     "available": false,
-    "reason": "화자 분리 기능은 이번 MVP 범위에 포함되어 있지 않습니다."
-  }
+    "reason": "실제 화자 분리는 H100 런타임에서 별도 pyannote 설정 후 활성화됩니다."
+  },
+  "runtime_mode": "disabled"
 }
 ```
 
@@ -295,9 +296,11 @@ Returns whether this runtime can accept audio uploads and whether automatic tran
 POST /api/audio/transcribe
 ```
 
-Accepts multipart `file`, optional `language`, and optional `task`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`.
+Accepts multipart `file`, optional `language`, optional `task`, and optional `expected_speakers`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`.
 
-When transcription is unavailable, the endpoint returns 503 instead of a fake transcript.
+`expected_speakers` defaults to 2 and must be between 1 and 4. When transcription is unavailable, the endpoint returns 503. In stub mode, the endpoint returns a clearly marked demo transcript with warning text: `시연용 예시 축어록이며 업로드 음성을 분석한 결과가 아닙니다.`
+
+`pause_before_seconds` is based on the previous chronological transcript segment end time. `speech_rate_wps` is segment words per second, and `speech_rate_level` is speaker-relative when enough samples exist. `volume_level` is returned only when the runtime supplies normalized speaker-relative loudness. The API does not infer emotion, depression, anxiety, risk, diagnosis, or treatment effect from audio.
 
 ### Response
 
@@ -306,14 +309,25 @@ When transcription is unavailable, the endpoint returns 503 instead of a fake tr
   "transcription_id": "transcription_abc123",
   "filename": "session.wav",
   "status": "completed",
+  "runtime_mode": "real",
+  "diarization_status": "disabled",
   "duration_seconds": 142.3,
   "language": "ko",
+  "language_probability": 0.98,
   "segments": [
     {
       "id": 1,
       "start": 0.0,
       "end": 4.2,
-      "text": "상담자 발화..."
+      "text": "상담자 발화...",
+      "speaker": "speaker_1",
+      "pause_before_seconds": 0.8,
+      "duration_seconds": 4.2,
+      "speech_rate_wps": 1.7,
+      "speech_rate_level": "typical",
+      "volume_level": "low",
+      "confidence": 0.91,
+      "words": []
     }
   ],
   "transcript_text": "상담자 발화...",

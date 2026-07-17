@@ -19,6 +19,15 @@ dependencies = [
     "weasyprint>=62.0",
 ]
 
+[project.optional-dependencies]
+audio-stt = [
+    "faster-whisper>=1,<2",
+    "numpy>=1.26,<3",
+]
+audio-diarization = [
+    "pyannote.audio>=4,<5",
+]
+
 [tool.uv]
 # Allow prerelease packages when resolving this MVP demo environment.
 prerelease = "allow"

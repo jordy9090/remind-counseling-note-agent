@@ -430,6 +430,7 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
     assert audio_capabilities["upload"]["available"] is True
     assert audio_capabilities["transcription"]["available"] is False
     assert audio_capabilities["speaker_diarization"]["available"] is False
+    assert audio_capabilities["runtime_mode"] == "disabled"
 
     original_audio_limit = os.environ.get("AUDIO_UPLOAD_MAX_BYTES")
     os.environ["AUDIO_UPLOAD_MAX_BYTES"] = "20"
@@ -466,6 +467,13 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
     )
     assert invalid_language.status_code == 422
 
+    invalid_speaker_count = client.post(
+        "/api/audio/transcribe",
+        files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"language": "ko", "task": "transcribe", "expected_speakers": "5"},
+    )
+    assert invalid_speaker_count.status_code == 422
+
     _run_audio_transcription_runtime_smoke_tests(client)
 
 
@@ -474,7 +482,12 @@ def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
     from app.services.upload_validation import ValidatedUpload
 
     previous_enable = os.environ.get("ENABLE_AUDIO_TRANSCRIPTION")
+    previous_stub = os.environ.get("AUDIO_TRANSCRIPTION_STUB")
+    previous_diarization = os.environ.get("ENABLE_AUDIO_DIARIZATION")
+    previous_hf_token = os.environ.get("HF_TOKEN")
     os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "1"
+    os.environ["AUDIO_TRANSCRIPTION_STUB"] = "0"
+    os.environ["ENABLE_AUDIO_DIARIZATION"] = "0"
 
     init_count = {"value": 0}
 
@@ -512,6 +525,7 @@ def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
             second_result = second_service.transcribe(validated, language="ko", task="transcribe")
             assert first_result.transcript_text == "첫 번째 발화"
             assert second_result.transcript_text == "첫 번째 발화"
+            assert first_result.runtime_mode == "real"
             assert init_count["value"] == 1
         finally:
             audio_path.unlink(missing_ok=True)
@@ -560,12 +574,85 @@ def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
                 route_failure = client.post(
                     "/api/audio/transcribe",
                     files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
-                    data={"language": "ko", "task": "transcribe"},
+                    data={"language": "ko", "task": "transcribe", "expected_speakers": "2"},
                 )
                 assert route_failure.status_code == 500, route_failure.text
                 assert route_failure.json()["detail"] == "음성 축어록 생성 중 오류가 발생했습니다."
                 assert upload_temp_dir not in route_failure.text
                 assert "unsafe failure" not in route_failure.text
+                assert not list(Path(upload_temp_dir).iterdir())
+            finally:
+                if previous_tmp_dir is None:
+                    os.environ.pop("UPLOAD_TMP_DIR", None)
+                else:
+                    os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+
+        audio_service.set_whisper_model_factory_for_testing(SuccessfulFakeWhisperModel)
+        os.environ["AUDIO_TRANSCRIPTION_STUB"] = "0"
+        os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "1"
+        os.environ["ENABLE_AUDIO_DIARIZATION"] = "1"
+        os.environ.pop("HF_TOKEN", None)
+        audio_service.reset_transcription_service_cache_for_testing()
+
+        with tempfile.TemporaryDirectory() as upload_temp_dir:
+            previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+            os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+            try:
+                diarization_fallback = client.post(
+                    "/api/audio/transcribe",
+                    files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+                    data={"language": "ko", "task": "transcribe", "expected_speakers": "2"},
+                )
+                assert diarization_fallback.status_code == 200, diarization_fallback.text
+                fallback_data = diarization_fallback.json()
+                assert fallback_data["runtime_mode"] == "real"
+                assert fallback_data["diarization_status"] == "fallback"
+                assert {segment["speaker"] for segment in fallback_data["segments"]} == {"speaker_1"}
+                assert "화자 분리를 사용할 수 없어 단일 화자로 처리했습니다." in " ".join(
+                    fallback_data["warnings"]
+                )
+                assert "HF_TOKEN" not in diarization_fallback.text
+                assert upload_temp_dir not in diarization_fallback.text
+                assert not list(Path(upload_temp_dir).iterdir())
+            finally:
+                if previous_tmp_dir is None:
+                    os.environ.pop("UPLOAD_TMP_DIR", None)
+                else:
+                    os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+
+        class RaisingWhisperModel:
+            def __init__(self, model_size: str, device: str, compute_type: str) -> None:
+                raise AssertionError("stub mode must not initialize a real Whisper model")
+
+        audio_service.set_whisper_model_factory_for_testing(RaisingWhisperModel)
+        os.environ["AUDIO_TRANSCRIPTION_STUB"] = "1"
+        os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "0"
+        audio_service.reset_transcription_service_cache_for_testing()
+
+        stub_capabilities = client.get("/api/audio/capabilities")
+        assert stub_capabilities.status_code == 200, stub_capabilities.text
+        assert stub_capabilities.json()["runtime_mode"] == "stub"
+        assert stub_capabilities.json()["transcription"]["available"] is True
+
+        with tempfile.TemporaryDirectory() as upload_temp_dir:
+            previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+            os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+            try:
+                stub_response = client.post(
+                    "/api/audio/transcribe",
+                    files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+                    data={"language": "ko", "task": "transcribe", "expected_speakers": "3"},
+                )
+                assert stub_response.status_code == 200, stub_response.text
+                stub_data = stub_response.json()
+                assert stub_data["runtime_mode"] == "stub"
+                assert stub_data["diarization_status"] == "fallback"
+                assert "시연용 예시 축어록" in " ".join(stub_data["warnings"])
+                assert {segment["speaker"] for segment in stub_data["segments"]} == {
+                    "speaker_1",
+                    "speaker_2",
+                    "speaker_3",
+                }
                 assert not list(Path(upload_temp_dir).iterdir())
             finally:
                 if previous_tmp_dir is None:
@@ -578,6 +665,18 @@ def _run_audio_transcription_runtime_smoke_tests(client: TestClient) -> None:
             os.environ.pop("ENABLE_AUDIO_TRANSCRIPTION", None)
         else:
             os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = previous_enable
+        if previous_stub is None:
+            os.environ.pop("AUDIO_TRANSCRIPTION_STUB", None)
+        else:
+            os.environ["AUDIO_TRANSCRIPTION_STUB"] = previous_stub
+        if previous_diarization is None:
+            os.environ.pop("ENABLE_AUDIO_DIARIZATION", None)
+        else:
+            os.environ["ENABLE_AUDIO_DIARIZATION"] = previous_diarization
+        if previous_hf_token is None:
+            os.environ.pop("HF_TOKEN", None)
+        else:
+            os.environ["HF_TOKEN"] = previous_hf_token
 
 
 class _BytesTextWriter:
@@ -596,6 +695,8 @@ class _BytesTextWriter:
 def main() -> None:
     require_pdf_export = os.getenv("REQUIRE_PDF_EXPORT") == "1"
     os.environ["ENABLE_AUDIO_TRANSCRIPTION"] = "0"
+    os.environ["AUDIO_TRANSCRIPTION_STUB"] = "0"
+    os.environ["ENABLE_AUDIO_DIARIZATION"] = "0"
     settings.use_stub = True
     settings.openai_api_key = None
     settings.enable_persistence = False

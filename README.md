@@ -47,7 +47,7 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 - 결제/예약/관리자 기능
 - AI 슈퍼비전 또는 자동 사례개념화
 
-문서 업로드는 원본 파일을 저장하지 않고 임시 파일에서 텍스트만 추출한 뒤 정리합니다. TXT는 UTF-8/BOM, DOCX는 문단과 표, PDF는 텍스트 레이어만 지원합니다. 스캔 이미지 PDF는 OCR을 지원하지 않으며 경고를 반환합니다. 음성 자동 축어록은 `ENABLE_AUDIO_TRANSCRIPTION=1`과 `faster-whisper` 런타임이 설정된 로컬/서버에서만 동작합니다. 기본값은 비활성화이며 가짜 축어록을 만들지 않습니다.
+문서 업로드는 원본 파일을 저장하지 않고 임시 파일에서 텍스트만 추출한 뒤 정리합니다. TXT는 UTF-8/BOM, DOCX는 문단과 표, PDF는 텍스트 레이어만 지원합니다. 스캔 이미지 PDF는 OCR을 지원하지 않으며 경고를 반환합니다. 음성 원본은 브라우저 세션의 `File` 참조와 object URL로만 재생/재시도에 사용하며 서버나 Supabase에 영구 저장하지 않습니다. 음성 자동 축어록은 기본 비활성화이고, `AUDIO_TRANSCRIPTION_STUB=1`이면 업로드 음성을 분석하지 않는 시연용 예시 축어록을 반환합니다. 실제 STT는 `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, optional `audio-stt`/`audio-diarization` 의존성이 준비된 로컬/서버에서만 동작합니다.
 
 현재 MVP에는 인증이 없습니다. 공개 배포나 공유 데모 환경에는 실제 내담자를 식별할 수 있는 상담 자료, 원본 음성, 심리검사 자료를 업로드하지 마세요.
 
@@ -73,7 +73,7 @@ POST /api/audio/transcribe
 
 `POST /api/materials/documents/extract`는 multipart `file` 필드로 PDF/DOCX/TXT를 받아 텍스트를 추출합니다. 기본 문서 업로드 제한은 20MB이며 `DOCUMENT_UPLOAD_MAX_BYTES`로 조정할 수 있습니다. DOCX는 압축 member 수, 압축 해제 총량, 압축률 제한을 추가로 검사하며 `DOCX_MAX_ARCHIVE_MEMBERS`, `DOCX_MAX_UNCOMPRESSED_BYTES`, `DOCX_MAX_COMPRESSION_RATIO`로 조정할 수 있습니다.
 
-`GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`를 받으며 기본 음성 업로드 제한은 500MB입니다. `AUDIO_UPLOAD_MAX_BYTES`, `ENABLE_AUDIO_TRANSCRIPTION`, `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` 환경변수로 제어합니다.
+`GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태와 `runtime_mode`(`disabled`, `stub`, `real`)를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`, 선택 `expected_speakers`(기본 2, 범위 1~4)를 받으며 기본 음성 업로드 제한은 500MB입니다. `AUDIO_UPLOAD_MAX_BYTES`, `AUDIO_TRANSCRIPTION_STUB`, `ENABLE_AUDIO_TRANSCRIPTION`, `ENABLE_AUDIO_DIARIZATION`, `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` 환경변수로 제어합니다.
 
 OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. Supabase 환경변수가 없거나 `ENABLE_RAG=0`, `ENABLE_PERSISTENCE=0`이면 기존처럼 요청 단위 처리만 수행합니다. 따라서 API key와 Supabase credentials 없이도 데모와 smoke test를 실행할 수 있습니다.
 
@@ -218,6 +218,8 @@ Frontend build:
 
 ```bash
 cd frontend
+pnpm verify:material-workflow
+pnpm verify:audio-transcript-workflow
 pnpm build
 ```
 
@@ -237,6 +239,8 @@ curl -F "file=@sample_data/upload_sample.txt;type=text/plain" http://localhost:8
 curl http://localhost:8000/api/audio/capabilities
 ```
 
+H100에서 실제 faster-whisper/pyannote 런타임을 켜는 방법은 [docs/h100_audio_runbook.md](docs/h100_audio_runbook.md)를 따릅니다. 연구용 GPU backend는 공개 인터넷에 노출하지 않고 SSH local port forwarding으로 검증합니다.
+
 ## 문서
 
 - [제품 명세](docs/product_spec.md)
@@ -244,4 +248,5 @@ curl http://localhost:8000/api/audio/capabilities
 - [아키텍처](docs/architecture.md)
 - [스키마](docs/schema.md)
 - [API 계약](docs/api_contract.md)
+- [H100 음성 STT runbook](docs/h100_audio_runbook.md)
 - [보안 체크리스트](docs/security_checklist.md)
