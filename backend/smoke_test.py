@@ -10,6 +10,7 @@ import json
 import os
 import re
 import tempfile
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import unquote
@@ -115,6 +116,25 @@ def _make_blank_pdf_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def _make_encrypted_pdf_bytes() -> bytes:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt("secret")
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _make_zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
 def _make_wav_bytes(payload_size: int = 16) -> bytes:
     data = b"\x00" * payload_size
     return (
@@ -134,6 +154,14 @@ def _make_wav_bytes(payload_size: int = 16) -> bytes:
     )
 
 
+def _make_mp3_bytes() -> bytes:
+    return b"ID3\x04\x00\x00\x00\x00\x00\x10" + (b"\x00" * 32)
+
+
+def _make_m4a_bytes() -> bytes:
+    return b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A mp42"
+
+
 def _upload_file(client: TestClient, name: str, body: bytes, content_type: str):
     return client.post(
         "/api/materials/documents/extract",
@@ -141,7 +169,70 @@ def _upload_file(client: TestClient, name: str, body: bytes, content_type: str):
     )
 
 
+def _assert_signature_checks_are_streaming() -> None:
+    from app.services.upload_validation import signature_matches
+
+    samples = [
+        (".wav", "audio", _make_wav_bytes(1024)),
+        (".mp3", "audio", _make_mp3_bytes()),
+        (".m4a", "audio", _make_m4a_bytes()),
+        (".pdf", "document", _make_text_pdf_bytes()),
+    ]
+
+    original_read_bytes = Path.read_bytes
+    original_open = Path.open
+    read_sizes: list[int] = []
+
+    def fail_read_bytes(self: Path) -> bytes:
+        raise AssertionError("Path.read_bytes() must not be used for upload signature checks")
+
+    class GuardedFile:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return self.handle.__exit__(exc_type, exc, traceback)
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            assert 0 <= size <= 64, f"signature check read too much: {size}"
+            return self.handle.read(size)
+
+        def __getattr__(self, name: str):
+            return getattr(self.handle, name)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        watched_paths: set[Path] = set()
+        for suffix, kind, content in samples:
+            sample_path = Path(temp_dir) / f"sample{suffix}"
+            sample_path.write_bytes(content)
+            watched_paths.add(sample_path)
+
+        def guarded_open(self: Path, *args, **kwargs):
+            handle = original_open(self, *args, **kwargs)
+            if self in watched_paths:
+                return GuardedFile(handle)
+            return handle
+
+        try:
+            Path.read_bytes = fail_read_bytes
+            Path.open = guarded_open
+            for suffix, kind, _content in samples:
+                assert signature_matches(Path(temp_dir) / f"sample{suffix}", suffix, kind)
+        finally:
+            Path.read_bytes = original_read_bytes
+            Path.open = original_open
+
+    assert read_sizes and all(size == 64 for size in read_sizes)
+
+
 def _run_material_upload_smoke_tests(client: TestClient) -> None:
+    _assert_signature_checks_are_streaming()
+
     txt_response = _upload_file(
         client,
         "memo.txt",
@@ -180,6 +271,89 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
     assert image_pdf_data["status"] == "warning"
     assert "OCR" in " ".join(image_pdf_data["warnings"])
 
+    corrupt_docx_response = _upload_file(
+        client,
+        "broken.docx",
+        b"PK\x03\x04not a readable zip archive",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert corrupt_docx_response.status_code == 422
+    assert "DOCX 파일을 읽을 수 없습니다" in corrupt_docx_response.text
+
+    corrupt_pdf_response = _upload_file(client, "broken.pdf", b"%PDF-1.4\nbroken", "application/pdf")
+    assert corrupt_pdf_response.status_code == 422
+    assert "PDF 파일을 읽을 수 없습니다" in corrupt_pdf_response.text
+
+    encrypted_pdf_response = _upload_file(client, "encrypted.pdf", _make_encrypted_pdf_bytes(), "application/pdf")
+    assert encrypted_pdf_response.status_code == 422
+    assert "암호화된 PDF" in encrypted_pdf_response.text
+
+    original_docx_member_limit = os.environ.get("DOCX_MAX_ARCHIVE_MEMBERS")
+    os.environ["DOCX_MAX_ARCHIVE_MEMBERS"] = "2"
+    try:
+        too_many_members = _upload_file(
+            client,
+            "too-many.docx",
+            _make_zip_bytes(
+                {
+                    "[Content_Types].xml": b"<Types/>",
+                    "word/document.xml": b"<document/>",
+                    "word/extra.xml": b"<extra/>",
+                }
+            ),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert too_many_members.status_code == 413
+    finally:
+        if original_docx_member_limit is None:
+            os.environ.pop("DOCX_MAX_ARCHIVE_MEMBERS", None)
+        else:
+            os.environ["DOCX_MAX_ARCHIVE_MEMBERS"] = original_docx_member_limit
+
+    original_docx_size_limit = os.environ.get("DOCX_MAX_UNCOMPRESSED_BYTES")
+    os.environ["DOCX_MAX_UNCOMPRESSED_BYTES"] = "30"
+    try:
+        too_large_docx = _upload_file(
+            client,
+            "too-large.docx",
+            _make_zip_bytes(
+                {
+                    "[Content_Types].xml": b"<Types/>",
+                    "word/document.xml": b"<document/>",
+                    "word/large.bin": b"x" * 64,
+                }
+            ),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert too_large_docx.status_code == 413
+    finally:
+        if original_docx_size_limit is None:
+            os.environ.pop("DOCX_MAX_UNCOMPRESSED_BYTES", None)
+        else:
+            os.environ["DOCX_MAX_UNCOMPRESSED_BYTES"] = original_docx_size_limit
+
+    original_docx_ratio_limit = os.environ.get("DOCX_MAX_COMPRESSION_RATIO")
+    os.environ["DOCX_MAX_COMPRESSION_RATIO"] = "2"
+    try:
+        high_ratio_docx = _upload_file(
+            client,
+            "high-ratio.docx",
+            _make_zip_bytes(
+                {
+                    "[Content_Types].xml": b"<Types/>",
+                    "word/document.xml": b"<document/>",
+                    "word/repeated.txt": b"a" * 4096,
+                }
+            ),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert high_ratio_docx.status_code == 413
+    finally:
+        if original_docx_ratio_limit is None:
+            os.environ.pop("DOCX_MAX_COMPRESSION_RATIO", None)
+        else:
+            os.environ["DOCX_MAX_COMPRESSION_RATIO"] = original_docx_ratio_limit
+
     unsupported_response = _upload_file(client, "note.rtf", b"{\\rtf1}", "application/rtf")
     assert unsupported_response.status_code == 415
 
@@ -206,6 +380,24 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
         try:
             cleanup_response = _upload_file(client, "cleanup.txt", b"temporary cleanup text", "text/plain")
             assert cleanup_response.status_code == 200, cleanup_response.text
+            assert not list(Path(upload_temp_dir).iterdir())
+        finally:
+            if previous_tmp_dir is None:
+                os.environ.pop("UPLOAD_TMP_DIR", None)
+            else:
+                os.environ["UPLOAD_TMP_DIR"] = previous_tmp_dir
+
+    with tempfile.TemporaryDirectory() as upload_temp_dir:
+        previous_tmp_dir = os.environ.get("UPLOAD_TMP_DIR")
+        os.environ["UPLOAD_TMP_DIR"] = upload_temp_dir
+        try:
+            cleanup_after_parser_failure = _upload_file(
+                client,
+                "cleanup-broken.pdf",
+                b"%PDF-1.4\nbroken",
+                "application/pdf",
+            )
+            assert cleanup_after_parser_failure.status_code == 422
             assert not list(Path(upload_temp_dir).iterdir())
         finally:
             if previous_tmp_dir is None:
@@ -251,6 +443,20 @@ def _run_material_upload_smoke_tests(client: TestClient) -> None:
         data={"language": "ko", "task": "transcribe"},
     )
     assert audio_unavailable.status_code == 503
+
+    invalid_task = client.post(
+        "/api/audio/transcribe",
+        files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"language": "ko", "task": "summarize"},
+    )
+    assert invalid_task.status_code == 422
+
+    invalid_language = client.post(
+        "/api/audio/transcribe",
+        files={"file": ("session.wav", BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"language": "../secret", "task": "transcribe"},
+    )
+    assert invalid_language.status_code == 422
 
 
 class _BytesTextWriter:

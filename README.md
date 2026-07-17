@@ -71,7 +71,7 @@ POST /api/audio/transcribe
 
 `POST /api/documents/export`는 최종문서 화면에서 수정된 최신 섹션을 DOCX 또는 PDF byte stream으로 반환합니다. HWPX는 스키마와 exporter 인터페이스만 준비되어 있으며, 검증된 HWPX 템플릿이 추가되기 전까지는 422를 반환합니다.
 
-`POST /api/materials/documents/extract`는 multipart `file` 필드로 PDF/DOCX/TXT를 받아 텍스트를 추출합니다. 기본 문서 업로드 제한은 20MB이며 `DOCUMENT_UPLOAD_MAX_BYTES`로 조정할 수 있습니다.
+`POST /api/materials/documents/extract`는 multipart `file` 필드로 PDF/DOCX/TXT를 받아 텍스트를 추출합니다. 기본 문서 업로드 제한은 20MB이며 `DOCUMENT_UPLOAD_MAX_BYTES`로 조정할 수 있습니다. DOCX는 압축 member 수, 압축 해제 총량, 압축률 제한을 추가로 검사하며 `DOCX_MAX_ARCHIVE_MEMBERS`, `DOCX_MAX_UNCOMPRESSED_BYTES`, `DOCX_MAX_COMPRESSION_RATIO`로 조정할 수 있습니다.
 
 `GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`를 받으며 기본 음성 업로드 제한은 500MB입니다. `AUDIO_UPLOAD_MAX_BYTES`, `ENABLE_AUDIO_TRANSCRIPTION`, `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` 환경변수로 제어합니다.
 

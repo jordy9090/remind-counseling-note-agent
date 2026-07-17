@@ -1,6 +1,7 @@
 """Extract text from temporary document uploads."""
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -50,6 +51,7 @@ class DocumentExtractionService:
         try:
             from docx import Document
             from docx.document import Document as DocumentObject
+            from docx.opc.exceptions import PackageNotFoundError
             from docx.oxml.table import CT_Tbl
             from docx.oxml.text.paragraph import CT_P
             from docx.table import Table
@@ -57,36 +59,62 @@ class DocumentExtractionService:
         except ImportError as error:
             raise DocumentExtractionError("DOCX 추출 런타임을 불러오지 못했습니다.") from error
 
-        document: DocumentObject = Document(path)
-        parts: list[str] = []
-        for child in document.element.body.iterchildren():
-            if isinstance(child, CT_P):
-                paragraph = Paragraph(child, document)
-                if paragraph.text.strip():
-                    parts.append(paragraph.text)
-            elif isinstance(child, CT_Tbl):
-                table = Table(child, document)
-                rows = []
-                for row in table.rows:
-                    cells = [cell.text.strip() for cell in row.cells]
-                    if any(cells):
-                        rows.append("\t".join(cells))
-                if rows:
-                    parts.append("\n".join(rows))
-        return "\n\n".join(parts), None, []
+        try:
+            document: DocumentObject = Document(path)
+            parts: list[str] = []
+            for child in document.element.body.iterchildren():
+                if isinstance(child, CT_P):
+                    paragraph = Paragraph(child, document)
+                    if paragraph.text.strip():
+                        parts.append(paragraph.text)
+                elif isinstance(child, CT_Tbl):
+                    table = Table(child, document)
+                    rows = []
+                    for row in table.rows:
+                        cells = [cell.text.strip() for cell in row.cells]
+                        if any(cells):
+                            rows.append("\t".join(cells))
+                    if rows:
+                        parts.append("\n".join(rows))
+            return "\n\n".join(parts), None, []
+        except (PackageNotFoundError, zipfile.BadZipFile, KeyError, ValueError, OSError) as error:
+            raise DocumentExtractionError("DOCX 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.") from error
+        except Exception as error:
+            raise DocumentExtractionError("DOCX 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.") from error
 
     def _extract_pdf(self, path: Path) -> tuple[str, int | None, list[str]]:
         try:
             from pypdf import PdfReader
+            from pypdf.errors import PdfReadError
         except ImportError as error:
             raise DocumentExtractionError("PDF 추출 런타임을 불러오지 못했습니다.") from error
 
-        reader = PdfReader(str(path))
-        page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
-        text = "\n\n".join(part for part in page_texts if part)
-        warnings = [SCANNED_PDF_WARNING] if len(text.strip()) < 20 else []
-        return text, len(reader.pages), warnings
+        try:
+            if not pdf_has_eof_marker(path):
+                raise DocumentExtractionError("PDF 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.")
+            reader = PdfReader(str(path))
+            if reader.is_encrypted:
+                raise DocumentExtractionError("암호화된 PDF는 현재 처리할 수 없습니다. 암호를 해제한 파일을 사용해주세요.")
+            page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+            text = "\n\n".join(part for part in page_texts if part)
+            warnings = [SCANNED_PDF_WARNING] if len(text.strip()) < 20 else []
+            return text, len(reader.pages), warnings
+        except DocumentExtractionError:
+            raise
+        except (PdfReadError, KeyError, ValueError, OSError, EOFError) as error:
+            raise DocumentExtractionError("PDF 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.") from error
+        except Exception as error:
+            raise DocumentExtractionError("PDF 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.") from error
 
 
 def normalize_text(value: str) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def pdf_has_eof_marker(path: Path) -> bool:
+    with path.open("rb") as file:
+        file.seek(0, 2)
+        size = file.tell()
+        file.seek(max(0, size - 1024))
+        tail = file.read()
+    return b"%%EOF" in tail

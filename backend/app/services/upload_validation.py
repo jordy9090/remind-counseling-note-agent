@@ -21,6 +21,9 @@ UploadKind = Literal["document", "audio"]
 
 DOCUMENT_MAX_BYTES = 20 * 1024 * 1024
 AUDIO_MAX_BYTES = 500 * 1024 * 1024
+DOCX_MAX_ARCHIVE_MEMBERS = 2000
+DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+DOCX_MAX_COMPRESSION_RATIO = 100
 
 DOCUMENT_MEDIA_TYPES = {
     ".txt": {"text/plain"},
@@ -98,6 +101,12 @@ async def persist_upload_to_temp(upload: UploadFile, kind: UploadKind) -> Valida
     if not signature_matches(temp_path, suffix, kind):
         cleanup_temp_file(temp_path)
         raise UploadValidationError(415, "파일 내용이 허용된 형식과 일치하지 않습니다.")
+    if kind == "document" and suffix == ".docx":
+        try:
+            validate_docx_archive_limits(temp_path)
+        except UploadValidationError:
+            cleanup_temp_file(temp_path)
+            raise
 
     return ValidatedUpload(
         filename=filename,
@@ -120,7 +129,11 @@ def cleanup_temp_file(path: Path | None) -> None:
 def upload_max_bytes(kind: UploadKind) -> int:
     env_name = "DOCUMENT_UPLOAD_MAX_BYTES" if kind == "document" else "AUDIO_UPLOAD_MAX_BYTES"
     default = DOCUMENT_MAX_BYTES if kind == "document" else AUDIO_MAX_BYTES
-    raw_value = os.getenv(env_name)
+    return int_env(env_name, default)
+
+
+def int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
     if not raw_value:
         return default
     try:
@@ -142,12 +155,13 @@ def safe_filename(filename: str) -> str:
 
 
 def signature_matches(path: Path, suffix: str, kind: UploadKind) -> bool:
-    head = path.read_bytes()[:64]
+    with path.open("rb") as file:
+        head = file.read(64)
     if kind == "document":
         if suffix == ".pdf":
             return head.startswith(b"%PDF-")
         if suffix == ".docx":
-            return is_docx_zip(path)
+            return head.startswith(b"PK")
         if suffix == ".txt":
             return b"\x00" not in head
     if suffix == ".wav":
@@ -166,3 +180,30 @@ def is_docx_zip(path: Path) -> bool:
             return "[Content_Types].xml" in names and "word/document.xml" in names
     except zipfile.BadZipFile:
         return False
+
+
+def validate_docx_archive_limits(path: Path) -> None:
+    max_members = int_env("DOCX_MAX_ARCHIVE_MEMBERS", DOCX_MAX_ARCHIVE_MEMBERS)
+    max_uncompressed = int_env("DOCX_MAX_UNCOMPRESSED_BYTES", DOCX_MAX_UNCOMPRESSED_BYTES)
+    max_ratio = int_env("DOCX_MAX_COMPRESSION_RATIO", DOCX_MAX_COMPRESSION_RATIO)
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = archive.infolist()
+            names = {member.filename for member in members}
+            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                raise UploadValidationError(422, "DOCX 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.")
+            if len(members) > max_members:
+                raise UploadValidationError(413, "DOCX 파일 압축 구조가 허용된 범위를 초과했습니다.")
+
+            total_uncompressed = 0
+            for member in members:
+                total_uncompressed += member.file_size
+                if total_uncompressed > max_uncompressed:
+                    raise UploadValidationError(413, "DOCX 파일 압축 해제 크기가 허용된 범위를 초과했습니다.")
+                if member.file_size and member.compress_size == 0:
+                    raise UploadValidationError(413, "DOCX 파일 압축률이 허용된 범위를 초과했습니다.")
+                if member.compress_size and member.file_size / member.compress_size > max_ratio:
+                    raise UploadValidationError(413, "DOCX 파일 압축률이 허용된 범위를 초과했습니다.")
+    except zipfile.BadZipFile as error:
+        raise UploadValidationError(422, "DOCX 파일을 읽을 수 없습니다. 파일이 손상되지 않았는지 확인해주세요.") from error

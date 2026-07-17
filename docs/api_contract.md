@@ -239,7 +239,7 @@ PDF responses use `application/pdf`. Filenames follow `{문서유형}_{case_id}_
 POST /api/materials/documents/extract
 ```
 
-Accepts a multipart `file` field and extracts text without permanently storing the raw upload. Supported formats are TXT, DOCX, and text-layer PDF. Default size limit is 20MB and can be changed with `DOCUMENT_UPLOAD_MAX_BYTES`.
+Accepts a multipart `file` field and extracts text without permanently storing the raw upload. Supported formats are TXT, DOCX, and text-layer PDF. Default size limit is 20MB and can be changed with `DOCUMENT_UPLOAD_MAX_BYTES`. DOCX uploads are additionally checked with `DOCX_MAX_ARCHIVE_MEMBERS`, `DOCX_MAX_UNCOMPRESSED_BYTES`, and `DOCX_MAX_COMPRESSION_RATIO` before parsing.
 
 The backend validates extension, `Content-Type`, and file signature. Empty files return 400, oversized files return 413, and unsupported or mismatched formats return 415.
 

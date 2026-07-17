@@ -130,6 +130,11 @@ type MaterialApplyTarget =
   | 'psychological_test_summary'
 type MaterialApplyMode = 'append' | 'replace'
 
+const DOCUMENT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+const AUDIO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
+const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['.pdf', '.docx', '.txt'])
+const AUDIO_UPLOAD_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav'])
+
 interface UploadedMaterial {
   id: string
   kind: UploadedMaterialKind
@@ -147,6 +152,7 @@ interface UploadedMaterial {
   segments?: AudioSegment[]
   durationSeconds?: number | null
   language?: string | null
+  appliedTargets: MaterialApplyTarget[]
 }
 
 interface CompactEvidence {
@@ -373,10 +379,17 @@ export default function SessionDraftPage() {
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
   const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
 
-  const hasMaterials = Boolean(
+  const hasUsableNoteInput = Boolean(
     form.counselor_memo.trim() ||
       form.transcript_text.trim() ||
+      form.previous_session_summary.trim() ||
       form.psychological_test_summary?.trim() ||
+      form.counseling_goal?.trim() ||
+      form.nonverbal_notes?.trim(),
+  )
+
+  const hasMaterialRows = Boolean(
+    hasUsableNoteInput ||
       materials.length,
   )
 
@@ -418,6 +431,19 @@ export default function SessionDraftPage() {
   const uploadDocumentFiles = async (files: FileList | null) => {
     if (!files?.length) return
     const selectedFiles = Array.from(files)
+    if (selectedFiles.length > 5) {
+      setError('문서는 한 번에 최대 5개까지 선택할 수 있습니다.')
+      return
+    }
+
+    const invalidMaterials = selectedFiles
+      .map((file) => validateSelectedFile(file, 'document'))
+      .filter((material): material is UploadedMaterial => Boolean(material))
+    if (invalidMaterials.length) {
+      setMaterials((prev) => [...invalidMaterials, ...prev])
+      return
+    }
+
     const pendingMaterials: UploadedMaterial[] = selectedFiles.map((file) => ({
       id: makeMaterialId(file),
       kind: 'document',
@@ -425,6 +451,7 @@ export default function SessionDraftPage() {
       mediaType: file.type,
       status: 'uploading',
       warnings: [],
+      appliedTargets: [],
     }))
     setMaterials((prev) => [...pendingMaterials, ...prev])
 
@@ -447,6 +474,7 @@ export default function SessionDraftPage() {
                     extractedText: extracted.extracted_text,
                     warnings: extracted.warnings,
                     error: undefined,
+                    appliedTargets: material.appliedTargets,
                   }
                 : material,
             ),
@@ -465,8 +493,18 @@ export default function SessionDraftPage() {
 
   const addAudioFiles = async (files: FileList | null) => {
     if (!files?.length) return
+    const selectedFiles = Array.from(files)
+    if (selectedFiles.length > 1) {
+      setError('음성은 한 번에 1개만 선택할 수 있습니다.')
+      return
+    }
+    const invalidMaterial = validateSelectedFile(selectedFiles[0], 'audio')
+    if (invalidMaterial) {
+      setMaterials((prev) => [invalidMaterial, ...prev])
+      return
+    }
     await refreshAudioCapabilities()
-    const nextMaterials = Array.from(files).map((file) => {
+    const nextMaterials = selectedFiles.map((file) => {
       const objectUrl = URL.createObjectURL(file)
       objectUrlsRef.current.add(objectUrl)
       return {
@@ -478,6 +516,7 @@ export default function SessionDraftPage() {
         warnings: [],
         file,
         objectUrl,
+        appliedTargets: [],
       }
     })
     setMaterials((prev) => [...nextMaterials, ...prev])
@@ -534,6 +573,7 @@ export default function SessionDraftPage() {
                 warnings: transcription.warnings,
                 error: undefined,
                 file: undefined,
+                appliedTargets: material.appliedTargets,
               }
             : material,
         ),
@@ -583,10 +623,34 @@ export default function SessionDraftPage() {
     const material = materials.find((item) => item.id === materialId)
     const text = getMaterialText(material)
     if (!text.trim()) return
+    if (mode === 'append' && material?.appliedTargets.includes(target)) {
+      setMaterials((prev) =>
+        prev.map((item) =>
+          item.id === materialId
+            ? {
+                ...item,
+                error: `${materialApplyTargetLabel[target]}에 이미 반영된 자료입니다. 다시 넣으려면 기존 내용 교체를 선택해주세요.`,
+              }
+            : item,
+        ),
+      )
+      return
+    }
     setForm((prev) => ({
       ...prev,
       [target]: mergeMaterialText(String(prev[target] || ''), text, mode),
     }))
+    setMaterials((prev) =>
+      prev.map((item) =>
+        item.id === materialId
+          ? {
+              ...item,
+              appliedTargets: Array.from(new Set([...item.appliedTargets, target])),
+              error: undefined,
+            }
+          : item,
+      ),
+    )
     setMaterialModal(null)
   }
 
@@ -598,6 +662,11 @@ export default function SessionDraftPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (materials.length && !hasUsableNoteInput) {
+      setHasSubmitted(true)
+      setError('업로드한 자료가 아직 회기 입력에 반영되지 않았습니다. 자료에 반영할 항목을 선택해주세요.')
+      return
+    }
     setIsLoading(true)
     setHasSubmitted(true)
     setError(null)
@@ -926,7 +995,7 @@ export default function SessionDraftPage() {
                   completedSteps={completedSteps}
                   error={error}
                   form={form}
-                  hasMaterials={hasMaterials}
+                  hasMaterialRows={hasMaterialRows}
                   hasSubmitted={hasSubmitted}
                   isDeidentified={isDeidentified}
                   isLoading={isLoading}
@@ -1455,7 +1524,7 @@ function SessionInputWorkspace({
   completedSteps,
   error,
   form,
-  hasMaterials,
+  hasMaterialRows,
   hasSubmitted,
   isDeidentified,
   isLoading,
@@ -1474,7 +1543,7 @@ function SessionInputWorkspace({
   completedSteps: number
   error: string | null
   form: SessionInput
-  hasMaterials: boolean
+  hasMaterialRows: boolean
   hasSubmitted: boolean
   isDeidentified: boolean
   isLoading: boolean
@@ -1527,7 +1596,7 @@ function SessionInputWorkspace({
           </div>
         </div>
 
-        {!hasMaterials ? (
+        {!hasMaterialRows ? (
           <div className="session-material-content mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
             <FileText className="mx-auto h-7 w-7 text-slate-400" aria-hidden="true" />
             <p className="mt-3 text-sm font-medium text-slate-700">이번 회기요약에 사용할 자료를 추가해주세요.</p>
@@ -2978,8 +3047,9 @@ function UploadedMaterialRow({
   transcriptionAvailable: boolean
   transcriptionReason: string | null
 }) {
-  const isDocumentReady = material.kind === 'document' && ['completed', 'warning'].includes(material.status)
-  const isAudioReady = material.kind === 'audio' && material.status === 'transcribed'
+  const hasText = Boolean(getMaterialText(material).trim())
+  const isDocumentReady = material.kind === 'document' && ['completed', 'warning'].includes(material.status) && hasText
+  const isAudioReady = material.kind === 'audio' && material.status === 'transcribed' && hasText
   const canApply = isDocumentReady || isAudioReady
   const canPreview = canApply
   const canTranscribe =
@@ -2999,6 +3069,9 @@ function UploadedMaterialRow({
           {material.error && <p className="mt-1 text-xs font-semibold text-rose-600">{material.error}</p>}
           {material.kind === 'audio' && !transcriptionAvailable && material.status !== 'transcribed' && (
             <p className="mt-1 text-xs text-slate-500">{transcriptionReason || '음성 자동 축어록은 현재 비활성화되어 있습니다.'}</p>
+          )}
+          {material.kind === 'document' && ['completed', 'warning'].includes(material.status) && !hasText && (
+            <p className="mt-1 text-xs text-amber-700">텍스트를 추출하지 못했습니다. 현재 스캔 이미지 PDF의 OCR은 지원하지 않습니다.</p>
           )}
         </div>
         {material.status === 'uploading' || material.status === 'transcribing' ? (
@@ -3087,6 +3160,7 @@ function MaterialSummary({ material }: { material: UploadedMaterial }) {
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
       <p className="truncate text-sm font-bold text-slate-950">{material.filename}</p>
       <p className="mt-1 text-xs text-slate-500">{materialMetaText(material)}</p>
+      {material.error && <p className="mt-2 text-xs font-semibold text-rose-600">{material.error}</p>}
       {material.warnings.length > 0 && (
         <p className="mt-2 text-xs font-medium text-amber-700">{material.warnings.join(' ')}</p>
       )}
@@ -3139,6 +3213,13 @@ function MaterialModal({
   const [applyMode, setApplyMode] = useState<MaterialApplyMode>('append')
   const selectedText = getMaterialText(selectedMaterial)
   const transcriptionAvailable = Boolean(audioCapabilities?.transcription.available)
+
+  useEffect(() => {
+    if (mode !== 'material_apply' || !selectedMaterial) return
+    const target = selectedMaterial.kind === 'audio' ? 'transcript_text' : 'counselor_memo'
+    setApplyTarget(target)
+    setApplyMode(String(form[target] || '').trim() ? 'append' : 'replace')
+  }, [form, mode, selectedMaterial])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6">
@@ -3324,7 +3405,13 @@ function MaterialModal({
           {mode === 'document_preview' && selectedMaterial && (
             <div className="space-y-4">
               <MaterialSummary material={selectedMaterial} />
-              <textarea value={selectedText} readOnly className={`${textareaClass} min-h-[320px] bg-slate-50`} />
+              {selectedText.trim() ? (
+                <textarea value={selectedText} readOnly className={`${textareaClass} min-h-[320px] bg-slate-50`} />
+              ) : (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                  텍스트를 추출하지 못했습니다. 현재 스캔 이미지 PDF의 OCR은 지원하지 않습니다.
+                </p>
+              )}
               <ModalDoneButton onClick={onClose} />
             </div>
           )}
@@ -3417,7 +3504,11 @@ function MaterialModal({
               {selectedMaterial.status === 'transcribed' && (
                 <button
                   type="button"
-                  onClick={() => onApplyMaterial(selectedMaterial.id, 'transcript_text', 'append')}
+                  onClick={() => {
+                    setApplyTarget('transcript_text')
+                    setApplyMode(form.transcript_text.trim() ? 'append' : 'replace')
+                    onModeChange('material_apply')
+                  }}
                   className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800"
                 >
                   축어록에 반영
@@ -4011,6 +4102,42 @@ function makeMaterialId(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`
 }
 
+function validateSelectedFile(file: File, kind: UploadedMaterialKind): UploadedMaterial | null {
+  const extension = getFileExtension(file.name)
+  const allowed = kind === 'document' ? DOCUMENT_UPLOAD_EXTENSIONS : AUDIO_UPLOAD_EXTENSIONS
+  const maxBytes = kind === 'document' ? DOCUMENT_UPLOAD_MAX_BYTES : AUDIO_UPLOAD_MAX_BYTES
+  const defaultLimitLabel = kind === 'document' ? '20MB' : '500MB'
+
+  if (!allowed.has(extension)) {
+    return buildFailedMaterial(file, kind, `지원하지 않는 파일 형식입니다. ${Array.from(allowed).join(', ')} 파일을 선택해주세요.`)
+  }
+  if (file.size > maxBytes) {
+    return buildFailedMaterial(file, kind, `기본 업로드 제한(${defaultLimitLabel})을 초과했습니다.`)
+  }
+  if (file.size === 0) {
+    return buildFailedMaterial(file, kind, '빈 파일은 업로드할 수 없습니다.')
+  }
+  return null
+}
+
+function buildFailedMaterial(file: File, kind: UploadedMaterialKind, error: string): UploadedMaterial {
+  return {
+    id: makeMaterialId(file),
+    kind,
+    filename: file.name,
+    mediaType: file.type,
+    status: 'failed',
+    warnings: [],
+    error,
+    appliedTargets: [],
+  }
+}
+
+function getFileExtension(filename: string): string {
+  const index = filename.lastIndexOf('.')
+  return index >= 0 ? filename.slice(index).toLowerCase() : ''
+}
+
 function getMaterialText(material: UploadedMaterial | null | undefined): string {
   if (!material) return ''
   if (material.kind === 'audio') {
@@ -4030,6 +4157,9 @@ function mergeMaterialText(current: string, incoming: string, mode: MaterialAppl
 }
 
 function materialMetaText(material: UploadedMaterial): string {
+  if (material.appliedTargets.length) {
+    return `${material.appliedTargets.map((target) => materialApplyTargetLabel[target]).join(', ')}에 반영 완료`
+  }
   if (material.status === 'uploading') return '텍스트 추출 중'
   if (material.status === 'selected') return '음성 파일 선택 완료'
   if (material.status === 'transcribing') return '축어록 생성 중'
@@ -4037,11 +4167,16 @@ function materialMetaText(material: UploadedMaterial): string {
   if (material.kind === 'audio') {
     const duration = material.durationSeconds ? ` · ${formatSeconds(material.durationSeconds)}` : ''
     const count = countCharacters(material.transcriptText || '')
-    return material.status === 'transcribed' ? `축어록 생성 완료 · ${count}자${duration}` : `음성 자료${duration}`
+    return material.status === 'transcribed'
+      ? `축어록 생성 완료 · 아직 요약에 미반영 · ${count}자${duration}`
+      : `음성 자료${duration}`
+  }
+  if (!material.extractedText?.trim() && ['completed', 'warning'].includes(material.status)) {
+    return '텍스트를 추출하지 못했습니다. 현재 스캔 이미지 PDF의 OCR은 지원하지 않습니다.'
   }
   const count = material.characterCount ?? countCharacters(material.extractedText || '')
   const pageCount = material.pageCount ? ` · ${material.pageCount}쪽` : ''
-  return `텍스트 추출 완료 · ${count.toLocaleString('ko-KR')}자${pageCount}`
+  return `추출 완료 · 아직 요약에 미반영 · ${count.toLocaleString('ko-KR')}자${pageCount}`
 }
 
 function formatSeconds(value: number): string {
@@ -4064,7 +4199,15 @@ function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
     error: material.error,
     durationSeconds: material.durationSeconds,
     language: material.language,
+    appliedTargets: material.appliedTargets,
   }))
+}
+
+const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
+  transcript_text: '축어록',
+  counselor_memo: '상담사 메모',
+  previous_session_summary: '이전 회기 요약',
+  psychological_test_summary: '심리검사 요약',
 }
 
 interface TextModalConfig {

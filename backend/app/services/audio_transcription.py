@@ -23,6 +23,10 @@ class AudioTranscriptionUnavailable(Exception):
         self.reason = reason
 
 
+class AudioTranscriptionRuntimeError(Exception):
+    """Raised when an enabled transcription runtime fails safely."""
+
+
 class AudioTranscriptionService(ABC):
     """Interface for real audio transcription implementations."""
 
@@ -66,18 +70,24 @@ class FasterWhisperTranscriptionService(AudioTranscriptionService):
         except ImportError as error:
             raise AudioTranscriptionUnavailable("faster-whisper 패키지가 설치되어 있지 않습니다.") from error
 
-        if self._model is None:
-            self._model = WhisperModel(
-                os.getenv("WHISPER_MODEL_SIZE", "large-v3"),
-                device=normalize_auto(os.getenv("WHISPER_DEVICE", "auto")),
-                compute_type=normalize_auto(os.getenv("WHISPER_COMPUTE_TYPE", "auto")),
-            )
+        try:
+            if self._model is None:
+                self._model = WhisperModel(
+                    os.getenv("WHISPER_MODEL_SIZE", "large-v3"),
+                    device=normalize_auto(os.getenv("WHISPER_DEVICE", "auto")),
+                    compute_type=normalize_auto(os.getenv("WHISPER_COMPUTE_TYPE", "auto")),
+                )
 
-        segments_iter, info = self._model.transcribe(
-            str(upload.temp_path),
-            language=language or None,
-            task=task,
-        )
+            segments_iter, info = self._model.transcribe(
+                str(upload.temp_path),
+                language=language or None,
+                task=task,
+            )
+        except AudioTranscriptionUnavailable:
+            raise
+        except Exception as error:
+            raise AudioTranscriptionRuntimeError("음성 축어록 생성 중 오류가 발생했습니다.") from error
+
         segments = [
             AudioSegment(id=index, start=float(segment.start), end=float(segment.end), text=segment.text.strip())
             for index, segment in enumerate(segments_iter, start=1)
