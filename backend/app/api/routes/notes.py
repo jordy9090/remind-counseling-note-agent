@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import traceback
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.security import require_preview_access
 from app.core.config import settings
 from app.graph.graph import run_note_pipeline
 from app.graph.supervision_report import run_supervision_report_pipeline
@@ -23,29 +25,34 @@ from app.schemas.note import (
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
-from app.services.supabase_storage import confirm_generated_note, persist_generated_note
+from app.services.supabase_storage import NoteConfirmationError, confirm_generated_note, persist_generated_note
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
+PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 
 @router.post("/generate", response_model=GenerateNoteResponse)
-async def generate_note(session_input: SessionInput) -> GenerateNoteResponse:
+async def generate_note(session_input: SessionInput, actor: PreviewActor) -> GenerateNoteResponse:
     """Run the full six-agent workflow and return Pydantic-validated JSON."""
-    return _run_pipeline_with_stub_fallback(session_input)
+    return _run_pipeline_with_stub_fallback(session_input, actor=actor)
 
 
 @router.post("/confirm", response_model=ConfirmGeneratedNoteResponse)
-async def confirm_note(request: ConfirmGeneratedNoteRequest) -> ConfirmGeneratedNoteResponse:
+async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor) -> ConfirmGeneratedNoteResponse:
     """Mark a generated note as counselor-confirmed and create case memory chunks."""
     try:
-        return confirm_generated_note(request)
+        return confirm_generated_note(request, actor=actor)
+    except NoteConfirmationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message)
+    except HTTPException:
+        raise
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Note confirmation failed: {str(error)}")
 
 
 @router.post("/recompose", response_model=RecomposeNoteResponse)
-async def recompose_note_draft(request: RecomposeNoteRequest) -> RecomposeNoteResponse:
+async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActor) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
     try:
         return recompose_note_with_cache(request)
@@ -58,7 +65,7 @@ async def recompose_note_draft(request: RecomposeNoteRequest) -> RecomposeNoteRe
 
 
 @router.post("/supervision-report", response_model=SupervisionReportDraft)
-async def generate_supervision_report(request: SupervisionReportRequest) -> SupervisionReportDraft:
+async def generate_supervision_report(request: SupervisionReportRequest, actor: PreviewActor) -> SupervisionReportDraft:
     """Generate a Korean personal counseling case supervision report draft."""
     try:
         return run_supervision_report_pipeline(request)
@@ -71,13 +78,13 @@ async def generate_supervision_report(request: SupervisionReportRequest) -> Supe
 
 
 @router.post("/drafts", response_model=TemporaryDraftSaveResponse)
-async def save_note_draft(draft: TemporaryDraftSaveRequest) -> TemporaryDraftSaveResponse:
+async def save_note_draft(draft: TemporaryDraftSaveRequest, actor: PreviewActor) -> TemporaryDraftSaveResponse:
     """Persist a counselor's temporary workspace draft."""
     return save_temporary_draft(draft)
 
 
 @router.get("/drafts/{draft_id}", response_model=TemporaryDraftRecord)
-async def get_note_draft(draft_id: str) -> TemporaryDraftRecord:
+async def get_note_draft(draft_id: str, actor: PreviewActor) -> TemporaryDraftRecord:
     """Return a saved temporary draft."""
     draft = get_temporary_draft(draft_id)
     if draft is None:
@@ -86,15 +93,15 @@ async def get_note_draft(draft_id: str) -> TemporaryDraftRecord:
 
 
 @router.get("/drafts", response_model=list[TemporaryDraftRecord])
-async def list_note_drafts(case_id: str | None = None) -> list[TemporaryDraftRecord]:
+async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> list[TemporaryDraftRecord]:
     """Return temporary drafts, optionally filtered by case id."""
     return list_temporary_drafts(case_id=case_id)
 
 
-def _run_pipeline_with_stub_fallback(session_input: SessionInput) -> GenerateNoteResponse:
+def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:
     try:
         result = run_note_pipeline(session_input)
-        result.persistence_report = persist_generated_note(session_input, result)
+        result.persistence_report = persist_generated_note(session_input, result, actor=actor)
         return result
     except Exception as error:
         traceback.print_exc()
@@ -102,7 +109,7 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput) -> GenerateNot
         try:
             settings.use_stub = True
             result = run_note_pipeline(session_input)
-            result.persistence_report = persist_generated_note(session_input, result)
+            result.persistence_report = persist_generated_note(session_input, result, actor=actor)
             return result
         except Exception:
             traceback.print_exc()

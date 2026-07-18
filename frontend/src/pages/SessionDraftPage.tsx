@@ -29,8 +29,15 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { generateNoteDraft, generateSupervisionReport, recomposeNoteDraft, saveTemporaryDraft } from '../api/client'
+import {
+  confirmGeneratedNote,
+  generateNoteDraft,
+  generateSupervisionReport,
+  recomposeNoteDraft,
+  saveTemporaryDraft,
+} from '../api/client'
 import type {
+  ConfirmGeneratedNoteResponse,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
@@ -298,6 +305,9 @@ export default function SessionDraftPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
   const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null)
+  const [isConfirmingNote, setIsConfirmingNote] = useState(false)
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmGeneratedNoteResponse | null>(null)
+  const [confirmationError, setConfirmationError] = useState<string | null>(null)
   const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(null)
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
@@ -360,6 +370,8 @@ export default function SessionDraftPage() {
     setSupervisionReportDraft(null)
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
+    setConfirmationResult(null)
+    setConfirmationError(null)
 
     try {
       const data = await generateNoteDraft(form)
@@ -406,6 +418,8 @@ export default function SessionDraftPage() {
       setDraftSections(buildDocumentSections(recomposed.note, form, sessionTopic, nextVisibleSet))
       setExpandedEvidenceId(null)
       setEditingSectionId(null)
+      setConfirmationResult(null)
+      setConfirmationError(null)
       setDraftRecomposeMessage(recomposed.cacheHit ? '저장된 재구성 초안을 사용했습니다.' : 'AI 초안을 다시 재구성했습니다.')
     } catch (err) {
       const message = err instanceof Error ? err.message : '요약초안 재구성 중 오류가 발생했습니다.'
@@ -417,6 +431,8 @@ export default function SessionDraftPage() {
   }
 
   const updateDraftSectionContent = (sectionId: DraftSectionId, content: string) => {
+    setConfirmationResult(null)
+    setConfirmationError(null)
     setDraftSections((prev) =>
       prev.map((section) => (section.id === sectionId ? { ...section, content } : section)),
     )
@@ -436,6 +452,8 @@ export default function SessionDraftPage() {
       editable: true,
       toggleable: true,
     }
+    setConfirmationResult(null)
+    setConfirmationError(null)
     setDraftSections((prev) => [...prev, newSection])
     setVisibleSectionIds((prev) => new Set(prev).add(id))
   }
@@ -447,6 +465,8 @@ export default function SessionDraftPage() {
     setDraftSections([])
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
+    setConfirmationResult(null)
+    setConfirmationError(null)
   }
 
   const openCaseList = () => {
@@ -544,6 +564,35 @@ export default function SessionDraftPage() {
       setDraftSaveMessage(`임시저장 실패 · ${message}`)
     } finally {
       setIsSavingDraft(false)
+    }
+  }
+
+  const handleConfirmNote = async () => {
+    if (!result) return
+    const noteId = result.full_response?.persistence_report?.note_id
+    if (!noteId) {
+      setConfirmationError('저장된 note_id가 없어 확인 저장을 할 수 없습니다. persist=true와 서버 persistence 설정이 필요합니다.')
+      return
+    }
+
+    setIsConfirmingNote(true)
+    setConfirmationError(null)
+    try {
+      const response = await confirmGeneratedNote({
+        note_id: noteId,
+        confirmed_note: buildConfirmedNotePayload(finalDocumentType, draftSections.filter((section) => section.visible)),
+        counselor_edited: true,
+        create_case_memory: true,
+      })
+      setConfirmationResult(response)
+    } catch (err) {
+      const apiError = err as { response?: { data?: { detail?: string } } }
+      setConfirmationError(
+        apiError.response?.data?.detail ||
+          (err instanceof Error ? err.message : '상담사 확인 저장 중 오류가 발생했습니다.'),
+      )
+    } finally {
+      setIsConfirmingNote(false)
     }
   }
 
@@ -683,12 +732,18 @@ export default function SessionDraftPage() {
                 />
               ) : (
                 <FinalReviewPanel
+                  confirmationError={confirmationError}
+                  confirmationResult={confirmationResult}
+                  confirmationSections={draftSections.filter((section) => section.visible)}
                   documentType={finalDocumentType}
                   draftSaveMessage={draftSaveMessage}
+                  isConfirming={isConfirmingNote}
                   isSavingDraft={isSavingDraft}
                   missingItems={result?.missing_items || []}
+                  noteId={result?.full_response?.persistence_report?.note_id || null}
                   warnings={result?.warnings || []}
                   onBack={() => setCurrentScreen('document_transform')}
+                  onConfirm={handleConfirmNote}
                   onTemporarySave={handleTemporarySave}
                 />
               )
@@ -2351,19 +2406,31 @@ function PreviousSessionLinkPanel({
 }
 
 function FinalReviewPanel({
+  confirmationError,
+  confirmationResult,
+  confirmationSections,
   documentType,
   draftSaveMessage,
+  isConfirming,
   isSavingDraft,
   missingItems,
+  noteId,
   onBack,
+  onConfirm,
   onTemporarySave,
   warnings,
 }: {
+  confirmationError: string | null
+  confirmationResult: ConfirmGeneratedNoteResponse | null
+  confirmationSections: DraftSection[]
   documentType: FinalDocumentType
   draftSaveMessage: string | null
+  isConfirming: boolean
   isSavingDraft: boolean
   missingItems: string[]
+  noteId: string | null
   onBack: () => void
+  onConfirm: () => void
   onTemporarySave: () => void
   warnings: string[]
 }) {
@@ -2408,6 +2475,15 @@ function FinalReviewPanel({
         }
       />
 
+      <FinalConfirmationCard
+        error={confirmationError}
+        isConfirming={isConfirming}
+        noteId={noteId}
+        result={confirmationResult}
+        sections={confirmationSections}
+        onConfirm={onConfirm}
+      />
+
       <div className="mt-auto space-y-3 pt-8">
         {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
         <button
@@ -2429,6 +2505,71 @@ function FinalReviewPanel({
         </div>
       </div>
     </aside>
+  )
+}
+
+function FinalConfirmationCard({
+  error,
+  isConfirming,
+  noteId,
+  onConfirm,
+  result,
+  sections,
+}: {
+  error: string | null
+  isConfirming: boolean
+  noteId: string | null
+  onConfirm: () => void
+  result: ConfirmGeneratedNoteResponse | null
+  sections: DraftSection[]
+}) {
+  return (
+    <section className="mt-4 rounded-[8px] border border-emerald-200 bg-emerald-50 p-3">
+      <div className="flex items-start gap-2">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+        <div>
+          <h3 className="text-sm font-extrabold text-emerald-950">상담사 확인 저장</h3>
+          <p className="mt-1 text-xs font-semibold leading-5 text-emerald-900">
+            확인된 내용은 서버 설정에서 case memory가 켜진 경우 다음 회기 참고 기억으로 색인됩니다.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-[7px] bg-white/80 p-2">
+        <p className="text-[11px] font-bold text-slate-500">저장될 섹션</p>
+        <ul className="mt-1 space-y-1 text-xs font-semibold leading-5 text-slate-900">
+          {sections.map((section) => (
+            <li key={section.id}>- {section.title}</li>
+          ))}
+        </ul>
+      </div>
+
+      {result && (
+        <p className="mt-3 rounded-[7px] bg-white px-2 py-2 text-xs font-bold leading-5 text-emerald-800">
+          {result.confirmation_status} / {result.confirmed_at} / memory chunks {result.memory_chunk_count}
+        </p>
+      )}
+      {error && (
+        <p className="mt-3 flex gap-1.5 rounded-[7px] bg-white px-2 py-2 text-xs font-bold leading-5 text-red-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {error}
+        </p>
+      )}
+      {!noteId && (
+        <p className="mt-3 text-xs font-semibold leading-5 text-emerald-900">
+          현재 초안은 서버에 note_id가 저장되지 않아 확인 저장을 보낼 수 없습니다.
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={isConfirming || !noteId}
+        className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[6px] bg-emerald-700 px-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+      >
+        {isConfirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+        {isConfirming ? '확인 저장 중' : '상담사 확인 및 저장'}
+      </button>
+    </section>
   )
 }
 
@@ -2991,6 +3132,19 @@ function buildFinalDocumentSections(
     { title: '내담자 반응', content: getSection('client_response', '내담자 반응을 확인해야 합니다.') },
     { title: '다음 계획', content: getSection('next_plan', '다음 계획을 확인해야 합니다.') },
   ]
+}
+
+function buildConfirmedNotePayload(documentType: FinalDocumentType, sections: DraftSection[]): Record<string, unknown> {
+  return {
+    status: 'counselor_confirmed',
+    document_type: documentType,
+    confirmed_section_ids: sections.map((section) => section.id),
+    sections: sections.reduce<Record<string, string>>((payload, section) => {
+      const sectionKey = section.id === 'main_issue' ? 'presenting_problem' : String(section.id)
+      payload[sectionKey] = section.content
+      return payload
+    }, {}),
+  }
 }
 
 function supervisionBlockToEditableText(block: SupervisionContentBlock): string {

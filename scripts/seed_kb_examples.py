@@ -86,7 +86,7 @@ def main() -> None:
                 "counselor_review_required": bool(chunk.get("counselor_review_required", False)),
                 "source_ref": chunk.get("source_ref")
                 or f"kb:{document.get('slug') or document_id}:{index + 1}",
-                "content_hash": content_hash(chunk["chunk_text"], document.get("slug", "")),
+                "content_hash": chunk_content_hash(chunk, document),
                 "metadata_json": chunk.get("metadata_json", {}),
             }
             for index, chunk in enumerate(document.get("chunks", []))
@@ -229,7 +229,7 @@ def seed_with_cli(seed: dict[str, Any]) -> None:
         )
         for index, chunk in enumerate(document.get("chunks", [])):
             source_ref = chunk.get("source_ref") or f"kb:{slug or document['title']}:{index + 1}"
-            chunk_hash = content_hash(chunk["chunk_text"], slug)
+            chunk_hash = chunk_content_hash(chunk, document)
             chunks_total += 1
             statements.extend(
                 [
@@ -335,8 +335,25 @@ def checksum_json(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def content_hash(text: str, salt: str = "") -> str:
-    payload = f"{salt}\n{' '.join(text.split())}"
+def chunk_content_hash(chunk: dict[str, Any], document: dict[str, Any]) -> str:
+    return content_hash(
+        embedding_text(chunk, document),
+        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+    )
+
+
+def embedding_text(chunk: dict[str, Any], document: dict[str, Any]) -> str:
+    parts = [
+        chunk.get("section_path", ""),
+        chunk.get("document_type", document.get("source_type", "")),
+        chunk.get("allowed_use", document.get("allowed_use", "")),
+        chunk.get("chunk_text", ""),
+    ]
+    return "\n".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def content_hash(text: str, *, model: str) -> str:
+    payload = f"{model}\n{' '.join(text.split())}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

@@ -5,6 +5,8 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 ## Required Before Real Counseling Data
 
 - Enable authentication and identify the counselor/organization for every request.
+- Until production Auth exists, protect every `/api/notes/*` route with `REMIND_PREVIEW_API_TOKEN` and `X-Remind-Preview-Token`.
+- Keep `REMIND_ALLOW_LOCAL_BYPASS=0` outside local development/test environments.
 - Configure Supabase Row Level Security for every table that can contain case, session, note, evidence, verification, or draft data.
 - Do not use `counselor_name` as a production security identity. It is a display/demo label until Supabase Auth user-to-counselor mapping exists.
 - Keep service role keys on the backend only. Never expose `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY` to frontend code, browser logs, screenshots, or client-side environment variables.
@@ -24,6 +26,7 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 
 - RAG is limited to case-level memory, document templates, and privacy/ethics/security guardrails.
 - Dense retrieval is opt-in with `ENABLE_DENSE_RETRIEVAL=1`; real counseling records must not be embedded by default.
+- Case-memory indexing is opt-in with `ENABLE_CASE_MEMORY=1`; the default must remain `ENABLE_CASE_MEMORY=0`.
 - Case-memory retrieval must filter by counselor and case before ranking to prevent cross-case leakage.
 - Do not use RAG to generate diagnosis, clinical risk scoring, treatment recommendations, psychological test interpretation, or counselor performance evaluation.
 - KB seed files must not contain copyrighted manuals, paid psychological test material, or real counseling records.

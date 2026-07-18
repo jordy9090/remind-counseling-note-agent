@@ -243,6 +243,15 @@ def build_report() -> dict[str, Any]:
         select 'case_memory_source_ref' as scope, count(*)::int as duplicate_groups
         from (
           select source_ref from public.case_memory_chunks group by source_ref having count(*) > 1
+        ) duplicates
+        union all
+        select 'case_memory_source_note_field' as scope, count(*)::int as duplicate_groups
+        from (
+          select source_note_id, field_type
+          from public.case_memory_chunks
+          where source_note_id is not null
+          group by source_note_id, field_type
+          having count(*) > 1
         ) duplicates;
         """
     )
@@ -263,10 +272,14 @@ def build_report() -> dict[str, Any]:
 
 def run_dense_probe() -> dict[str, Any]:
     query = KB_QUERIES[0]["query"]
+    total_started = time.perf_counter()
     try:
+        embedding_started = time.perf_counter()
         vector = embed_query(query)
+        embedding_latency_ms = round((time.perf_counter() - embedding_started) * 1000, 3)
     except EmbeddingError as error:
         return {"skipped": True, "reason": str(error)}
+    rpc_started = time.perf_counter()
     rows = rows_for(
         f"""
         select source_ref, title, doc_category, document_type, authority_level,
@@ -281,19 +294,31 @@ def run_dense_probe() -> dict[str, Any]:
         );
         """
     )
-    return {"skipped": False, "query": query, "rows": rows}
+    rpc_latency_ms = round((time.perf_counter() - rpc_started) * 1000, 3)
+    total_latency_ms = round((time.perf_counter() - total_started) * 1000, 3)
+    return {
+        "skipped": False,
+        "query": query,
+        "embedding_latency_ms": embedding_latency_ms,
+        "rpc_latency_ms": rpc_latency_ms,
+        "total_latency_ms": total_latency_ms,
+        "rows": rows,
+    }
 
 
 def run_retrieval_queries() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for query_config in KB_QUERIES:
         query_text = query_config["query"]
-        started = time.perf_counter()
+        total_started = time.perf_counter()
         try:
+            embedding_started = time.perf_counter()
             vector = embed_query(query_text)
+            embedding_latency_ms = round((time.perf_counter() - embedding_started) * 1000, 3)
         except EmbeddingError as error:
             results.append({**query_config, "skipped": True, "reason": str(error), "rows": []})
             continue
+        rpc_started = time.perf_counter()
         rows = rows_for(
             f"""
             select source_ref, title, doc_category, document_type, allowed_use,
@@ -312,12 +337,16 @@ def run_retrieval_queries() -> list[dict[str, Any]]:
             );
             """
         )
-        latency_ms = round((time.perf_counter() - started) * 1000, 3)
+        rpc_latency_ms = round((time.perf_counter() - rpc_started) * 1000, 3)
+        total_latency_ms = round((time.perf_counter() - total_started) * 1000, 3)
         results.append(
             {
                 **query_config,
                 "skipped": False,
-                "latency_ms": latency_ms,
+                "latency_ms": total_latency_ms,
+                "embedding_latency_ms": embedding_latency_ms,
+                "rpc_latency_ms": rpc_latency_ms,
+                "total_latency_ms": total_latency_ms,
                 "expected_in_top_5": len(rows) > 0,
                 "rows": rows,
             }
@@ -325,12 +354,15 @@ def run_retrieval_queries() -> list[dict[str, Any]]:
 
     for query_config in CASE_QUERIES:
         query_text = query_config["query"]
-        started = time.perf_counter()
+        total_started = time.perf_counter()
         try:
+            embedding_started = time.perf_counter()
             vector = embed_query(query_text)
+            embedding_latency_ms = round((time.perf_counter() - embedding_started) * 1000, 3)
         except EmbeddingError as error:
             results.append({**query_config, "kind": "case", "skipped": True, "reason": str(error), "rows": []})
             continue
+        rpc_started = time.perf_counter()
         rows = rows_for(
             f"""
             select source_ref, case_id, counselor_id, session_id::text, source_note_id::text,
@@ -345,7 +377,8 @@ def run_retrieval_queries() -> list[dict[str, Any]]:
             );
             """
         )
-        latency_ms = round((time.perf_counter() - started) * 1000, 3)
+        rpc_latency_ms = round((time.perf_counter() - rpc_started) * 1000, 3)
+        total_latency_ms = round((time.perf_counter() - total_started) * 1000, 3)
         expected = len(rows) == 0 if query_config["id"] == "E" else all(
             row.get("case_id") == query_config["case_id"] and row.get("counselor_id") == "demo-counselor"
             for row in rows
@@ -355,7 +388,10 @@ def run_retrieval_queries() -> list[dict[str, Any]]:
                 **query_config,
                 "kind": "case",
                 "skipped": False,
-                "latency_ms": latency_ms,
+                "latency_ms": total_latency_ms,
+                "embedding_latency_ms": embedding_latency_ms,
+                "rpc_latency_ms": rpc_latency_ms,
+                "total_latency_ms": total_latency_ms,
                 "expected_in_top_5": expected,
                 "rows": rows,
             }
@@ -492,7 +528,11 @@ def print_summary(report: dict[str, Any]) -> None:
     print("Retrieval queries:")
     for result in report["retrieval_queries"]:
         status = "skipped" if result.get("skipped") else f"{len(result.get('rows', []))} rows"
-        print(f"- {result['id']}: {status}, expected={result.get('expected_in_top_5')}")
+        print(
+            f"- {result['id']}: {status}, expected={result.get('expected_in_top_5')}, "
+            f"embedding={result.get('embedding_latency_ms', 'skipped')} ms, "
+            f"rpc={result.get('rpc_latency_ms', 'skipped')} ms"
+        )
     print(f"Cross-case leakage count: {report['cross_case_leakage_count']}")
 
 
@@ -527,6 +567,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"- Skipped: {dense.get('reason')}")
     else:
         lines.append(f"- Query: `{dense['query']}`")
+        lines.append(
+            f"- Latency: embedding `{dense['embedding_latency_ms']} ms`, "
+            f"Supabase RPC `{dense['rpc_latency_ms']} ms`, total `{dense['total_latency_ms']} ms`"
+        )
         lines.append(markdown_table(slim_rows(dense["rows"])))
     lines.extend(["", "## Korean Remote Retrieval Queries", ""])
     for result in report["retrieval_queries"]:
@@ -536,7 +580,9 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "",
                 f"- Query: `{result['query']}`",
                 f"- Expected: {result['expected']}",
-                f"- Latency: `{result.get('latency_ms', 'skipped')} ms`",
+                f"- Embedding latency: `{result.get('embedding_latency_ms', 'skipped')} ms`",
+                f"- Supabase RPC latency: `{result.get('rpc_latency_ms', 'skipped')} ms`",
+                f"- Total retrieval latency: `{result.get('total_latency_ms', 'skipped')} ms`",
                 f"- Expected result in top 5: `{result.get('expected_in_top_5')}`",
                 "",
             ]

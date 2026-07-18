@@ -213,6 +213,8 @@ def run_supabase_query_json(sql: str) -> dict[str, Any]:
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     finally:
         Path(path).unlink(missing_ok=True)

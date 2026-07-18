@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from app.core.config import settings
@@ -171,7 +172,7 @@ def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
         return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
 
     try:
-        counselor_id = session_input.counselor_name.strip()
+        counselor_id = settings.remind_preview_actor
         if settings.enable_dense_retrieval and counselor_id:
             chunks = retrieve_case_memory_chunks(
                 query_text=query_text,
@@ -268,6 +269,13 @@ def fuse_and_rerank(state: dict[str, Any]) -> dict[str, Any]:
         )
     )
     report.privacy_rule_count = len(privacy_context)
+    for chunks in (state.get("retrieved_case_memory_chunks") or [], state.get("retrieved_authoritative_kb_chunks") or []):
+        if not chunks:
+            continue
+        first_chunk = chunks[0]
+        report.embedding_latency_ms += int(getattr(first_chunk, "embedding_latency_ms", 0) or 0)
+        report.rpc_latency_ms += int(getattr(first_chunk, "rpc_latency_ms", 0) or 0)
+        report.retrieval_latency_ms += int(getattr(first_chunk, "total_latency_ms", 0) or 0)
     if settings.enable_rag:
         if not case_context:
             report.notices.append("No prior case-memory context was retrieved.")
@@ -323,9 +331,12 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     session_topic: str = state.get("session_topic") or ""
     case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
     template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    started = time.perf_counter()
     fallback = _mock_summary(sanitized, structured)
     if settings.stub_mode:
-        return {"session_summary_draft": fallback}
+        report.generation_latency_ms += _elapsed_ms(started)
+        return {"session_summary_draft": fallback, "retrieval_report": report}
 
     prompt = _build_summary_prompt(
         sanitized,
@@ -337,7 +348,8 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         template_context,
     )
     summary = get_structured_llm(SessionSummaryDraft).invoke(prompt)
-    return {"session_summary_draft": summary}
+    report.generation_latency_ms += _elapsed_ms(started)
+    return {"session_summary_draft": summary, "retrieval_report": report}
 
 
 def verify_output(state: dict[str, Any]) -> dict[str, Any]:
@@ -880,3 +892,7 @@ def _unique_strings(values: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)

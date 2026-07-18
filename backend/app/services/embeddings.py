@@ -8,6 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -22,6 +25,17 @@ class EmbeddingError(RuntimeError):
 class EmbeddingProvider(Protocol):
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one embedding per input text."""
+
+
+@dataclass
+class EmbeddingCacheEntry:
+    embedding: list[float]
+    expires_at: float
+
+
+_QUERY_EMBEDDING_CACHE: "OrderedDict[str, EmbeddingCacheEntry]" = OrderedDict()
+_CACHE_HITS = 0
+_CACHE_MISSES = 0
 
 
 class OpenAIEmbeddingProvider:
@@ -84,13 +98,58 @@ def get_embedding_provider() -> EmbeddingProvider:
 
 
 def embed_query(text: str) -> list[float]:
-    return get_embedding_provider().embed([text])[0]
+    """Embed a retrieval query with a bounded hash-keyed TTL cache."""
+    if settings.disable_embedding_cache or settings.embedding_cache_ttl_seconds <= 0:
+        return get_embedding_provider().embed([text])[0]
+
+    global _CACHE_HITS, _CACHE_MISSES
+    now = time.monotonic()
+    cache_key = _query_cache_key(text)
+    cached = _QUERY_EMBEDDING_CACHE.get(cache_key)
+    if cached and cached.expires_at > now:
+        _CACHE_HITS += 1
+        _QUERY_EMBEDDING_CACHE.move_to_end(cache_key)
+        return list(cached.embedding)
+    if cached:
+        _QUERY_EMBEDDING_CACHE.pop(cache_key, None)
+
+    _CACHE_MISSES += 1
+    embedding = get_embedding_provider().embed([text])[0]
+    _QUERY_EMBEDDING_CACHE[cache_key] = EmbeddingCacheEntry(
+        embedding=list(embedding),
+        expires_at=now + settings.embedding_cache_ttl_seconds,
+    )
+    _trim_query_embedding_cache()
+    return embedding
+
+
+def clear_embedding_cache() -> None:
+    global _CACHE_HITS, _CACHE_MISSES
+    _QUERY_EMBEDDING_CACHE.clear()
+    _CACHE_HITS = 0
+    _CACHE_MISSES = 0
+
+
+def embedding_cache_stats() -> dict[str, int]:
+    return {"entries": len(_QUERY_EMBEDDING_CACHE), "hits": _CACHE_HITS, "misses": _CACHE_MISSES}
 
 
 def content_hash(text: str, *, model: str | None = None) -> str:
     normalized = " ".join((text or "").split())
     payload = f"{model or settings.embedding_model}\n{normalized}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _query_cache_key(text: str) -> str:
+    normalized = " ".join((text or "").split())
+    query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"{settings.embedding_model}:{query_hash}"
+
+
+def _trim_query_embedding_cache() -> None:
+    max_entries = max(settings.embedding_cache_max_entries, 1)
+    while len(_QUERY_EMBEDDING_CACHE) > max_entries:
+        _QUERY_EMBEDDING_CACHE.popitem(last=False)
 
 
 def _hash_embedding(text: str, dimension: int) -> list[float]:

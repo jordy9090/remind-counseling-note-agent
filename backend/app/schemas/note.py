@@ -200,6 +200,10 @@ class RetrievalReport(BaseModel):
     case_context_count: int = 0
     template_context_found: bool = False
     privacy_rule_count: int = 0
+    embedding_latency_ms: int = 0
+    rpc_latency_ms: int = 0
+    retrieval_latency_ms: int = 0
+    generation_latency_ms: int = 0
     failures: list[str] = Field(default_factory=list)
     notices: list[str] = Field(default_factory=list)
 
@@ -215,16 +219,11 @@ class PersistenceReport(BaseModel):
 
 
 class ConfirmGeneratedNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     note_id: str
-    case_id: str
-    session_id: str
-    session_number: int
-    session_date: str = ""
     confirmed_note: dict[str, Any] = Field(default_factory=dict)
-    counselor_id: str = ""
-    confirmed_by: str = "server_demo_actor"
     counselor_edited: bool = True
-    demo_confirmed: bool = False
     create_case_memory: bool = True
 
 

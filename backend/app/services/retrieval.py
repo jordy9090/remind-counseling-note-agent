@@ -38,6 +38,9 @@ class RetrievalChunk:
     field_type: str = ""
     session_number: int | None = None
     session_date: str = ""
+    embedding_latency_ms: int = 0
+    rpc_latency_ms: int = 0
+    total_latency_ms: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -119,8 +122,11 @@ def retrieve_case_memory_chunks(
     """Retrieve dense prior-session memory with mandatory counselor/case filters."""
     if not _can_dense_retrieve() or not query_text or not counselor_id or not case_id:
         return []
-    started = time.perf_counter()
+    total_started = time.perf_counter()
+    embedding_started = time.perf_counter()
     vector = embed_query(query_text)
+    embedding_latency_ms = _elapsed_ms(embedding_started)
+    rpc_started = time.perf_counter()
     rows = storage.rpc(
         "match_case_memory_chunks",
         {
@@ -131,7 +137,10 @@ def retrieve_case_memory_chunks(
             "match_count": max_chunks,
         },
     )
+    rpc_latency_ms = _elapsed_ms(rpc_started)
+    total_latency_ms = _elapsed_ms(total_started)
     chunks = [_case_memory_row_to_chunk(row) for row in rows or []]
+    _apply_timing(chunks, embedding_latency_ms, rpc_latency_ms, total_latency_ms)
     _log_retrieval(
         counselor_id=counselor_id,
         case_id=case_id,
@@ -139,7 +148,9 @@ def retrieve_case_memory_chunks(
         query_text=query_text,
         retrieval_method="case_memory_dense",
         source_refs=[chunk.source_ref for chunk in chunks],
-        latency_ms=_elapsed_ms(started),
+        embedding_latency_ms=embedding_latency_ms,
+        rpc_latency_ms=rpc_latency_ms,
+        total_latency_ms=total_latency_ms,
     )
     return chunks
 
@@ -155,12 +166,14 @@ def retrieve_authoritative_kb_chunks(
     if not _can_dense_retrieve() or not query_text:
         return []
 
-    started = time.perf_counter()
+    total_started = time.perf_counter()
     categories = [TEMPLATE_CATEGORIES[target_document_type], "document_template"]
     if include_warning_rules:
         categories.extend(WARNING_CATEGORIES)
 
+    embedding_started = time.perf_counter()
     vector = embed_query(query_text)
+    embedding_latency_ms = _elapsed_ms(embedding_started)
     rpc_name = "hybrid_search_kb" if settings.enable_hybrid_retrieval else "match_kb_chunks"
     params: dict[str, Any] = {
         "query_embedding": vector,
@@ -172,8 +185,12 @@ def retrieve_authoritative_kb_chunks(
     }
     if settings.enable_hybrid_retrieval:
         params["query_text"] = query_text
+    rpc_started = time.perf_counter()
     rows = storage.rpc(rpc_name, params)
+    rpc_latency_ms = _elapsed_ms(rpc_started)
+    total_latency_ms = _elapsed_ms(total_started)
     chunks = [_kb_row_to_chunk(row) for row in rows or []]
+    _apply_timing(chunks, embedding_latency_ms, rpc_latency_ms, total_latency_ms)
     _log_retrieval(
         counselor_id=None,
         case_id=None,
@@ -181,7 +198,9 @@ def retrieve_authoritative_kb_chunks(
         query_text=query_text,
         retrieval_method=rpc_name,
         source_refs=[chunk.source_ref for chunk in chunks],
-        latency_ms=_elapsed_ms(started),
+        embedding_latency_ms=embedding_latency_ms,
+        rpc_latency_ms=rpc_latency_ms,
+        total_latency_ms=total_latency_ms,
     )
     return chunks
 
@@ -552,7 +571,9 @@ def _log_retrieval(
     query_text: str,
     retrieval_method: str,
     source_refs: list[str],
-    latency_ms: int,
+    embedding_latency_ms: int,
+    rpc_latency_ms: int,
+    total_latency_ms: int,
 ) -> None:
     if not storage.retrieval_enabled:
         return
@@ -569,7 +590,10 @@ def _log_retrieval(
                     "retrieval_method": retrieval_method,
                     "returned_source_refs": source_refs,
                     "result_count": len(source_refs),
-                    "latency_ms": latency_ms,
+                    "latency_ms": total_latency_ms,
+                    "embedding_latency_ms": embedding_latency_ms,
+                    "rpc_latency_ms": rpc_latency_ms,
+                    "total_latency_ms": total_latency_ms,
                 }
             ],
             return_representation=False,
@@ -580,3 +604,15 @@ def _log_retrieval(
 
 def _elapsed_ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+def _apply_timing(
+    chunks: list[RetrievalChunk],
+    embedding_latency_ms: int,
+    rpc_latency_ms: int,
+    total_latency_ms: int,
+) -> None:
+    for chunk in chunks:
+        chunk.embedding_latency_ms = embedding_latency_ms
+        chunk.rpc_latency_ms = rpc_latency_ms
+        chunk.total_latency_ms = total_latency_ms
