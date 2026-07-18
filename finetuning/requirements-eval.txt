@@ -1,0 +1,3 @@
+# Lightweight additions for constrained inference and structural evaluation.
+lm-format-enforcer==0.11.3
+jsonschema>=4.23,<5

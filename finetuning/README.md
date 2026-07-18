@@ -113,6 +113,30 @@ python finetuning/eval/quick_eval.py --adapter finetuning/output/qwen25-7b-remin
 - 무료 Colab(T4 16GB)은 이 구성으로 불가. Colab Pro A100이면 노트북 없이 위 명령 그대로 실행 가능
 - 학습 후 서빙: vLLM(`--enable-lora`) 또는 어댑터 머지 후 GGUF 변환(Ollama)
 
+### 5.5 H100에서 Qwen3-14B 어댑터 평가
+
+이미 학습이 끝난 어댑터를 변경하거나 다시 학습하지 않고 평가만 실행합니다. 아래 경로는
+H100 학습에 사용한 출력 경로와 같아야 하며, 평가 결과는 별도 JSONL 파일에 저장됩니다.
+
+```bash
+cd ~/remind-counseling-note-agent
+python -m pip install -r finetuning/requirements-eval.txt
+python -m unittest finetuning.eval.test_quick_eval -v
+
+python finetuning/eval/quick_eval.py \
+  --base Qwen/Qwen3-14B \
+  --adapter finetuning/output/qwen3-14b-remind-note-qlora \
+  --val finetuning/data/processed/sft_val.jsonl \
+  --limit 10 \
+  --max-new-tokens 1024 \
+  --results-jsonl finetuning/eval/results/qwen3-14b-qlora-quick-eval.jsonl
+```
+
+평가는 `lm-format-enforcer`로 단일 상담일지 JSON Schema를 토큰 단계에서 강제합니다.
+`session_info`와 7개 섹션의 필수 키, 허용된 `evidence_type`, 본문 길이 제한을 같은
+스키마로 후검증합니다. JSONL에는 예시별 파싱/스키마 상태, 반복 감지, 생성 결과와 오류가
+남고, 콘솔에는 JSON-valid, schema-valid, repetition, Korean ratio가 출력됩니다.
+
 ### 6. 백엔드 연동 (학습 후)
 
 `backend/app/services/llm.py`의 `get_structured_llm`이 유일한 교체 지점입니다.
