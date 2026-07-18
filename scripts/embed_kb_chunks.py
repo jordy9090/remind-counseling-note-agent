@@ -12,9 +12,14 @@ This command is explicit and never runs during app startup.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -46,22 +51,18 @@ from app.services.embeddings import OpenAIEmbeddingProvider, content_hash  # noq
 
 
 def main() -> None:
-    config = SupabaseConfig.from_env()
-    if not settings.openai_api_key:
+    args = parse_args()
+    config = SupabaseConfig.try_from_env()
+    if not settings.openai_api_key and not args.dry_run:
         raise SystemExit("OPENAI_API_KEY is required to embed KB chunks.")
 
-    chunks = request(
-        config,
-        "GET",
-        "kb_chunks",
-        query={
-            "select": "id,chunk_text,section_path,document_type,allowed_use,content_hash,embedding_model,embedding",
-            "limit": "1000",
-        },
-    )
+    chunks = fetch_chunks(config)
     pending = [chunk for chunk in chunks if should_embed(chunk)]
     if not pending:
         print("No KB chunks need embeddings.")
+        return
+    if args.dry_run:
+        print(f"Dry run: {len(pending)} KB chunk(s) need embeddings with {settings.embedding_model}.")
         return
 
     provider = OpenAIEmbeddingProvider(settings.openai_api_key, settings.embedding_model)
@@ -70,7 +71,7 @@ def main() -> None:
     for start in range(0, len(pending), batch_size):
         batch = pending[start : start + batch_size]
         texts = [embedding_text(chunk) for chunk in batch]
-        embeddings = provider.embed(texts)
+        embeddings = embed_with_retry(provider, texts, retries=args.retries)
         for chunk, embedding, text in zip(batch, embeddings, texts, strict=True):
             request(
                 config,
@@ -85,16 +86,38 @@ def main() -> None:
                 },
                 prefer="return=minimal",
             )
+            if config is None:
+                update_chunk_embedding_cli(chunk["id"], embedding, content_hash(text, model=settings.embedding_model))
             updated += 1
 
     print(f"Embedded {updated} KB chunk(s) with {settings.embedding_model}.")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Embed KB chunks that are new or changed.")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--retries", type=int, default=3)
+    return parser.parse_args()
+
+
+def embed_with_retry(provider: OpenAIEmbeddingProvider, texts: list[str], retries: int) -> list[list[float]]:
+    last_error: Exception | None = None
+    for attempt in range(max(retries, 1)):
+        try:
+            return provider.embed(texts)
+        except Exception as error:
+            last_error = error
+            if attempt == retries - 1:
+                break
+            time.sleep(min(2 ** attempt, 8))
+    raise SystemExit(f"Embedding provider failed after {retries} attempt(s): {last_error}") from last_error
 
 
 def should_embed(chunk: dict[str, Any]) -> bool:
     text = embedding_text(chunk)
     expected_hash = content_hash(text, model=settings.embedding_model)
     return (
-        not chunk.get("embedding")
+        not (chunk.get("embedding") or chunk.get("embedding_present"))
         or chunk.get("embedding_model") != settings.embedding_model
         or chunk.get("content_hash") != expected_hash
     )
@@ -116,6 +139,13 @@ class SupabaseConfig:
         self.key = key
 
     @classmethod
+    def try_from_env(cls) -> "SupabaseConfig | None":
+        try:
+            return cls.from_env()
+        except SystemExit:
+            return None
+
+    @classmethod
     def from_env(cls) -> "SupabaseConfig":
         url = os.getenv("SUPABASE_URL", "").strip()
         key = (
@@ -129,8 +159,109 @@ class SupabaseConfig:
         return cls(url, key)
 
 
+def fetch_chunks(config: SupabaseConfig | None) -> list[dict[str, Any]]:
+    if config is not None:
+        return request(
+            config,
+            "GET",
+            "kb_chunks",
+            query={
+                "select": "id,chunk_text,section_path,document_type,allowed_use,content_hash,embedding_model,embedding",
+                "limit": "1000",
+            },
+        )
+    result = run_supabase_query_json(
+        """
+        select
+          id::text,
+          chunk_text,
+          section_path,
+          document_type,
+          allowed_use,
+          content_hash,
+          embedding_model,
+          embedding is not null as embedding_present
+        from public.kb_chunks
+        order by created_at asc
+        limit 1000;
+        """
+    )
+    return result.get("rows", [])
+
+
+def update_chunk_embedding_cli(chunk_id: str, embedding: list[float], hash_value: str) -> None:
+    vector_literal = "[" + ",".join(f"{value:.10f}" for value in embedding) + "]"
+    sql = f"""
+    update public.kb_chunks
+    set embedding = {sql_literal(vector_literal)}::extensions.vector,
+        embedding_model = {sql_literal(settings.embedding_model)},
+        content_hash = {sql_literal(hash_value)},
+        embedding_updated_at = now()
+    where id = {sql_literal(chunk_id)};
+    """
+    run_supabase_sql(sql)
+
+
+def run_supabase_query_json(sql: str) -> dict[str, Any]:
+    with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False, encoding="utf-8") as handle:
+        handle.write(sql)
+        path = handle.name
+    try:
+        completed = subprocess.run(
+            [npx_executable(), "supabase", "db", "query", "--linked", "--output", "json", "--file", path],
+            check=True,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+    return parse_first_json_object(completed.stdout)
+
+
+def run_supabase_sql(sql: str) -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False, encoding="utf-8") as handle:
+        handle.write(sql)
+        path = handle.name
+    try:
+        subprocess.run(
+            [npx_executable(), "supabase", "db", "query", "--linked", "--file", path],
+            check=True,
+            cwd=ROOT,
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def npx_executable() -> str:
+    executable = shutil.which("npx.cmd") or shutil.which("npx")
+    if not executable:
+        raise SystemExit("npx is required for linked Supabase CLI fallback.")
+    return executable
+
+
+def parse_first_json_object(output: str) -> dict[str, Any]:
+    start = output.find("{")
+    if start < 0:
+        return {"rows": []}
+    depth = 0
+    for index in range(start, len(output)):
+        char = output[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(output[start : index + 1])
+    return {"rows": []}
+
+
+def sql_literal(value: Any) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def request(
-    config: SupabaseConfig,
+    config: SupabaseConfig | None,
     method: str,
     table: str,
     *,
@@ -138,6 +269,8 @@ def request(
     body: Any | None = None,
     prefer: str | None = None,
 ) -> Any:
+    if config is None:
+        return None
     query_string = f"?{urlencode(query)}" if query else ""
     url = f"{config.url}/rest/v1/{table}{query_string}"
     headers = {

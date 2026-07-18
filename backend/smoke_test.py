@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.graph import nodes as graph_nodes
 from app.main import app
 from app.schemas.note import (
+    ConfirmGeneratedNoteRequest,
     GenerateNoteResponse,
     RetrievedCaseContextItem,
     RetrievedEvidenceItem,
@@ -23,8 +24,15 @@ from app.schemas.note import (
     RetrievedTemplateContext,
     SessionInput,
 )
+from app.services.deidentification import deidentify_text
+from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
 from app.services.retrieval import RetrievalChunk
-from app.services.supabase_storage import _build_session_row
+from app.services.supabase_storage import (
+    _attach_embeddings,
+    _build_session_row,
+    _case_memory_rows_from_confirmed_note,
+    confirm_generated_note,
+)
 
 
 def main() -> None:
@@ -37,6 +45,26 @@ def main() -> None:
     settings.supabase_service_key = None
     settings.save_raw_input = False
 
+    root = Path(__file__).resolve().parents[1]
+    for migration_path in (root / "supabase" / "migrations").glob("*.sql"):
+        sql = migration_path.read_text(encoding="utf-8").lower()
+        assert "drop table" not in sql
+        assert "drop schema" not in sql
+        assert "truncate " not in sql
+        assert "delete from" not in sql
+
+    assert content_hash("  a\nb  ", model="model-a") == content_hash("a b", model="model-a")
+    assert content_hash("a b", model="model-a") != content_hash("a b", model="model-b")
+    settings.use_stub = False
+    settings.openai_api_key = None
+    try:
+        get_embedding_provider()
+    except EmbeddingError:
+        pass
+    else:
+        raise AssertionError("Dense retrieval must fail closed when no embedding provider is configured.")
+    settings.use_stub = True
+
     client = TestClient(app)
     health = client.get("/api/health")
     assert health.status_code == 200, health.text
@@ -48,6 +76,14 @@ def main() -> None:
 
         sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "session_input_001.json"
         payload = json.loads(sample_path.read_text(encoding="utf-8"))
+        pii_text = "이름: 홍길동, 연락처 010-1234-5678, email test@example.com, 학번 2026123456"
+        masked_text, pii_candidates = deidentify_text(pii_text, source="counselor_memo")
+        assert "010-1234-5678" not in masked_text
+        assert "test@example.com" not in masked_text
+        assert "홍길동" not in masked_text
+        assert "[STUDENT_ID]" in masked_text
+        assert pii_candidates
+
         response = client.post("/api/notes/generate", json=payload)
         assert response.status_code == 200, response.text
         data = response.json()
@@ -69,6 +105,70 @@ def main() -> None:
         raw_session_row = _build_session_row(SessionInput(**payload), GenerateNoteResponse(**data))
         assert raw_session_row["raw_input_text"]
         settings.save_raw_input = False
+
+        pii_payload = {
+            **payload,
+            "counselor_memo": pii_text,
+            "transcript_text": "Cl: 서울시 강남구 테헤란로에 살고 010-9999-0000으로 연락 가능해요.",
+        }
+        pii_response = client.post("/api/notes/generate", json=pii_payload)
+        assert pii_response.status_code == 200, pii_response.text
+        pii_data = pii_response.json()
+        serialized_sanitized = json.dumps(pii_data["sanitized_input"], ensure_ascii=False)
+        assert "010-1234-5678" not in serialized_sanitized
+        assert "010-9999-0000" not in serialized_sanitized
+        assert "test@example.com" not in serialized_sanitized
+        assert "홍길동" not in serialized_sanitized
+
+        memory_request = ConfirmGeneratedNoteRequest(
+            note_id="00000000-0000-0000-0000-000000000011",
+            case_id=payload["case_id"],
+            session_id="00000000-0000-0000-0000-000000000012",
+            session_number=payload["session_number"],
+            session_date=payload["session_date"],
+            confirmed_note={
+                "sections": {
+                    "session_theme": pii_text,
+                    "client_response": "Client reported anxiety decreasing after small next actions.",
+                    "next_plan": "Review student id 2026123456 only after masking.",
+                }
+            },
+            counselor_id="demo-counselor",
+            confirmed_by="counselor-demo",
+            counselor_edited=True,
+            create_case_memory=True,
+            demo_confirmed=True,
+        )
+        memory_rows = _case_memory_rows_from_confirmed_note(memory_request)
+        serialized_memory_rows = json.dumps(memory_rows, ensure_ascii=False)
+        assert "010-1234-5678" not in serialized_memory_rows
+        assert "test@example.com" not in serialized_memory_rows
+        assert "2026123456" not in serialized_memory_rows
+        assert "[PHONE]" in serialized_memory_rows
+        assert "[EMAIL]" in serialized_memory_rows
+        assert "[STUDENT_ID]" in serialized_memory_rows
+        assert all(row["source_note_id"] == memory_request.note_id for row in memory_rows)
+        assert all(row["source_ref"].startswith(f"confirmed_note:{memory_request.note_id}:") for row in memory_rows)
+
+        original_dense = settings.enable_dense_retrieval
+        original_stub = settings.use_stub
+        original_api_key = settings.openai_api_key
+        try:
+            settings.enable_dense_retrieval = True
+            settings.use_stub = False
+            settings.openai_api_key = None
+            unavailable_rows = [row.copy() for row in memory_rows]
+            assert _attach_embeddings(unavailable_rows) == 0
+            assert all("embedding" not in row for row in unavailable_rows)
+
+            settings.use_stub = True
+            embedded_rows = [row.copy() for row in memory_rows]
+            assert _attach_embeddings(embedded_rows) == len(embedded_rows)
+            assert all(len(row["embedding"]) == settings.embedding_dimension for row in embedded_rows)
+        finally:
+            settings.enable_dense_retrieval = original_dense
+            settings.use_stub = original_stub
+            settings.openai_api_key = original_api_key
 
         persist_without_supabase = client.post("/api/notes/generate", json={**payload, "persist": True})
         assert persist_without_supabase.status_code == 200, persist_without_supabase.text
@@ -204,6 +304,20 @@ def main() -> None:
             graph_nodes.retrieve_authoritative_kb_chunks = original_authoritative_kb_chunks
             graph_nodes.retrieve_document_template = original_template_retrieval
             graph_nodes.retrieve_privacy_rules = original_privacy_retrieval
+
+        confirm_result = confirm_generated_note(
+            ConfirmGeneratedNoteRequest(
+                note_id="00000000-0000-0000-0000-000000000001",
+                case_id=payload["case_id"],
+                session_id="00000000-0000-0000-0000-000000000002",
+                session_number=payload["session_number"],
+                confirmed_note=data["confirmed_session_note"],
+                counselor_id="demo-counselor",
+                demo_confirmed=True,
+            )
+        )
+        assert confirm_result.confirmation_status == "demo_confirmed"
+        assert confirm_result.memory_chunk_count == 0
 
         save_payload = {
             "case_id": payload["case_id"],

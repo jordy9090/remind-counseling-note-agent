@@ -33,6 +33,11 @@ create table if not exists public.generated_notes (
   draft_json jsonb not null default '{}'::jsonb,
   confirmed_json jsonb not null default '{}'::jsonb,
   counselor_edited boolean not null default false,
+  confirmation_status text not null default 'draft',
+  confirmed_at timestamptz,
+  confirmed_by text,
+  source_note_id uuid references public.generated_notes(id) on delete set null,
+  memory_indexed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -76,14 +81,17 @@ create table if not exists public.kb_chunks (
   document_id uuid not null references public.kb_documents(id) on delete cascade,
   chunk_text text not null,
   chunk_type text not null default 'guideline',
-  metadata_json jsonb not null default '{}'::jsonb
+  metadata_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists public.counseling_drafts (
-  id uuid primary key default gen_random_uuid(),
-  draft_json jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  draft_id text primary key,
+  case_id text not null,
+  session_number integer not null default 0,
+  saved_at timestamptz not null default now(),
+  data jsonb not null,
+  created_at timestamptz not null default now()
 );
 
 create index if not exists idx_sessions_case_recent
@@ -101,3 +109,8 @@ create index if not exists idx_kb_documents_category
 create index if not exists idx_kb_chunks_document
   on public.kb_chunks(document_id, chunk_type);
 
+create index if not exists counseling_drafts_case_id_idx
+  on public.counseling_drafts(case_id);
+
+create index if not exists counseling_drafts_saved_at_idx
+  on public.counseling_drafts(saved_at desc);

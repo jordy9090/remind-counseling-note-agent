@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
-from app.schemas.note import GenerateNoteResponse, PersistenceReport, SessionInput
+from app.schemas.note import ConfirmGeneratedNoteRequest, ConfirmGeneratedNoteResponse, GenerateNoteResponse, PersistenceReport, SessionInput
+from app.services.deidentification import deidentify_text
+from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
 
 
 class SupabaseStorageError(RuntimeError):
@@ -62,6 +65,18 @@ class SupabaseStorage:
             body=rows,
             prefer="resolution=merge-duplicates,return=representation",
         )
+        return result if isinstance(result, list) else []
+
+    def update(
+        self,
+        table: str,
+        values: dict[str, Any],
+        *,
+        query: dict[str, str | int],
+        return_representation: bool = True,
+    ) -> list[dict[str, Any]]:
+        prefer = "return=representation" if return_representation else "return=minimal"
+        result = self._request("PATCH", table, query=query, body=values, prefer=prefer)
         return result if isinstance(result, list) else []
 
     def rpc(self, function_name: str, params: dict[str, Any]) -> Any:
@@ -200,6 +215,53 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
     return report
 
 
+def confirm_generated_note(request: ConfirmGeneratedNoteRequest) -> ConfirmGeneratedNoteResponse:
+    """Persist explicit counselor confirmation and create retrieval memory chunks."""
+    confirmed_at = datetime.now(UTC).isoformat()
+    status = "demo_confirmed" if request.demo_confirmed else "confirmed"
+    if not settings.supabase_configured:
+        return ConfirmGeneratedNoteResponse(
+            note_id=request.note_id,
+            confirmation_status=status,
+            confirmed_at=confirmed_at,
+            message="Supabase credentials are missing; confirmation was not stored.",
+        )
+
+    storage.update(
+        "generated_notes",
+        {
+            "confirmed_json": request.confirmed_note,
+            "counselor_edited": request.counselor_edited,
+            "confirmation_status": status,
+            "confirmed_at": confirmed_at,
+            "confirmed_by": request.confirmed_by or "server_demo_actor",
+            "updated_at": confirmed_at,
+        },
+        query={"id": f"eq.{request.note_id}"},
+        return_representation=False,
+    )
+
+    chunks = _case_memory_rows_from_confirmed_note(request)
+    embedding_count = _attach_embeddings(chunks)
+    if request.create_case_memory and chunks:
+        storage.insert("case_memory_chunks", chunks, return_representation=False)
+        storage.update(
+            "generated_notes",
+            {"memory_indexed_at": datetime.now(UTC).isoformat()},
+            query={"id": f"eq.{request.note_id}"},
+            return_representation=False,
+        )
+
+    return ConfirmGeneratedNoteResponse(
+        note_id=request.note_id,
+        confirmation_status=status,
+        confirmed_at=confirmed_at,
+        memory_chunk_count=len(chunks) if request.create_case_memory else 0,
+        memory_embedding_count=embedding_count if request.create_case_memory else 0,
+        message="Confirmed note stored; case memory uses masked counselor-reviewed content only.",
+    )
+
+
 def _session_title(session_input: SessionInput) -> str:
     tags = ", ".join(session_input.key_issue_tags or [])
     if tags:
@@ -209,13 +271,13 @@ def _session_title(session_input: SessionInput) -> str:
 
 def _raw_input_text(session_input: SessionInput) -> str:
     payload = {
-        "counselor_memo": session_input.counselor_memo,
-        "transcript_text": session_input.transcript_text,
-        "previous_session_summary": session_input.previous_session_summary,
-        "counseling_goal": session_input.counseling_goal,
-        "psychological_test_summary": session_input.psychological_test_summary,
+        "counselor_memo": _masked(session_input.counselor_memo),
+        "transcript_text": _masked(session_input.transcript_text),
+        "previous_session_summary": _masked(session_input.previous_session_summary),
+        "counseling_goal": _masked(session_input.counseling_goal),
+        "psychological_test_summary": _masked(session_input.psychological_test_summary),
         "key_issue_tags": session_input.key_issue_tags,
-        "nonverbal_notes": session_input.nonverbal_notes,
+        "nonverbal_notes": _masked(session_input.nonverbal_notes),
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -237,7 +299,67 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
 def _stored_message() -> str:
     if settings.save_raw_input:
         return (
-            "Generated note was stored in Supabase with raw_input_text because SAVE_RAW_INPUT=true. "
+            "Generated note was stored in Supabase with masked raw_input_text because SAVE_RAW_INPUT=true. "
             "Use demo/synthetic data only unless consent, RLS, audit logging, and retention policy are in place."
         )
     return "Generated note was stored in Supabase without raw_input_text; sanitized input and metadata were stored."
+
+
+def _masked(text: str) -> str:
+    return deidentify_text(text)[0]
+
+
+def _case_memory_rows_from_confirmed_note(request: ConfirmGeneratedNoteRequest) -> list[dict[str, Any]]:
+    if not request.create_case_memory:
+        return []
+    sections = request.confirmed_note.get("sections") if isinstance(request.confirmed_note, dict) else {}
+    if not isinstance(sections, dict):
+        return []
+    field_map = {
+        "session_theme": "session_theme",
+        "presenting_problem": "presenting_problem",
+        "session_content": "session_content",
+        "counselor_intervention": "counselor_intervention",
+        "client_response": "client_response",
+        "reflection": "reflection",
+        "next_plan": "next_plan",
+    }
+    rows: list[dict[str, Any]] = []
+    for field_name, field_type in field_map.items():
+        text = _masked(str(sections.get(field_name) or "").strip())
+        if not text:
+            continue
+        rows.append(
+            {
+                "counselor_id": request.counselor_id or request.confirmed_by or "server_demo_actor",
+                "case_id": request.case_id,
+                "session_id": request.session_id,
+                "source_note_id": request.note_id,
+                "session_number": request.session_number,
+                "session_date": request.session_date or None,
+                "field_type": field_type,
+                "chunk_text": text,
+                "source_ref": f"confirmed_note:{request.note_id}:{field_type}",
+                "metadata_json": {
+                    "confirmation_status": "demo_confirmed" if request.demo_confirmed else "confirmed",
+                    "counselor_edited": request.counselor_edited,
+                    "pii_masked": True,
+                },
+                "content_hash": content_hash(text, model=settings.embedding_model),
+            }
+        )
+    return rows
+
+
+def _attach_embeddings(rows: list[dict[str, Any]]) -> int:
+    if not rows or not settings.enable_dense_retrieval:
+        return 0
+    try:
+        provider = get_embedding_provider()
+        embeddings = provider.embed([row["chunk_text"] for row in rows])
+    except EmbeddingError:
+        return 0
+    for row, embedding in zip(rows, embeddings, strict=True):
+        row["embedding"] = embedding
+        row["embedding_model"] = settings.embedding_model
+    return len(rows)

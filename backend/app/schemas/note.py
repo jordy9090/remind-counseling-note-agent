@@ -214,6 +214,29 @@ class PersistenceReport(BaseModel):
     message: str = ""
 
 
+class ConfirmGeneratedNoteRequest(BaseModel):
+    note_id: str
+    case_id: str
+    session_id: str
+    session_number: int
+    session_date: str = ""
+    confirmed_note: dict[str, Any] = Field(default_factory=dict)
+    counselor_id: str = ""
+    confirmed_by: str = "server_demo_actor"
+    counselor_edited: bool = True
+    demo_confirmed: bool = False
+    create_case_memory: bool = True
+
+
+class ConfirmGeneratedNoteResponse(BaseModel):
+    note_id: str
+    confirmation_status: Literal["confirmed", "demo_confirmed"]
+    confirmed_at: str
+    memory_chunk_count: int = 0
+    memory_embedding_count: int = 0
+    message: str = ""
+
+
 class GenerateNoteResponse(BaseModel):
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData

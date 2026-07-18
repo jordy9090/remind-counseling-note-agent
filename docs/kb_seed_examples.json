@@ -20,14 +20,16 @@
           "section_path": "session_note > required_fields",
           "document_type": "session_note",
           "chunk_type": "template_fields",
-          "chunk_text": "Session notes should separate presenting issue, session theme, session content, counselor intervention, client response, reflection candidate, and next plan.",
+          "chunk_text": "Session notes should separate session metadata, session theme, presenting issue, session content, counselor intervention, client response, important client utterance, nonverbal or paraverbal observation, counselor reflection, and next-session plan. Intervention, response, utterance, and nonverbal information may be combined inside session content when the local form uses a compact format.",
           "allowed_use": "documentation_structure_only",
           "counselor_review_required": false,
           "metadata_json": {
-            "required_fields": ["presenting_problem", "session_theme", "session_content", "counselor_intervention", "client_response", "next_plan"],
-            "optional_fields": ["nonverbal_observation", "counseling_goal", "psychological_test_summary"],
-            "counselor_review_fields": ["reflection", "case_conceptualization", "goal_attainment"],
-            "missing_field_checklist": ["risk signal review", "counselor final confirmation"]
+            "required_fields": ["session_metadata", "session_theme", "presenting_problem", "session_content", "counselor_intervention", "client_response", "important_client_utterance", "next_plan"],
+            "optional_fields": ["nonverbal_or_paraverbal_observation", "counseling_goal", "psychological_test_summary"],
+            "auto_extractable_fields": ["session_theme", "presenting_problem", "session_content", "counselor_intervention", "client_response", "important_client_utterance", "nonverbal_or_paraverbal_observation", "next_plan"],
+            "partially_available_fields": ["psychological_test_summary", "counseling_goal"],
+            "counselor_review_fields": ["counselor_reflection", "case_conceptualization", "goal_attainment"],
+            "missing_field_checklist": ["session_metadata", "risk signal review", "counselor final confirmation"]
           }
         }
       ]
@@ -47,14 +49,16 @@
           "section_path": "supervision_report > required_fields",
           "document_type": "supervision_report",
           "chunk_type": "template_fields",
-          "chunk_text": "Supervision reports should include case background, referral or request context, presenting issue, counseling progress, intervention questions, and counselor questions for supervision.",
+          "chunk_text": "Supervision reports should include counselor and institution metadata, supervisor metadata, client basic information, counseling request or background, presenting issue, previous counseling experience, family relationship, observed behavior, psychological-test summary, strengths/resources, case understanding, counseling goals, strategies, progress, selected transcript or verbatim, counselor reflection, and supervision questions.",
           "allowed_use": "documentation_structure_only",
           "counselor_review_required": true,
           "metadata_json": {
-            "required_fields": ["case_background", "request_context", "presenting_problem", "counseling_progress", "supervision_questions"],
-            "optional_fields": ["family_relationship", "previous_counseling_history", "psychological_test_summary"],
-            "counselor_review_fields": ["case_conceptualization", "counseling_goal_strategy", "supervision_questions"],
-            "missing_field_checklist": ["family_relationship", "counseling_goal_strategy", "supervision_questions"]
+            "required_fields": ["counselor_metadata", "institution_metadata", "supervisor_metadata", "client_basic_information", "counseling_request_background", "presenting_problem", "counseling_progress", "selected_transcript_or_verbatim", "supervision_questions"],
+            "optional_fields": ["previous_counseling_experience", "family_relationship", "observed_behavior", "psychological_test_summary", "strengths_and_resources"],
+            "auto_extractable_fields": ["presenting_problem", "counseling_progress", "selected_transcript_or_verbatim", "observed_behavior"],
+            "partially_available_fields": ["client_basic_information", "previous_counseling_experience", "family_relationship", "psychological_test_summary", "strengths_and_resources"],
+            "counselor_review_fields": ["case_understanding", "counseling_goals", "counseling_strategies", "counselor_reflection", "supervision_questions"],
+            "missing_field_checklist": ["case_understanding", "counseling_goals", "counseling_strategies", "supervision_questions"]
           }
         }
       ]
@@ -74,14 +78,16 @@
           "section_path": "termination_report > required_fields",
           "document_type": "termination_report",
           "chunk_type": "template_fields",
-          "chunk_text": "Termination reports should summarize counseling goals, course of sessions, observed changes, termination reason, remaining concerns, and follow-up plan.",
+          "chunk_text": "Termination reports should summarize counselor and client metadata, counseling period, number of sessions, presenting issue, assessment or test types, counseling goals, counseling process, major interventions, changes and outcomes, unresolved issues, termination reason, follow-up plan, and counselor final opinion.",
           "allowed_use": "documentation_structure_only",
           "counselor_review_required": true,
           "metadata_json": {
-            "required_fields": ["counseling_goal", "session_course", "observed_changes", "termination_reason", "follow_up_plan"],
-            "optional_fields": ["referral_plan", "remaining_concerns"],
-            "counselor_review_fields": ["goal_attainment", "overall_opinion", "follow_up_recommendation"],
-            "missing_field_checklist": ["termination_reason", "goal_attainment", "follow_up_recommendation"]
+            "required_fields": ["counselor_metadata", "client_metadata", "counseling_period", "session_count", "presenting_problem", "counseling_goals", "counseling_process", "major_interventions", "changes_and_outcomes", "termination_reason", "follow_up_plan"],
+            "optional_fields": ["assessment_test_types", "unresolved_issues", "referral_plan"],
+            "auto_extractable_fields": ["presenting_problem", "counseling_process", "major_interventions", "changes_and_outcomes", "follow_up_plan"],
+            "partially_available_fields": ["assessment_test_types", "unresolved_issues", "session_count"],
+            "counselor_review_fields": ["goal_attainment", "termination_reason", "counselor_final_opinion", "follow_up_recommendation"],
+            "missing_field_checklist": ["counseling_period", "session_count", "termination_reason", "goal_attainment", "counselor_final_opinion"]
           }
         }
       ]

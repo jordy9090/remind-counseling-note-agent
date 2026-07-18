@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.graph.graph import run_note_pipeline
 from app.graph.supervision_report import run_supervision_report_pipeline
 from app.schemas.note import (
+    ConfirmGeneratedNoteRequest,
+    ConfirmGeneratedNoteResponse,
     GenerateNoteResponse,
     RecomposeNoteRequest,
     RecomposeNoteResponse,
@@ -21,7 +23,7 @@ from app.schemas.note import (
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
-from app.services.supabase_storage import persist_generated_note
+from app.services.supabase_storage import confirm_generated_note, persist_generated_note
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
@@ -30,6 +32,16 @@ router = APIRouter(prefix="/api/notes", tags=["notes"])
 async def generate_note(session_input: SessionInput) -> GenerateNoteResponse:
     """Run the full six-agent workflow and return Pydantic-validated JSON."""
     return _run_pipeline_with_stub_fallback(session_input)
+
+
+@router.post("/confirm", response_model=ConfirmGeneratedNoteResponse)
+async def confirm_note(request: ConfirmGeneratedNoteRequest) -> ConfirmGeneratedNoteResponse:
+    """Mark a generated note as counselor-confirmed and create case memory chunks."""
+    try:
+        return confirm_generated_note(request)
+    except Exception as error:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Note confirmation failed: {str(error)}")
 
 
 @router.post("/recompose", response_model=RecomposeNoteResponse)

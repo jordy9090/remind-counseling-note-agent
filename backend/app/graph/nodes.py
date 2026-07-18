@@ -29,6 +29,7 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
+from app.services.deidentification import deidentify_sources
 from app.services.retrieval import (
     chunks_to_case_context,
     chunks_to_privacy_rules,
@@ -55,21 +56,31 @@ NEXT_PLAN_RE = re.compile(r"(다음\s*회기|추후|다음에는|검토하기로
 def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     """Detect sensitive candidates and normalize input sources."""
     session_input: SessionInput = state["session_input"]
+    masked_sources, sensitive_candidates = deidentify_sources(
+        {
+            "counselor_memo": session_input.counselor_memo.strip(),
+            "transcript_text": session_input.transcript_text.strip(),
+            "previous_session_summary": session_input.previous_session_summary.strip(),
+            "counseling_goal": session_input.counseling_goal.strip(),
+            "psychological_test_summary": session_input.psychological_test_summary.strip(),
+            "nonverbal_notes": session_input.nonverbal_notes.strip(),
+        }
+    )
     sanitized = SanitizedInput(
         case_id=session_input.case_id,
         session_number=session_input.session_number,
         session_date=session_input.session_date,
         counselor_name=session_input.counselor_name,
         sources=InputSources(
-            counselor_memo=session_input.counselor_memo.strip(),
-            transcript_text=session_input.transcript_text.strip(),
-            previous_session_summary=session_input.previous_session_summary.strip(),
-            counseling_goal=session_input.counseling_goal.strip(),
-            psychological_test_summary=session_input.psychological_test_summary.strip(),
+            counselor_memo=masked_sources["counselor_memo"],
+            transcript_text=masked_sources["transcript_text"],
+            previous_session_summary=masked_sources["previous_session_summary"],
+            counseling_goal=masked_sources["counseling_goal"],
+            psychological_test_summary=masked_sources["psychological_test_summary"],
             key_issue_tags=session_input.key_issue_tags,
-            nonverbal_notes=session_input.nonverbal_notes.strip(),
+            nonverbal_notes=masked_sources["nonverbal_notes"],
         ),
-        sensitive_info_candidates=_detect_sensitive_info(session_input),
+        sensitive_info_candidates=sensitive_candidates,
     )
     return {"sanitized_input": sanitized, "stub": settings.stub_mode}
 
@@ -343,6 +354,34 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context)
     verification = get_structured_llm(VerificationReport).invoke(prompt)
     return {"verification_report": verification}
+
+
+def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
+    """Mark risky draft sections for counselor review and allow one re-verification pass."""
+    if state.get("revision_attempted"):
+        return {"revision_needs_reverify": False}
+    verification: VerificationReport = state["verification_report"]
+    if not verification.unsupported_or_risky_claims:
+        return {"revision_attempted": False, "revision_needs_reverify": False}
+
+    summary: SessionSummaryDraft = state["session_summary_draft"].model_copy(deep=True)
+    for section in (
+        summary.session_theme,
+        summary.presenting_problem,
+        summary.session_content,
+        summary.counselor_intervention,
+        summary.client_response,
+        summary.reflection,
+        summary.next_plan,
+    ):
+        if section.evidence_type != "direct":
+            section.requires_review = True
+    return {
+        "session_summary_draft": summary,
+        "revision_attempted": True,
+        "revision_needs_reverify": True,
+        "revision_reason": "Unsupported or risky claims were marked for counselor review.",
+    }
 
 
 def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
@@ -710,17 +749,23 @@ def _build_structure_prompt(
 ) -> str:
     return f"""
 You are generating structured counseling documentation data for Re:mind V1.
-Return only fields allowed by the Pydantic schema.
-Do not diagnose, evaluate risk, or replace counselor judgment.
-If a claim is not directly grounded, mark it as inferred or needs_review.
-Re:mind is not a diagnosis tool, treatment recommendation tool, or counselor evaluation tool.
-
-Retrieved prior-session context is background only. Use it only when it is relevant to the current session.
-Every claim must cite current input source_refs or retrieved prior-session source_refs.
-If a claim depends on prior sessions, set evidence_type to prior_context_based and include the stored source_ref.
-If support is weak, set needs_review or another review-sensitive evidence type.
-
-Document template context can be used only to identify missing fields and counselor-review fields.
+Role: documentation assistant for a counselor, not a clinician and not a supervisor.
+Task: extract and structure only what is supported by allowed sources.
+Output schema: return only fields allowed by the Pydantic schema.
+Source precedence:
+1. current-session counselor-confirmed input
+2. current-session transcript or memo
+3. counselor-confirmed prior-session memory
+4. document-template KB
+5. ethics/privacy/security KB for warnings only
+Required source_refs: every factual claim must cite current input source_refs or retrieved prior-session source_refs.
+Prior-session rule: if a claim depends on prior sessions, set evidence_type to prior_context_based and include the stored source_ref.
+Template rule: document template context can identify missing fields and counselor-review fields only.
+Prohibited actions: diagnosis, psychiatric labels, treatment prescriptions, psychological-test interpretation,
+automatic suicide/self-harm conclusions, counselor scoring, invented client statements, invented nonverbal behavior,
+invented interventions, or unsupported progress claims.
+Uncertainty behavior: if evidence is missing or weak, return needs_review and identify the missing field.
+Failure behavior: prefer a brief needs_review item over a plausible guess.
 
 Sanitized input:
 {_json(sanitized)}
@@ -746,14 +791,23 @@ def _build_summary_prompt(
     case_context = case_context or []
     return f"""
 Generate an editable Korean counseling session summary draft.
+Role: Korean counseling documentation drafting assistant.
+Task: draft editable text, not final clinical judgment.
 Each section must include evidence_type and source_refs.
-Reflection, case conceptualization, and goal attainment must remain counselor-review areas.
-Do not generate diagnosis, clinical risk scoring, treatment recommendation, psychological test interpretation,
-or counselor performance evaluation.
-Retrieved prior sessions may be used only as traceable background context.
-If a section uses prior-session context, set evidence_type to prior_context_based or mixed and include
-stored_session_note:<session_id> or stored_evidence:<id> in source_refs.
-Do not treat privacy/ethics/template rules as clinical evidence.
+Source precedence:
+1. current-session counselor-confirmed input
+2. current-session transcript or memo
+3. counselor-confirmed prior-session memory
+4. document-template KB
+5. ethics/privacy/security KB for warnings only
+Counselor-review boundaries: reflection, case conceptualization, goal attainment, risk interpretation, and
+psychological-test interpretation must remain counselor-review areas.
+Prohibited actions: diagnosis, clinical risk scoring, treatment recommendation, counselor evaluation,
+invented client statements, invented interventions, invented nonverbal behavior, and unsupported progress claims.
+Prior-session rule: retrieved prior sessions may be used only as traceable background context. If a section uses
+prior-session context, set evidence_type to prior_context_based or mixed and include stored source_refs.
+KB rule: do not treat privacy/ethics/template rules as clinical evidence.
+Uncertainty behavior: if evidence is missing, return needs_review and state the missing field instead of guessing.
 The frontend will display only these requested section ids:
 {_json(requested_section_ids)}
 If requested_section_ids is not empty, rewrite the requested sections as a coherent self-contained draft
@@ -788,12 +842,16 @@ def _build_verification_prompt(
     privacy_context = privacy_context or []
     return f"""
 Verify the generated counseling note draft.
-Separate grounded items, weakly grounded items, unsupported/risky claims,
+Role: safety and evidence verifier for a counseling documentation draft.
+Task: separate grounded items, weakly grounded items, unsupported/risky claims,
 sensitive information candidates, and counselor-review-required fields.
-Do not make clinical judgments on behalf of the counselor.
-Use retrieved privacy, ethics, and security rules only to flag review items.
-Do not claim legal compliance. Flag sensitive data, consent issues, raw audio storage risk,
-unsupported claims, and counselor-review-needed fields.
+Allowed sources: current input, evidence map, generated draft, and retrieved privacy/ethics/security KB for warnings only.
+Required behavior: every factual generated claim should have valid source_refs. Flag missing source_refs.
+Prohibited actions: do not make clinical judgments, legal-compliance claims, diagnoses, treatment recommendations,
+psychological-test interpretations, or counselor performance evaluations.
+Warning behavior: use retrieved privacy, ethics, and security rules only to flag sensitive data, consent issues,
+raw audio storage risk, access-control risk, unsupported claims, and counselor-review-needed fields.
+Failure behavior: when uncertain, add a reviewable claim instead of approving the claim.
 
 Sanitized input:
 {_json(sanitized)}

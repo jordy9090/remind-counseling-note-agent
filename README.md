@@ -183,9 +183,11 @@ npx supabase db push
 ```
 
 Do not run `supabase db reset` against the shared project. Review pending
-migrations before applying them. In this Codex session, Supabase CLI auth was
-not available, so remote DB pull/push, row counts, seed insertion, and sample
-remote retrieval queries were not executed.
+migrations before applying them. The linked remote project has been verified
+with synthetic/demo data only; see
+[docs/supabase_remote_preflight.md](docs/supabase_remote_preflight.md) and
+[docs/supabase_remote_verification.md](docs/supabase_remote_verification.md)
+for redacted results.
 
 Dense retrieval is still opt-in:
 
@@ -201,6 +203,12 @@ Synthetic retrieval evaluation does not require Supabase or OpenAI:
 
 ```bash
 python scripts/evaluate_retrieval.py
+```
+
+Remote Supabase verification after linking:
+
+```bash
+python scripts/check_supabase_remote.py --write-report docs/supabase_remote_verification.md
 ```
 
 보안 경계는 [docs/security_checklist.md](docs/security_checklist.md)를 기준으로 확인합니다.

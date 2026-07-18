@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.graph.nodes import (
+    conditional_revision,
     formulate_retrieval_query,
     fuse_and_rerank,
     generate_summary,
@@ -49,9 +50,16 @@ class NoteGraphState(TypedDict, total=False):
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
     verification_report: VerificationReport
+    revision_attempted: bool
+    revision_needs_reverify: bool
+    revision_reason: str
     document_transform_preview: DocumentTransformPreview
     confirmed_session_note: dict[str, Any]
     stub: bool
+
+
+def _route_after_revision(state: NoteGraphState) -> str:
+    return "reverify" if state.get("revision_needs_reverify") else "preview"
 
 
 def create_note_graph():
@@ -65,6 +73,7 @@ def create_note_graph():
     workflow.add_node("map_evidence", map_evidence)
     workflow.add_node("generate_summary", generate_summary)
     workflow.add_node("verify_output", verify_output)
+    workflow.add_node("conditional_revision", conditional_revision)
     workflow.add_node("transform_document_preview", transform_document_preview)
 
     workflow.set_entry_point("sanitize_input")
@@ -76,7 +85,15 @@ def create_note_graph():
     workflow.add_edge("structure_session", "map_evidence")
     workflow.add_edge("map_evidence", "generate_summary")
     workflow.add_edge("generate_summary", "verify_output")
-    workflow.add_edge("verify_output", "transform_document_preview")
+    workflow.add_edge("verify_output", "conditional_revision")
+    workflow.add_conditional_edges(
+        "conditional_revision",
+        _route_after_revision,
+        {
+            "reverify": "verify_output",
+            "preview": "transform_document_preview",
+        },
+    )
     workflow.add_edge("transform_document_preview", END)
     return workflow.compile()
 

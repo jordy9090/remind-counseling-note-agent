@@ -4,6 +4,7 @@
 
 create schema if not exists extensions;
 create extension if not exists vector with schema extensions;
+create extension if not exists pg_trgm with schema extensions;
 
 alter table public.kb_documents
   add column if not exists source_org text not null default '',
@@ -13,35 +14,33 @@ alter table public.kb_documents
 
 do $$
 begin
-  if exists (
+  if not exists (
     select 1
     from pg_constraint
     where conname = 'kb_documents_doc_category_check'
       and conrelid = 'public.kb_documents'::regclass
   ) then
-    alter table public.kb_documents drop constraint kb_documents_doc_category_check;
+    alter table public.kb_documents
+      add constraint kb_documents_doc_category_check
+      check (
+        doc_category in (
+          'document_template',
+          'ethics_rule',
+          'privacy_rule',
+          'security_rule',
+          'writing_example',
+          'internal_policy',
+          'session_note_template',
+          'supervision_report_template',
+          'termination_report_template',
+          'counseling_ethics',
+          'privacy_law',
+          'deidentification_guideline',
+          'internal_security_policy'
+        )
+      );
   end if;
 end $$;
-
-alter table public.kb_documents
-  add constraint kb_documents_doc_category_check
-  check (
-    doc_category in (
-      'document_template',
-      'ethics_rule',
-      'privacy_rule',
-      'security_rule',
-      'writing_example',
-      'internal_policy',
-      'session_note_template',
-      'supervision_report_template',
-      'termination_report_template',
-      'counseling_ethics',
-      'privacy_law',
-      'deidentification_guideline',
-      'internal_security_policy'
-    )
-  );
 
 alter table public.kb_chunks
   add column if not exists section_path text not null default '',
@@ -52,7 +51,15 @@ alter table public.kb_chunks
   add column if not exists embedding extensions.vector(1536),
   add column if not exists embedding_model text,
   add column if not exists content_hash text,
-  add column if not exists embedding_updated_at timestamptz;
+  add column if not exists embedding_updated_at timestamptz,
+  add column if not exists created_at timestamptz not null default now();
+
+alter table public.generated_notes
+  add column if not exists confirmation_status text not null default 'draft',
+  add column if not exists confirmed_at timestamptz,
+  add column if not exists confirmed_by text,
+  add column if not exists source_note_id uuid references public.generated_notes(id) on delete set null,
+  add column if not exists memory_indexed_at timestamptz;
 
 alter table public.kb_chunks
   add column if not exists search_text tsvector
@@ -71,6 +78,7 @@ create table if not exists public.case_memory_chunks (
   counselor_id text not null,
   case_id text not null references public.cases(id) on delete cascade,
   session_id uuid references public.sessions(id) on delete cascade,
+  source_note_id uuid references public.generated_notes(id) on delete cascade,
   session_number integer,
   session_date date,
   field_type text not null,
@@ -83,6 +91,20 @@ create table if not exists public.case_memory_chunks (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.retrieval_logs (
+  id uuid primary key default gen_random_uuid(),
+  counselor_id text,
+  case_id text,
+  retrieval_scope text not null,
+  query_hash text not null,
+  query_length integer not null default 0,
+  retrieval_method text not null default '',
+  returned_source_refs text[] not null default '{}'::text[],
+  result_count integer not null default 0,
+  latency_ms integer,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_kb_documents_hybrid_filters
   on public.kb_documents(doc_category, source_type, authority_level, allowed_use);
 
@@ -91,6 +113,9 @@ create index if not exists idx_kb_chunks_hybrid_filters
 
 create index if not exists idx_kb_chunks_search_text
   on public.kb_chunks using gin(search_text);
+
+create index if not exists idx_kb_chunks_chunk_text_trgm
+  on public.kb_chunks using gin(chunk_text extensions.gin_trgm_ops);
 
 create index if not exists idx_kb_chunks_content_hash
   on public.kb_chunks(content_hash);
@@ -103,6 +128,15 @@ create index if not exists idx_case_memory_field
 
 create index if not exists idx_case_memory_content_hash
   on public.case_memory_chunks(content_hash);
+
+create index if not exists idx_case_memory_source_note
+  on public.case_memory_chunks(source_note_id);
+
+create index if not exists idx_retrieval_logs_scope_created
+  on public.retrieval_logs(retrieval_scope, created_at desc);
+
+create index if not exists idx_retrieval_logs_case_created
+  on public.retrieval_logs(counselor_id, case_id, created_at desc);
 
 -- Add HNSW indexes later when the corpus is large enough to justify ANN tuning:
 -- create index idx_kb_chunks_embedding_hnsw on public.kb_chunks
@@ -147,7 +181,7 @@ as $$
     coalesce(nullif(c.allowed_use, ''), d.allowed_use) as allowed_use,
     d.authority_level,
     c.chunk_text,
-    (1 - (c.embedding <=> query_embedding))::double precision as similarity_score,
+    (1 - (c.embedding operator(extensions.<=>) query_embedding))::double precision as similarity_score,
     'dense'::text as retrieval_method,
     (
       c.metadata_json ||
@@ -164,9 +198,32 @@ as $$
     and (filter_document_type is null or coalesce(nullif(c.document_type, ''), d.source_type) in (filter_document_type, ''))
     and (filter_allowed_uses is null or coalesce(nullif(c.allowed_use, ''), d.allowed_use) = any(filter_allowed_uses))
     and (filter_authority_levels is null or d.authority_level = any(filter_authority_levels))
-  order by c.embedding <=> query_embedding
+    and (d.effective_date is null or d.effective_date <= current_date)
+  order by c.embedding operator(extensions.<=>) query_embedding
   limit greatest(match_count, 1);
 $$;
+
+alter table public.cases enable row level security;
+alter table public.sessions enable row level security;
+alter table public.generated_notes enable row level security;
+alter table public.evidence_items enable row level security;
+alter table public.verification_reports enable row level security;
+alter table public.counseling_drafts enable row level security;
+alter table public.case_memory_chunks enable row level security;
+alter table public.retrieval_logs enable row level security;
+alter table public.kb_documents enable row level security;
+alter table public.kb_chunks enable row level security;
+
+revoke all on table public.cases from anon, authenticated;
+revoke all on table public.sessions from anon, authenticated;
+revoke all on table public.generated_notes from anon, authenticated;
+revoke all on table public.evidence_items from anon, authenticated;
+revoke all on table public.verification_reports from anon, authenticated;
+revoke all on table public.counseling_drafts from anon, authenticated;
+revoke all on table public.case_memory_chunks from anon, authenticated;
+revoke all on table public.retrieval_logs from anon, authenticated;
+revoke all on table public.kb_documents from anon, authenticated;
+revoke all on table public.kb_chunks from anon, authenticated;
 
 create or replace function public.match_case_memory_chunks(
   query_embedding extensions.vector(1536),
@@ -178,6 +235,7 @@ create or replace function public.match_case_memory_chunks(
 returns table (
   chunk_id uuid,
   session_id uuid,
+  source_note_id uuid,
   source_ref text,
   case_id text,
   counselor_id text,
@@ -195,6 +253,7 @@ as $$
   select
     c.id as chunk_id,
     c.session_id,
+    c.source_note_id,
     c.source_ref,
     c.case_id,
     c.counselor_id,
@@ -202,7 +261,7 @@ as $$
     c.session_date,
     c.field_type,
     c.chunk_text,
-    (1 - (c.embedding <=> query_embedding))::double precision as similarity_score,
+    (1 - (c.embedding operator(extensions.<=>) query_embedding))::double precision as similarity_score,
     'case_memory_dense'::text as retrieval_method,
     c.metadata_json as metadata
   from public.case_memory_chunks c
@@ -213,7 +272,7 @@ as $$
     and c.embedding is not null
     and (filter_field_types is null or c.field_type = any(filter_field_types))
   order by
-    (c.embedding <=> query_embedding) asc,
+    (c.embedding operator(extensions.<=>) query_embedding) asc,
     c.session_number desc nulls last,
     c.created_at desc
   limit least(greatest(match_count, 1), 5);
@@ -274,6 +333,7 @@ as $$
       and (filter_document_type is null or coalesce(nullif(c.document_type, ''), d.source_type) in (filter_document_type, ''))
       and (filter_allowed_uses is null or coalesce(nullif(c.allowed_use, ''), d.allowed_use) = any(filter_allowed_uses))
       and (filter_authority_levels is null or d.authority_level = any(filter_authority_levels))
+      and (d.effective_date is null or d.effective_date <= current_date)
   ),
   tsq as (
     select websearch_to_tsquery('simple', coalesce(query_text, '')) as value
@@ -281,7 +341,7 @@ as $$
   dense_ranked as (
     select
       f.chunk_id,
-      row_number() over (order by f.embedding <=> query_embedding) as rank_position
+      row_number() over (order by f.embedding operator(extensions.<=>) query_embedding) as rank_position
     from filtered f
     where query_embedding is not null
       and f.embedding is not null
@@ -296,6 +356,15 @@ as $$
       and f.search_text @@ tsq.value
     limit 50
   ),
+  trigram_ranked as (
+    select
+      f.chunk_id,
+      row_number() over (order by extensions.similarity(f.chunk_text, coalesce(query_text, '')) desc) as rank_position
+    from filtered f
+    where coalesce(query_text, '') <> ''
+      and extensions.similarity(f.chunk_text, coalesce(query_text, '')) > 0.05
+    limit 50
+  ),
   fused as (
     select chunk_id, sum(score) as fused_score, string_agg(method, '+') as method
     from (
@@ -304,6 +373,9 @@ as $$
       union all
       select chunk_id, 1.0 / (60 + rank_position) as score, 'keyword'::text as method
       from keyword_ranked
+      union all
+      select chunk_id, 1.0 / (60 + rank_position) as score, 'trigram'::text as method
+      from trigram_ranked
     ) ranked
     group by chunk_id
   )

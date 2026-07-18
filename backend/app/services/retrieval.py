@@ -1,6 +1,8 @@
 """Lightweight retrieval for case memory, document templates, and privacy guardrails."""
 from __future__ import annotations
 
+import hashlib
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +28,7 @@ class RetrievalChunk:
     similarity_score: float = 0.0
     document_id: str | None = None
     session_id: str | None = None
+    source_note_id: str | None = None
     source_url: str = ""
     title: str = ""
     doc_category: str = ""
@@ -116,6 +119,7 @@ def retrieve_case_memory_chunks(
     """Retrieve dense prior-session memory with mandatory counselor/case filters."""
     if not _can_dense_retrieve() or not query_text or not counselor_id or not case_id:
         return []
+    started = time.perf_counter()
     vector = embed_query(query_text)
     rows = storage.rpc(
         "match_case_memory_chunks",
@@ -127,7 +131,17 @@ def retrieve_case_memory_chunks(
             "match_count": max_chunks,
         },
     )
-    return [_case_memory_row_to_chunk(row) for row in rows or []]
+    chunks = [_case_memory_row_to_chunk(row) for row in rows or []]
+    _log_retrieval(
+        counselor_id=counselor_id,
+        case_id=case_id,
+        retrieval_scope="case_memory",
+        query_text=query_text,
+        retrieval_method="case_memory_dense",
+        source_refs=[chunk.source_ref for chunk in chunks],
+        latency_ms=_elapsed_ms(started),
+    )
+    return chunks
 
 
 def retrieve_authoritative_kb_chunks(
@@ -141,6 +155,7 @@ def retrieve_authoritative_kb_chunks(
     if not _can_dense_retrieve() or not query_text:
         return []
 
+    started = time.perf_counter()
     categories = [TEMPLATE_CATEGORIES[target_document_type], "document_template"]
     if include_warning_rules:
         categories.extend(WARNING_CATEGORIES)
@@ -158,7 +173,17 @@ def retrieve_authoritative_kb_chunks(
     if settings.enable_hybrid_retrieval:
         params["query_text"] = query_text
     rows = storage.rpc(rpc_name, params)
-    return [_kb_row_to_chunk(row) for row in rows or []]
+    chunks = [_kb_row_to_chunk(row) for row in rows or []]
+    _log_retrieval(
+        counselor_id=None,
+        case_id=None,
+        retrieval_scope="authoritative_kb",
+        query_text=query_text,
+        retrieval_method=rpc_name,
+        source_refs=[chunk.source_ref for chunk in chunks],
+        latency_ms=_elapsed_ms(started),
+    )
+    return chunks
 
 
 def chunks_to_case_context(chunks: list[RetrievalChunk]) -> list[RetrievedCaseContextItem]:
@@ -387,6 +412,7 @@ def _case_memory_row_to_chunk(row: dict[str, Any]) -> RetrievalChunk:
     return RetrievalChunk(
         chunk_id=str(row.get("chunk_id") or ""),
         session_id=str(row.get("session_id") or "") or None,
+        source_note_id=str(row.get("source_note_id") or "") or None,
         source_ref=str(row.get("source_ref") or ""),
         field_type=str(row.get("field_type") or ""),
         chunk_text=str(row.get("chunk_text") or ""),
@@ -516,3 +542,41 @@ def _as_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _log_retrieval(
+    *,
+    counselor_id: str | None,
+    case_id: str | None,
+    retrieval_scope: str,
+    query_text: str,
+    retrieval_method: str,
+    source_refs: list[str],
+    latency_ms: int,
+) -> None:
+    if not storage.retrieval_enabled:
+        return
+    try:
+        storage.insert(
+            "retrieval_logs",
+            [
+                {
+                    "counselor_id": counselor_id,
+                    "case_id": case_id,
+                    "retrieval_scope": retrieval_scope,
+                    "query_hash": hashlib.sha256(query_text.encode("utf-8")).hexdigest(),
+                    "query_length": len(query_text),
+                    "retrieval_method": retrieval_method,
+                    "returned_source_refs": source_refs,
+                    "result_count": len(source_refs),
+                    "latency_ms": latency_ms,
+                }
+            ],
+            return_representation=False,
+        )
+    except Exception:
+        return
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)

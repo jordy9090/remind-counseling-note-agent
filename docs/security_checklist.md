@@ -6,6 +6,7 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 
 - Enable authentication and identify the counselor/organization for every request.
 - Configure Supabase Row Level Security for every table that can contain case, session, note, evidence, verification, or draft data.
+- Do not use `counselor_name` as a production security identity. It is a display/demo label until Supabase Auth user-to-counselor mapping exists.
 - Keep service role keys on the backend only. Never expose `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY` to frontend code, browser logs, screenshots, or client-side environment variables.
 - Add audit logs for create/read/update/delete access to counseling records and generated notes.
 - Define a retention policy for raw materials, generated drafts, confirmed notes, evidence items, and temporary drafts.
@@ -32,6 +33,7 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 
 - Apply RLS to `cases`, `sessions`, `generated_notes`, `evidence_items`, `verification_reports`, `kb_documents`, `kb_chunks`, and `counseling_drafts`.
 - Apply RLS to `case_memory_chunks` before any real case memory is stored.
+- Keep direct anon/authenticated client access denied until verified owner/tenant policies are implemented.
 - Restrict `kb_documents` and `kb_chunks` writes to trusted backend/admin paths.
 - Separate tenant or counselor data by authenticated owner fields before production use.
 - Add deletion/export procedures before storing real client data.
