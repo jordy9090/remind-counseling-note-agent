@@ -41,3 +41,6 @@ Thumbs.db
 .env.local
 .env.*.local
 .vercel
+.venv-dev/
+*.docx
+
