@@ -103,3 +103,20 @@ body {
 .process-step {
   height: var(--process-step-height);
 }
+
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+
+  .print\:hidden {
+    display: none !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+}
+
