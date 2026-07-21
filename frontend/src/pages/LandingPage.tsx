@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react'
 import { FileText, Quote, Star } from 'lucide-react'
 
 interface LandingPageProps {
-  onStartDemo?: () => void
-  onStartFullWorkflow?: () => void
-  onStart?: () => void
+  onStart: () => void
 }
 
 const BASE_WIDTH = 988
@@ -19,13 +17,11 @@ function getViewportSize() {
   return { height: window.innerHeight, width: window.innerWidth }
 }
 
-export default function LandingPage({ onStartDemo, onStartFullWorkflow, onStart }: LandingPageProps) {
+export default function LandingPage({ onStart }: LandingPageProps) {
   const [viewport, setViewport] = useState(getViewportSize)
   const scale = Math.min(viewport.width / BASE_WIDTH, viewport.height / BASE_HEIGHT)
   const headerHeight = BASE_HEADER_HEIGHT * scale
   const s = (value: number) => value * scale
-
-  const handleDemoStart = onStartDemo || onStart || onStartFullWorkflow || (() => {})
 
   useEffect(() => {
     const handleResize = () => setViewport(getViewportSize())
@@ -51,20 +47,17 @@ export default function LandingPage({ onStartDemo, onStartFullWorkflow, onStart 
           style={{ height: s(19), width: s(96) }}
         />
         <div className="flex items-center" style={{ gap: s(22) }}>
-          {onStartFullWorkflow && (
-            <button
-              type="button"
-              onClick={onStartFullWorkflow}
-              className="font-semibold text-slate-500 hover:text-slate-900"
-              style={{ fontSize: s(10) }}
-            >
-              전체 세션 생성 워크플로우
-            </button>
-          )}
           <button
             type="button"
-            onClick={handleDemoStart}
-            className="rounded-[5px] border border-blue-600 bg-blue-50 font-extrabold text-blue-700 shadow-sm hover:bg-blue-100"
+            className="font-semibold text-slate-500 hover:text-slate-900"
+            style={{ fontSize: s(10) }}
+          >
+            로그인
+          </button>
+          <button
+            type="button"
+            onClick={onStart}
+            className="rounded-[5px] border border-slate-300 bg-white font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
             style={{
               fontSize: s(11),
               height: s(30),
@@ -72,7 +65,7 @@ export default function LandingPage({ onStartDemo, onStartFullWorkflow, onStart 
               paddingRight: s(14),
             }}
           >
-            상담사 검토 데모 체험하기
+            무료로 시작하기
           </button>
         </div>
       </header>
@@ -114,21 +107,19 @@ export default function LandingPage({ onStartDemo, onStartFullWorkflow, onStart 
             >
               {'상담사의 기록 시간을 줄이고 문서의 완성도는\n높여 상담에 더 집중할 수 있도록 돕습니다'}
             </p>
-            <div className="flex items-center" style={{ gap: s(12), marginTop: s(34) }}>
-              <button
-                type="button"
-                onClick={handleDemoStart}
-                className="rounded-[5px] bg-blue-600 font-extrabold text-white shadow-[0_5px_9px_rgba(30,80,180,0.28)] hover:bg-blue-700"
-                style={{
-                  fontSize: s(19),
-                  height: s(49),
-                  paddingLeft: s(24),
-                  paddingRight: s(24),
-                }}
-              >
-                상담사 검토 데모 체험하기 →
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onStart}
+              className="rounded-[5px] bg-blue-600 font-extrabold text-white shadow-[0_5px_9px_rgba(30,80,180,0.28)] hover:bg-blue-700"
+              style={{
+                fontSize: s(21),
+                height: s(49),
+                marginTop: s(34),
+                width: s(214),
+              }}
+            >
+              무료로 시작하기
+            </button>
           </div>
 
           <div

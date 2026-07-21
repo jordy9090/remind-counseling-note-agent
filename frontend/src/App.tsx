@@ -4,46 +4,46 @@ import LandingPage from './pages/LandingPage'
 import SessionDraftPage from './pages/SessionDraftPage'
 import CounselorDemoPage from './pages/CounselorDemoPage'
 
-type ViewMode = 'landing' | 'demo' | 'full_workflow'
-
-function getInitialMode(): ViewMode {
-  if (typeof window === 'undefined') return 'landing'
+function isCounselorDemoRoute(): boolean {
+  if (typeof window === 'undefined') return false
   const path = window.location.pathname
   const search = window.location.search
-  if (path.includes('/demo') || search.includes('demo=true') || search.includes('demo=1')) {
-    return 'demo'
-  }
-  return 'landing'
+  return (
+    path.startsWith('/demo') ||
+    path === '/demo/counselor-review' ||
+    search.includes('demo=counselor-review') ||
+    search.includes('demo=true')
+  )
 }
 
 function App() {
-  const [viewMode, setViewMode] = useState<ViewMode>(getInitialMode)
+  const [isDemo, setIsDemo] = useState(isCounselorDemoRoute)
+  const [hasStarted, setHasStarted] = useState(false)
 
   useEffect(() => {
     const handlePopState = () => {
-      setViewMode(getInitialMode())
+      setIsDemo(isCounselorDemoRoute())
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  if (viewMode === 'demo') {
-    return <CounselorDemoPage onBackToMain={() => setViewMode('landing')} />
+  if (isDemo) {
+    return (
+      <CounselorDemoPage
+        onBackToMain={() => {
+          window.history.pushState({}, '', '/')
+          setIsDemo(false)
+        }}
+      />
+    )
   }
 
-  if (viewMode === 'full_workflow') {
-    return <SessionDraftPage />
+  if (!hasStarted) {
+    return <LandingPage onStart={() => setHasStarted(true)} />
   }
 
-  return (
-    <LandingPage
-      onStartDemo={() => {
-        window.history.pushState({}, '', '?demo=true')
-        setViewMode('demo')
-      }}
-      onStartFullWorkflow={() => setViewMode('full_workflow')}
-    />
-  )
+  return <SessionDraftPage />
 }
 
 export default App
