@@ -182,6 +182,10 @@ export interface RetrievalReport {
   case_context_count: number
   template_context_found: boolean
   privacy_rule_count: number
+  embedding_latency_ms: number
+  rpc_latency_ms: number
+  retrieval_latency_ms: number
+  generation_latency_ms: number
   failures: string[]
   notices: string[]
 }
@@ -210,6 +214,22 @@ export interface GenerateNoteResponse {
   retrieval_report: RetrievalReport
   persistence_report: PersistenceReport
   stub: boolean
+}
+
+export interface ConfirmGeneratedNoteRequest {
+  note_id: string
+  confirmed_note: Record<string, unknown>
+  counselor_edited: boolean
+  create_case_memory: boolean
+}
+
+export interface ConfirmGeneratedNoteResponse {
+  note_id: string
+  confirmation_status: 'confirmed' | 'demo_confirmed'
+  confirmed_at: string
+  memory_chunk_count: number
+  memory_embedding_count: number
+  message: string
 }
 
 export type EvidenceSourceType =

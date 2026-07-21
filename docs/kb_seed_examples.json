@@ -1,116 +1,490 @@
 {
   "notes": [
     "Demo seed content only. Do not paste copyrighted manuals, paid test material, or real counseling records.",
-    "Use these chunks for documentation structure and privacy review, not diagnosis or treatment recommendations."
+    "Chunks are short paraphrases for documentation structure and warning generation, not diagnosis or treatment recommendations.",
+    "Run migrations before this seed so source-aware columns exist."
   ],
   "documents": [
     {
-      "slug": "template_session_note",
-      "title": "Session note template checklist",
+      "slug": "session-note-template-v1",
+      "title": "Re:mind session note template checklist",
+      "source_org": "Re:mind internal demo",
       "source_type": "session_note",
-      "doc_category": "document_template",
+      "source_url": "https://github.com/jordy9090/remind-counseling-note-agent",
+      "effective_date": "2026-07-17",
+      "doc_category": "session_note_template",
       "authority_level": "internal_demo",
       "allowed_use": "documentation_structure_only",
       "chunks": [
         {
+          "source_ref": "kb:session-note-template-v1:1",
+          "section_path": "session_note > session_metadata",
+          "document_type": "session_note",
           "chunk_type": "template_fields",
-          "chunk_text": "Session notes should separate presenting issue, session theme, key content, counselor intervention, client response, and next plan.",
+          "chunk_text": "회기 기록은 사례 식별자, 회기 번호, 회기 일자, 상담자 표시명 같은 회기 메타데이터를 본문과 분리해 둔다. 이 값은 문서 정렬과 이전 회기 연결을 위한 정보이며 임상 판단 근거로 쓰지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": false,
           "metadata_json": {
-            "required_fields": ["주호소", "회기 주제", "상담 내용", "상담자 개입", "내담자 반응", "다음 계획"],
-            "optional_fields": ["비언어 관찰", "상담 목표", "심리검사 메모"],
-            "counselor_review_fields": ["상담자 reflection", "사례개념화", "목표 달성 정도"],
-            "missing_field_checklist": ["위험 신호 확인", "상담자 최종 확인"]
+            "required_fields": ["session_metadata", "case_id", "session_number", "session_date"],
+            "auto_extractable_fields": ["case_id", "session_number", "session_date"]
+          }
+        },
+        {
+          "source_ref": "kb:session-note-template-v1:presenting-theme",
+          "section_path": "session_note > presenting_issue_and_theme",
+          "document_type": "session_note",
+          "chunk_type": "template_fields",
+          "chunk_text": "주호소와 회기 주제는 내담자 발화, 상담자 메모, 이전 회기 요약에서 직접 확인되는 표현을 우선한다. 추정한 배경 설명은 needs_review로 남기고 상담사가 유지 여부를 확인한다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["presenting_problem", "session_theme"],
+            "auto_extractable_fields": ["presenting_problem", "session_theme"],
+            "missing_field_checklist": ["direct client wording", "counselor confirmation"]
+          }
+        },
+        {
+          "source_ref": "kb:session-note-template-v1:content-intervention",
+          "section_path": "session_note > content_and_intervention",
+          "document_type": "session_note",
+          "chunk_type": "template_fields",
+          "chunk_text": "상담 내용에는 다룬 사건, 생각, 감정, 행동, 상담자 개입을 근거 문장과 함께 적는다. 개입, 내담자 반응, 중요 발화, 비언어 관찰은 기관 양식에 따라 상담 내용 안에 통합할 수 있다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": false,
+          "metadata_json": {
+            "required_fields": ["session_content", "counselor_intervention", "client_response", "important_client_utterance"],
+            "auto_extractable_fields": ["session_content", "counselor_intervention", "client_response", "important_client_utterance"]
+          }
+        },
+        {
+          "source_ref": "kb:session-note-template-v1:observation-review",
+          "section_path": "session_note > observation_and_review",
+          "document_type": "session_note",
+          "chunk_type": "template_fields",
+          "chunk_text": "비언어 또는 준언어 관찰은 입력 자료에 명시된 경우에만 기록한다. 사례개념화, 상담자 성찰, 목표 달성 평가는 상담자 판단 영역으로 표시하고 AI가 단정하지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "optional_fields": ["nonverbal_or_paraverbal_observation"],
+            "counselor_review_fields": ["counselor_reflection", "case_conceptualization", "goal_attainment"]
+          }
+        },
+        {
+          "source_ref": "kb:session-note-template-v1:next-plan",
+          "section_path": "session_note > next_session_plan",
+          "document_type": "session_note",
+          "chunk_type": "template_fields",
+          "chunk_text": "다음 회기 계획은 이번 회기에서 합의된 과제, 확인할 변화, 다음에 다룰 주제를 구체적으로 적는다. 합의가 확인되지 않은 계획이나 치료 처방처럼 보이는 문장은 상담사 확인 항목으로 둔다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["next_plan"],
+            "auto_extractable_fields": ["next_plan"],
+            "missing_field_checklist": ["agreed next action", "follow-up check"]
           }
         }
       ]
     },
     {
-      "slug": "template_supervision_report",
-      "title": "Supervision report template checklist",
+      "slug": "supervision-report-template-v1",
+      "title": "Re:mind supervision report template checklist",
+      "source_org": "Re:mind internal demo",
       "source_type": "supervision_report",
-      "doc_category": "document_template",
+      "source_url": "https://github.com/jordy9090/remind-counseling-note-agent",
+      "effective_date": "2026-07-17",
+      "doc_category": "supervision_report_template",
       "authority_level": "internal_demo",
       "allowed_use": "documentation_structure_only",
       "chunks": [
         {
+          "source_ref": "kb:supervision-report-template-v1:1",
+          "section_path": "supervision_report > counselor_and_supervisor_metadata",
+          "document_type": "supervision_report",
           "chunk_type": "template_fields",
-          "chunk_text": "Supervision reports need case background, presenting issue, counseling progress, intervention questions, and items the counselor wants to discuss.",
+          "chunk_text": "수퍼비전 보고서에는 상담자, 기관, 수퍼바이저, 수퍼비전 일시와 장소 같은 행정 정보를 본문 사례 내용과 분리해 둔다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": false,
           "metadata_json": {
-            "required_fields": ["내담자 기본 정보", "상담신청경위", "주호소", "상담 진행 과정", "슈퍼비전 요청사항"],
-            "optional_fields": ["가족관계", "이전 상담 경험", "심리검사 결과 요약"],
-            "counselor_review_fields": ["사례개념화", "상담 목표와 전략", "슈퍼비전 질문"],
-            "missing_field_checklist": ["가족관계", "상담 목표와 전략", "슈퍼비전 요청사항"]
+            "required_fields": ["counselor_metadata", "institution_metadata", "supervisor_metadata"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:client-background",
+          "section_path": "supervision_report > client_background",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "내담자 기본 정보, 상담 의뢰 또는 요청 배경, 주호소, 이전 상담 경험은 입력 자료에서 확인된 범위만 요약한다. 직접 확인되지 않은 가족관계나 병력은 추정하지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["client_basic_information", "counseling_request_background", "presenting_problem"],
+            "partially_available_fields": ["previous_counseling_experience", "family_relationship"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:observed-behavior",
+          "section_path": "supervision_report > observed_behavior",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "관찰 행동은 축어록, 상담자 메모, 명시적 비언어 기록에서 나온 내용만 쓴다. 표정이나 감정 상태를 새로 만들어 내지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": false,
+          "metadata_json": {
+            "optional_fields": ["observed_behavior", "nonverbal_or_paraverbal_observation"],
+            "auto_extractable_fields": ["observed_behavior"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:test-summary",
+          "section_path": "supervision_report > psychological_test_summary",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "심리검사 요약은 제공된 검사명과 상담자가 이미 적은 요약만 반영한다. 점수 해석, 진단, 위험도 판단은 자동 작성하지 않고 상담자 확인 항목으로 남긴다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "partially_available_fields": ["psychological_test_summary"],
+            "counselor_review_fields": ["psychological_test_interpretation"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:resources",
+          "section_path": "supervision_report > strengths_and_resources",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "강점과 자원은 내담자 발화나 상담자 메모에 근거가 있을 때만 쓴다. 가능성이 있어 보인다는 이유만으로 성격 특성이나 보호요인을 확정하지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "optional_fields": ["strengths_and_resources"],
+            "counselor_review_fields": ["resource_formulation"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:case-understanding",
+          "section_path": "supervision_report > case_understanding_and_goals",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "사례 이해, 상담 목표, 상담 전략은 상담자 판단이 필요한 핵심 영역이다. AI는 근거 후보와 누락 항목만 제시하고 최종 사례개념화는 상담자가 작성한다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "counselor_review_fields": ["case_understanding", "counseling_goals", "counseling_strategies"],
+            "missing_field_checklist": ["case_understanding", "counseling_goals", "counseling_strategies"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:progress-transcript",
+          "section_path": "supervision_report > progress_and_verbatim",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "상담 진행과 선택 축어록은 회기 흐름을 보여 주는 직접 근거를 중심으로 구성한다. 축어록은 내담자와 상담자 발화를 구분하고, 생략 또는 편집 사실을 표시한다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": false,
+          "metadata_json": {
+            "required_fields": ["counseling_progress", "selected_transcript_or_verbatim"],
+            "auto_extractable_fields": ["counseling_progress", "selected_transcript_or_verbatim"]
+          }
+        },
+        {
+          "source_ref": "kb:supervision-report-template-v1:questions",
+          "section_path": "supervision_report > reflection_and_questions",
+          "document_type": "supervision_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "상담자 성찰과 수퍼비전 질문은 상담자가 직접 정리해야 한다. AI 초안은 질문 후보를 만들 수 있지만 상담자 자기평가나 수행 점수를 자동 산출하지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["counselor_reflection", "supervision_questions"],
+            "counselor_review_fields": ["counselor_reflection", "supervision_questions"]
           }
         }
       ]
     },
     {
-      "slug": "template_termination_report",
-      "title": "Termination report template checklist",
+      "slug": "termination-report-template-v1",
+      "title": "Re:mind termination report template checklist",
+      "source_org": "Re:mind internal demo",
       "source_type": "termination_report",
-      "doc_category": "document_template",
+      "source_url": "https://github.com/jordy9090/remind-counseling-note-agent",
+      "effective_date": "2026-07-17",
+      "doc_category": "termination_report_template",
       "authority_level": "internal_demo",
       "allowed_use": "documentation_structure_only",
       "chunks": [
         {
+          "source_ref": "kb:termination-report-template-v1:1",
+          "section_path": "termination_report > metadata_and_period",
+          "document_type": "termination_report",
           "chunk_type": "template_fields",
-          "chunk_text": "Termination reports summarize overall goals, session course, observed changes, termination reason, and follow-up plan.",
+          "chunk_text": "종결 보고서는 상담자와 내담자 메타데이터, 상담 기간, 총 회기 수를 먼저 정리한다. 회기 수와 기간은 저장된 회기 목록에서 확인된 값이어야 한다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
           "metadata_json": {
-            "required_fields": ["상담 목표", "전체 회기 진행 요약", "주요 변화", "종결 사유", "향후 계획"],
-            "optional_fields": ["의뢰 또는 연계 계획", "추수 상담 일정"],
-            "counselor_review_fields": ["목표 달성 정도", "종합 소견", "향후 권고"],
-            "missing_field_checklist": ["종결 사유", "목표 달성 정도", "향후 권고"]
+            "required_fields": ["counselor_metadata", "client_metadata", "counseling_period", "session_count"]
+          }
+        },
+        {
+          "source_ref": "kb:termination-report-template-v1:presenting-assessment",
+          "section_path": "termination_report > presenting_issue_and_assessment",
+          "document_type": "termination_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "주호소와 평가 또는 검사 유형은 전체 상담 과정에서 반복 확인된 내용만 요약한다. 검사 해석과 진단은 자동 생성하지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["presenting_problem"],
+            "optional_fields": ["assessment_test_types"],
+            "counselor_review_fields": ["assessment_interpretation"]
+          }
+        },
+        {
+          "source_ref": "kb:termination-report-template-v1:process-intervention",
+          "section_path": "termination_report > process_and_interventions",
+          "document_type": "termination_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "상담 목표, 상담 과정, 주요 개입은 여러 회기의 확인된 기록을 시간 순서로 묶어 쓴다. 단일 회기 발화를 전체 변화로 과장하지 않는다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["counseling_goals", "counseling_process", "major_interventions"],
+            "missing_field_checklist": ["multi-session timeline", "confirmed goals"]
+          }
+        },
+        {
+          "source_ref": "kb:termination-report-template-v1:outcomes-unresolved",
+          "section_path": "termination_report > outcomes_and_unresolved_issues",
+          "document_type": "termination_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "변화와 성과, 미해결 쟁점은 상담자가 확인한 근거와 함께 적는다. 목표 달성 정도와 종합 의견은 상담자 판단 영역으로 표시한다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["changes_and_outcomes"],
+            "optional_fields": ["unresolved_issues"],
+            "counselor_review_fields": ["goal_attainment", "counselor_final_opinion"]
+          }
+        },
+        {
+          "source_ref": "kb:termination-report-template-v1:termination-followup",
+          "section_path": "termination_report > termination_reason_and_follow_up",
+          "document_type": "termination_report",
+          "chunk_type": "template_fields",
+          "chunk_text": "종결 사유, 추후 계획, 의뢰 또는 사후관리 계획은 상담자가 명확히 확인한 내용으로 작성한다. 확인되지 않은 권고는 누락 항목으로 표시한다.",
+          "allowed_use": "documentation_structure_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "required_fields": ["termination_reason", "follow_up_plan"],
+            "optional_fields": ["referral_plan"],
+            "missing_field_checklist": ["termination_reason", "follow_up_plan", "counselor_final_opinion"]
           }
         }
       ]
     },
     {
-      "slug": "privacy_minimization",
-      "title": "Privacy minimization principle",
-      "source_type": "privacy",
-      "doc_category": "privacy_rule",
+      "slug": "counseling-ethics-confidentiality-demo",
+      "title": "Counseling ethics confidentiality paraphrase",
+      "source_org": "Korean Counseling Association",
+      "source_type": "ethics",
+      "source_url": "https://dev.counselors.or.kr/KOR/kca/law3.php",
+      "effective_date": "2026-07-17",
+      "doc_category": "counseling_ethics",
       "authority_level": "public_principle_paraphrase",
       "allowed_use": "verification_warnings_only",
       "chunks": [
         {
-          "chunk_type": "privacy_warning",
-          "chunk_text": "Collect and store only the minimum personal information needed for the documented counseling purpose.",
-          "metadata_json": {
-            "warning": "저장 전 불필요한 실명, 연락처, 기관명, 학교명은 비식별화 필요 여부를 확인하세요."
-          }
-        }
-      ]
-    },
-    {
-      "slug": "ethics_consent_records",
-      "title": "Consent and counseling records principle",
-      "source_type": "ethics",
-      "doc_category": "ethics_rule",
-      "authority_level": "professional_ethics_paraphrase",
-      "allowed_use": "verification_warnings_only",
-      "chunks": [
-        {
+          "source_ref": "kb:counseling-ethics-confidentiality-demo:1",
+          "section_path": "ethics > confidentiality",
+          "document_type": "",
           "chunk_type": "ethics_warning",
-          "chunk_text": "Recording, retaining, or sharing counseling records should be handled with client consent and counselor review.",
+          "chunk_text": "상담 기록과 전자 기록은 비밀보장 검토와 접근 통제가 필요하다. 공유, 출력, export 전에는 상담자 확인과 적절한 권한 확인을 거친다.",
+          "allowed_use": "verification_warnings_only",
+          "counselor_review_required": true,
           "metadata_json": {
-            "warning": "녹음/STT 원문 저장 또는 기록 공유 전 동의와 접근 권한을 확인하세요."
+            "warning": "Check confidentiality, consent, and access permissions before storing, sharing, or exporting counseling records."
+          }
+        },
+        {
+          "source_ref": "kb:counseling-ethics-confidentiality-demo:minimum-sharing",
+          "section_path": "ethics > minimum_necessary_sharing",
+          "document_type": "",
+          "chunk_type": "ethics_warning",
+          "chunk_text": "상담 자료를 교육, 수퍼비전, 시연에 사용할 때는 필요한 범위만 남기고 식별 가능 정보를 줄인다. 데모에는 합성 자료를 우선한다.",
+          "allowed_use": "verification_warnings_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Use minimum necessary information and prefer synthetic material for demos."
+          }
+        },
+        {
+          "source_ref": "kb:counseling-ethics-confidentiality-demo:boundaries",
+          "section_path": "ethics > ai_boundaries",
+          "document_type": "",
+          "chunk_type": "ethics_warning",
+          "chunk_text": "AI는 상담자 판단을 대체하지 않는다. 진단, 위험 결론, 치료 권고, 상담자 수행평가는 자동 생성하지 않고 검토 항목으로 남긴다.",
+          "allowed_use": "verification_warnings_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Do not use the system for diagnosis, risk scoring, treatment recommendations, or counselor evaluation."
           }
         }
       ]
     },
     {
-      "slug": "security_access_control",
-      "title": "Access control principle",
-      "source_type": "security",
-      "doc_category": "security_rule",
-      "authority_level": "internal_demo",
-      "allowed_use": "verification_warnings_only",
+      "slug": "privacy-law-sensitive-info-demo",
+      "title": "Personal Information Protection Act sensitive information paraphrase",
+      "source_org": "Korea Law Information Center",
+      "source_type": "privacy_law",
+      "source_url": "https://www.law.go.kr/lsLawLinkInfo.do?chrClsCd=010202&lsJoLnkSeq=1000575255",
+      "effective_date": "2025-10-02",
+      "doc_category": "privacy_law",
+      "authority_level": "public_law_paraphrase",
+      "allowed_use": "verification_warning_only",
       "chunks": [
         {
-          "chunk_type": "security_warning",
-          "chunk_text": "Counseling records should be protected by role-based access, audit logs, and retention limits before production use.",
+          "source_ref": "kb:privacy-law-sensitive-info-demo:1",
+          "section_path": "privacy_law > sensitive_information",
+          "document_type": "",
+          "chunk_type": "privacy_warning",
+          "chunk_text": "상담 기록에는 민감정보가 포함될 수 있으므로 처리 전 별도 동의, 법적 근거, 안전조치 필요 여부를 검토한다.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
           "metadata_json": {
-            "warning": "운영 전 사용자별 접근권한, 감사 로그, 보관기간 정책을 설정해야 합니다."
+            "warning": "Review whether sensitive personal information is present and whether a legal basis or separate consent exists."
+          }
+        },
+        {
+          "source_ref": "kb:privacy-law-sensitive-info-demo:minimum-collection",
+          "section_path": "privacy_law > minimum_collection",
+          "document_type": "",
+          "chunk_type": "privacy_warning",
+          "chunk_text": "기록 저장은 목적에 필요한 최소 범위로 제한한다. 원문, 음성, 연락처, 식별자는 저장 필요성이 확인되지 않으면 제외한다.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Keep storage minimal; do not keep raw text/audio or direct identifiers by default."
+          }
+        },
+        {
+          "source_ref": "kb:privacy-law-sensitive-info-demo:retention-export",
+          "section_path": "privacy_law > retention_and_export",
+          "document_type": "",
+          "chunk_type": "privacy_warning",
+          "chunk_text": "보관 기간, 삭제 절차, 열람 또는 export 권한은 실제 상담 자료 저장 전에 정해져 있어야 한다.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Define retention, deletion, access, and export controls before real counseling data is stored."
+          }
+        }
+      ]
+    },
+    {
+      "slug": "deidentification-guideline-demo",
+      "title": "Pseudonymized information guideline paraphrase",
+      "source_org": "Personal Information Protection Commission",
+      "source_type": "deidentification",
+      "source_url": "https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS217&mCode=D010030000&nttId=9900",
+      "effective_date": "2024-02-05",
+      "doc_category": "deidentification_guideline",
+      "authority_level": "public_guideline_paraphrase",
+      "allowed_use": "verification_warning_only",
+      "chunks": [
+        {
+          "source_ref": "kb:deidentification-guideline-demo:1",
+          "section_path": "deidentification > direct_identifiers",
+          "document_type": "",
+          "chunk_type": "deidentification_warning",
+          "chunk_text": "테스트나 retrieval에 상담 텍스트를 쓰기 전 이름, 연락처, 이메일, 주민등록번호 유사 값, 학번 같은 직접 식별자를 제거하거나 placeholder로 대체한다.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Mask direct identifiers before persistence or embedding."
+          }
+        },
+        {
+          "source_ref": "kb:deidentification-guideline-demo:contextual-identifiers",
+          "section_path": "deidentification > contextual_identifiers",
+          "document_type": "",
+          "chunk_type": "deidentification_warning",
+          "chunk_text": "학교, 병원, 직장, 지역, 희귀 사건처럼 조합되면 재식별될 수 있는 맥락 정보도 검토한다.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Review contextual identifiers such as institutions, locations, and rare events."
+          }
+        },
+        {
+          "source_ref": "kb:deidentification-guideline-demo:review-loop",
+          "section_path": "deidentification > counselor_review",
+          "document_type": "",
+          "chunk_type": "deidentification_warning",
+          "chunk_text": "비식별 처리는 자동 masking 뒤 상담자 검토를 거친다. 오탐은 검토 가능하게 남기고, 전체 기록을 조용히 삭제하지 않는다.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Keep masking decisions reviewable and do not silently remove entire notes."
+          }
+        }
+      ]
+    },
+    {
+      "slug": "internal-security-policy-v1",
+      "title": "Re:mind internal security policy draft",
+      "source_org": "Re:mind internal demo",
+      "source_type": "security",
+      "source_url": "https://github.com/jordy9090/remind-counseling-note-agent",
+      "effective_date": "2026-07-17",
+      "doc_category": "internal_security_policy",
+      "authority_level": "internal_demo",
+      "allowed_use": "verification_warning_only",
+      "chunks": [
+        {
+          "source_ref": "kb:internal-security-policy-v1:1",
+          "section_path": "security > backend_only_service_role",
+          "document_type": "",
+          "chunk_type": "security_warning",
+          "chunk_text": "Service-role credentials must stay on the backend. They must not be exposed through frontend code, screenshots, browser logs, or VITE environment variables.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Do not expose service role keys to frontend code."
+          }
+        },
+        {
+          "source_ref": "kb:internal-security-policy-v1:preview-token",
+          "section_path": "security > preview_access_guard",
+          "document_type": "",
+          "chunk_type": "security_warning",
+          "chunk_text": "Public preview deployments must require a server-side preview token before note generation, persistence, confirmation, recomposition, draft, or supervision endpoints are used.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "A deployed preview without REMIND_PREVIEW_API_TOKEN must not accept note writes."
+          }
+        },
+        {
+          "source_ref": "kb:internal-security-policy-v1:persistence-defaults",
+          "section_path": "security > persistence_defaults",
+          "document_type": "",
+          "chunk_type": "security_warning",
+          "chunk_text": "Persistence, raw input storage, and case-memory indexing stay disabled by default. Enable them only with preview-token protection or production Auth/RLS.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Keep ENABLE_PERSISTENCE=0, SAVE_RAW_INPUT=0, and ENABLE_CASE_MEMORY=0 unless access control is verified."
+          }
+        },
+        {
+          "source_ref": "kb:internal-security-policy-v1:audit-retention",
+          "section_path": "security > audit_retention_export",
+          "document_type": "",
+          "chunk_type": "security_warning",
+          "chunk_text": "Production use requires owner-based RLS, audit logs, retention limits, deletion/export controls, and a reviewed counselor-to-auth-user mapping.",
+          "allowed_use": "verification_warning_only",
+          "counselor_review_required": true,
+          "metadata_json": {
+            "warning": "Do not store real counseling data before Auth/RLS/audit/retention/export controls are implemented."
           }
         }
       ]

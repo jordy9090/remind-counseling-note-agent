@@ -43,4 +43,4 @@ Thumbs.db
 .vercel
 .venv-dev/
 *.docx
-
+supabase/.temp/

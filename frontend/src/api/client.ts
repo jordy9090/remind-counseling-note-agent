@@ -3,6 +3,8 @@ import type {
   AudioCapabilitiesResponse,
   AudioTranscriptionResponse,
   DocumentCapabilitiesResponse,
+  ConfirmGeneratedNoteRequest,
+  ConfirmGeneratedNoteResponse,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
@@ -21,10 +23,19 @@ import type {
 } from '../types/session'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const PREVIEW_API_TOKEN = import.meta.env.VITE_REMIND_PREVIEW_API_TOKEN || ''
 
 const client = axios.create({
   baseURL: API_BASE_URL,
   timeout: 90000,
+})
+
+client.interceptors.request.use((config) => {
+  if (PREVIEW_API_TOKEN) {
+    config.headers = config.headers ?? {}
+    config.headers['X-Remind-Preview-Token'] = PREVIEW_API_TOKEN
+  }
+  return config
 })
 
 export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftResponse> => {
@@ -48,6 +59,13 @@ export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftR
 }
 
 export const postGenerateNote = generateNoteDraft
+
+export const confirmGeneratedNote = async (
+  request: ConfirmGeneratedNoteRequest,
+): Promise<ConfirmGeneratedNoteResponse> => {
+  const response = await client.post<ConfirmGeneratedNoteResponse>('/api/notes/confirm', request)
+  return response.data
+}
 
 export const saveTemporaryDraft = async (
   draft: TemporaryDraftSaveRequest,

@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import audio, documents, health, materials, notes
+from app.core.config import validate_runtime_security
 
 app = FastAPI(
     title="Re:mind MVP V0 API",
@@ -28,6 +29,11 @@ app.include_router(notes.router)
 app.include_router(documents.router)
 app.include_router(materials.router)
 app.include_router(audio.router)
+
+
+@app.on_event("startup")
+async def validate_startup_security() -> None:
+    validate_runtime_security()
 
 
 @app.get("/")

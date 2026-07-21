@@ -5,7 +5,10 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 ## Required Before Real Counseling Data
 
 - Enable authentication and identify the counselor/organization for every request.
+- Until production Auth exists, protect every `/api/notes/*` route with `REMIND_PREVIEW_API_TOKEN` and `X-Remind-Preview-Token`.
+- Keep `REMIND_ALLOW_LOCAL_BYPASS=0` outside local development/test environments.
 - Configure Supabase Row Level Security for every table that can contain case, session, note, evidence, verification, or draft data.
+- Do not use `counselor_name` as a production security identity. It is a display/demo label until Supabase Auth user-to-counselor mapping exists.
 - Keep service role keys on the backend only. Never expose `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY` to frontend code, browser logs, screenshots, or client-side environment variables.
 - Add audit logs for create/read/update/delete access to counseling records and generated notes.
 - Define a retention policy for raw materials, generated drafts, confirmed notes, evidence items, and temporary drafts.
@@ -25,6 +28,9 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 ## Retrieval Boundaries
 
 - RAG is limited to case-level memory, document templates, and privacy/ethics/security guardrails.
+- Dense retrieval is opt-in with `ENABLE_DENSE_RETRIEVAL=1`; real counseling records must not be embedded by default.
+- Case-memory indexing is opt-in with `ENABLE_CASE_MEMORY=1`; the default must remain `ENABLE_CASE_MEMORY=0`.
+- Case-memory retrieval must filter by counselor and case before ranking to prevent cross-case leakage.
 - Do not use RAG to generate diagnosis, clinical risk scoring, treatment recommendations, psychological test interpretation, or counselor performance evaluation.
 - KB seed files must not contain copyrighted manuals, paid psychological test material, or real counseling records.
 - Use `docs/kb_seed_examples.json` as a short paraphrased demo seed only.
@@ -32,6 +38,8 @@ Re:mind V1 is a lightweight retrieval-aware documentation demo. Do not store rea
 ## Supabase Data Controls
 
 - Apply RLS to `cases`, `sessions`, `generated_notes`, `evidence_items`, `verification_reports`, `kb_documents`, `kb_chunks`, and `counseling_drafts`.
+- Apply RLS to `case_memory_chunks` before any real case memory is stored.
+- Keep direct anon/authenticated client access denied until verified owner/tenant policies are implemented.
 - Restrict `kb_documents` and `kb_chunks` writes to trusted backend/admin paths.
 - Separate tenant or counselor data by authenticated owner fields before production use.
 - Add deletion/export procedures before storing real client data.

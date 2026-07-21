@@ -169,17 +169,76 @@ Supabase 저장과 lightweight RAG를 켜려면 Supabase SQL editor에서 [docs/
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+RUNTIME_ENVIRONMENT=production
+REMIND_PREVIEW_API_TOKEN=replace-with-preview-only-token
+REMIND_PREVIEW_ACTOR=preview_server_actor
+REMIND_ALLOW_LOCAL_BYPASS=0
 ENABLE_PERSISTENCE=1
 ENABLE_RAG=1
+ENABLE_CASE_MEMORY=0
+ENABLE_DENSE_RETRIEVAL=0
+ENABLE_HYBRID_RETRIEVAL=1
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+EMBEDDING_CACHE_TTL_SECONDS=300
+EMBEDDING_CACHE_MAX_ENTRIES=256
 SAVE_RAW_INPUT=0
 ```
 
 `POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. `SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 저장하지 않고 sanitized input과 metadata만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
 
+All `/api/notes/*` routes require `X-Remind-Preview-Token` until production Supabase Auth mapping exists. `ENABLE_CASE_MEMORY=0` is the safe default; turn it on only for synthetic/demo cases after preview-token protection is verified. This is a lightweight retrieval-aware workflow, not production-ready RAG.
+
 KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 있습니다. 유료 검사 매뉴얼, 저작권 있는 상담 자료, 실제 내담자 기록은 seed에 넣지 않습니다. Supabase schema를 만든 뒤 demo KB를 넣으려면 repository root에서 다음을 실행합니다.
 
 ```bash
 python scripts/seed_kb_examples.py
+python scripts/embed_kb_chunks.py
+python scripts/check_supabase_remote.py
+```
+
+### Supabase pgvector workflow
+
+Shared project ref: `bgjapctiawosgpjcyfuq`
+
+This repo now keeps non-destructive Supabase migrations under
+`supabase/migrations`. The remote project is the source of truth, so pull before
+push whenever Supabase credentials are available.
+
+```bash
+npx supabase login
+npx supabase link --project-ref bgjapctiawosgpjcyfuq
+npx supabase db pull
+npx supabase db push
+```
+
+Do not run `supabase db reset` against the shared project. Review pending
+migrations before applying them. The linked remote project has been verified
+with synthetic/demo data only; see
+[docs/supabase_remote_preflight.md](docs/supabase_remote_preflight.md) and
+[docs/supabase_remote_verification.md](docs/supabase_remote_verification.md)
+for redacted results.
+
+Dense retrieval is still opt-in:
+
+```env
+ENABLE_RAG=1
+ENABLE_DENSE_RETRIEVAL=1
+ENABLE_HYBRID_RETRIEVAL=1
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+```
+
+Synthetic retrieval evaluation does not require Supabase or OpenAI:
+
+```bash
+python scripts/evaluate_retrieval.py
+```
+
+Remote Supabase verification after linking:
+
+```bash
+python scripts/check_supabase_remote.py --write-report docs/supabase_remote_verification.md
 ```
 
 보안 경계는 [docs/security_checklist.md](docs/security_checklist.md)를 기준으로 확인합니다.
@@ -196,7 +255,10 @@ pnpm dev
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000
+VITE_REMIND_PREVIEW_API_TOKEN=replace-with-preview-only-token
 ```
+
+`VITE_REMIND_PREVIEW_API_TOKEN` is visible to anyone who can inspect the browser bundle. Use it only for a temporary preview gate, rotate it often, and do not treat it as production authentication.
 
 `pnpm`이 설치되어 있지 않다면 `npm install`과 `npm run dev`를 사용할 수 있습니다. 빌드 검증은 `pnpm build` 또는 `npm run build`로 실행합니다.
 

@@ -1,0 +1,295 @@
+{
+  "description": "Synthetic Korean retrieval evaluation for Re:mind. No real counseling records.",
+  "items": [
+    {
+      "id": "session-metadata",
+      "query": "회기 번호와 날짜 같은 기본 정보는 상담 내용과 어떻게 분리해서 기록해?",
+      "expected_document_category": "session_note_template",
+      "expected_source_ref": "kb:session-note-template-v1:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "session-theme",
+      "query": "주호소와 이번 회기 주제를 내담자 말에서 뽑을 때 확인해야 할 기준",
+      "expected_document_category": "session_note_template",
+      "expected_source_ref": "kb:session-note-template-v1:presenting-theme",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "session-content-intervention",
+      "query": "상담 개입, 내담자 반응, 중요한 발화를 회기 요약에 같이 넣어도 되나",
+      "expected_document_category": "session_note_template",
+      "expected_source_ref": "kb:session-note-template-v1:content-intervention",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "session-observation",
+      "query": "눈물이나 시선 회피 같은 비언어 관찰을 AI가 추정해서 써도 되나",
+      "expected_document_category": "session_note_template",
+      "expected_source_ref": "kb:session-note-template-v1:observation-review",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "session-next-plan",
+      "query": "다음 회기 계획과 합의된 과제를 기록하는 항목",
+      "expected_document_category": "session_note_template",
+      "expected_source_ref": "kb:session-note-template-v1:next-plan",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-metadata",
+      "query": "수퍼비전 보고서에서 상담자 기관 수퍼바이저 정보가 필요한 위치",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-client-background",
+      "query": "수퍼비전용 내담자 배경과 이전 상담 경험이 없을 때 누락으로 둬야 하는 항목",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:client-background",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-observed-behavior",
+      "query": "상담 장면에서 관찰 행동은 어떤 원문 근거로만 써야 하나",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:observed-behavior",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-test-summary",
+      "query": "심리검사 결과를 수퍼비전 보고서에서 AI가 해석해도 되는지",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:test-summary",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-case-understanding",
+      "query": "사례개념화 상담목표 상담전략은 상담자가 직접 판단해야 하는지",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:case-understanding",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-verbatim",
+      "query": "선택 축어록과 상담 진행 과정을 구분해서 수퍼비전에 넣는 법",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:progress-transcript",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "supervision-questions",
+      "query": "수퍼비전 질문은 AI가 평가 점수처럼 만들어도 되나",
+      "expected_document_category": "supervision_report_template",
+      "expected_source_ref": "kb:supervision-report-template-v1:questions",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "termination-period",
+      "query": "종결보고서 상담 기간과 총 회기 수는 어디서 확인해야 하나",
+      "expected_document_category": "termination_report_template",
+      "expected_source_ref": "kb:termination-report-template-v1:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "termination-process",
+      "query": "여러 회기 흐름으로 상담 과정과 주요 개입을 시간순으로 정리",
+      "expected_document_category": "termination_report_template",
+      "expected_source_ref": "kb:termination-report-template-v1:process-intervention",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "termination-outcome",
+      "query": "종결 시 변화 성과 미해결 쟁점과 목표달성 판단은 누가 확인해",
+      "expected_document_category": "termination_report_template",
+      "expected_source_ref": "kb:termination-report-template-v1:outcomes-unresolved",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "termination-followup",
+      "query": "종결 사유 추후 계획 의뢰 계획이 확인되지 않으면 어떻게 표시해",
+      "expected_document_category": "termination_report_template",
+      "expected_source_ref": "kb:termination-report-template-v1:termination-followup",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "ethics-confidentiality",
+      "query": "상담 기록을 공유하거나 출력하기 전에 비밀보장 관점에서 확인할 점",
+      "expected_document_category": "counseling_ethics",
+      "expected_source_ref": "kb:counseling-ethics-confidentiality-demo:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "ethics-ai-boundaries",
+      "query": "AI가 진단 위험 결론 치료 권고를 자동으로 내면 안 되는 이유",
+      "expected_document_category": "counseling_ethics",
+      "expected_source_ref": "kb:counseling-ethics-confidentiality-demo:boundaries",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "privacy-sensitive",
+      "query": "상담 기록에 민감정보가 있을 때 동의와 법적 근거를 확인해야 하나",
+      "expected_document_category": "privacy_law",
+      "expected_source_ref": "kb:privacy-law-sensitive-info-demo:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "privacy-retention",
+      "query": "보관 기간 삭제 절차 export 권한은 어느 보안 문서와 다른가",
+      "expected_document_category": "privacy_law",
+      "expected_source_ref": "kb:privacy-law-sensitive-info-demo:retention-export",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": false
+    },
+    {
+      "id": "deid-direct",
+      "query": "이름 연락처 이메일 학번을 embedding 전에 placeholder로 바꿔야 하나",
+      "expected_document_category": "deidentification_guideline",
+      "expected_source_ref": "kb:deidentification-guideline-demo:1",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "deid-context",
+      "query": "학교 병원 직장 지역 정보가 조합되어 내담자를 다시 알아볼 수 있는 경우",
+      "expected_document_category": "deidentification_guideline",
+      "expected_source_ref": "kb:deidentification-guideline-demo:contextual-identifiers",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "security-preview-token",
+      "query": "공개 미리보기에서 노트 생성과 확인 API를 토큰 없이 열어도 되나",
+      "expected_document_category": "internal_security_policy",
+      "expected_source_ref": "kb:internal-security-policy-v1:preview-token",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "security-case-memory-default",
+      "query": "case memory indexing은 배포 기본값에서 꺼져 있어야 하나",
+      "expected_document_category": "internal_security_policy",
+      "expected_source_ref": "kb:internal-security-policy-v1:persistence-defaults",
+      "expected_field_type": null,
+      "case_id": null,
+      "forbidden_case_ids": [],
+      "lexical_supported": true
+    },
+    {
+      "id": "case-theme",
+      "query": "이전 회기에서 반복된 진로 불안과 자기비난 주제",
+      "expected_document_category": null,
+      "expected_source_ref": "synthetic_case_memory:demo-case-001:1:1",
+      "expected_field_type": "session_theme",
+      "case_id": "demo-case-001",
+      "forbidden_case_ids": ["other-case-999"],
+      "lexical_supported": false
+    },
+    {
+      "id": "case-client-response",
+      "query": "내담자는 선택을 작은 행동으로 나눴을 때 어떤 반응을 보였나",
+      "expected_document_category": null,
+      "expected_source_ref": "synthetic_case_memory:demo-case-001:1:2",
+      "expected_field_type": "client_response",
+      "case_id": "demo-case-001",
+      "forbidden_case_ids": ["other-case-999"],
+      "lexical_supported": false
+    },
+    {
+      "id": "case-next-plan",
+      "query": "다음 회기에 확인하기로 한 과제와 사고기록 계획",
+      "expected_document_category": null,
+      "expected_source_ref": "synthetic_case_memory:demo-case-001:1:3",
+      "expected_field_type": "next_plan",
+      "case_id": "demo-case-001",
+      "forbidden_case_ids": ["other-case-999"],
+      "lexical_supported": false
+    },
+    {
+      "id": "case-cross-leakage",
+      "query": "다른 사례에서 같은 자기비난 회피 행동을 검색하면 원래 사례가 나오면 안 된다",
+      "expected_document_category": null,
+      "expected_source_ref": null,
+      "expected_field_type": null,
+      "case_id": "other-case-999",
+      "forbidden_case_ids": ["demo-case-001"],
+      "lexical_supported": false
+    },
+    {
+      "id": "case-wrong-field-negative",
+      "query": "같은 사례에서 다음 계획만 물었는데 내담자 반응 field_type만 필터하면 나오면 안 된다",
+      "expected_document_category": null,
+      "expected_source_ref": null,
+      "expected_field_type": "client_response",
+      "case_id": "demo-case-001",
+      "forbidden_case_ids": [],
+      "lexical_supported": false
+    }
+  ]
+}
