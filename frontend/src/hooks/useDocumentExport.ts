@@ -53,8 +53,8 @@ export function useDocumentExport(): UseDocumentExportReturn {
         const filename = await executeDocxExport(clientInfo, sections, docType)
         setExportSuccessMessage(`상담일지 파일 (${filename}) 다운로드를 시작했습니다.`)
       } catch (error) {
-        const msg = error instanceof Error ? error.message : 'DOCX 내보내기 중 오류가 발생했습니다.'
-        setExportErrorMessage(msg)
+        console.error('Document export error:', error)
+        setExportErrorMessage('문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.')
       } finally {
         setIsExportingDocx(false)
       }
