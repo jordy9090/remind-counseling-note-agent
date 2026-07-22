@@ -24,6 +24,8 @@ from api.notes.recompose import app as recompose_app
 supervision_app = importlib.import_module("api.notes.supervision-report").app
 from api.notes.drafts import app as drafts_app
 from api.notes.confirm import app as confirm_app
+from api.documents.export import app as export_app
+from api.documents.capabilities import app as capabilities_app
 
 from app.core.config import settings
 
@@ -272,6 +274,40 @@ class TestVercelWrappers(unittest.TestCase):
 
         response = client.get("/", headers={"X-Remind-Preview-Token": "secret-test-token"})
         self.assertEqual(response.status_code, 200)
+
+    def test_capabilities_endpoint_requires_token(self):
+        client = TestClient(capabilities_app)
+        response = client.get("/")
+        self.assertEqual(response.status_code, 401)
+
+        response = client.get("/", headers={"X-Remind-Preview-Token": "secret-test-token"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["docx"]["available"])
+
+    def test_export_endpoint_requires_token(self):
+        client = TestClient(export_app)
+        payload = {
+            "format": "docx",
+            "document_type": "session_note",
+            "case_id": "test-case-id",
+            "session_number": 5,
+            "session_date": "2026-07-23",
+            "title": "test title",
+            "metadata": {},
+            "sections": [
+                {
+                    "id": "sec-1",
+                    "title": "sec title",
+                    "content": "sec content"
+                }
+            ]
+        }
+        response = client.post("/", json=payload)
+        self.assertEqual(response.status_code, 401)
+
+        response = client.post("/", json=payload, headers={"X-Remind-Preview-Token": "secret-test-token"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 
 if __name__ == "__main__":
