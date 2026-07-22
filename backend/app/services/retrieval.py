@@ -301,10 +301,11 @@ def retrieve_document_template(target_document_type: TargetDocumentType) -> Retr
     if not _can_retrieve():
         return None
 
+    target_category = TEMPLATE_CATEGORIES.get(target_document_type, "document_template")
     documents = storage.select(
         "kb_documents",
         {
-            "doc_category": "eq.document_template",
+            "doc_category": f"in.({target_category},document_template)",
             "select": "id,title,source_type,doc_category,authority_level",
             "limit": 50,
         },

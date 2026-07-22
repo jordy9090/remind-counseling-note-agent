@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import unittest
+import unittest.mock
 
 from fastapi.testclient import TestClient
 
@@ -104,10 +105,139 @@ class TestVercelWrappers(unittest.TestCase):
         response = client.post("/", json=payload)
         self.assertEqual(response.status_code, 401)
 
-        # 2. Valid token but note_id not found -> 400 or 500 (since persistence is off and stub db doesn't exist)
-        # However, it should NOT return 401. Let's verify it gets past the preview token guard.
+        # 2. Valid token but persistence disabled -> 409
         response = client.post("/", json=payload, headers={"X-Remind-Preview-Token": "secret-test-token"})
-        self.assertNotEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("ENABLE_PERSISTENCE is false", response.json()["detail"])
+
+    @unittest.mock.patch("app.services.supabase_storage.storage")
+    def test_confirm_endpoint_success_with_mock_persistence(self, mock_storage):
+        orig_persistence = settings.enable_persistence
+        orig_supabase_url = settings.supabase_url
+        orig_supabase_key = settings.supabase_service_role_key
+        orig_case_memory = settings.enable_case_memory
+        try:
+            settings.enable_persistence = True
+            settings.supabase_url = "https://mock.supabase.co"
+            settings.supabase_service_role_key = "mock-key"
+            settings.enable_case_memory = False
+
+            note_data = {
+                "id": "test-note-id",
+                "case_id": "test-case-id",
+                "session_id": "test-session-id",
+                "note_type": "session_note",
+                "draft_json": {},
+                "confirmed_json": {},
+                "confirmation_status": "draft",
+                "confirmed_by": None,
+                "created_at": "2026-07-23",
+            }
+            session_data = {
+                "id": "test-session-id",
+                "case_id": "test-case-id",
+                "session_number": 5,
+                "session_date": "2026-07-23",
+                "session_title": "session-title",
+            }
+            case_data = {
+                "id": "test-case-id",
+                "case_alias": "alias",
+                "counselor_id": "preview_server_actor",
+                "status": "active",
+            }
+
+            def mock_maybe_single(table, query):
+                if table == "generated_notes":
+                    return note_data
+                elif table == "sessions":
+                    return session_data
+                elif table == "cases":
+                    return case_data
+                return None
+
+            mock_storage.maybe_single.side_effect = mock_maybe_single
+            mock_storage.persistence_enabled = True
+            mock_storage.configured = True
+
+            client = TestClient(confirm_app)
+            payload = {
+                "note_id": "test-note-id",
+                "confirmed_note": {
+                    "session_theme": "테마",
+                    "presenting_problem": "문제",
+                    "session_content": "내용",
+                    "counselor_intervention": "개입",
+                    "client_response": "반응",
+                    "reflection": "성찰",
+                    "next_plan": "계획",
+                },
+                "counselor_edited": True,
+                "create_case_memory": False,
+            }
+
+            response = client.post("/", json=payload, headers={"X-Remind-Preview-Token": "secret-test-token"})
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["note_id"], "test-note-id")
+            self.assertEqual(data["confirmation_status"], "confirmed")
+            mock_storage.update.assert_called()
+        finally:
+            settings.enable_persistence = orig_persistence
+            settings.supabase_url = orig_supabase_url
+            settings.supabase_service_role_key = orig_supabase_key
+            settings.enable_case_memory = orig_case_memory
+
+    @unittest.mock.patch("app.services.retrieval.storage")
+    def test_retrieve_document_template_logic(self, mock_storage):
+        orig_enable_rag = settings.enable_rag
+        try:
+            settings.enable_rag = True
+            mock_storage.retrieval_enabled = True
+
+            documents_data = [
+                {
+                    "id": "doc-uuid-1",
+                    "title": "Re:mind session note template checklist",
+                    "source_type": "session_note",
+                    "doc_category": "session_note_template",
+                    "authority_level": "professional_association_public_template",
+                }
+            ]
+            chunks_data = [
+                {
+                    "id": "chunk-uuid-1",
+                    "document_id": "doc-uuid-1",
+                    "chunk_text": "session_metadata",
+                    "chunk_type": "required_field",
+                    "metadata_json": {
+                        "required_fields": ["session_metadata", "case_id", "session_number", "session_date"]
+                    }
+                }
+            ]
+
+            selected_queries = []
+            def mock_select(table, query):
+                selected_queries.append((table, query))
+                if table == "kb_documents":
+                    return documents_data
+                elif table == "kb_chunks":
+                    return chunks_data
+                return []
+
+            mock_storage.select.side_effect = mock_select
+
+            from app.services.retrieval import retrieve_document_template
+            context = retrieve_document_template("session_note")
+
+            doc_query = next(q for t, q in selected_queries if t == "kb_documents")
+            self.assertIn("session_note_template", doc_query["doc_category"])
+            self.assertIsNotNone(context)
+            self.assertTrue(len(context.required_fields) > 0)
+            self.assertIn("session_metadata", context.required_fields)
+            self.assertTrue(any(ref.startswith("kb_template:") for ref in context.source_refs))
+        finally:
+            settings.enable_rag = orig_enable_rag
 
     def test_recompose_endpoint_requires_token(self):
         client = TestClient(recompose_app)

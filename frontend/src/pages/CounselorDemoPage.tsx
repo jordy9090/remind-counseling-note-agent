@@ -6,6 +6,7 @@ import { SessionSourcePanel } from '../components/counselor-demo/SessionSourcePa
 import { FinalDocumentPreview } from '../components/counselor-demo/FinalDocumentPreview'
 import { ExportActions } from '../components/counselor-demo/ExportActions'
 import { ReviewStatusBar } from '../components/counselor-demo/ReviewStatusBar'
+import { TemplateKbStatusCard } from '../components/counselor-demo/TemplateKbStatusCard'
 
 import { useCounselorDemo } from '../hooks/useCounselorDemo'
 import { useDocumentExport } from '../hooks/useDocumentExport'
@@ -114,14 +115,32 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
         {/* Center Panel (Draft or Raw Sources) */}
         <div className="flex-1 min-w-0 w-full">
           {centerMode === 'draft' ? (
-            <DraftReviewPanel
-              sections={sections}
-              selectedSectionId={selectedSectionId}
-              onSelectSection={setSelectedSectionId}
-              onUpdateSectionContent={updateSectionContent}
-              missingItems={demoData.missingItems}
-              warnings={demoData.warnings}
-            />
+            <>
+              <TemplateKbStatusCard
+                templateContext={demoData.templateContext}
+                retrievalReport={{
+                  enabled: true,
+                  case_context_count: 3,
+                  template_context_found: true,
+                  privacy_rule_count: 2,
+                  embedding_latency_ms: 10,
+                  rpc_latency_ms: 5,
+                  retrieval_latency_ms: 15,
+                  generation_latency_ms: 120,
+                  failures: [],
+                  notices: [],
+                }}
+                isDemo={true}
+              />
+              <DraftReviewPanel
+                sections={sections}
+                selectedSectionId={selectedSectionId}
+                onSelectSection={setSelectedSectionId}
+                onUpdateSectionContent={updateSectionContent}
+                missingItems={demoData.missingItems}
+                warnings={demoData.warnings}
+              />
+            </>
           ) : (
             <SessionSourcePanel demoData={demoData} />
           )}

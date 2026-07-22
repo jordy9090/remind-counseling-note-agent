@@ -127,6 +127,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def document_row(document: dict[str, Any], checksum: str) -> dict[str, Any]:
+    meta = {"slug": document.get("slug", "")}
+    if "metadata_json" in document and isinstance(document["metadata_json"], dict):
+        meta.update(document["metadata_json"])
     return {
         "title": document["title"],
         "source_org": document.get("source_org", ""),
@@ -140,7 +143,7 @@ def document_row(document: dict[str, Any], checksum: str) -> dict[str, Any]:
             "verification_and_documentation_support_only",
         ),
         "checksum": checksum,
-        "metadata_json": {"slug": document.get("slug", "")},
+        "metadata_json": meta,
     }
 
 
@@ -188,6 +191,9 @@ def seed_with_cli(seed: dict[str, Any]) -> None:
     for document in seed.get("documents", []):
         checksum = checksum_json(document)
         slug = document.get("slug", "")
+        doc_meta = {"slug": slug}
+        if "metadata_json" in document and isinstance(document["metadata_json"], dict):
+            doc_meta.update(document["metadata_json"])
         inserted_documents += 1
         statements.extend(
             [
@@ -205,7 +211,7 @@ def seed_with_cli(seed: dict[str, Any]) -> None:
                     f"{sql_nullable(document.get('effective_date'))}, "
                     f"{sql_literal(document.get('allowed_use', 'verification_and_documentation_support_only'))}, "
                     f"{sql_literal(checksum)}, "
-                    f"{sql_json({'slug': slug})}"
+                    f"{sql_json(doc_meta)}"
                     ") returning id into v_document_id;"
                 ),
                 "  else",
@@ -220,7 +226,7 @@ def seed_with_cli(seed: dict[str, Any]) -> None:
                     f"effective_date = {sql_nullable(document.get('effective_date'))}, "
                     f"allowed_use = {sql_literal(document.get('allowed_use', 'verification_and_documentation_support_only'))}, "
                     f"checksum = {sql_literal(checksum)}, "
-                    f"metadata_json = {sql_json({'slug': slug})}, "
+                    f"metadata_json = {sql_json(doc_meta)}, "
                     "updated_at = now()"
                 ),
                 "    where id = v_document_id;",

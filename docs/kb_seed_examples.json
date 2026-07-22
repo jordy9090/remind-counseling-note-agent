@@ -87,14 +87,19 @@
     },
     {
       "slug": "supervision-report-template-v1",
-      "title": "Re:mind supervision report template checklist",
-      "source_org": "Re:mind internal demo",
+      "title": "한국상담심리학회 개인상담 사례 수퍼비전 보고서 기본양식 기반 체크리스트",
+      "source_org": "(사)한국상담심리학회",
       "source_type": "supervision_report",
       "source_url": "https://github.com/jordy9090/remind-counseling-note-agent",
       "effective_date": "2026-07-17",
       "doc_category": "supervision_report_template",
-      "authority_level": "internal_demo",
+      "authority_level": "professional_association_public_template",
       "allowed_use": "documentation_structure_only",
+      "metadata_json": {
+        "basis": "한국상담심리학회 개인상담(공개상담) 사례 수퍼비전 보고서 기본양식",
+        "template_date": "2021-09-11",
+        "adaptation_notice": "공개 양식의 항목 구조를 Re:mind MVP용으로 재구성"
+      },
       "chunks": [
         {
           "source_ref": "kb:supervision-report-template-v1:1",

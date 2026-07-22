@@ -71,7 +71,10 @@ import type {
   SupervisionContentBlock,
   SupervisionReportDraft,
   SupervisionReportSection,
+  RetrievedTemplateContext,
+  RetrievalReport,
 } from '../types/session'
+import { TemplateKbStatusCard } from '../components/counselor-demo/TemplateKbStatusCard'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
 const processSteps = ['입력 정제', 'RAG 컨텍스트 검색', '상담 내용 구조화', '근거 연결', '회기요약 생성', '검증 리포트 생성']
@@ -1171,6 +1174,8 @@ export default function SessionDraftPage() {
                   onToggleEvidence={(sectionId) =>
                     setExpandedEvidenceId((current) => (current === sectionId ? null : sectionId))
                   }
+                  templateContext={result.full_response?.retrieved_template_context}
+                  retrievalReport={result.full_response?.retrieval_report}
                 />
               )}
 
@@ -1883,6 +1888,8 @@ function SummaryDraftWorkspace({
   onEditSection,
   onToggleEvidence,
   sections,
+  templateContext,
+  retrievalReport,
 }: {
   editingSectionId: DraftSectionId | null
   expandedEvidenceId: DraftSectionId | null
@@ -1891,9 +1898,17 @@ function SummaryDraftWorkspace({
   onEditSection: (sectionId: DraftSectionId | null) => void
   onToggleEvidence: (sectionId: DraftSectionId) => void
   sections: DraftSection[]
+  templateContext: RetrievedTemplateContext | null | undefined
+  retrievalReport: RetrievalReport | null | undefined
 }) {
   return (
     <section className="space-y-3">
+      <TemplateKbStatusCard
+        templateContext={templateContext}
+        retrievalReport={retrievalReport}
+        isDemo={false}
+      />
+
       <div className="rounded-[8px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">i</span>

@@ -1,3 +1,5 @@
+import { RetrievedTemplateContext } from '../types/session'
+
 export interface DemoEvidenceItem {
   id: string
   sourceType: 'transcript' | 'counselor_memo' | 'previous_summary' | 'ai_inference'
@@ -32,9 +34,47 @@ export interface CounselorDemoFixtureData {
   evidences: Record<string, DemoEvidenceItem>
   missingItems: string[]
   warnings: string[]
+  templateContext?: RetrievedTemplateContext
 }
 
 export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
+  templateContext: {
+    target_document_type: 'session_note',
+    required_fields: [
+      'session_metadata',
+      'case_id',
+      'session_number',
+      'session_date',
+      'presenting_problem',
+      'session_theme',
+      'session_content',
+      'counselor_intervention',
+      'client_response',
+      'important_client_utterance',
+      'next_plan'
+    ],
+    optional_fields: [
+      'nonverbal_or_paraverbal_observation'
+    ],
+    counselor_review_fields: [
+      'counselor_reflection',
+      'case_conceptualization',
+      'goal_attainment'
+    ],
+    missing_field_checklist: [
+      'direct client wording',
+      'counselor confirmation',
+      'agreed next action',
+      'follow-up check'
+    ],
+    source_refs: [
+      'kb:session-note-template-v1:1',
+      'kb:session-note-template-v1:presenting-theme',
+      'kb:session-note-template-v1:content-intervention',
+      'kb:session-note-template-v1:observation-review',
+      'kb:session-note-template-v1:next-plan'
+    ]
+  },
   clientInfo: {
     name: '김민서 (가명)',
     caseId: 'CASE-2026-05',
