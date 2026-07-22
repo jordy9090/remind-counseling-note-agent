@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { BookOpen, ChevronDown, ChevronUp, AlertCircle, CheckCircle } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronUp, CheckCircle } from 'lucide-react'
 import { RetrievedTemplateContext, RetrievalReport } from '../../types/session'
 
 interface TemplateKbStatusCardProps {
@@ -18,12 +18,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
   const templateFound = retrievalReport?.template_context_found || (isDemo && !!templateContext)
 
   if (!templateFound) {
-    return (
-      <div className="p-4 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs flex items-center gap-2 mb-4">
-        <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-        <span>문서 양식 KB를 불러오지 못했습니다. (RAG 비활성화 또는 양식 데이터 없음)</span>
-      </div>
-    )
+    return null
   }
 
   const {
