@@ -104,6 +104,31 @@ export const DemoHeader: React.FC<DemoHeaderProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Sub metadata bar for supervision details */}
+      {clientInfo.supervisor && (
+        <div className="max-w-7xl mx-auto mt-2 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
+          <div>
+            <span className="text-slate-400">상담자: </span>
+            <span className="text-slate-700 font-bold">{clientInfo.counselorName}</span>
+          </div>
+          <span className="text-slate-300">|</span>
+          <div>
+            <span className="text-slate-400">소속 기관: </span>
+            <span className="text-slate-700 font-bold">{clientInfo.institution}</span>
+          </div>
+          <span className="text-slate-300">|</span>
+          <div>
+            <span className="text-slate-400">수퍼바이저: </span>
+            <span className="text-slate-700 font-bold">{clientInfo.supervisor}</span>
+          </div>
+          <span className="text-slate-300">|</span>
+          <div>
+            <span className="text-slate-400">수퍼비전 일시/장소: </span>
+            <span className="text-slate-700 font-bold">{clientInfo.supervisionDatePlace}</span>
+          </div>
+        </div>
+      )}
     </header>
   )
 }

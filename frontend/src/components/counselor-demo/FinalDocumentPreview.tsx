@@ -22,7 +22,7 @@ export const FinalDocumentPreview: React.FC<FinalDocumentPreviewProps> = ({
   isExporting,
 }) => {
   const [docType, setDocType] = useState<'session_note' | 'supervision_report' | 'termination_report'>(
-    'session_note',
+    'supervision_report',
   )
 
   if (!isOpen) return null

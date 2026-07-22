@@ -45,14 +45,14 @@ export const DraftSectionEditor: React.FC<DraftSectionEditorProps> = ({
 
           {/* Badge */}
           {section.status === 'needs_review' ? (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
               <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
               상담사 확인 필요
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">
-              <Sparkles className="w-3 h-3 text-blue-500" />
-              근거 연결됨
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded bg-slate-100/80 text-slate-600 border border-slate-200/60">
+              <Sparkles className="w-3 h-3 text-slate-500" />
+              AI 초안
             </span>
           )}
         </div>
@@ -75,9 +75,9 @@ export const DraftSectionEditor: React.FC<DraftSectionEditorProps> = ({
       </div>
 
       {/* Body Content */}
-      <div className="p-5">
+      <div className="p-6">
         {section.missingNotice && (
-          <div className="mb-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200/80 text-xs font-medium text-amber-900 flex items-start gap-2">
+          <div className="mb-4 p-3.5 rounded-lg bg-amber-50/80 border border-amber-200/80 text-xs font-medium text-amber-900 flex items-start gap-2">
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <p className="font-bold text-amber-950">임상적 확인 필요 항목</p>
@@ -92,7 +92,7 @@ export const DraftSectionEditor: React.FC<DraftSectionEditorProps> = ({
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
               rows={4}
-              className="w-full rounded-lg border border-blue-400 p-3 text-base text-slate-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-blue-50/20 font-normal"
+              className="w-full rounded-lg border border-blue-400 p-3.5 text-base text-slate-900 leading-8 focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-blue-50/20 font-normal"
               placeholder="내용을 입력하세요..."
             />
             <div className="flex items-center justify-end gap-2">
@@ -115,7 +115,7 @@ export const DraftSectionEditor: React.FC<DraftSectionEditorProps> = ({
             </div>
           </div>
         ) : (
-          <p className="text-base text-slate-800 leading-relaxed font-normal whitespace-pre-line">
+          <p className="text-base text-slate-800 leading-8 font-normal whitespace-pre-line tracking-wide">
             {section.content}
           </p>
         )}

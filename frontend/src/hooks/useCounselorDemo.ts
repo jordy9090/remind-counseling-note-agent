@@ -28,7 +28,9 @@ export interface UseCounselorDemoReturn {
 export function useCounselorDemo(): UseCounselorDemoReturn {
   const [demoData] = useState<CounselorDemoFixtureData>(COUNSELOR_DEMO_FIXTURE)
   const [sections, setSections] = useState<DemoDraftSection[]>(COUNSELOR_DEMO_FIXTURE.sections)
-  const [selectedSectionId, setSelectedSectionId] = useState<string>('presenting_problem')
+  const [selectedSectionId, setSelectedSectionId] = useState<string>(
+    COUNSELOR_DEMO_FIXTURE.sections[0]?.id || '',
+  )
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('ai_draft')
   const [isDirty, setIsDirty] = useState<boolean>(false)
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
@@ -61,7 +63,7 @@ export function useCounselorDemo(): UseCounselorDemoReturn {
 
   const resetDemo = useCallback(() => {
     setSections(COUNSELOR_DEMO_FIXTURE.sections)
-    setSelectedSectionId('presenting_problem')
+    setSelectedSectionId(COUNSELOR_DEMO_FIXTURE.sections[0]?.id || '')
     setReviewStatus('ai_draft')
     setIsDirty(false)
     setLastSavedAt(null)

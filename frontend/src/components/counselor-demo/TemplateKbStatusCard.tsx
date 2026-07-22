@@ -53,7 +53,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h4 className="text-xs font-semibold text-slate-300">
-                {isDemo ? '문서 양식 KB (데모용 KB 스냅샷)' : '문서 양식 KB 적용됨'}
+                {isDemo ? '문서 양식 KB 적용됨 (데모 스냅샷)' : '문서 양식 KB 적용됨'}
               </h4>
               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400">
                 <CheckCircle className="w-2.5 h-2.5 mr-1" />

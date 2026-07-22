@@ -83,8 +83,8 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({ sectionTitle, evid
       </div>
 
       {/* Footer Info */}
-      <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 rounded-b-xl text-[11px] text-slate-500 leading-tight">
-        💡 상담 문서는 회기 축어록 및 상담사 메모를 기반으로 추출되었습니다. 임상적 해석은 상담사의 판단을 우선합니다.
+      <div className="px-4 py-3.5 bg-slate-50 border-t border-slate-200 rounded-b-xl text-[11px] text-slate-500 leading-relaxed">
+        💡 AI 매핑 근거는 참고용이며, 최종 임상적 판단은 상담사의 의견을 우선합니다.
       </div>
     </aside>
   )

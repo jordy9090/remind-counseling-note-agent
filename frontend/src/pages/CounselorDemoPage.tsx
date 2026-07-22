@@ -46,7 +46,7 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
 
   const selectedSection = sections.find((s) => s.id === selectedSectionId) || sections[0]
 
-  const handleExportDocx = (docType: 'session_note' | 'supervision_report' | 'termination_report' = 'session_note') => {
+  const handleExportDocx = (docType: 'session_note' | 'supervision_report' | 'termination_report' = 'supervision_report') => {
     exportDocx(demoData.clientInfo, sections, docType)
   }
 
@@ -161,7 +161,7 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
         onSaveTemporary={saveTemporary}
         onMarkAsReviewed={markAsReviewed}
         onOpenPreview={() => setIsPreviewOpen(true)}
-        onExportDocx={() => handleExportDocx('session_note')}
+        onExportDocx={() => handleExportDocx('supervision_report')}
         onPrintPDF={printDocument}
       />
 

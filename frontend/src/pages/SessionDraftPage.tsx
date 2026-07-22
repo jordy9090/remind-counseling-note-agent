@@ -905,11 +905,11 @@ export default function SessionDraftPage() {
       setDocumentCapabilities(capabilities)
       return capabilities
     } catch (err) {
-      const message = err instanceof Error ? err.message : '문서 내보내기 지원 상태를 확인하지 못했습니다.'
-      setDocumentCapabilitiesError(message)
+      console.error('Capabilities fetch failed:', err)
+      setDocumentCapabilitiesError('내보내기 서버 상태 확인 실패')
       const fallback: DocumentCapabilitiesResponse = {
         docx: { available: true },
-        pdf: { available: false, reason: '문서 내보내기 지원 상태를 확인하지 못했습니다.' },
+        pdf: { available: false, reason: '내보내기 서버 상태 확인 실패' },
         hwpx: { available: false, reason: '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.' },
       }
       setDocumentCapabilities(fallback)
@@ -1049,8 +1049,8 @@ export default function SessionDraftPage() {
       triggerBlobDownload(blob, filename)
       setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : 'Word'} 다운로드를 시작했습니다.`)
     } catch (err) {
-      const message = err instanceof Error ? err.message : '문서 내보내기 중 오류가 발생했습니다.'
-      setDocumentExportError(message)
+      console.error('Document download failed:', err)
+      setDocumentExportError('문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.')
     } finally {
       setIsExportingDocument(false)
     }
@@ -3085,11 +3085,11 @@ function DownloadControls({
   status: string | null
 }) {
   const pdfUnavailableReason = !capabilities
-    ? '문서 내보내기 지원 상태를 확인한 뒤 PDF를 사용할 수 있습니다.'
+    ? '내보내기 기능을 확인 중입니다.'
     : capabilities.pdf.available === false
       ? capabilityReasonToKorean(capabilities.pdf.reason)
       : capabilitiesError
-        ? '문서 내보내기 지원 상태를 확인하지 못해 PDF 다운로드를 비활성화했습니다.'
+        ? '내보내기 기능이 비활성화되었습니다.'
         : null
   const pdfDisabled = isExporting || Boolean(pdfUnavailableReason)
 

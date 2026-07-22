@@ -26,6 +26,8 @@ export interface DemoClientInfo {
   counselorName: string
   counselingGoal: string
   institution: string
+  supervisor?: string
+  supervisionDatePlace?: string
 }
 
 export interface CounselorDemoFixtureData {
@@ -39,98 +41,114 @@ export interface CounselorDemoFixtureData {
 
 export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
   templateContext: {
-    target_document_type: 'session_note',
+    target_document_type: 'supervision_report',
     required_fields: [
       'session_metadata',
       'case_id',
       'session_number',
       'session_date',
       'presenting_problem',
-      'session_theme',
+      'family_relations',
+      'counseling_goal',
       'session_content',
-      'counselor_intervention',
-      'client_response',
-      'important_client_utterance',
+      'counselor_reflection',
       'next_plan'
     ],
     optional_fields: [
-      'nonverbal_or_paraverbal_observation'
+      'nonverbal_observation',
+      'psychological_tests'
     ],
     counselor_review_fields: [
-      'counselor_reflection',
       'case_conceptualization',
-      'goal_attainment'
+      'supervision_questions'
     ],
     missing_field_checklist: [
-      'direct client wording',
-      'counselor confirmation',
-      'agreed next action',
-      'follow-up check'
+      'family genogram outline',
+      'direct client quotes',
+      'prior counseling details',
+      'suicide risk screening'
     ],
     source_refs: [
-      'kb:session-note-template-v1:1',
-      'kb:session-note-template-v1:presenting-theme',
-      'kb:session-note-template-v1:content-intervention',
-      'kb:session-note-template-v1:observation-review',
-      'kb:session-note-template-v1:next-plan'
+      'kb:supervision-report-template-v1:1',
+      'kb:supervision-report-template-v1:demographics',
+      'kb:supervision-report-template-v1:family-dynamics',
+      'kb:supervision-report-template-v1:session-excerpts',
+      'kb:supervision-report-template-v1:reflection-goals'
     ]
   },
   clientInfo: {
     name: '김민서 (가명)',
     caseId: 'CASE-2026-05',
     sessionNumber: 5,
-    sessionDate: '2026.04.28',
-    counselorName: '이수진 상담사',
+    sessionDate: '2026.05.30',
+    counselorName: '이수진',
     counselingGoal: '취업 준비 과정의 대인 비교 불안 완화 및 완벽주의적 사고 재구성',
     institution: '마음연결 심리상담센터',
+    supervisor: '김OO',
+    supervisionDatePlace: '2026.05.30 / 사례회의실',
   },
   sections: [
     {
-      id: 'presenting_problem',
-      title: '주호소 및 회기 주제',
+      id: 'A-1',
+      title: 'A-1. 인적사항',
       content:
-        '진로 및 취업 준비 과정에서 주변 동기들과의 비교로 인한 강한 불안과 자기비난을 호소함. 5회기에서는 서류 전형 합격 후 면접을 앞두고 급격히 높아진 발표/평가 불안과 무기력감을 집중 다룸.',
+        '내담자는 24세 대학 4학년 여학생으로, 현재 졸업과 공채 취업 준비를 병행하고 있다. 주거 형태는 부모님과 동거 중이며 종교는 무교로 보고되었다. 최근 대형 공기업의 1차 서류 합격 소식을 들은 직후부터 발표와 면접 상황에 대한 불안을 강하게 호소하고 있다. 경제적 부양 수준이나 구체적인 학업 평점 등의 세부 사항은 접수면접지를 통해 추가 확인이 필요하다.',
       status: 'connected',
-      evidenceIds: ['ev_1', 'ev_2'],
+      evidenceIds: ['ev_1'],
     },
     {
-      id: 'main_content',
-      title: '주요 상담 내용',
+      id: 'A-2',
+      title: 'A-2. 상담신청경위',
       content:
-        '동기들의 취업 소식을 들은 뒤 "나만 제자리에 있는 것 같다"는 생각이 반복되며, 밤에 잠들기 어렵고 두통이 동반된다고 보고함. 면접관 앞에서 실수할 것에 대한 두려움으로 인해 대본 작성을 미루는 회피 행동을 보임.',
+        '내담자는 진로 결정 과정에서 주변 동기들에 비해 준비가 늦었다는 생각이 반복되자, 자발적으로 센터를 찾았다. 이전에는 무기력감을 혼자 견뎠으나 취업 준비가 본격화되면서 수행 불안이 신체화 증상으로까지 이어져 개입을 원했다. 특히 부모님의 높은 기대에 부응하지 못해 실패할 것이라는 두려움이 상담 신청의 결정적 계기로 작용했다. 자발적 내원이나 신청 상세 경로는 초기 기록을 대조하여 보완이 필요하다.',
+      status: 'connected',
+      evidenceIds: ['ev_2'],
+    },
+    {
+      id: 'A-3',
+      title: 'A-3. 주 호소문제',
+      content:
+        '취업 준비 및 수행 상황에서 자신을 타인과 끊임없이 비교하며 비난하는 양상을 보인다. 서류 합격 후 면접 연습 대본을 작성해야 함에도 "내가 잘할 리 없다", "면접장에서 버벅거리면 다 망할 거다"는 생각에 시달리며 과제를 미루는 회피 패턴이 두드러진다. 불안이 높은 날에는 답답함과 두통을 호소하고 있으며, 최근 2주간 야간 불면이 동반되는 상태이다. 신체 증상의 의학적 배제 여부는 추가적인 모니터링이 요구된다.',
       status: 'connected',
       evidenceIds: ['ev_3', 'ev_4'],
     },
     {
-      id: 'counselor_intervention',
-      title: '상담자 개입',
+      id: 'A-4',
+      title: 'A-4. 이전 상담 경험',
       content:
-        "내담자의 취업 불안 속에 가려진 '완벽주의적 자동적 사고'를 명료화하고, 면접 결과와 본인 가치를 분리하는 인지 재구성을 제공함. 이전 회기에서 연습한 4-7-8 복식호흡법과 생각 멈추기 기법을 회기 중 재연습함.",
+        '대학 학생상담센터나 사설 기관을 포함하여 과거에 전문적인 심리상담을 받아본 경험은 없는 것으로 나타났다. 다만 고등학교 시절 진로 탐색을 위한 집단 상담에 1회 참여한 적이 있으나, 개인적인 심리적 어려움을 주제로 심층 상담을 진행한 적은 이번이 처음이다. 이전 상담 경험이 전혀 없기 때문에 상담 관계 형성 초기 구조화가 중요하게 작용하였다.',
       status: 'connected',
-      evidenceIds: ['ev_5', 'ev_6'],
+      evidenceIds: ['ev_5'],
     },
     {
-      id: 'client_response',
-      title: '내담자 반응',
+      id: 'A-5',
+      title: 'A-5. 가족관계',
       content:
-        '현실 검증 질문을 통해 "면접 하나로 내 전체 유능성이 결정되는 것은 아니다"라는 점을 인지적으로 수용함. 호흡 재훈련 후 신체적 긴장도(VAS 8→4) 감소를 경험하고, 이번 주 모의 면접 질문 3개 작성 과제에 동의함.',
+        '부모님과 남동생으로 구성된 4인 가정이며, 아버지는 권위적이고 성취 지향적인 편이다. 어머니는 내담자를 지지해주지만 내심 은근히 취업 성과를 기대하는 태도를 보여 내담자에게 은밀한 압박으로 작용하고 있다. 어린 시절부터 "가족의 기대를 저버리면 안 된다"는 신념이 학습되었고, 이것이 현재의 수행불안과 과도한 책임감으로 연결된 양상이다. 구체적인 가계도와 세부 관계망은 추가 면담을 통해 보완할 예정이다.',
+      status: 'connected',
+      evidenceIds: ['ev_6'],
+    },
+    {
+      id: 'A-6',
+      title: 'A-6. 인상 및 행동특성',
+      content:
+        '단정하고 깔끔한 차림새로 내원하였으나, 대화 중 손가락을 자주 만지작거리며 불안정한 시선 처리를 보였다. 자신의 학업이나 준비 수준을 설명할 때 한숨을 자주 쉬며 자책감을 적극적으로 표현하였다. 면접 장면을 시뮬레이션할 때는 목소리가 작아지고 문장을 끝맺지 못하는 급박한 호흡 곤란 증상을 일시적으로 관찰하였다. 호흡 훈련과 인지 재구성 개입 이후에는 어조가 다소 차분해지며 신체적 이완 상태를 회복하였다.',
       status: 'connected',
       evidenceIds: ['ev_7'],
     },
     {
-      id: 'risk_safety',
-      title: '위험·안전 확인',
+      id: 'A-7',
+      title: 'A-7. 심리검사 결과 및 주요 해석내용',
       content:
-        '자살 및 자해 위험성은 낮음(경미한 무기력감 및 불면 표현). 단, 최근 2주간 불면으로 약국 판매 수면유도제를 임의 복용했음을 보고하여, 다음 회기 시작 시 수면 양상 및 필요시 정신건강의학과 전문의 상담 안내 여부를 확인해야 함.',
-      status: 'needs_review',
+        '접수 면접 시 진행한 진로흥미검사 결과 사회형과 탐구형 흥미가 유의미하게 높게 확인되었다. 상태불안 척도는 상위 10%에 해당하여 현재 평가 국면에서 급격한 신체적, 심리적 불안을 경험하고 있음을 뒷받침한다. 단, 본 평가 결과는 현재의 급성 스트레스 반응을 이해하기 위한 참고 수치로만 활용하고 있으며 임상적 진단 근거는 아니다.',
+      status: 'connected',
       evidenceIds: ['ev_8'],
-      missingNotice: '약물 복용 보고 건: 상담사의 직접 확인 및 수면 수칙 안내 필요',
     },
     {
-      id: 'next_plan',
-      title: '다음 회기 계획',
+      id: 'A-8',
+      title: 'A-8. 내담자 강점 및 자원',
       content:
-        '1) 면접 예상 질문 3가지 인지적 재구성 적용 연습 점검 2) 주 3회 15분 일상 산책 과제 수행 여부 확인 3) 수면 패턴 및 신체 긴장도 재평가',
+        '내담자는 자신의 불안 상태를 인지하고 이를 변화시키고자 하는 자발적인 치료적 동기가 높다. 면접 발표 장면에서 자동사고를 사실과 의견으로 객관화하여 구분하려는 연습에 적극적으로 동참하였다. 회기 말에 제시된 구체적인 모의 과제 수행 및 행동 과제(간단한 메시지 발송 등)에 순응하고 동의하는 등 실행 자원이 우수하다.',
       status: 'connected',
       evidenceIds: ['ev_9'],
     },
@@ -139,80 +157,78 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
     ev_1: {
       id: 'ev_1',
       sourceType: 'transcript',
-      sourceLabel: '5회기 축어록 (04:12)',
+      sourceLabel: '초기 면담 기록 (04:12)',
       excerpt:
-        '내담자: "친구들은 벌써 서류 합격해서 면접 보러 다니는데, 저는 서류 하나 내는 것도 너무 덜덜 떨려요. 제가 너무 뒤처진 것 같아서 밤마다 잠이 안 와요."',
-      rationale: '취업 준비 중 동기 비교 및 제출/평가 불안에 대한 내담자의 직접 표현',
+        '내담자: "나이는 스물넷이고 대학교 4학년이에요. 부모님이랑 같이 살고요. 종교는 없어요. 이번에 서류는 붙었는데 면접 볼 생각 하니 잠이 안 와요."',
+      rationale: '내담자가 직접 밝힌 인적사항 및 동거 여부 기록',
     },
     ev_2: {
       id: 'ev_2',
-      sourceType: 'counselor_memo',
-      sourceLabel: '상담사 사전 관찰 메모',
+      sourceType: 'transcript',
+      sourceLabel: '5회기 축어록 (10:15)',
       excerpt:
-        '서류 합격 통보 직후 면접에 대한 부담으로 불안 지수(VAS 8/10) 급상승. 자기비난적 사고 자극됨.',
-      rationale: '상담 시작 시 상담사가 직접 기록한 관찰 및 세션 전 상태',
+        '내담자: "취업 준비를 본격적으로 시작하면서 머리도 아프고 잠도 통 못 자요. 혼자 해결해 보려고 노력해 봤는데 더는 안 될 것 같아서 고민 끝에 신청했어요."',
+      rationale: '진로 문제로 인한 신체화 증상 및 상담 신청 계기',
     },
     ev_3: {
       id: 'ev_3',
       sourceType: 'transcript',
-      sourceLabel: '5회기 축어록 (12:35)',
+      sourceLabel: '5회기 축어록 (15:20)',
       excerpt:
-        '내담자: "면접관이 질문했을 때 머리가 하얗게 될 것 같아요. 말 막히면 끝장이라는 생각만 들고... 그래서 면접 연습 대본 작성을 자꾸 미루고 있어요."',
-      rationale: '평가 두려움 및 준비 회피 행동에 대한 내담자 진술',
+        '내담자: "서류는 합격했는데 면접이 너무 무서워요. 내가 잘할 리가 없고, 면접장에서 버벅거리면 다 망할 거 같아요. 대본도 자꾸 미루고 안 써요."',
+      rationale: '타인 비교, 수행 불안, 면접 준비 미루기 등 주요 호소 사항',
     },
     ev_4: {
       id: 'ev_4',
-      sourceType: 'previous_summary',
-      sourceLabel: '4회기 요약록',
+      sourceType: 'counselor_memo',
+      sourceLabel: '상담사 관찰 기록',
       excerpt:
-        '4회기 사례 개념화: 과도한 타인 인식 및 유능성에 대한 완벽주의적 기준이 주요 불안 유발 인자로 파악됨.',
-      rationale: '이전 회기 사례 개념화 데이터와 연결된 맥락',
+        '내담자는 발표 상황을 상상할 때 가슴 답답함과 신체적 긴장감을 두드러지게 호소함.',
+      rationale: '상담 회기 중 관찰된 불안의 신체화 양상',
     },
     ev_5: {
       id: 'ev_5',
       sourceType: 'transcript',
-      sourceLabel: '5회기 축어록 (24:18)',
+      sourceLabel: '초기 접수 면담 (08:45)',
       excerpt:
-        '상담자: "민서 씨, 면접에서 대답을 잠시 머뭇거린다고 해서 면접관이 민서 씨의 인격 전체를 부정적으로 볼까요? 우리가 지난번에 연습했던 생각 멈추기 기법을 지금 같이 해볼까요?"',
-      rationale: '인지 재구성 질의 및 신체 이완 기법 적용 개입 원문',
+        '내담자: "학교 상담센터 같은 데는 한 번도 안 가봤어요. 고등학교 때 진로 검사 한 번 해본 게 전부예요."',
+      rationale: '이전 상담 경험 여부 및 구조화 배경 정보',
     },
     ev_6: {
       id: 'ev_6',
-      sourceType: 'counselor_memo',
-      sourceLabel: '상담 과정 메모',
+      sourceType: 'transcript',
+      sourceLabel: '3회기 축어록 (22:40)',
       excerpt:
-        '4-7-8 호흡법 안내 후 신체 긴장도 VAS 8에서 4로 저하 확인. 인지적 재구성 질문 반응 양호.',
-      rationale: '상담사의 개입 및 신체 반응 변화 관찰 기록',
+        '내담자: "아빠는 늘 완벽해야 한다고 하시고 엄마도 이번엔 꼭 대기업 가야지 하셔서 마음이 무거워요. 가족 기대를 저버리는 것 같아서요."',
+      rationale: '가족의 기대 수준 및 완벽주의 신념의 형성 배경',
     },
     ev_7: {
       id: 'ev_7',
-      sourceType: 'transcript',
-      sourceLabel: '5회기 축어록 (38:50)',
+      sourceType: 'counselor_memo',
+      sourceLabel: '행동 관찰 기록',
       excerpt:
-        '내담자: "생각해보니 꼭 한 번에 다 완벽히 해야 하는 건 아니네요. 숨 깊게 쉬니까 답답한 것도 좀 나아졌어요. 이번 주에 면접 질문 3개만 먼저 작성해볼게요."',
-      rationale: '인지적 수용 및 행동 과제 합의 발언',
+        '내원 시 다소 경직된 자세를 취하고 손을 가만히 두지 못함. 한숨이 잦고 질문에 대답할 때 끝맺음을 주저함.',
+      rationale: '상담 장면에서의 비언어적 긴장 및 행동 특성',
     },
     ev_8: {
       id: 'ev_8',
-      sourceType: 'transcript',
-      sourceLabel: '5회기 축어록 (45:10)',
+      sourceType: 'counselor_memo',
+      sourceLabel: '접수 평가 자료',
       excerpt:
-        '내담자: "요즘 잠을 너무 못 자서 약국에서 처방전 없이 살 수 있는 수면유도제를 두 번 먹었는데... 괜찮겠죠?"',
-      rationale: '일시적 수면유도제 임의 복용 발언',
-      warning:
-        '상담사 검토 필요: 의료적 조언은 삼가고, 수면 위생 교육 및 필요시 전문의 상담 권유 여부를 확인해야 합니다.',
+        '진로흥미검사 사회형/탐구형 높음. 상태불안 척도 상위 10% 범주. 임상적 진단 수준은 아님.',
+      rationale: '접수 단계에서 실시한 간이 검사 결과 및 해석 근거',
     },
     ev_9: {
       id: 'ev_9',
-      sourceType: 'previous_summary',
-      sourceLabel: '4회기 과제 평가',
-      excerpt: '일상 산책 및 신체 반응 기재 과제를 다음 회기 연속 과제로 유지하기로 함.',
-      rationale: '이전 회기 과제 및 지속 계획 연계',
+      sourceType: 'transcript',
+      sourceLabel: '5회기 축어록 (38:50)',
+      excerpt:
+        '내담자: "알려주신 호흡 기법을 해보니까 가슴이 조금 편해졌어요. 이번 주엔 일단 면접 질문 세 개만 먼저 적어볼게요."',
+      rationale: '치료 동기, 자동사고 탐색 및 행동 과제 수행 태도',
     },
   },
-  missingItems: ['수면유도제 복용 관련 수면 위생 및 안전 가이드 확인'],
+  missingItems: ['가족 구성 및 가계도 상세 구조 보완 필요'],
   warnings: [
-    'AI 초안은 상담사의 임상적 검토 전 최종 회기 기록으로 사용하지 마십시오.',
-    '약물 관련 발언은 의료적 처방이 아닌 상담 내 관찰로 기록되었습니다.',
+    '작성된 내용은 상담사의 최종 검토용 초안입니다. 실제 제출 전 반드시 수정보완하십시오.',
   ],
 }
