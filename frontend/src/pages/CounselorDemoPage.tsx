@@ -47,7 +47,7 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
   const selectedSection = sections.find((s) => s.id === selectedSectionId) || sections[0]
 
   const handleExportDocx = (docType: 'session_note' | 'supervision_report' | 'termination_report' = 'supervision_report') => {
-    exportDocx(demoData.clientInfo, sections, docType)
+    exportDocx(demoData.clientInfo, sections, docType, true)
   }
 
   return (

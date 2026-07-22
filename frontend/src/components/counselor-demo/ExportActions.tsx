@@ -70,15 +70,17 @@ export const ExportActions: React.FC<ExportActionsProps> = ({
             상담일지 미리보기
           </button>
 
-          <button
-            type="button"
-            onClick={onPrintPDF}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-2xs"
-            title="브라우저 인쇄 창에서 PDF로 저장할 수 있습니다"
-          >
-            <Printer className="w-4 h-4 text-slate-600" />
-            인쇄 / PDF
-          </button>
+          <div className="flex flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={onPrintPDF}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-2xs"
+            >
+              <Printer className="w-4 h-4 text-slate-600" />
+              인쇄 / PDF
+            </button>
+            <span className="text-[10px] text-slate-500">브라우저 인쇄에서 PDF로 저장할 수 있습니다.</span>
+          </div>
 
           <button
             type="button"

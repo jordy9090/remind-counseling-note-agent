@@ -84,8 +84,8 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
     counselorName: '이수진',
     counselingGoal: '취업 준비 과정의 대인 비교 불안 완화 및 완벽주의적 사고 재구성',
     institution: '마음연결 심리상담센터',
-    supervisor: '김OO',
-    supervisionDatePlace: '2026.05.30 / 사례회의실',
+    supervisor: '김OO 상담심리사',
+    supervisionDatePlace: '2026.05.30 14:00 / 사례회의실',
   },
   sections: [
     {

@@ -20,6 +20,7 @@ export const DemoHeader: React.FC<DemoHeaderProps> = ({
   onResetDemo,
   onBackToMain,
 }) => {
+
   return (
     <header className="print:hidden sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-sm shadow-xs px-4 lg:px-6 py-3">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -106,29 +107,27 @@ export const DemoHeader: React.FC<DemoHeaderProps> = ({
       </div>
 
       {/* Sub metadata bar for supervision details */}
-      {clientInfo.supervisor && (
-        <div className="max-w-7xl mx-auto mt-2 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
-          <div>
-            <span className="text-slate-400">상담자: </span>
-            <span className="text-slate-700 font-bold">{clientInfo.counselorName}</span>
-          </div>
-          <span className="text-slate-300">|</span>
-          <div>
-            <span className="text-slate-400">소속 기관: </span>
-            <span className="text-slate-700 font-bold">{clientInfo.institution}</span>
-          </div>
-          <span className="text-slate-300">|</span>
-          <div>
-            <span className="text-slate-400">수퍼바이저: </span>
-            <span className="text-slate-700 font-bold">{clientInfo.supervisor}</span>
-          </div>
-          <span className="text-slate-300">|</span>
-          <div>
-            <span className="text-slate-400">수퍼비전 일시/장소: </span>
-            <span className="text-slate-700 font-bold">{clientInfo.supervisionDatePlace}</span>
-          </div>
+      <div className="max-w-7xl mx-auto mt-2 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
+        <div>
+          <span className="text-slate-400">상담자: </span>
+          <span className="text-slate-700 font-bold">{clientInfo.counselorName || '미입력'}</span>
         </div>
-      )}
+        <span className="text-slate-300">|</span>
+        <div>
+          <span className="text-slate-400">소속 기관: </span>
+          <span className="text-slate-700 font-bold">{clientInfo.institution || '미입력'}</span>
+        </div>
+        <span className="text-slate-300">|</span>
+        <div>
+          <span className="text-slate-400">수퍼바이저: </span>
+          <span className="text-slate-700 font-bold">{clientInfo.supervisor || '미입력'}</span>
+        </div>
+        <span className="text-slate-300">|</span>
+        <div>
+          <span className="text-slate-400">수퍼비전 일시/장소: </span>
+          <span className="text-slate-700 font-bold">{clientInfo.supervisionDatePlace || '미입력'}</span>
+        </div>
+      </div>
     </header>
   )
 }

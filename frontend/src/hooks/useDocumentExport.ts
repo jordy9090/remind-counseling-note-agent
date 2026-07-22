@@ -6,6 +6,7 @@ import {
   type DocumentExportCapabilityStatus,
 } from '../lib/documentExport'
 import type { DemoClientInfo, DemoDraftSection } from '../data/counselorDemoFixture'
+import { exportCounselorDemoDocx } from '../lib/clientDocxExport'
 
 export interface UseDocumentExportReturn {
   capabilities: DocumentExportCapabilityStatus | null
@@ -16,6 +17,7 @@ export interface UseDocumentExportReturn {
     clientInfo: DemoClientInfo,
     sections: DemoDraftSection[],
     docType?: 'session_note' | 'supervision_report' | 'termination_report',
+    isDemo?: boolean,
   ) => Promise<void>
   printDocument: () => void
   clearMessages: () => void
@@ -44,17 +46,27 @@ export function useDocumentExport(): UseDocumentExportReturn {
       clientInfo: DemoClientInfo,
       sections: DemoDraftSection[],
       docType: 'session_note' | 'supervision_report' | 'termination_report' = 'session_note',
+      isDemo: boolean = false,
     ) => {
       setIsExportingDocx(true)
       setExportErrorMessage(null)
       setExportSuccessMessage(null)
 
       try {
-        const filename = await executeDocxExport(clientInfo, sections, docType)
-        setExportSuccessMessage(`상담일지 파일 (${filename}) 다운로드를 시작했습니다.`)
+        if (isDemo) {
+          const filename = await exportCounselorDemoDocx(clientInfo, sections)
+          setExportSuccessMessage(`문서 파일 (${filename}) 다운로드를 시작했습니다.`)
+        } else {
+          const filename = await executeDocxExport(clientInfo, sections, docType)
+          setExportSuccessMessage(`상담일지 파일 (${filename}) 다운로드를 시작했습니다.`)
+        }
       } catch (error) {
         console.error('Document export error:', error)
-        setExportErrorMessage('문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.')
+        if (isDemo) {
+          setExportErrorMessage('문서 파일을 생성하지 못했습니다. 다시 시도해주세요.')
+        } else {
+          setExportErrorMessage('문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.')
+        }
       } finally {
         setIsExportingDocx(false)
       }
