@@ -39,23 +39,27 @@ client.interceptors.request.use((config) => {
 })
 
 export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftResponse> => {
-  const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
-    case_id: input.case_id,
-    client_alias: input.client_alias || '',
-    session_number: input.session_number,
-    session_date: input.session_date,
-    counselor_name: input.counselor_name,
-    counselor_memo: input.counselor_memo,
-    transcript_text: input.transcript_text,
-    previous_session_summary: input.previous_session_summary,
-    counseling_goal: input.counseling_goal || '',
-    psychological_test_summary: input.psychological_test_summary || '',
-    key_issue_tags: input.key_issue_tags || [],
-    nonverbal_notes: input.nonverbal_notes || '',
-    target_document_type: input.target_document_type || 'session_note',
-    persist: Boolean(input.persist),
-  })
-  return toNoteDraftResponse(response.data)
+  try {
+    const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
+      case_id: input.case_id,
+      client_alias: input.client_alias || '',
+      session_number: input.session_number,
+      session_date: input.session_date,
+      counselor_name: input.counselor_name,
+      counselor_memo: input.counselor_memo,
+      transcript_text: input.transcript_text,
+      previous_session_summary: input.previous_session_summary,
+      counseling_goal: input.counseling_goal || '',
+      psychological_test_summary: input.psychological_test_summary || '',
+      key_issue_tags: input.key_issue_tags || [],
+      nonverbal_notes: input.nonverbal_notes || '',
+      target_document_type: input.target_document_type || 'session_note',
+      persist: Boolean(input.persist),
+    })
+    return toNoteDraftResponse(response.data)
+  } catch (error) {
+    throw normalizeApiError(error, '회기요약 초안을 생성하지 못했습니다.')
+  }
 }
 
 export const postGenerateNote = generateNoteDraft
