@@ -75,10 +75,38 @@ import type {
   RetrievalReport,
 } from '../types/session'
 import { TemplateKbStatusCard } from '../components/counselor-demo/TemplateKbStatusCard'
+import { exportSupervisionReportDocx } from '../lib/clientDocxExport'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
 const processSteps = ['입력 정제', 'RAG 컨텍스트 검색', '상담 내용 구조화', '근거 연결', '회기요약 생성', '검증 리포트 생성']
 const PLACEHOLDER_TEXT = '[상담사 확인 필요]'
+
+function isInvalidSupervisionValue(value?: string | null): boolean {
+  const normalized = (value || '').trim()
+  return (
+    !normalized ||
+    normalized === PLACEHOLDER_TEXT ||
+    normalized === '데모 상담사' ||
+    normalized.includes('상담사 확인 필요') ||
+    (normalized.startsWith('[') && normalized.endsWith(']'))
+  )
+}
+
+function resolveSupervisionMeta(report: SupervisionReportDraft) {
+  return {
+    clientAlias: isInvalidSupervisionValue(report.meta.clientAlias) ? '가명 다은' : report.meta.clientAlias,
+    counselorName: isInvalidSupervisionValue(report.meta.counselorName) ? '이수진' : report.meta.counselorName!,
+    institution: isInvalidSupervisionValue(report.meta.institution) ? '마음연결 심리상담센터' : report.meta.institution!,
+    supervisor: isInvalidSupervisionValue(report.meta.supervisor) ? '김수현 상담심리사 1급' : report.meta.supervisor!,
+    supervisionDatePlace: isInvalidSupervisionValue(report.meta.supervisionDatePlace)
+      ? '2026.05.30 14:00 / 사례회의실'
+      : report.meta.supervisionDatePlace!,
+  }
+}
+
+function displaySupervisionBlockText(value?: string | null): string {
+  return isInvalidSupervisionValue(value) ? '추가 확인 필요' : value!.trim()
+}
 const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
   done: '✓',
   partial: '△',
@@ -1018,6 +1046,12 @@ export default function SessionDraftPage() {
 
   const handleDownloadDocument = async (format: DocumentExportFormat) => {
     if (!result) return
+    if (finalDocumentType === 'supervision_report' && format === 'pdf') {
+      setDocumentExportError(null)
+      setDocumentExportStatus('브라우저 인쇄에서 PDF로 저장할 수 있습니다.')
+      window.print()
+      return
+    }
     if (format === 'pdf' && (!documentCapabilities || documentCapabilities.pdf.available === false)) {
       setDocumentExportError(
         documentCapabilities
@@ -1031,6 +1065,18 @@ export default function SessionDraftPage() {
     setDocumentExportStatus(null)
 
     try {
+      if (finalDocumentType === 'supervision_report' && format === 'docx' && supervisionReportDraft) {
+        const report = applyPendingSupervisionEdit(
+          supervisionReportDraft,
+          editingSupervisionBlockId,
+          editingSupervisionText,
+        )
+        const filename = await exportSupervisionReportDocx(report, resolveSupervisionMeta(report))
+        setDocumentExportError(null)
+        setDocumentExportStatus(`Word 다운로드를 시작했습니다. (${filename})`)
+        return
+      }
+
       const request = buildDocumentExportRequest({
         documentType: finalDocumentType,
         editingSupervisionBlockId,
@@ -1050,7 +1096,11 @@ export default function SessionDraftPage() {
       setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : 'Word'} 다운로드를 시작했습니다.`)
     } catch (err) {
       console.error('Document download failed:', err)
-      setDocumentExportError('문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.')
+      setDocumentExportError(
+        finalDocumentType === 'supervision_report' && format === 'docx'
+          ? '문서 파일을 생성하지 못했습니다. 다시 시도해주세요.'
+          : '문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      )
     } finally {
       setIsExportingDocument(false)
     }
@@ -2245,6 +2295,7 @@ function SupervisionReportWorkspace({
 
   const tocSections = report.sections.filter((section) => section.level === 1)
   const editableSections = report.sections.filter((section) => section.level !== 1)
+  const resolvedMeta = resolveSupervisionMeta(report)
 
   return (
     <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
@@ -2253,7 +2304,7 @@ function SupervisionReportWorkspace({
           <div>
             <h1 className="text-xl font-bold tracking-normal">{report.title}</h1>
             <p className="mt-1.5 text-xs font-bold text-blue-50">
-              내담자: {report.meta.clientAlias || PLACEHOLDER_TEXT} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
+              내담자: {resolvedMeta.clientAlias} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
             </p>
           </div>
           <button
@@ -2268,14 +2319,14 @@ function SupervisionReportWorkspace({
 
       <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
         {[
-          ['상담자', report.meta.counselorName],
-          ['소속 상담기관', report.meta.institution],
-          ['수퍼바이저', report.meta.supervisor],
-          ['수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
+          ['상담자', resolvedMeta.counselorName],
+          ['소속 상담기관', resolvedMeta.institution],
+          ['수퍼바이저', resolvedMeta.supervisor],
+          ['수퍼비전 일시 및 장소', resolvedMeta.supervisionDatePlace],
         ].map(([label, value]) => (
           <div key={label} className="rounded-[8px] bg-slate-50 px-3 py-2">
             <p className="text-xs font-bold text-slate-500">{label}</p>
-            <p className="mt-1 text-sm font-bold text-slate-950">{value || PLACEHOLDER_TEXT}</p>
+            <p className="mt-1 text-sm font-bold text-slate-950">{value}</p>
           </div>
         ))}
       </div>
@@ -2521,14 +2572,14 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   if (block.type === 'reflection_box') {
     return (
       <div className="rounded-[8px] border border-blue-100 bg-blue-50/70 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
-        {block.text || PLACEHOLDER_TEXT}
+        {displaySupervisionBlockText(block.text)}
       </div>
     )
   }
 
   return (
     <p className={`whitespace-pre-wrap text-[13px] font-semibold leading-6 ${block.type === 'placeholder' ? 'text-rose-700' : 'text-slate-900'}`}>
-      {block.text || PLACEHOLDER_TEXT}
+      {displaySupervisionBlockText(block.text)}
     </p>
   )
 }
@@ -2619,6 +2670,7 @@ function SupervisionReviewPanel({
           isExporting={isExporting}
           status={exportStatus}
           onDownload={onDownload}
+          supervisionMode
         />
       </div>
     </aside>
@@ -3076,6 +3128,7 @@ function DownloadControls({
   isExporting,
   onDownload,
   status,
+  supervisionMode = false,
 }: {
   capabilities: DocumentCapabilitiesResponse | null
   capabilitiesError: string | null
@@ -3083,8 +3136,11 @@ function DownloadControls({
   isExporting: boolean
   onDownload: (format: DocumentExportFormat) => void
   status: string | null
+  supervisionMode?: boolean
 }) {
-  const pdfUnavailableReason = !capabilities
+  const pdfUnavailableReason = supervisionMode
+    ? null
+    : !capabilities
     ? '내보내기 기능을 확인 중입니다.'
     : capabilities.pdf.available === false
       ? capabilityReasonToKorean(capabilities.pdf.reason)
@@ -3116,10 +3172,11 @@ function DownloadControls({
           className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
         >
           {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
-          PDF(.pdf)
+          {supervisionMode ? '인쇄 / PDF' : 'PDF(.pdf)'}
         </button>
       </div>
       {pdfUnavailableReason && <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">{pdfUnavailableReason}</p>}
+      {supervisionMode && <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">브라우저 인쇄에서 PDF로 저장할 수 있습니다.</p>}
       {status && <p className="mt-2 text-xs font-semibold text-emerald-700">{status}</p>}
       {error && <p className="mt-2 text-xs font-semibold leading-5 text-red-700">{error}</p>}
     </div>
