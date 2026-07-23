@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -2298,7 +2299,8 @@ function SupervisionReportWorkspace({
   const resolvedMeta = resolveSupervisionMeta(report)
 
   return (
-    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
+    <>
+    <section className="supervision-screen-report rounded-[7px] border border-slate-200 bg-white shadow-sm">
       <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -2368,7 +2370,69 @@ function SupervisionReportWorkspace({
         )}
       </div>
     </section>
+    <SupervisionPrintableReport report={report} />
+    </>
   )
+}
+
+function SupervisionPrintableReport({ report }: { report: SupervisionReportDraft }) {
+  const meta = resolveSupervisionMeta(report)
+
+  return createPortal(
+    <article id="supervision-print-document" className="supervision-print-document" aria-hidden="true">
+      <h1 className="supervision-print-title">개인상담 사례 수퍼비전 보고서</h1>
+      <table className="supervision-print-meta">
+        <tbody>
+          <tr><th>내담자</th><td>{meta.clientAlias}</td><th>회기</th><td>{report.meta.sessionNumber}회기</td></tr>
+          <tr><th>기준일</th><td>{report.meta.reportDate}</td><th>상담자</th><td>{meta.counselorName}</td></tr>
+          <tr><th>소속 상담기관</th><td>{meta.institution}</td><th>수퍼바이저</th><td>{meta.supervisor}</td></tr>
+          <tr><th>수퍼비전 일시 및 장소</th><td colSpan={3}>{meta.supervisionDatePlace}</td></tr>
+        </tbody>
+      </table>
+
+      <div className="supervision-print-sections">
+        {report.sections.map((section) => (
+          <section key={section.id} className={`supervision-print-section supervision-print-level-${section.level}`}>
+            {section.level === 1 ? <h2>{section.title}</h2> : <h3>{section.title}</h3>}
+            <div className="supervision-print-blocks">
+              {section.contentBlocks.map((block) => <SupervisionPrintableBlock key={block.id} block={block} />)}
+            </div>
+          </section>
+        ))}
+      </div>
+    </article>,
+    document.body,
+  )
+}
+
+function SupervisionPrintableBlock({ block }: { block: SupervisionContentBlock }) {
+  if (block.type === 'table' && block.rows?.length) {
+    const headers = Object.keys(block.rows[0])
+    return (
+      <table className="supervision-print-table">
+        <thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+        <tbody>{block.rows.map((row, index) => (
+          <tr key={`${block.id}-print-${index}`}>{headers.map((header) => <td key={header}>{row[header]}</td>)}</tr>
+        ))}</tbody>
+      </table>
+    )
+  }
+
+  if (block.type === 'transcript' && block.speakerTurns?.length) {
+    return <div className="supervision-print-transcript">{block.speakerTurns.map((turn) => (
+      <p key={turn.turnId}><strong>{turn.speaker === 'client' ? '내담자' : '상담자'}:</strong> {turn.text}</p>
+    ))}</div>
+  }
+
+  const value = displaySupervisionBlockText(block.text)
+  const lines = value.split(/\r?\n/).filter(Boolean)
+  const isList = lines.length > 0 && lines.every((line) => /^\s*[-*•]\s+/.test(line))
+  if (isList) {
+    return <ul className="supervision-print-list">{lines.map((line, index) => (
+      <li key={`${block.id}-${index}`}>{line.replace(/^\s*[-*•]\s+/, '')}</li>
+    ))}</ul>
+  }
+  return <p className="supervision-print-paragraph">{value}</p>
 }
 
 function SupervisionReportSectionView({
