@@ -27,15 +27,12 @@ DEMO_CASE_ID = "CASE-DEMO-001"
 DEMO_META = {
     "client_alias": "김민서",
     "counselor_name": "이수진",
-    "institution": "마마음연결 상담센터", # Note: '마음연결 상담센터' will be normalized cleanly
-    "supervisor": "김OO",
-    "supervision_date_place": "2026.05.30 / 사례회의실",
+    "institution": "마음연결 심리상담센터",
+    "supervisor": "김수현 상담심리사 1급",
+    "supervision_date_place": "2026.05.30 14:00 / 사례회의실",
     "max_sessions": "12회기",
     "default_duration": "50분",
 }
-# Keep institution clean
-DEMO_META["institution"] = "마음연결 상담센터"
-
 DEMO_PROFILE_TEXT = (
     "내담자는 24세 대학 4학년 여학생으로, 현재 졸업과 공채 취업 준비를 병행하고 있다. "
     "최근 대형 공기업의 1차 서류 합격 소식을 들은 직후부터 발표와 면접 상황에 대한 불안을 강하게 호소하고 있다. "
@@ -47,9 +44,9 @@ DEMO_PROFILE_CONTEXT = (
     "경제적 부양 수준이나 구체적인 학업 평점 등의 세부 사항은 접수면접지를 통해 추가 확인이 필요하다."
 )
 DEMO_PSYCH_TEST_SUMMARY = (
-    "접수 면접 시 진행한 진로흥미검사 결과 사회형과 탐구형 흥미가 유의미하게 높게 확인되었다. "
-    "상태불안 척도는 상위 10%에 해당하여 현재 평가 국면에서 급격한 신체적, 심리적 불안을 경험하고 있음을 뒷받침한다. "
-    "단, 본 평가 결과는 현재의 급성 스트레스 반응을 이해하기 위한 참고 수치로만 활용하고 있으며 임상적 진단 근거는 아니다."
+    "접수면접에서 실시한 진로흥미검사에서는 사회형과 탐구형 경향이 상대적으로 높게 나타났다. "
+    "상태불안 자기보고에서도 면접과 평가 상황에 관련된 불안이 높은 수준으로 보고되었다. "
+    "해당 결과는 상담 목표 설정과 현재 어려움의 맥락을 이해하기 위한 참고자료로 활용하였다."
 )
 DEMO_SESSION_ROWS = [
     {

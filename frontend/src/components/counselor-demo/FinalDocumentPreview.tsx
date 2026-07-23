@@ -150,6 +150,10 @@ export const FinalDocumentPreview: React.FC<FinalDocumentPreviewProps> = ({
                 </div>
                 <div className="p-2.5 bg-slate-100 font-bold text-slate-900">담당 상담사</div>
                 <div className="p-2.5 bg-white">{clientInfo.counselorName}</div>
+                <div className="p-2.5 bg-slate-100 font-bold text-slate-900">수퍼바이저</div>
+                <div className="p-2.5 bg-white">{clientInfo.supervisor || '미입력'}</div>
+                <div className="p-2.5 bg-slate-100 font-bold text-slate-900">수퍼비전 일시/장소</div>
+                <div className="p-2.5 bg-white">{clientInfo.supervisionDatePlace || '미입력'}</div>
               </div>
             </div>
 

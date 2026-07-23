@@ -8,6 +8,29 @@ interface TemplateKbStatusCardProps {
   isDemo?: boolean
 }
 
+const FIELD_LABELS: Record<string, string> = {
+  session_metadata: '회기 기본정보',
+  case_id: '사례 ID',
+  session_number: '회기 번호',
+  session_date: '상담 일자',
+  presenting_problem: '주 호소문제',
+  family_relations: '가족관계',
+  counseling_goal: '상담목표',
+  session_content: '상담 진행내용',
+  counselor_reflection: '상담자 평가 및 성찰',
+  next_plan: '향후 계획',
+  nonverbal_observation: '비언어적 관찰',
+  psychological_tests: '심리검사 결과',
+  case_conceptualization: '사례개념화',
+  supervision_questions: '수퍼비전 질문',
+  'family genogram outline': '가계도 및 가족관계',
+  'direct client quotes': '내담자 주요 진술',
+  'prior counseling details': '이전 상담 경험',
+  'suicide risk screening': '위험도 확인',
+}
+
+const fieldLabel = (field: string) => FIELD_LABELS[field] || field
+
 export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
   templateContext,
   retrievalReport,
@@ -56,10 +79,16 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
               </span>
             </div>
             <p className="text-sm font-bold text-white mt-0.5">{kbSubtitle}</p>
+            {!isExpanded && (
+              <p className="text-xs text-slate-400 mt-1">
+                필수 항목 {required_fields.length}개 · 상담사 확인 {counselor_review_fields.length}개 · 근거 항목 {source_refs.length}개
+              </p>
+            )}
           </div>
         </div>
         <button
           type="button"
+          aria-label={isExpanded ? 'KB 상세 접기' : 'KB 상세 펼치기'}
           onClick={() => setIsExpanded(!isExpanded)}
           className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors"
         >
@@ -67,7 +96,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mt-4 bg-slate-950/60 p-3 rounded-lg border border-slate-800 text-center">
+      {isExpanded && <div className="grid grid-cols-3 gap-2 mt-4 bg-slate-950/60 p-3 rounded-lg border border-slate-800 text-center">
         <div>
           <div className="text-[10px] text-slate-400">필수 항목</div>
           <div className="text-sm font-bold text-white mt-0.5">{required_fields.length}개</div>
@@ -77,10 +106,10 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
           <div className="text-sm font-bold text-white mt-0.5">{counselor_review_fields.length}개</div>
         </div>
         <div>
-          <div className="text-[10px] text-slate-400">근거 청크</div>
+          <div className="text-[10px] text-slate-400">근거 항목</div>
           <div className="text-sm font-bold text-white mt-0.5">{source_refs.length}개</div>
         </div>
-      </div>
+      </div>}
 
       {isExpanded && (
         <div className="mt-4 pt-4 border-t border-slate-850 space-y-3.5 text-xs text-slate-300">
@@ -90,7 +119,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
               <div className="flex flex-wrap gap-1.5">
                 {required_fields.map((field) => (
                   <span key={field} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
-                    {field}
+                    {fieldLabel(field)}
                   </span>
                 ))}
               </div>
@@ -103,7 +132,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
               <div className="flex flex-wrap gap-1.5">
                 {optional_fields.map((field) => (
                   <span key={field} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400">
-                    {field}
+                    {fieldLabel(field)}
                   </span>
                 ))}
               </div>
@@ -116,7 +145,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
               <div className="flex flex-wrap gap-1.5">
                 {counselor_review_fields.map((field) => (
                   <span key={field} className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300">
-                    {field}
+                    {fieldLabel(field)}
                   </span>
                 ))}
               </div>
@@ -129,7 +158,7 @@ export const TemplateKbStatusCard: React.FC<TemplateKbStatusCardProps> = ({
               <div className="flex flex-wrap gap-1.5">
                 {missing_field_checklist.map((field) => (
                   <span key={field} className="px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-300">
-                    {field}
+                    {fieldLabel(field)}
                   </span>
                 ))}
               </div>

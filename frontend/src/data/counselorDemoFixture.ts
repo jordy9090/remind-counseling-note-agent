@@ -84,7 +84,7 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
     counselorName: '이수진',
     counselingGoal: '취업 준비 과정의 대인 비교 불안 완화 및 완벽주의적 사고 재구성',
     institution: '마음연결 심리상담센터',
-    supervisor: '김OO 상담심리사',
+    supervisor: '김수현 상담심리사 1급',
     supervisionDatePlace: '2026.05.30 14:00 / 사례회의실',
   },
   sections: [
@@ -140,7 +140,7 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
       id: 'A-7',
       title: 'A-7. 심리검사 결과 및 주요 해석내용',
       content:
-        '접수 면접 시 진행한 진로흥미검사 결과 사회형과 탐구형 흥미가 유의미하게 높게 확인되었다. 상태불안 척도는 상위 10%에 해당하여 현재 평가 국면에서 급격한 신체적, 심리적 불안을 경험하고 있음을 뒷받침한다. 단, 본 평가 결과는 현재의 급성 스트레스 반응을 이해하기 위한 참고 수치로만 활용하고 있으며 임상적 진단 근거는 아니다.',
+        '접수면접에서 실시한 진로흥미검사에서는 사회형과 탐구형 경향이 상대적으로 높게 나타났다. 상태불안 자기보고에서도 면접과 평가 상황에 관련된 불안이 높은 수준으로 보고되었다. 해당 결과는 상담 목표 설정과 현재 어려움의 맥락을 이해하기 위한 참고자료로 활용하였다.',
       status: 'connected',
       evidenceIds: ['ev_8'],
     },
@@ -215,7 +215,7 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
       sourceType: 'counselor_memo',
       sourceLabel: '접수 평가 자료',
       excerpt:
-        '진로흥미검사 사회형/탐구형 높음. 상태불안 척도 상위 10% 범주. 임상적 진단 수준은 아님.',
+        '진로흥미검사에서 사회형과 탐구형 경향이 상대적으로 높게 나타남. 상태불안 자기보고에서 면접과 평가 상황 관련 불안이 높은 수준으로 보고됨.',
       rationale: '접수 단계에서 실시한 간이 검사 결과 및 해석 근거',
     },
     ev_9: {

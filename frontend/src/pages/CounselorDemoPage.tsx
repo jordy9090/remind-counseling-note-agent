@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { DemoHeader } from '../components/counselor-demo/DemoHeader'
 import { DraftReviewPanel } from '../components/counselor-demo/DraftReviewPanel'
 import { EvidencePanel } from '../components/counselor-demo/EvidencePanel'
@@ -17,6 +17,10 @@ interface CounselorDemoPageProps {
 }
 
 export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPageProps) {
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 })
+  }, [])
+
   const {
     demoData,
     sections,
