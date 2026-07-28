@@ -1,0 +1,25 @@
+# Qwen3-0.6B 스모크 테스트 — 파이프라인 검증용 (품질 무관)
+# 실행: python finetuning/train/train_qlora.py --config finetuning/configs/qlora_qwen3_smoke.yaml --smoke 15
+# 확인 항목: 정상 종료 / loss NaN 없이 감소 / masking sanity 통과 / 생성이 단일 JSON으로 종료
+
+base_model: Qwen/Qwen3-0.6B
+data_dir: finetuning/data/processed
+output_dir: finetuning/output/qwen3-0.6b-smoke
+
+max_seq_length: 8192        # --smoke는 가장 짧은 예시만 쓰므로 충분
+epochs: 2
+max_steps: 12
+batch_size: 1
+gradient_accumulation: 2
+learning_rate: 2.0e-4
+logging_steps: 1
+eval_steps: 6
+save_steps: 12
+report_to: none
+use_liger: false            # 0.6B/8k에서는 불필요 — liger 미설치 환경에서도 스모크 가능
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]

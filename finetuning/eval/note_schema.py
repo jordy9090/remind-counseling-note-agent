@@ -29,14 +29,18 @@ REVIEW_EVIDENCE_TYPES = (
     "model_inference",
     "prior_context_based",
 )
+# 학습 타깃(AI Hub 1,251건) 실측 분포 기반 + 여유분.
+# 실측 max: theme 143 / presenting 436 / content 1070 / intervention 354 / response 228 / next 170.
+# 이전 값(content 600 등)은 학습 분포보다 좁아 constrained decoding이 모델의 자연스러운
+# 이어쓰기를 차단했고, 이것이 반복 생성·JSON 미완성의 원인 중 하나였다.
 SECTION_TEXT_MAX_LENGTHS = {
-    "session_theme": 200,
-    "presenting_problem": 400,
-    "session_content": 600,
-    "counselor_intervention": 450,
-    "client_response": 400,
+    "session_theme": 300,
+    "presenting_problem": 800,
+    "session_content": 1600,
+    "counselor_intervention": 700,
+    "client_response": 500,
     "reflection": 200,
-    "next_plan": 350,
+    "next_plan": 500,
 }
 
 

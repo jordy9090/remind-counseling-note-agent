@@ -7,7 +7,11 @@ import unittest
 
 from lmformatenforcer import CharacterLevelParserConfig, JsonSchemaParser
 
-from finetuning.eval.note_schema import COUNSELING_NOTE_SCHEMA, NOTE_SECTIONS
+from finetuning.eval.note_schema import (
+    COUNSELING_NOTE_SCHEMA,
+    NOTE_SECTIONS,
+    SECTION_TEXT_MAX_LENGTHS,
+)
 from finetuning.eval.quick_eval import (
     GENERATION_INSTRUCTION,
     check_note,
@@ -120,7 +124,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_maximum_text_length_is_enforced(self) -> None:
         note = valid_note()
-        note["session_theme"]["text"] = "가" * 201
+        note["session_theme"]["text"] = "가" * (SECTION_TEXT_MAX_LENGTHS["session_theme"] + 1)
         self.assertTrue(check_note(note))
 
     def test_reflection_must_remain_counselor_input(self) -> None:
@@ -143,13 +147,26 @@ class EvaluationTests(unittest.TestCase):
 
     def test_evaluation_result_and_metrics(self) -> None:
         valid = evaluate_text(json.dumps(valid_note(), ensure_ascii=False))
-        invalid = evaluate_text('{"broken": ]')
+        invalid = evaluate_text('{"broken": ]', truncated=True)
         metrics = summarize_results([valid, invalid])
         self.assertEqual(valid["parse_status"], "valid")
         self.assertEqual(valid["schema_status"], "valid")
+        self.assertEqual(valid["missing_sections"], [])
+        self.assertFalse(valid["truncated"])
         self.assertEqual(invalid["parse_status"], "invalid")
+        self.assertTrue(invalid["truncated"])
+        self.assertIn("hit max_new_tokens", invalid["error"])
         self.assertEqual(metrics["json_valid_rate"], 0.5)
         self.assertEqual(metrics["schema_valid_rate"], 0.5)
+        self.assertEqual(metrics["truncated_rate"], 0.5)
+        self.assertEqual(metrics["missing_section_rate"], 0.5)
+
+    def test_missing_section_is_reported(self) -> None:
+        note = valid_note()
+        del note["next_plan"]
+        result = evaluate_text(json.dumps(note, ensure_ascii=False))
+        self.assertEqual(result["missing_sections"], ["next_plan"])
+        self.assertEqual(result["schema_status"], "invalid")
 
     def test_prompt_instruction_is_appended_without_mutating_example(self) -> None:
         example = {
@@ -167,7 +184,7 @@ class EvaluationTests(unittest.TestCase):
         model = FakeModel()
         tokenizer = FakeTokenizer()
         prefix_function = object()
-        text = generate_note_text(
+        text, truncated = generate_note_text(
             model,
             tokenizer,
             [{"role": "user", "content": "input"}],
@@ -175,6 +192,7 @@ class EvaluationTests(unittest.TestCase):
             prefix_allowed_tokens_fn=prefix_function,
         )
         self.assertEqual(text, '{"ok": true}')
+        self.assertFalse(truncated)
         self.assertFalse(tokenizer.template_kwargs["enable_thinking"])
         self.assertIs(model.generate_kwargs["input_ids"], tokenizer.input_ids)
         self.assertIs(model.generate_kwargs["attention_mask"], tokenizer.attention_mask)

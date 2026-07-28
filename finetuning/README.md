@@ -19,16 +19,33 @@
 사용하지 않는 것: ESConv(학술 전용), Psych8k·KokoroChat(비상업), AI Hub 재업로드본(약관 위반 소지),
 싱글턴 상담 Q&A류(태스크 형식 불일치).
 
-## 파이프라인
+## 파이프라인 (v2)
 
 ```text
-data/convert.py            원천 데이터 → 중간 형식 (intermediate_<source>.jsonl)
-data/synthesize_notes.py   노트 없는 대화(KMI 등)에 LLM으로 한국어 노트 타깃 생성  [OPENAI_API_KEY 필요]
-data/convert_aihub_71806.py AI Hub 심리상담 데이터 승인 후 변환 (스켈레톤, 명세서 확인 후 매핑)
-data/build_sft_dataset.py  노트 있는 레코드 → chat 형식 sft_train/val.jsonl
-train/train_qlora.py       QLoRA SFT (trl + peft + bitsandbytes)                  [GPU 필요]
-eval/quick_eval.py         JSON 파싱률 / 스키마 유효율 / 한국어 비율 등 구조 평가   [GPU 필요]
+data/convert.py             KMI/CACTUS/CPsyCoun → 중간 형식 (intermediate_<source>.jsonl)
+data/convert_aihub_71806.py AI Hub 심리상담 데이터 → 중간 형식 (ID 유일성 하드 검증)
+data/convert_medical.py     MTS-Dialog/ACI-Bench → 중간 형식 (native_note 보존, SFT 미사용)
+data/synthesize_notes.py    노트 없는 대화(KMI 등)에 LLM으로 노트 타깃 생성  [OPENAI_API_KEY 필요]
+data/build_sft_dataset.py   case_id 단위 group split → sft_train/val/test.jsonl (80/10/10)
+tests/test_masking.py       assistant-only loss 마스킹 검증 (CPU, 학습 전 필수)
+tests/test_split.py         split 무결성 검증 (case 누수 0, ID 중복 0)
+train/train_qlora.py        QLoRA SFT — transformers+peft, 프롬프트 -100 마스킹  [GPU 필요]
+eval/quick_eval.py          constrained 평가 (parse/schema/repetition/truncation)  [GPU 필요]
+eval/compare_eval.py        base vs adapter를 같은 test set으로 비교              [GPU 필요]
 ```
+
+라이선스와 소스별 사용 상태는 [DATASETS.md](DATASETS.md) 참고.
+
+### v2에서 고친 것 (fix/finetuning-pipeline-v2)
+
+1. **ID 체계**: `aihub71806-{split}-{category}-{원본ID}-s{회기}` — 변환·빌드 양쪽에서 중복 시 하드 실패
+2. **Split**: 랜덤 row split 폐지 → `case_id`(내담자) 단위 group split, train/val/test 케이스 중복 0 검증
+3. **Loss**: 축어록/프롬프트 토큰을 -100 마스킹, assistant JSON+eos에만 loss.
+   Qwen3 템플릿에는 `{% generation %}` 마커가 없어 trl `assistant_only_loss=True`가 **작동하지 않음** →
+   trl 의존을 제거하고 transformers Trainer + 직접 마스킹으로 구현 (tests/test_masking.py로 검증)
+4. **평가**: 스키마 maxLength를 실측 분포로 상향(기존 600자 제한이 반복/미완성의 원인),
+   `--max-new-tokens` 기본 2048(타깃이 900~1,400토큰이라 1024는 정상 출력도 잘림),
+   truncation/missing-section 지표와 base-vs-adapter 비교 추가
 
 ### 1. 환경 (CPU, 이 레포에서 완료됨)
 
@@ -75,14 +92,19 @@ python data/convert_aihub_71806.py --input "C:/Users/.../16.심리상담 데이�
   복구 불가 1건, 요약 결측 245건(노트 없음 — 합성 대상으로 남음)
 - **주의: AI Hub 약관상 재배포 금지. data/raw, data/processed는 gitignore 유지**
 
-### 4. SFT 데이터셋 빌드 (완료됨: train 1,769 / val 93)
+### 4. SFT 데이터셋 빌드 (v2 검증 결과)
 
 ```bash
 python data/build_sft_dataset.py --sources aihub_71806,cactus --max-per-source cactus=1000 --max-chars 28000
+python -m unittest finetuning.tests.test_split -v
 ```
 
-- `--max-chars 28000`: 실측(Qwen 토크나이저) 기준 축어록+노트가 p50 15.8k / p90 19k 토큰이라,
-  20k 컨텍스트에 안 들어가는 상위 31%(389건)는 제외. VRAM이 크면 상한을 올려 복구 가능
+2026-07-29 로컬 실행 결과:
+
+- AI Hub 변환: **전체 1,496 / 노트 1,251 / 중복 ID 0 / 고유 case 213**
+- 빌드: aihub 862(28k자 초과 389 제외) + cactus 1,000
+- group split: **train 1,483 / val 192 / test 187** (case 935/107/117, **split 간 case 중복 0**)
+- `--max-chars 28000`: 20k 토큰 컨텍스트 기준. VRAM이 크면 상한을 올려 제외분 복구 가능
 - KMI 합성 완료 후: `--sources aihub_71806,kmi,cactus`
 
 ### 5. QLoRA 학습 (GPU 서버)
@@ -94,15 +116,29 @@ python data/build_sft_dataset.py --sources aihub_71806,cactus --max-per-source c
 scp finetuning/data/processed/sft_{train,val}.jsonl user@server:~/remind-counseling-note-agent/finetuning/data/processed/
 ```
 
-서버에서 (tmux 안에서 실행 — SSH가 끊겨도 학습이 유지됨):
+서버에서 (tmux 안에서 실행 — SSH가 끊겨도 학습이 유지됨). **14B 본 학습 전에
+반드시 masking/split 테스트와 0.6B 스모크를 통과시킬 것:**
 
 ```bash
 pip install -r finetuning/requirements-train.txt
+
+# 0) 학습 전 검증 (CPU)
+python -m unittest finetuning.tests.test_masking finetuning.tests.test_split -v
+
+# 1) 스모크: Qwen3-0.6B + 가장 짧은 15개 예시 (~수 분)
+tmux new -s smoke
+python finetuning/train/train_qlora.py --config finetuning/configs/qlora_qwen3_smoke.yaml --smoke 15
+python finetuning/eval/quick_eval.py --base Qwen/Qwen3-0.6B \
+  --adapter finetuning/output/qwen3-0.6b-smoke --limit 3 --max-new-tokens 2048
+
+# 2) 본 학습: Qwen3-14B (새 output 경로 v2 — 기존 어댑터 보존)
 tmux new -s train
-python finetuning/train/train_qlora.py --config finetuning/configs/qlora_qwen25_7b.yaml
+python finetuning/train/train_qlora.py --config finetuning/configs/qlora_qwen3_14b.yaml
 # Ctrl+B, D 로 detach / tmux attach -t train 으로 복귀
 
-python finetuning/eval/quick_eval.py --adapter finetuning/output/qwen25-7b-remind-note-qlora --limit 50
+# 3) base vs adapter 비교 (held-out test set)
+python finetuning/eval/compare_eval.py --base Qwen/Qwen3-14B \
+  --adapter finetuning/output/qwen3-14b-remind-note-qlora-v2 --limit 30
 ```
 
 - 베이스 모델: **Qwen2.5-7B-Instruct** (Apache-2.0, 한국어 우수). 대안: gemma-2-9b-it, Llama-3.1-8B-Instruct (config 주석 참고)

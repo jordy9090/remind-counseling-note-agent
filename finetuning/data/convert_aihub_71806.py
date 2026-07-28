@@ -155,7 +155,7 @@ def build_note(data: dict, dialogue: list[dict]) -> dict | None:
     }
 
 
-def convert_label_json(data: dict, category: str, session_number: int, split: str) -> dict | None:
+def convert_label_json(data: dict, category: str, session_number: int, split: str, stem: str) -> dict | None:
     dialogue = []
     for p in data.get("paragraph", []):
         text = str(p.get("paragraph_text") or "").strip()
@@ -185,10 +185,19 @@ def convert_label_json(data: dict, category: str, session_number: int, split: st
     interventions = sorted(
         {label for t in dialogue if t["speaker"] == "counselor" and t.get("label") for label in t["label"].split(",")}
     )
+    # ID 규칙: split + category + 원본 참여자 ID + 회기 번호를 모두 포함해 전역 유일성을 보장.
+    # (참여자 ID(D005 등)는 카테고리/스플릿 간에 재사용될 수 있음)
+    original_id = str(data.get("id") or stem)
+    category_slug = re.sub(r"^label_", "", stem).split("_")[0] or category
+    record_id = f"aihub71806-{split}-{category_slug}-{original_id}-s{session_number}"
+    # case_id는 split을 제외 — 같은 내담자의 회기가 TL/VL로 흩어져 있어도
+    # group split 시 한 스플릿에 모이도록 한다.
+    case_id = f"aihub71806-{category_slug}-{original_id}"
     return {
-        "id": f"aihub71806-{data.get('id', 'unknown')}-s{session_number}",
+        "id": record_id,
+        "case_id": case_id,
         "source": "aihub_71806",
-        "lang": "ko",
+        "language": "ko",
         "license": "AIHub-terms(재배포 금지)",
         "dialogue": [{k: v for k, v in t.items() if k in ("speaker", "text", "label")} for t in dialogue],
         "meta": {
@@ -237,29 +246,48 @@ def main() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
     out_path = OUT / "intermediate_aihub_71806.jsonl"
-    count = skipped = parse_errors = 0
+    records: list[dict] = []
+    skipped = parse_errors = 0
+    for zip_path in label_zips:
+        match = ZIP_META_RE.search(zip_path.name)
+        category = match.group(1) if match else ""
+        session_number = int(match.group(2)) if match else 0
+        split = "train" if zip_path.name.startswith("TL") else "val"
+        with zipfile.ZipFile(zip_path) as zf:
+            for name in zf.namelist():
+                if not name.endswith(".json"):
+                    continue
+                data = parse_label_json(zf.read(name).decode("utf-8-sig"))
+                if data is None:
+                    parse_errors += 1
+                    print(f"  parse error: {zip_path.name} :: {name}")
+                    continue
+                stem = Path(name).stem
+                record = convert_label_json(data, category, session_number, split, stem)
+                if record is None:
+                    skipped += 1
+                    continue
+                records.append(record)
+
+    # --- validation: ID 유일성은 필수 조건이다 (중복 시 하드 실패) ---
+    ids = [r["id"] for r in records]
+    duplicates = {i for i in ids if ids.count(i) > 1} if len(set(ids)) != len(ids) else set()
+    with_note = sum(1 for r in records if r["note"])
+    cases = {r["case_id"] for r in records}
+    print(f"total rows:        {len(records)}")
+    print(f"unique ids:        {len(set(ids))}")
+    print(f"duplicate ids:     {len(duplicates)}")
+    print(f"rows with note:    {with_note}")
+    print(f"unique case_ids:   {len(cases)}")
+    if duplicates:
+        for d in sorted(duplicates)[:10]:
+            print(f"  DUP: {d}")
+        raise SystemExit("FATAL: duplicate ids detected — fix the ID scheme before training.")
+
     with out_path.open("w", encoding="utf-8") as f:
-        for zip_path in label_zips:
-            match = ZIP_META_RE.search(zip_path.name)
-            category = match.group(1) if match else ""
-            session_number = int(match.group(2)) if match else 0
-            split = "train" if zip_path.name.startswith("TL") else "val"
-            with zipfile.ZipFile(zip_path) as zf:
-                for name in zf.namelist():
-                    if not name.endswith(".json"):
-                        continue
-                    data = parse_label_json(zf.read(name).decode("utf-8-sig"))
-                    if data is None:
-                        parse_errors += 1
-                        print(f"  parse error: {zip_path.name} :: {name}")
-                        continue
-                    record = convert_label_json(data, category, session_number, split)
-                    if record is None:
-                        skipped += 1
-                        continue
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    count += 1
-    print(f"aihub_71806: {count} records (skipped {skipped}, parse errors {parse_errors}) -> {out_path}")
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(f"aihub_71806: {len(records)} records (skipped {skipped}, parse errors {parse_errors}) -> {out_path}")
 
 
 if __name__ == "__main__":

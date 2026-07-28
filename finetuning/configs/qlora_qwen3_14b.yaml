@@ -1,0 +1,23 @@
+# Qwen3-14B QLoRA — 본 학습 (스모크/마스킹/split 검증 통과 후에만 실행)
+# 새 output 경로(v2) — 기존 어댑터(finetuning/output/qwen3-14b-remind-note-qlora)를 덮어쓰지 않음
+
+base_model: Qwen/Qwen3-14B
+data_dir: finetuning/data/processed
+output_dir: finetuning/output/qwen3-14b-remind-note-qlora-v2
+
+# AI Hub 실측: 프롬프트+타깃 p50 15.8k / p90 19k 토큰 (build --max-chars 28000 기준)
+max_seq_length: 20480
+epochs: 2
+batch_size: 1
+gradient_accumulation: 16
+learning_rate: 2.0e-4
+eval_steps: 50
+save_steps: 50
+report_to: none
+use_liger: true             # 긴 시퀀스 logits 메모리 제거 — 14B/20k에서는 필수
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]

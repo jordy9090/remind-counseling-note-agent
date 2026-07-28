@@ -2,23 +2,25 @@
 
 Merges data/processed/synthesized_<source>.jsonl (preferred) and
 intermediate_<source>.jsonl, keeps records that have a `note`, renders each as a
-chat example that mirrors the production Re:mind summary task
-(backend/app/graph/nodes.py::generate_summary), and writes:
+chat example mirroring the production Re:mind summary task, and writes:
 
   data/processed/sft_train.jsonl
   data/processed/sft_val.jsonl
+  data/processed/sft_test.jsonl
 
-Each line: {"messages": [{role, content} x3], "meta": {...}}
-— the format expected by trl's SFTTrainer with a chat template.
+Split policy: **group split by case_id** — all sessions of the same client/case
+land in exactly one split (no case leakage between train/val/test). Row-level
+random split is forbidden. Duplicate record ids are a hard error.
 
 Usage:
-  python data/build_sft_dataset.py --sources kmi,cactus --max-per-source cactus=4000
+  python data/build_sft_dataset.py --sources aihub_71806,cactus --max-per-source cactus=1000 --max-chars 28000
 """
 from __future__ import annotations
 
 import argparse
 import json
 import random
+from collections import Counter
 from pathlib import Path
 
 PROCESSED = Path(__file__).parent / "processed"
@@ -45,27 +47,27 @@ USER_TEMPLATE = """다음 회기 자료로 회기요약 초안을 생성하세�
 {transcript}"""
 
 
-def dialogue_to_transcript(dialogue: list[dict], lang: str) -> str:
+def dialogue_to_transcript(dialogue: list[dict], language: str) -> str:
     roles = {
         "ko": {"counselor": "상담사", "client": "내담자"},
         "en": {"counselor": "Counselor", "client": "Client"},
         "zh": {"counselor": "咨询师", "client": "来访者"},
-    }[lang if lang in ("ko", "en", "zh") else "en"]
+    }[language if language in ("ko", "en", "zh") else "en"]
     return "\n".join(f"{roles[t['speaker']]}: {t['text']}" for t in dialogue)
 
 
-def to_example(record: dict, rng: random.Random) -> dict:
-    session_number = rng.randint(1, 12)
+def to_example(record: dict) -> dict:
+    meta = record.get("meta", {})
     session_info = {
-        "case_id": f"case-{record['id']}",
-        "session_number": session_number,
+        "case_id": record.get("case_id", record["id"]),
+        "session_number": int(meta.get("session_number") or 1),
         "session_date": "",
         "counselor_name": "",
     }
     user = USER_TEMPLATE.format(
         session_info=json.dumps(session_info, ensure_ascii=False),
-        counselor_memo=record.get("meta", {}).get("counselor_memo", "") or "(없음)",
-        transcript=dialogue_to_transcript(record["dialogue"], record["lang"]),
+        counselor_memo=meta.get("counselor_memo", "") or "(없음)",
+        transcript=dialogue_to_transcript(record["dialogue"], record.get("language", record.get("lang", "en"))),
     )
     note = {"session_info": session_info, **record["note"]}
     return {
@@ -76,8 +78,9 @@ def to_example(record: dict, rng: random.Random) -> dict:
         ],
         "meta": {
             "id": record["id"],
+            "case_id": record.get("case_id", record["id"]),
             "source": record["source"],
-            "lang": record["lang"],
+            "language": record.get("language", record.get("lang", "")),
             "license": record["license"],
             "note_origin": record.get("note_origin", "rule_based"),
         },
@@ -87,22 +90,76 @@ def to_example(record: dict, rng: random.Random) -> dict:
 def load_source(source: str) -> list[dict]:
     """Prefer synthesized records; fall back to intermediate ones with notes."""
     records: dict[str, dict] = {}
+    seen_per_file: dict[str, int] = {}
     for prefix in ("intermediate", "synthesized"):
         path = PROCESSED / f"{prefix}_{source}.jsonl"
         if not path.exists():
             continue
+        file_ids: list[str] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             record = json.loads(line)
             if record.get("note"):
-                records[record["id"]] = record  # synthesized pass overwrites
+                file_ids.append(record["id"])
+                records[record["id"]] = record  # synthesized pass overwrites intermediate
+        duplicate_count = len(file_ids) - len(set(file_ids))
+        if duplicate_count:
+            worst = Counter(file_ids).most_common(5)
+            raise SystemExit(
+                f"FATAL: {path.name} contains {duplicate_count} duplicate ids "
+                f"(records would be silently dropped). Worst: {worst}"
+            )
+        seen_per_file[path.name] = len(file_ids)
+    for name, n in seen_per_file.items():
+        print(f"  {name}: {n} records with note")
     return list(records.values())
+
+
+def group_split(
+    examples: list[dict], val_ratio: float, test_ratio: float, seed: int
+) -> dict[str, list[dict]]:
+    """Split by case_id so that every case's sessions stay in one split."""
+    rng = random.Random(seed)
+    cases: dict[str, list[dict]] = {}
+    for example in examples:
+        cases.setdefault(example["meta"]["case_id"], []).append(example)
+    case_ids = sorted(cases)
+    rng.shuffle(case_ids)
+
+    total = len(examples)
+    target_val = total * val_ratio
+    target_test = total * test_ratio
+    splits: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
+    counts = {"val": 0, "test": 0}
+    for case_id in case_ids:
+        bucket = "train"
+        if counts["test"] < target_test:
+            bucket = "test"
+        elif counts["val"] < target_val:
+            bucket = "val"
+        splits[bucket].extend(cases[case_id])
+        if bucket in counts:
+            counts[bucket] += len(cases[case_id])
+
+    # --- validation: case overlap between splits must be zero ---
+    case_sets = {name: {e["meta"]["case_id"] for e in items} for name, items in splits.items()}
+    for a, b in (("train", "val"), ("train", "test"), ("val", "test")):
+        overlap = case_sets[a] & case_sets[b]
+        if overlap:
+            raise SystemExit(f"FATAL: case overlap between {a} and {b}: {sorted(overlap)[:5]}")
+    print(
+        "split cases  : "
+        + " / ".join(f"{name}={len(case_sets[name])}" for name in ("train", "val", "test"))
+        + " (overlap 0 verified)"
+    )
+    return splits
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sources", default="kmi,cactus")
-    parser.add_argument("--max-per-source", default="", help="e.g. cactus=4000,kmi=1000")
-    parser.add_argument("--val-ratio", type=float, default=0.05)
+    parser.add_argument("--sources", default="aihub_71806,cactus")
+    parser.add_argument("--max-per-source", default="", help="e.g. cactus=1000")
+    parser.add_argument("--val-ratio", type=float, default=0.10)
+    parser.add_argument("--test-ratio", type=float, default=0.10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--max-chars",
@@ -126,7 +183,7 @@ def main() -> None:
         rng.shuffle(records)
         if source in caps:
             records = records[: caps[source]]
-        converted = [to_example(r, rng) for r in records]
+        converted = [to_example(r) for r in records]
         if args.max_chars:
             kept = [e for e in converted if sum(len(m["content"]) for m in e["messages"]) <= args.max_chars]
             print(f"{source}: {len(kept)} examples ({len(converted) - len(kept)} dropped over {args.max_chars} chars)")
@@ -135,15 +192,19 @@ def main() -> None:
             print(f"{source}: {len(converted)} examples")
         examples.extend(converted)
 
-    rng.shuffle(examples)
-    n_val = max(1, int(len(examples) * args.val_ratio)) if examples else 0
-    splits = {"sft_val.jsonl": examples[:n_val], "sft_train.jsonl": examples[n_val:]}
-    for name, split in splits.items():
-        path = PROCESSED / name
+    all_ids = [e["meta"]["id"] for e in examples]
+    if len(set(all_ids)) != len(all_ids):
+        raise SystemExit("FATAL: duplicate example ids across sources.")
+
+    splits = group_split(examples, args.val_ratio, args.test_ratio, args.seed)
+    for name, split_examples in splits.items():
+        rng.shuffle(split_examples)
+        path = PROCESSED / f"sft_{name}.jsonl"
         with path.open("w", encoding="utf-8") as f:
-            for example in split:
+            for example in split_examples:
                 f.write(json.dumps(example, ensure_ascii=False) + "\n")
-        print(f"{name}: {len(split)} examples -> {path}")
+        by_source = Counter(e["meta"]["source"] for e in split_examples)
+        print(f"sft_{name}.jsonl: {len(split_examples)} examples {dict(by_source)} -> {path}")
 
 
 if __name__ == "__main__":

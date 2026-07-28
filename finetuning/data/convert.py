@@ -3,9 +3,10 @@
 Intermediate record (one JSON object per line in data/processed/intermediate_<source>.jsonl):
 
 {
-  "id": "kmi-1",
-  "source": "kmi",                # kmi | cactus | cpsycoun | aihub_71806
-  "lang": "ko",                   # ko | en | zh
+  "id": "kmi-1",                  # 전역 유일 (검증됨)
+  "case_id": "kmi-1",             # 같은 내담자/사례의 모든 회기가 공유 — group split 기준
+  "source": "kmi",                # kmi | cactus | cpsycoun | aihub_71806 | mts_dialog | aci_bench
+  "language": "ko",               # ko | en | zh
   "license": "CC-BY-4.0",
   "dialogue": [{"speaker": "counselor"|"client", "text": "...", "label": "..."|null}],
   "meta": {...},                  # source-specific extras (intake form, CBT plan, MI labels...)
@@ -63,8 +64,9 @@ def convert_kmi() -> list[dict]:
         records.append(
             {
                 "id": f"kmi-{item['id']}",
+                "case_id": f"kmi-{item['id']}",
                 "source": "kmi",
-                "lang": "ko",
+                "language": "ko",
                 "license": "CC-BY-4.0",
                 "dialogue": dialogue,
                 "meta": {
@@ -182,8 +184,9 @@ def convert_cactus(limit: int | None = None) -> list[dict]:
         records.append(
             {
                 "id": f"cactus-{i}",
+                "case_id": f"cactus-{i}",
                 "source": "cactus",
-                "lang": "en",
+                "language": "en",
                 "license": "MIT",
                 "dialogue": dialogue,
                 "meta": {
@@ -216,8 +219,9 @@ def convert_cpsycoun() -> list[dict]:
         records.append(
             {
                 "id": f"cpsycoun-{i}",
+                "case_id": f"cpsycoun-{i}",
                 "source": "cpsycoun",
-                "lang": "zh",
+                "language": "zh",
                 "license": "CC-BY-SA-4.0",
                 "dialogue": dialogue,
                 "meta": {},

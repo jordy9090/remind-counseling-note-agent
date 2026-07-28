@@ -85,8 +85,9 @@ def dialogue_to_transcript(dialogue: list[dict]) -> str:
 
 def synthesize(client, model: str, record: dict) -> dict:
     transcript = dialogue_to_transcript(record["dialogue"])
-    if record["lang"] != "ko":
-        transcript = f"(다음 축어록은 {record['lang']} 원문입니다. 회기요약은 한국어로 작성하세요.)\n{transcript}"
+    language = record.get("language", record.get("lang", ""))
+    if language != "ko":
+        transcript = f"(다음 축어록은 {language} 원문입니다. 회기요약은 한국어로 작성하세요.)\n{transcript}"
     response = client.chat.completions.create(
         model=model,
         messages=[

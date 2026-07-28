@@ -152,8 +152,8 @@ def generate_note_text(
     *,
     max_new_tokens: int,
     prefix_allowed_tokens_fn: Any,
-) -> str:
-    """Generate one constrained note while preserving Qwen3 non-thinking mode."""
+) -> tuple[str, bool]:
+    """Generate one constrained note; returns (text, truncated_at_max_tokens)."""
     prompt_text = tokenizer.apply_chat_template(
         prompt_messages,
         tokenize=False,
@@ -182,28 +182,41 @@ def generate_note_text(
     output = model.generate(**generation_args)
     prompt_length = input_ids.shape[1]
     generated_ids = output[0][prompt_length:]
-    return tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+    truncated = len(generated_ids) >= max_new_tokens
+    return tokenizer.decode(generated_ids, skip_special_tokens=True).strip(), truncated
 
 
-def evaluate_text(text: str) -> dict[str, Any]:
+def missing_sections(note: dict[str, Any] | None) -> list[str]:
+    if not isinstance(note, dict):
+        return list(NOTE_SECTIONS)
+    return [name for name in NOTE_SECTIONS if not isinstance(note.get(name), dict)]
+
+
+def evaluate_text(text: str, truncated: bool = False) -> dict[str, Any]:
     note = extract_json(text)
     repeated = detect_repetition(note if note is not None else text)
     ratio = korean_ratio(note if note is not None else text)
+    missing = missing_sections(note)
     if note is None:
         return {
             "parse_status": "invalid",
             "schema_status": "not_checked",
+            "truncated": truncated,
+            "missing_sections": missing,
             "repetition_detected": repeated,
             "korean_ratio": ratio,
             "generated_note": None,
             "raw_output": text,
-            "error": "output is not exactly one valid JSON object",
+            "error": "output is not exactly one valid JSON object"
+            + (" (hit max_new_tokens)" if truncated else ""),
         }
 
     problems = check_note(note)
     return {
         "parse_status": "valid",
         "schema_status": "invalid" if problems else "valid",
+        "truncated": truncated,
+        "missing_sections": missing,
         "repetition_detected": repeated,
         "korean_ratio": ratio,
         "generated_note": note,
@@ -216,6 +229,8 @@ def generation_error_result(error: Exception) -> dict[str, Any]:
     return {
         "parse_status": "invalid",
         "schema_status": "not_checked",
+        "truncated": False,
+        "missing_sections": list(NOTE_SECTIONS),
         "repetition_detected": False,
         "korean_ratio": 0.0,
         "generated_note": None,
@@ -230,6 +245,8 @@ def summarize_results(results: Iterable[dict[str, Any]]) -> dict[str, float | in
     json_valid = sum(result["parse_status"] == "valid" for result in result_list)
     schema_valid = sum(result["schema_status"] == "valid" for result in result_list)
     repeated = sum(bool(result["repetition_detected"]) for result in result_list)
+    truncated = sum(bool(result.get("truncated")) for result in result_list)
+    with_missing = sum(bool(result.get("missing_sections")) for result in result_list)
     return {
         "total": total,
         "json_valid": json_valid,
@@ -238,6 +255,10 @@ def summarize_results(results: Iterable[dict[str, Any]]) -> dict[str, float | in
         "schema_valid_rate": schema_valid / total if total else 0.0,
         "repetition_count": repeated,
         "repetition_rate": repeated / total if total else 0.0,
+        "truncated_count": truncated,
+        "truncated_rate": truncated / total if total else 0.0,
+        "missing_section_count": with_missing,
+        "missing_section_rate": with_missing / total if total else 0.0,
         "korean_ratio": (
             sum(float(result["korean_ratio"]) for result in result_list) / total if total else 0.0
         ),
@@ -271,9 +292,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--adapter", default=None, help="LoRA adapter dir; omit to eval the base model")
-    parser.add_argument("--val", default="finetuning/data/processed/sft_val.jsonl")
+    parser.add_argument(
+        "--val",
+        default="finetuning/data/processed/sft_test.jsonl",
+        help="평가 데이터 (기본: held-out test set)",
+    )
     parser.add_argument("--limit", type=int, default=50)
-    parser.add_argument("--max-new-tokens", type=int, default=1024)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=2048,
+        help="타깃 노트가 900~1,400 토큰이라 1024는 정상 출력도 잘림 — 2048 이상 권장",
+    )
     parser.add_argument(
         "--results-jsonl",
         default="finetuning/eval/results/quick_eval.jsonl",
@@ -298,20 +328,26 @@ def main() -> None:
     with results_path.open("w", encoding="utf-8") as output_file:
         for index, example in enumerate(examples, 1):
             try:
-                text = generate_note_text(
+                text, truncated = generate_note_text(
                     model,
                     tokenizer,
                     prepare_prompt_messages(example),
                     max_new_tokens=args.max_new_tokens,
                     prefix_allowed_tokens_fn=constraint_factory(),
                 )
-                result = evaluate_text(text)
+                result = evaluate_text(text, truncated)
             except Exception as error:
                 result = generation_error_result(error)
 
+            meta = example.get("meta") or {}
+            reference_note = extract_json(example["messages"][-1]["content"])
             result = {
                 "example_index": index,
-                "example_id": (example.get("meta") or {}).get("id"),
+                "example_id": meta.get("id"),
+                "case_id": meta.get("case_id"),
+                # 근거 대조(환각 확인)용: 참조 노트 원문. 축어록 원문은 example_id로
+                # sft_*.jsonl에서 찾아 대조한다.
+                "reference_note": reference_note,
                 **result,
             }
             results.append(result)
@@ -325,11 +361,13 @@ def main() -> None:
 
     metrics = summarize_results(results)
     total = int(metrics["total"])
-    print(f"\nJSON-valid rate:   {metrics['json_valid']}/{total} ({metrics['json_valid_rate']:.1%})")
-    print(f"Schema-valid rate: {metrics['schema_valid']}/{total} ({metrics['schema_valid_rate']:.1%})")
-    print(f"Repetition rate:   {metrics['repetition_count']}/{total} ({metrics['repetition_rate']:.1%})")
-    print(f"Mean Korean ratio: {metrics['korean_ratio']:.2f}")
-    print(f"Results JSONL:     {results_path}")
+    print(f"\nJSON-valid rate:     {metrics['json_valid']}/{total} ({metrics['json_valid_rate']:.1%})")
+    print(f"Schema-valid rate:   {metrics['schema_valid']}/{total} ({metrics['schema_valid_rate']:.1%})")
+    print(f"Repetition rate:     {metrics['repetition_count']}/{total} ({metrics['repetition_rate']:.1%})")
+    print(f"Truncated rate:      {metrics['truncated_count']}/{total} ({metrics['truncated_rate']:.1%})")
+    print(f"Missing-section rate:{metrics['missing_section_count']}/{total} ({metrics['missing_section_rate']:.1%})")
+    print(f"Mean Korean ratio:   {metrics['korean_ratio']:.2f}")
+    print(f"Results JSONL:       {results_path}")
 
 
 if __name__ == "__main__":

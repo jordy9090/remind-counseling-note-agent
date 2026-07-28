@@ -1,7 +1,7 @@
-# GPU 학습 환경용 (Colab/RunPod 등). 데이터 파이프라인만 돌릴 땐 requirements.txt 사용.
+# GPU 학습 환경용. 데이터 파이프라인만 돌릴 땐 requirements.txt 사용.
+# v2: trl 의존 제거 — 학습은 transformers Trainer + 직접 마스킹으로 구현됨.
 torch>=2.4
 transformers>=4.49
-trl>=0.17
 peft>=0.14
 bitsandbytes>=0.45
 datasets>=3.0
