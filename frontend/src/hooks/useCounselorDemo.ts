@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { generateNoteDraft, generateSupervisionReport } from '../api/client'
+import { confirmGeneratedNote, generateNoteDraft, generateSupervisionReport } from '../api/client'
 import type { RetrievalReport } from '../types/session'
 import {
   COUNSELOR_DEMO_FIXTURE,
@@ -23,10 +23,12 @@ export interface UseCounselorDemoReturn {
   retrievalReport: RetrievalReport | null
   backendStatus: 'loading' | 'connected' | 'fallback'
   backendMessage: string | null
+  confirmationStatus: 'idle' | 'confirming' | 'confirmed' | 'error'
+  confirmationMessage: string | null
   setActiveTab: (tab: 'draft' | 'sources' | 'preview') => void
   setSelectedSectionId: (id: string) => void
   updateSectionContent: (id: string, newContent: string) => void
-  markAsReviewed: () => void
+  markAsReviewed: () => Promise<void>
   saveTemporary: () => void
   resetDemo: () => void
 }
@@ -44,6 +46,10 @@ export function useCounselorDemo(): UseCounselorDemoReturn {
   const [retrievalReport, setRetrievalReport] = useState<RetrievalReport | null>(null)
   const [backendStatus, setBackendStatus] = useState<'loading' | 'connected' | 'fallback'>('loading')
   const [backendMessage, setBackendMessage] = useState<string | null>(null)
+  const [noteId, setNoteId] = useState<string | null>(null)
+  const [confirmedNoteBase, setConfirmedNoteBase] = useState<Record<string, unknown> | null>(null)
+  const [confirmationStatus, setConfirmationStatus] = useState<'idle' | 'confirming' | 'confirmed' | 'error'>('idle')
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -99,6 +105,8 @@ export function useCounselorDemo(): UseCounselorDemoReturn {
         setSections(liveSections)
         setSelectedSectionId(liveSections[0]?.id || '')
         setRetrievalReport(full.retrieval_report)
+        setNoteId(full.persistence_report.stored ? full.persistence_report.note_id || null : null)
+        setConfirmedNoteBase(full.confirmed_session_note)
         setBackendStatus('connected')
         setBackendMessage(null)
       } catch (error) {
@@ -127,11 +135,31 @@ export function useCounselorDemo(): UseCounselorDemoReturn {
     setReviewStatus('in_review')
   }, [])
 
-  const markAsReviewed = useCallback(() => {
-    setReviewStatus('reviewed')
-    setIsDirty(false)
-    setLastSavedAt(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
-  }, [])
+  const markAsReviewed = useCallback(async () => {
+    if (!noteId || !confirmedNoteBase) {
+      setConfirmationStatus('error')
+      setConfirmationMessage('Backend persistence가 활성화되지 않아 확정할 note_id가 없습니다.')
+      return
+    }
+    setConfirmationStatus('confirming')
+    setConfirmationMessage(null)
+    try {
+      const response = await confirmGeneratedNote({
+        note_id: noteId,
+        confirmed_note: buildConfirmedNote(confirmedNoteBase, sections),
+        counselor_edited: isDirty,
+        create_case_memory: true,
+      })
+      setReviewStatus('reviewed')
+      setIsDirty(false)
+      setLastSavedAt(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+      setConfirmationStatus('confirmed')
+      setConfirmationMessage(`${response.message} memory chunks: ${response.memory_chunk_count}`)
+    } catch (error) {
+      setConfirmationStatus('error')
+      setConfirmationMessage(error instanceof Error ? error.message : '상담 기록 확정에 실패했습니다.')
+    }
+  }, [confirmedNoteBase, isDirty, noteId, sections])
 
   const saveTemporary = useCallback(() => {
     setIsDirty(false)
@@ -145,6 +173,8 @@ export function useCounselorDemo(): UseCounselorDemoReturn {
     setIsDirty(false)
     setLastSavedAt(null)
     setActiveTab('draft')
+    setConfirmationStatus('idle')
+    setConfirmationMessage(null)
   }, [demoData])
 
   return {
@@ -159,12 +189,35 @@ export function useCounselorDemo(): UseCounselorDemoReturn {
     retrievalReport,
     backendStatus,
     backendMessage,
+    confirmationStatus,
+    confirmationMessage,
     setActiveTab,
     setSelectedSectionId,
     updateSectionContent,
     markAsReviewed,
     saveTemporary,
     resetDemo,
+  }
+}
+
+function buildConfirmedNote(base: Record<string, unknown>, sections: DemoDraftSection[]): Record<string, unknown> {
+  const byId = new Map(sections.map((section) => [section.id, section.content]))
+  const baseSections =
+    typeof base.sections === 'object' && base.sections !== null
+      ? (base.sections as Record<string, unknown>)
+      : {}
+  return {
+    ...base,
+    sections: {
+      ...baseSections,
+      session_theme: byId.get('C-1') || baseSections.session_theme || '',
+      presenting_problem: byId.get('A-3') || baseSections.presenting_problem || '',
+      session_content: byId.get('C-2-2') || baseSections.session_content || '',
+      counselor_intervention: byId.get('C-2-3') || baseSections.counselor_intervention || '',
+      client_response: byId.get('C-2-3') || baseSections.client_response || '',
+      reflection: byId.get('C-2-5') || baseSections.reflection || '',
+      next_plan: byId.get('B-2') || baseSections.next_plan || '',
+    },
   }
 }
 

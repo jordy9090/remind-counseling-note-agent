@@ -6,8 +6,9 @@ interface ExportActionsProps {
   reviewStatus: ReviewStatus
   isDirty: boolean
   isExportingDocx: boolean
+  isConfirming: boolean
   onSaveTemporary: () => void
-  onMarkAsReviewed: () => void
+  onMarkAsReviewed: () => void | Promise<void>
   onOpenPreview: () => void
   onExportDocx: () => void
   onPrintPDF: () => void
@@ -17,6 +18,7 @@ export const ExportActions: React.FC<ExportActionsProps> = ({
   reviewStatus,
   isDirty,
   isExportingDocx,
+  isConfirming,
   onSaveTemporary,
   onMarkAsReviewed,
   onOpenPreview,
@@ -46,10 +48,11 @@ export const ExportActions: React.FC<ExportActionsProps> = ({
             <button
               type="button"
               onClick={onMarkAsReviewed}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition-colors shadow-2xs"
+              disabled={isConfirming}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition-colors shadow-2xs disabled:cursor-wait disabled:opacity-60"
             >
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              검토 완료 처리
+              {isConfirming ? '확정 저장 중...' : '검토 완료 처리'}
             </button>
           ) : (
             <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">

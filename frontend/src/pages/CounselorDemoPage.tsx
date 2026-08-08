@@ -32,6 +32,8 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
     retrievalReport,
     backendStatus,
     backendMessage,
+    confirmationStatus,
+    confirmationMessage,
     setSelectedSectionId,
     updateSectionContent,
     markAsReviewed,
@@ -135,6 +137,17 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
                     : `Backend에 연결하지 못해 명시된 fixture fallback을 표시합니다: ${backendMessage || '연결 실패'}`}
                 </p>
               )}
+              {confirmationMessage && (
+                <p
+                  className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
+                    confirmationStatus === 'confirmed'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                      : 'border-red-200 bg-red-50 text-red-900'
+                  }`}
+                >
+                  {confirmationMessage}
+                </p>
+              )}
               <DraftReviewPanel
                 sections={sections}
                 selectedSectionId={selectedSectionId}
@@ -161,6 +174,7 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
         reviewStatus={reviewStatus}
         isDirty={isDirty}
         isExportingDocx={isExportingDocx}
+        isConfirming={confirmationStatus === 'confirming'}
         onSaveTemporary={saveTemporary}
         onMarkAsReviewed={markAsReviewed}
         onOpenPreview={() => setIsPreviewOpen(true)}
