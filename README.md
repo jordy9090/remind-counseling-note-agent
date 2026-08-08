@@ -175,8 +175,8 @@ REMIND_PREVIEW_ACTOR=preview_server_actor
 REMIND_ALLOW_LOCAL_BYPASS=0
 ENABLE_PERSISTENCE=1
 ENABLE_RAG=1
-ENABLE_CASE_MEMORY=0
-ENABLE_DENSE_RETRIEVAL=0
+ENABLE_CASE_MEMORY=1
+ENABLE_DENSE_RETRIEVAL=1
 ENABLE_HYBRID_RETRIEVAL=1
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSION=1536
@@ -187,7 +187,7 @@ SAVE_RAW_INPUT=0
 
 `POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. `SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 저장하지 않고 sanitized input과 metadata만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
 
-All `/api/notes/*` routes require `X-Remind-Preview-Token` until production Supabase Auth mapping exists. `ENABLE_CASE_MEMORY=0` is the safe default; turn it on only for synthetic/demo cases after preview-token protection is verified. This is a lightweight retrieval-aware workflow, not production-ready RAG.
+All `/api/notes/*` routes require `X-Remind-Preview-Token` until production Supabase Auth mapping exists. `ENABLE_CASE_MEMORY=0` remains the safe default outside the isolated synthetic August demo. The configuration above intentionally enables it only for synthetic multi-session confirmation/retrieval verification after the preview-token guard is set. This is a lightweight retrieval-aware workflow, not production-ready RAG.
 
 KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 있습니다. 유료 검사 매뉴얼, 저작권 있는 상담 자료, 실제 내담자 기록은 seed에 넣지 않습니다. Supabase schema를 만든 뒤 demo KB를 넣으려면 repository root에서 다음을 실행합니다.
 
@@ -251,12 +251,14 @@ pnpm install
 pnpm dev
 ```
 
-기본 API 주소는 `http://localhost:8000`입니다. 필요하면 frontend 환경변수로 바꿀 수 있습니다.
+`VITE_API_BASE_URL`을 생략하면 frontend는 same-origin `/api`를 호출합니다. Vite 개발 서버와 로컬 FastAPI를 따로 실행할 때는 아래처럼 backend 주소를 지정합니다.
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000
 VITE_REMIND_PREVIEW_API_TOKEN=replace-with-preview-only-token
 ```
+
+`/demo/counselor-review`는 synthetic fixture를 입력으로 실제 `/api/notes/generate`와 `/api/notes/supervision-report`를 호출하고, backend의 retrieval report와 evidence index를 표시합니다. Backend 연결에 실패하면 화면에 경고를 표시한 뒤 fixture fallback으로 전환하며, retrieval 수치를 임의로 만들어 표시하지 않습니다. 생성→확정→case memory 저장까지 시연하려면 backend의 `ENABLE_PERSISTENCE=1`, `ENABLE_RAG=1`, `ENABLE_CASE_MEMORY=1`과 Supabase/preview-token 설정이 모두 필요합니다.
 
 `VITE_REMIND_PREVIEW_API_TOKEN` is visible to anyone who can inspect the browser bundle. Use it only for a temporary preview gate, rotate it often, and do not treat it as production authentication.
 
