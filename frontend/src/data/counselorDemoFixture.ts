@@ -1,4 +1,4 @@
-import { RetrievedTemplateContext } from '../types/session'
+import { RetrievedTemplateContext, SessionInput } from '../types/session'
 
 export interface DemoEvidenceItem {
   id: string
@@ -231,4 +231,28 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
   warnings: [
     '작성된 내용은 상담사의 최종 검토용 초안입니다. 실제 제출 전 반드시 수정보완하십시오.',
   ],
+}
+
+// Synthetic-only input used by the live counselor demo backend workflow.
+export const COUNSELOR_DEMO_SESSION_INPUT: SessionInput = {
+  case_id: COUNSELOR_DEMO_FIXTURE.clientInfo.caseId,
+  client_alias: COUNSELOR_DEMO_FIXTURE.clientInfo.name,
+  session_number: COUNSELOR_DEMO_FIXTURE.clientInfo.sessionNumber,
+  session_date: '2026-05-30',
+  counselor_name: COUNSELOR_DEMO_FIXTURE.clientInfo.counselorName,
+  counselor_memo:
+    '취업 면접을 앞둔 수행 불안과 자기비난을 다루었다. 상담자는 자동사고의 근거와 반대 근거를 구분하도록 돕고, 작은 면접 연습 행동을 계획했다.',
+  transcript_text: Object.values(COUNSELOR_DEMO_FIXTURE.evidences)
+    .filter((item) => item.sourceType === 'transcript')
+    .map((item) => `${item.sourceLabel}: ${item.excerpt}`)
+    .join('\n'),
+  previous_session_summary:
+    '이전 회기에는 가족의 기대와 완벽주의적 기준이 취업 불안 및 회피 행동과 연결되는 양상을 확인했다.',
+  counseling_goal: COUNSELOR_DEMO_FIXTURE.clientInfo.counselingGoal,
+  psychological_test_summary:
+    '시연용 synthetic 선별검사 메모이며 진단 목적이 아니다. 수행평가와 비교 상황에서 불안이 높게 보고되었다.',
+  key_issue_tags: ['취업불안', '수행불안', '완벽주의', '회피행동'],
+  nonverbal_notes: '면접 장면을 말할 때 목소리가 작아졌고, 실행 과제를 정할 때 고개를 끄덕였다.',
+  target_document_type: 'supervision_report',
+  persist: true,
 }

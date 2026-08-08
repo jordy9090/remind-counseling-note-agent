@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "verify:material-workflow": "node scripts/verify-material-workflow.mjs",
     "verify:audio-transcript-workflow": "node scripts/verify-audio-transcript-workflow.mjs",
+    "verify:counselor-demo-workflow": "node scripts/verify-counselor-demo-workflow.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

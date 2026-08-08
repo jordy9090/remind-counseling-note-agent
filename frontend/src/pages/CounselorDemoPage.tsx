@@ -29,6 +29,9 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
     reviewStatus,
     isDirty,
     lastSavedAt,
+    retrievalReport,
+    backendStatus,
+    backendMessage,
     setSelectedSectionId,
     updateSectionContent,
     markAsReviewed,
@@ -122,20 +125,16 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
             <>
               <TemplateKbStatusCard
                 templateContext={demoData.templateContext}
-                retrievalReport={{
-                  enabled: true,
-                  case_context_count: 3,
-                  template_context_found: true,
-                  privacy_rule_count: 2,
-                  embedding_latency_ms: 10,
-                  rpc_latency_ms: 5,
-                  retrieval_latency_ms: 15,
-                  generation_latency_ms: 120,
-                  failures: [],
-                  notices: [],
-                }}
-                isDemo={true}
+                retrievalReport={retrievalReport}
+                isDemo={backendStatus !== 'connected'}
               />
+              {backendStatus !== 'connected' && (
+                <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {backendStatus === 'loading'
+                    ? 'Synthetic 자료로 backend 회기요약과 evidence를 불러오는 중입니다.'
+                    : `Backend에 연결하지 못해 명시된 fixture fallback을 표시합니다: ${backendMessage || '연결 실패'}`}
+                </p>
+              )}
               <DraftReviewPanel
                 sections={sections}
                 selectedSectionId={selectedSectionId}
