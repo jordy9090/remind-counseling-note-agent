@@ -40,6 +40,8 @@ from app.services.embeddings import (
     get_embedding_provider,
 )
 from app.services.retrieval import RetrievalChunk
+from app.services import retrieval as retrieval_module
+from app.services.retrieval import retrieve_case_memory_chunks
 from app.services import supabase_storage as supabase_storage_module
 from app.services.supabase_storage import (
     ConfirmedNoteContext,
@@ -1327,19 +1329,23 @@ def main() -> None:
             raise AssertionError("Confirmation must be server-validated and reject disabled persistence.")
 
         original_storage = supabase_storage_module.storage
+        original_retrieval_storage = retrieval_module.storage
         original_enable_persistence = settings.enable_persistence
         original_enable_case_memory = settings.enable_case_memory
         original_supabase_url = settings.supabase_url
         original_supabase_key = settings.supabase_service_role_key
         original_enable_dense = settings.enable_dense_retrieval
+        original_confirmation_enable_rag = settings.enable_rag
         try:
             fake_storage = FakeConfirmationStorage()
             supabase_storage_module.storage = fake_storage  # type: ignore[assignment]
+            retrieval_module.storage = fake_storage  # type: ignore[assignment]
             settings.enable_persistence = True
             settings.enable_case_memory = True
             settings.supabase_url = "https://example.supabase.co"
             settings.supabase_service_role_key = "fake-service-key"
-            settings.enable_dense_retrieval = False
+            settings.enable_dense_retrieval = True
+            settings.enable_rag = True
 
             confirm_payload = ConfirmGeneratedNoteRequest(
                 note_id=fake_storage.note_id,
@@ -1356,6 +1362,29 @@ def main() -> None:
             assert first_confirm.memory_chunk_count == 3
             assert len(fake_storage.case_memory_chunks) == 3
             first_theme_hash = fake_storage.memory_by_field("session_theme")["content_hash"]
+
+            fake_storage.case_memory_chunks.append(
+                {
+                    "id": "foreign-memory",
+                    "counselor_id": "test-preview-actor",
+                    "case_id": "CASE-OTHER-SYNTHETIC",
+                    "session_id": "foreign-session",
+                    "source_note_id": "foreign-note",
+                    "field_type": "session_theme",
+                    "chunk_text": "Synthetic foreign case that must never be retrieved.",
+                    "source_ref": "confirmed_note:foreign-note:session_theme",
+                    "embedding": embed_query("foreign case"),
+                }
+            )
+            follow_up_context = retrieve_case_memory_chunks(
+                query_text="career anxiety follow-up",
+                counselor_id="test-preview-actor",
+                case_id=fake_storage.case_id,
+            )
+            assert len(follow_up_context) == 3, [chunk.source_ref for chunk in follow_up_context]
+            assert all(chunk.source_ref.startswith(f"confirmed_note:{fake_storage.note_id}:") for chunk in follow_up_context)
+            assert all(chunk.chunk_text != "Synthetic foreign case that must never be retrieved." for chunk in follow_up_context)
+            fake_storage.case_memory_chunks.pop()
 
             second_confirm = confirm_generated_note(confirm_payload, actor="test-preview-actor")
             assert second_confirm.memory_chunk_count == 3
@@ -1424,11 +1453,13 @@ def main() -> None:
                 raise AssertionError("Notes with missing sessions must be rejected.")
         finally:
             supabase_storage_module.storage = original_storage  # type: ignore[assignment]
+            retrieval_module.storage = original_retrieval_storage  # type: ignore[assignment]
             settings.enable_persistence = original_enable_persistence
             settings.enable_case_memory = original_enable_case_memory
             settings.supabase_url = original_supabase_url
             settings.supabase_service_role_key = original_supabase_key
             settings.enable_dense_retrieval = original_enable_dense
+            settings.enable_rag = original_confirmation_enable_rag
 
         save_payload = {
             "case_id": payload["case_id"],
@@ -1493,8 +1524,8 @@ def main() -> None:
         assert supervision["reportType"] == "personal_counseling_supervision"
         assert supervision["sections"]
         assert any(section["title"] == "C-1. 상담진행 과정 및 회기주제" for section in supervision["sections"])
-        assert supervision["meta"]["institution"] == "리마인드 심리상담센터"
-        assert supervision["meta"]["supervisor"] == "이수현 상담심리사 1급"
+        assert supervision["meta"]["institution"] == "마음연결 심리상담센터"
+        assert supervision["meta"]["supervisor"] == "김수현 상담심리사 1급"
         assert supervision["aiReview"]["completionChecklist"]
         assert supervision["aiReview"]["missingFields"]
         assert supervision["aiReview"]["demoInputs"]
@@ -1682,6 +1713,7 @@ def main() -> None:
 
 class FakeConfirmationStorage:
     def __init__(self) -> None:
+        self.retrieval_enabled = True
         self.note_id = "00000000-0000-0000-0000-000000000101"
         self.session_id = "00000000-0000-0000-0000-000000000102"
         self.case_id = "CASE-DEMO-001"
@@ -1762,6 +1794,32 @@ class FakeConfirmationStorage:
                 self.case_memory_chunks.append(stored)
                 result.append(stored)
         return result
+
+    def rpc(self, function_name: str, params: dict[str, object]) -> list[dict[str, object]]:
+        if function_name == "match_case_memory_chunks":
+            rows = [
+                row
+                for row in self.case_memory_chunks
+                if row.get("counselor_id") == params.get("filter_counselor_id")
+                and row.get("case_id") == params.get("filter_case_id")
+            ]
+            return [
+                {
+                    **row,
+                    "chunk_id": row.get("id") or f"chunk-{index}",
+                    "similarity_score": 0.9 - index * 0.01,
+                    "retrieval_method": "case_memory_dense",
+                    "metadata": row.get("metadata_json") or {},
+                }
+                for index, row in enumerate(rows[: int(params.get("match_count") or 5)])
+            ]
+        if function_name == "log_retrieval_event":
+            return []
+        raise AssertionError(f"Unexpected RPC: {function_name}")
+
+    def insert(self, table: str, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        assert table == "retrieval_logs"
+        return rows
 
     def memory_by_field(self, field_type: str) -> dict[str, object]:
         for row in self.case_memory_chunks:

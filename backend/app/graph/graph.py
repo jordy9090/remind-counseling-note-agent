@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-from app.core.config import settings
 from langgraph.graph import END, StateGraph
 
 from app.graph.nodes import (
@@ -107,32 +106,27 @@ def run_note_pipeline(
     requested_section_ids: list[str] | None = None,
     session_topic: str = "",
 ) -> GenerateNoteResponse:
-    original_enable_rag = settings.enable_rag
-    settings.enable_rag = False
-    try:
-        initial_state: NoteGraphState = {"session_input": session_input}
-        if requested_section_ids is not None:
-            initial_state["requested_section_ids"] = requested_section_ids
-        if session_topic:
-            initial_state["session_topic"] = session_topic
-        state = note_graph.invoke(initial_state)
-        confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
-        return GenerateNoteResponse(
-            sanitized_input=state["sanitized_input"],
-            structured_case_data=state["structured_case_data"],
-            evidence_mapped_data=state["evidence_mapped_data"],
-            session_summary_draft=state["session_summary_draft"],
-            verification_report=state["verification_report"],
-            document_transform_preview=state["document_transform_preview"],
-            confirmed_session_note=confirmed_session_note,
-            retrieved_case_context=state.get("retrieved_case_context") or [],
-            retrieved_template_context=state.get("retrieved_template_context"),
-            retrieved_privacy_context=state.get("retrieved_privacy_context") or [],
-            retrieval_report=state.get("retrieval_report") or RetrievalReport(),
-            stub=bool(state.get("stub", False)),
-        )
-    finally:
-        settings.enable_rag = original_enable_rag
+    initial_state: NoteGraphState = {"session_input": session_input}
+    if requested_section_ids is not None:
+        initial_state["requested_section_ids"] = requested_section_ids
+    if session_topic:
+        initial_state["session_topic"] = session_topic
+    state = note_graph.invoke(initial_state)
+    confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
+    return GenerateNoteResponse(
+        sanitized_input=state["sanitized_input"],
+        structured_case_data=state["structured_case_data"],
+        evidence_mapped_data=state["evidence_mapped_data"],
+        session_summary_draft=state["session_summary_draft"],
+        verification_report=state["verification_report"],
+        document_transform_preview=state["document_transform_preview"],
+        confirmed_session_note=confirmed_session_note,
+        retrieved_case_context=state.get("retrieved_case_context") or [],
+        retrieved_template_context=state.get("retrieved_template_context"),
+        retrieved_privacy_context=state.get("retrieved_privacy_context") or [],
+        retrieval_report=state.get("retrieval_report") or RetrievalReport(),
+        stub=bool(state.get("stub", False)),
+    )
 
 
 def _build_confirmed_session_note(state: NoteGraphState) -> dict[str, Any]:
