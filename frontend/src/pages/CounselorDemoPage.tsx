@@ -6,10 +6,14 @@ import { SessionSourcePanel } from '../components/counselor-demo/SessionSourcePa
 import { FinalDocumentPreview } from '../components/counselor-demo/FinalDocumentPreview'
 import { ExportActions } from '../components/counselor-demo/ExportActions'
 import { ReviewStatusBar } from '../components/counselor-demo/ReviewStatusBar'
-import { TemplateKbStatusCard } from '../components/counselor-demo/TemplateKbStatusCard'
 
 import { useCounselorDemo } from '../hooks/useCounselorDemo'
 import { useDocumentExport } from '../hooks/useDocumentExport'
+import {
+  DEMO_DOCUMENT_LABELS,
+  DEMO_DOCUMENT_ORDER,
+  type DemoDocumentType,
+} from '../data/counselorDemoFixture'
 import { Edit3, FileText, Layers } from 'lucide-react'
 
 interface CounselorDemoPageProps {
@@ -24,16 +28,15 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
   const {
     demoData,
     sections,
+    activeDocumentType,
     selectedSectionId,
     activeEvidenceItems,
     reviewStatus,
     isDirty,
     lastSavedAt,
-    retrievalReport,
-    backendStatus,
-    backendMessage,
     confirmationStatus,
     confirmationMessage,
+    setActiveDocumentType,
     setSelectedSectionId,
     updateSectionContent,
     markAsReviewed,
@@ -48,15 +51,16 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
     exportDocx,
     printDocument,
     clearMessages,
-  } = useDocumentExport()
+  } = useDocumentExport({ localOnly: true })
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [centerMode, setCenterMode] = useState<'draft' | 'sources'>('draft')
 
   const selectedSection = sections.find((s) => s.id === selectedSectionId) || sections[0]
 
-  const handleExportDocx = (docType: 'session_note' | 'supervision_report' | 'termination_report' = 'supervision_report') => {
-    exportDocx(demoData.clientInfo, sections, docType, true)
+  const handleExportDocx = (docType: DemoDocumentType = activeDocumentType) => {
+    const exportType = docType === 'supervision_report' ? 'supervision_report' : 'session_note'
+    exportDocx(demoData.clientInfo, sections, exportType, true)
   }
 
   return (
@@ -104,7 +108,7 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              원문 전체 자료 (STT/메모)
+              원문 자료 · 1~4회기
             </button>
           </div>
 
@@ -125,18 +129,33 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
         <div className="flex-1 min-w-0 w-full">
           {centerMode === 'draft' ? (
             <>
-              <TemplateKbStatusCard
-                templateContext={demoData.templateContext}
-                retrievalReport={retrievalReport}
-                isDemo={backendStatus !== 'connected'}
-              />
-              {backendStatus !== 'connected' && (
-                <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                  {backendStatus === 'loading'
-                    ? 'Synthetic 자료로 backend 회기요약과 evidence를 불러오는 중입니다.'
-                    : `Backend에 연결하지 못해 명시된 fixture fallback을 표시합니다: ${backendMessage || '연결 실패'}`}
-                </p>
-              )}
+              <div className="mb-4 rounded-xl border border-blue-200 bg-white p-3 shadow-2xs">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900">사전 생성된 5회기 문서</p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      이 화면은 저장된 MusPsy 결과를 불러오며 생성·저장 API를 호출하지 않습니다.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1">
+                    {DEMO_DOCUMENT_ORDER.map((documentType) => (
+                      <button
+                        key={documentType}
+                        type="button"
+                        aria-pressed={activeDocumentType === documentType}
+                        onClick={() => setActiveDocumentType(documentType)}
+                        className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                          activeDocumentType === documentType
+                            ? 'bg-white text-blue-700 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {DEMO_DOCUMENT_LABELS[documentType]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
               {confirmationMessage && (
                 <p
                   className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
@@ -174,11 +193,11 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
         reviewStatus={reviewStatus}
         isDirty={isDirty}
         isExportingDocx={isExportingDocx}
-        isConfirming={confirmationStatus === 'confirming'}
+        isConfirming={false}
         onSaveTemporary={saveTemporary}
         onMarkAsReviewed={markAsReviewed}
         onOpenPreview={() => setIsPreviewOpen(true)}
-        onExportDocx={() => handleExportDocx('supervision_report')}
+        onExportDocx={() => handleExportDocx(activeDocumentType)}
         onPrintPDF={printDocument}
       />
 
@@ -186,6 +205,8 @@ export default function CounselorDemoPage({ onBackToMain }: CounselorDemoPagePro
       <FinalDocumentPreview
         clientInfo={demoData.clientInfo}
         sections={sections}
+        documentType={activeDocumentType}
+        onDocumentTypeChange={setActiveDocumentType}
         isOpen={isPreviewOpen}
         onClose={() => setIsPreviewOpen(false)}
         onExportDocx={handleExportDocx}

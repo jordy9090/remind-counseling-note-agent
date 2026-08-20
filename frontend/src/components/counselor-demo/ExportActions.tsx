@@ -70,7 +70,7 @@ export const ExportActions: React.FC<ExportActionsProps> = ({
             className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold transition-all shadow-2xs"
           >
             <Eye className="w-4 h-4 text-blue-600" />
-            상담일지 미리보기
+            선택 문서 미리보기
           </button>
 
           <div className="flex flex-col items-center gap-1">

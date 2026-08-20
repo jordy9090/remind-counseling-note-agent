@@ -1,13 +1,21 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Download, Printer, X, FileCheck, ShieldCheck } from 'lucide-react'
-import type { DemoClientInfo, DemoDraftSection } from '../../data/counselorDemoFixture'
+import {
+  DEMO_DOCUMENT_LABELS,
+  DEMO_DOCUMENT_ORDER,
+  type DemoClientInfo,
+  type DemoDocumentType,
+  type DemoDraftSection,
+} from '../../data/counselorDemoFixture'
 
 interface FinalDocumentPreviewProps {
   clientInfo: DemoClientInfo
   sections: DemoDraftSection[]
+  documentType: DemoDocumentType
+  onDocumentTypeChange: (documentType: DemoDocumentType) => void
   isOpen: boolean
   onClose: () => void
-  onExportDocx: (docType: 'session_note' | 'supervision_report' | 'termination_report') => void
+  onExportDocx: (docType: DemoDocumentType) => void
   onPrintPDF: () => void
   isExporting: boolean
 }
@@ -15,24 +23,22 @@ interface FinalDocumentPreviewProps {
 export const FinalDocumentPreview: React.FC<FinalDocumentPreviewProps> = ({
   clientInfo,
   sections,
+  documentType,
+  onDocumentTypeChange,
   isOpen,
   onClose,
   onExportDocx,
   onPrintPDF,
   isExporting,
 }) => {
-  const [docType, setDocType] = useState<'session_note' | 'supervision_report' | 'termination_report'>(
-    'supervision_report',
-  )
-
   if (!isOpen) return null
 
   const getTitle = () => {
-    switch (docType) {
+    switch (documentType) {
+      case 'session_summary':
+        return '상담 회기요약'
       case 'supervision_report':
         return '수퍼비전 제출 보고서'
-      case 'termination_report':
-        return '상담 종결 보고서'
       case 'session_note':
       default:
         return '심리상담 회기 일지'
@@ -52,37 +58,21 @@ export const FinalDocumentPreview: React.FC<FinalDocumentPreviewProps> = ({
           <div className="flex items-center gap-3">
             {/* Format type selector */}
             <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs font-semibold">
-              <button
-                type="button"
-                onClick={() => setDocType('session_note')}
-                className={`px-3 py-1 rounded-md transition-colors ${
-                  docType === 'session_note' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                기본 상담일지
-              </button>
-              <button
-                type="button"
-                onClick={() => setDocType('supervision_report')}
-                className={`px-3 py-1 rounded-md transition-colors ${
-                  docType === 'supervision_report'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                수퍼비전 보고서
-              </button>
-              <button
-                type="button"
-                onClick={() => setDocType('termination_report')}
-                className={`px-3 py-1 rounded-md transition-colors ${
-                  docType === 'termination_report'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                종결 보고서
-              </button>
+              {DEMO_DOCUMENT_ORDER.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={documentType === option}
+                  onClick={() => onDocumentTypeChange(option)}
+                  className={`px-3 py-1 rounded-md transition-colors ${
+                    documentType === option
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {DEMO_DOCUMENT_LABELS[option]}
+                </button>
+              ))}
             </div>
 
             <button
@@ -115,7 +105,7 @@ export const FinalDocumentPreview: React.FC<FinalDocumentPreviewProps> = ({
             <button
               type="button"
               disabled={isExporting}
-              onClick={() => onExportDocx(docType)}
+              onClick={() => onExportDocx(documentType)}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors shadow-xs disabled:opacity-50"
             >
               <Download className="w-4 h-4" />

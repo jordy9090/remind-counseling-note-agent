@@ -23,13 +23,28 @@ export interface UseDocumentExportReturn {
   clearMessages: () => void
 }
 
-export function useDocumentExport(): UseDocumentExportReturn {
-  const [capabilities, setCapabilities] = useState<DocumentExportCapabilityStatus | null>(null)
+interface UseDocumentExportOptions {
+  localOnly?: boolean
+}
+
+const LOCAL_EXPORT_CAPABILITIES: DocumentExportCapabilityStatus = {
+  docx: true,
+  pdfServer: false,
+  pdfReason: '브라우저 PDF 인쇄를 사용합니다.',
+  hwpx: false,
+  hwpxReason: 'HWPX 미지원',
+}
+
+export function useDocumentExport({ localOnly = false }: UseDocumentExportOptions = {}): UseDocumentExportReturn {
+  const [capabilities, setCapabilities] = useState<DocumentExportCapabilityStatus | null>(
+    localOnly ? LOCAL_EXPORT_CAPABILITIES : null,
+  )
   const [isExportingDocx, setIsExportingDocx] = useState(false)
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null)
   const [exportErrorMessage, setExportErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
+    if (localOnly) return
     checkExportCapabilities().then(setCapabilities).catch(() => {
       setCapabilities({
         docx: true,
@@ -39,7 +54,7 @@ export function useDocumentExport(): UseDocumentExportReturn {
         hwpxReason: 'HWPX 기능 준비 중',
       })
     })
-  }, [])
+  }, [localOnly])
 
   const exportDocx = useCallback(
     async (
