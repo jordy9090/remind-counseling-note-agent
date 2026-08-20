@@ -14,4 +14,7 @@ frontend/dist
 
 remind-counseling-note-agent
 research_pilot_crew
-sample_data
+sample_data/*
+!sample_data/muspsy_demo/
+sample_data/muspsy_demo/*
+!sample_data/muspsy_demo/session_input_005_muspsy_1416_ko.json
