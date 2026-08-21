@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -17,47 +16,35 @@ import {
   Info,
   List,
   Loader2,
+  Mic,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
   Plus,
-  RefreshCcw,
   Save,
   Search,
   Send,
   ShieldCheck,
-  User,
+  Upload,
   Workflow,
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
+import BasicInfoCard from '../components/session-input/BasicInfoCard'
+import MaterialRow from '../components/session-input/MaterialRow'
+import ProcessStatusCard from '../components/session-input/ProcessStatusCard'
+import canonicalMuspsyCase from '../../../sample_data/muspsy_demo/session_input_005_muspsy_1416_ko.json'
+import { COUNSELOR_DEMO_FIXTURE } from '../data/counselorDemoFixture'
 import {
-  confirmGeneratedNote,
   downloadDocumentExport,
   extractDocumentMaterial,
-  generateNoteDraft,
-  generateSupervisionReport,
   getAudioCapabilities,
-  getDocumentCapabilities,
-  recomposeNoteDraft,
-  saveTemporaryDraft,
   transcribeAudio,
 } from '../api/client'
-import {
-  buildNonverbalNotes,
-  buildTranscriptText,
-  getSegmentSpeakerKey,
-  replaceAppliedAudioBlock,
-  type SpeakerRole,
-  type SpeakerRoleMap,
-} from '../lib/audioTranscriptWorkflow'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import type {
-  ConfirmGeneratedNoteResponse,
   AudioCapabilitiesResponse,
   AudioSegment,
-  AudioTranscriptionResponse,
   DocumentCapabilitiesResponse,
   DocumentExportFormat,
   DocumentExportRequest,
@@ -72,42 +59,11 @@ import type {
   SupervisionContentBlock,
   SupervisionReportDraft,
   SupervisionReportSection,
-  RetrievedTemplateContext,
-  RetrievalReport,
 } from '../types/session'
-import { TemplateKbStatusCard } from '../components/counselor-demo/TemplateKbStatusCard'
-import { exportSupervisionReportDocx } from '../lib/clientDocxExport'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
 const processSteps = ['입력 정제', 'RAG 컨텍스트 검색', '상담 내용 구조화', '근거 연결', '회기요약 생성', '검증 리포트 생성']
 const PLACEHOLDER_TEXT = '[상담사 확인 필요]'
-
-function isInvalidSupervisionValue(value?: string | null): boolean {
-  const normalized = (value || '').trim()
-  return (
-    !normalized ||
-    normalized === PLACEHOLDER_TEXT ||
-    normalized === '데모 상담사' ||
-    normalized.includes('상담사 확인 필요') ||
-    (normalized.startsWith('[') && normalized.endsWith(']'))
-  )
-}
-
-function resolveSupervisionMeta(report: SupervisionReportDraft) {
-  return {
-    clientAlias: isInvalidSupervisionValue(report.meta.clientAlias) ? '가명 다은' : report.meta.clientAlias,
-    counselorName: isInvalidSupervisionValue(report.meta.counselorName) ? '이수진' : report.meta.counselorName!,
-    institution: isInvalidSupervisionValue(report.meta.institution) ? '마음연결 심리상담센터' : report.meta.institution!,
-    supervisor: isInvalidSupervisionValue(report.meta.supervisor) ? '김수현 상담심리사 1급' : report.meta.supervisor!,
-    supervisionDatePlace: isInvalidSupervisionValue(report.meta.supervisionDatePlace)
-      ? '2026.05.30 14:00 / 사례회의실'
-      : report.meta.supervisionDatePlace!,
-  }
-}
-
-function displaySupervisionBlockText(value?: string | null): string {
-  return isInvalidSupervisionValue(value) ? '추가 확인 필요' : value!.trim()
-}
 const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
   done: '✓',
   partial: '△',
@@ -170,12 +126,10 @@ type UploadedMaterialStatus =
   | 'failed'
 type MaterialApplyTarget =
   | 'transcript_text'
-  | 'nonverbal_notes'
   | 'counselor_memo'
   | 'previous_session_summary'
   | 'psychological_test_summary'
 type MaterialApplyMode = 'append' | 'replace'
-const AUDIO_APPLY_TARGETS: MaterialApplyTarget[] = ['transcript_text', 'nonverbal_notes']
 
 const DOCUMENT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 const AUDIO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
@@ -199,16 +153,6 @@ interface UploadedMaterial {
   segments?: AudioSegment[]
   durationSeconds?: number | null
   language?: string | null
-  speakerRoleMap?: SpeakerRoleMap
-  runtimeMode?: 'real' | 'stub'
-  diarizationStatus?: 'completed' | 'fallback' | 'disabled'
-  languageProbability?: number | null
-  nonverbalNotes?: string
-  dirtySinceApply?: boolean
-  expectedSpeakers?: number
-  lastAppliedTranscriptText?: string
-  lastAppliedNonverbalNotes?: string
-  lastAppliedMode?: MaterialApplyMode
   appliedTargets: MaterialApplyTarget[]
 }
 
@@ -278,119 +222,204 @@ const defaultChecklistItems: ChecklistItem[] = [
 
 const defaultVisibleSectionIds = new Set<DraftSectionId>(defaultChecklistItems.map((item) => item.id))
 
-const previousSessionOptions: PreviousSessionOption[] = [
-  {
-    id: "session-1",
-    label: "1회기",
-    date: "2026. 04. 26",
-    summary: "사회적 모임 회피 이후 반복되는 고립감과 죄책감을 탐색하고, 부담이 낮은 소규모 모임을 시도하기로 함.",
-    detail: "내담자는 사람들과의 모임을 자주 피하면서 고립감과 죄책감을 경험한다고 보고함. 혼자 있는 시간을 선호하지만, 초대를 거절한 뒤 타인이 자신을 부정적으로 볼 것이라고 걱정하는 패턴을 확인함. 익숙한 사람들과의 소규모 모임부터 시도하고, 긴장을 낮추기 위해 주 1~2회 스케치 시간을 마련하기로 함.",
-  },
-  {
-    id: "session-2",
-    label: "2회기",
-    date: "2026. 05. 03",
-    summary: "타인이 자신을 부정적으로 평가할 것이라는 추측과 사회적 회피의 연결을 확인함.",
-    detail: "내담자는 자신이 자리에 없을 때 사람들이 자신을 부정적으로 평가하거나 이야기할 것이라고 추측하며 사회적 상황을 회피한다고 설명함. 이러한 생각이 사실로 확인된 내용인지 점검하고, 스케치 시작 전 부정적 생각을 알아차리는 연습을 함께 적용하기로 함. 주말마다 스케치 또는 독서 시간을 확보하는 과제를 계획함.",
-  },
-  {
-    id: "session-3",
-    label: "3회기",
-    date: "2026. 05. 10",
-    summary: "평가에 대한 두려움을 점검하고, 룸메이트와 함께 부담이 낮은 사회적 상황에 참여하기로 함.",
-    detail: "내담자는 타인의 평가에 대한 두려움이 실제 근거보다 자신의 예상에 가깝다는 점을 인식함. 룸메이트와 함께 부담이 낮은 모임에 참석해 예상했던 두려움이 실제로 발생하는지 확인해 보기로 함. 모임 전 짧게 스케치하며 긴장을 낮추고, 작은 참여도 변화의 과정으로 인정하기로 함.",
-  },
-  {
-    id: "session-4",
-    label: "4회기",
-    date: "2026. 05. 17",
-    summary: "소규모 모임 참여 계획을 구체화하고, 룸메이트의 지원과 스케치를 활용한 불안 조절 전략을 마련함.",
-    detail: "내담자는 룸메이트와 함께 소규모 모임이나 카페 방문을 계획함. 모임에 들어가는 첫 순간과 대화를 시작해야 하는 상황에서 불안이 커질 것으로 예상함. 룸메이트가 사람을 소개하거나 기존 대화에 참여하도록 돕는 방안을 마련함. 모임 전 스케치와 호흡 조절을 활용하고, 참여 후 작은 성취를 함께 확인하기로 함.",
-  },
-]
+const previousSessionOptions: PreviousSessionOption[] = COUNSELOR_DEMO_FIXTURE.sessionSources.history.map((session) => ({
+  id: `session-${session.sessionNumber}`,
+  label: `${session.sessionNumber}회기`,
+  date: '날짜 확인 필요',
+  summary: session.summary,
+  detail: session.rawSource,
+}))
 
 const defaultPreviousSessionIds = ['session-1', 'session-2', 'session-3', 'session-4']
-const demoClientName = '가명 다은'
+const demoClientName = canonicalMuspsyCase.case_id
 
 function buildPreviousSessionSummary(selectedIds: string[]): string {
   return previousSessionOptions
     .filter((session) => selectedIds.includes(session.id))
-    .map((session) => `${session.label} (${session.date}): ${session.detail}`)
-    .join('\n')
+    .map((session) => `${session.label}: ${session.summary}`)
+    .join('\n\n')
 }
 
 const caseSummaries: CaseSummary[] = [
   {
-    id: 'CASE-MUSPSY-1416',
-    name: '가명 다은',
-    type: '성인 개인상담',
+    id: canonicalMuspsyCase.case_id,
+    name: demoClientName,
+    type: '개인 상담',
     lastDate: '2026. 05. 24',
-    counselor: '데모 상담사',
-    mainIssue: '사회적 상황 불안, 평가 우려, 사회적 회피',
+    counselor: canonicalMuspsyCase.counselor_name,
+    mainIssue: canonicalMuspsyCase.key_issue_tags.slice(0, 3).join(', '),
     status: '진행중',
     sessionCount: 5,
-    progressLabel: '8회 목표',
+    progressLabel: '상담 진행중',
     progress: 62,
-  },
-  {
-    id: 'C-2024-002',
-    name: '신데렐라',
-    type: '직장인 상담',
-    lastDate: '2026. 04. 21',
-    counselor: '박상담사',
-    mainIssue: '직무 스트레스, 번아웃',
-    status: '진행중',
-    sessionCount: 3,
-    progressLabel: '12회 목표',
-    progress: 25,
-  },
-  {
-    id: 'C-2023-018',
-    name: '흥부',
-    type: '성인 개인상담',
-    lastDate: '2026. 03. 10',
-    counselor: '박상담사',
-    mainIssue: '우울, 자존감 하락',
-    status: '종결',
-    sessionCount: 12,
-    progressLabel: '종결 완료',
-    progress: 100,
-  },
-  {
-    id: 'C-2024-009',
-    name: '팥쥐',
-    type: '성인 개인 상담',
-    lastDate: '2026. 04. 15',
-    counselor: '미배정',
-    mainIssue: '초기 면접 진행 중',
-    status: '대기중',
-    sessionCount: 1,
-    progressLabel: '진행 예정',
-    progress: 18,
   },
 ]
 
-const initialForm: SessionInput = {
-  case_id: "CASE-MUSPSY-1416",
+const initialForm = {
+  ...canonicalMuspsyCase,
   client_alias: demoClientName,
-  session_number: 5,
-  session_date: "2026-05-24",
-  counselor_name: "데모 상담사",
-  counselor_memo: "5회기. 내담자는 예정된 시간에 참여하였으며 전반적으로 협조적인 태도를 보였다. 지난 회기에서 계획한 룸메이트와의 소규모 외출은 아직 구체적인 날짜를 정하지 못했으나, 사회적 상황을 앞두고 불안이 높아질 때 초대를 미루거나 거절하고 이후 고립감과 자기비난이 커지는 자신의 반복 패턴을 비교적 명확하게 설명하였다. 내담자는 “사람들이 나를 이상하게 볼 것 같다”는 생각이 사실로 확인된 내용보다 자신의 예상에 가깝다는 점은 이해하고 있으나, 실제 상황에서는 해당 생각의 영향력이 여전히 크게 느껴진다고 보고하였다.\n\n이번 회기에서는 내담자가 이미 안정감을 경험하고 있는 스케치 활동을 일상적인 정서조절 전략으로 구체화하고, 사회적 평가와 관련된 자동사고를 보다 객관적으로 점검하는 방법을 탐색하였다. 내담자는 자연 풍경을 그릴 때 걱정에서 잠시 거리를 둘 수 있고 마음이 차분해진다고 설명하였다. 이에 상담자는 주말마다 한 시간의 정기적인 스케치 시간을 확보하고, 스트레스가 급격히 높아지는 상황에서는 5분 내외의 짧은 스케치를 활용해 주의를 전환해 보도록 제안하였다. 내담자는 이 방법이 현실적으로 실행 가능하며, 스케치 시간을 ‘머릿속을 정리하는 시간’으로 활용해 보고 싶다고 반응하였다.\n\n부정적인 생각을 다루기 위해 상황, 자동사고, 해당 생각을 뒷받침하는 근거, 반대 근거, 보다 균형 잡힌 생각을 구분하여 기록하는 방법을 안내하였다. 내담자는 이를 “생각의 대차대조표를 만드는 것 같다”고 표현하였고, 머릿속에서 반복되는 생각을 종이에 적으면 자신의 추측을 한 걸음 떨어져서 볼 수 있을 것 같다고 말했다. 특히 “사람들이 나를 부정적으로 평가할 것이다”라는 생각이 떠오를 때 실제로 확인된 사실과 자신이 예상한 내용을 구분하여 기록해 보기로 하였다.\n\n정서조절 자원을 확장하는 과정에서 내담자는 스케치할 때 잔잔한 음악을 들으면 집중과 안정에 도움이 된다고 보고하였다. 집안일을 하거나 잠들기 전에도 비슷한 음악을 활용해 보고, 기존의 연필 스케치 외에 수채화나 점토 등 감각을 다양하게 사용하는 창작 활동도 시도해 보기로 하였다. 내담자는 새로운 재료를 탐색하는 태도를 사회적 상황에도 적용할 수 있을 것 같다고 말하며, 향후 초대를 받았을 때 즉시 거절하기보다 참석 가능성을 한 번 더 검토하고, 모임에서는 미술이나 창작 활동처럼 자신이 편안하게 이야기할 수 있는 공통 관심사를 활용해 먼저 대화를 시작해 보겠다고 하였다.\n\n상담자는 내담자의 사회적 불안이 타인의 부정적 평가를 예상하는 사고, 사회적 상황에 대한 예기불안, 회피 이후의 자기비난으로 이어지는 순환 구조와 관련되어 있다고 판단하였다. 다만 이전 회기보다 자신의 사고 패턴을 언어로 설명하는 능력과 대안 행동을 계획하려는 태도가 향상되었으며, 변화 가능성에 대한 기대도 증가한 것으로 보인다. 내담자의 현실검증력과 사고 과정은 양호하였고, 면담 중 사고의 비약이나 지각 이상은 관찰되지 않았다.\n\n현재 자살사고, 자해 충동, 타해사고 및 구체적인 계획은 보고하지 않았으며 급성 위험도는 낮은 수준으로 판단하였다. 다음 회기에서는 주말 스케치 루틴의 실행 여부, 활동 전후 불안 및 긴장 수준의 변화, 생각 기록지 작성 경험을 확인할 예정이다. 또한 사회적 초대에 반응하는 방식과 룸메이트와 계획한 소규모 외출의 진행 상황을 점검하고, 실제 사회적 상황에서 사용할 수 있는 대화 시작 문장과 불안 조절 방법을 구체화할 계획이다.",
-  transcript_text: "C: 최근에 즐거움을 느끼거나 스트레스를 조절하는 데 도움이 되는 활동을 찾은 것이 있나요?\nCl: 네, 저는 원래 스케치하는 걸 좋아해요. 그림을 그리면 걱정이 많은 상태에서 잠시 벗어날 수 있어요.\n\nC: 좋아하는 활동을 하는 건 에너지를 회복하는 데 도움이 될 수 있어요. 스케치 시간을 규칙적인 일과로 만들어 보는 건 어떨까요?\nCl: 좋아요. 주말처럼 비교적 조용한 시간에 정기적으로 시간을 내볼까 생각했어요.\n\nC: 정해진 시간을 마련하면 활동을 더 즐기고 성취감도 느낄 수 있을 것 같아요. 우선 주말마다 한 시간 정도로 시작해 보는 건 어떨까요?\nCl: 그 정도면 할 수 있을 것 같아요. 저한테 중심을 잡아주는 시간이 될 것 같고요.\n\nC: 스케치를 일과에 넣으면서 그림에서 반복적으로 나타나는 소재나 주제를 살펴보는 것도 도움이 될 수 있어요. 현재 상태를 이해할 단서가 될 수도 있고요.\nCl: 흥미로운 생각이네요. 저는 자연 풍경을 자주 그리는데, 그런 그림을 그리면 평온해져요. 제가 평화를 원해서 그런 것 같기도 해요.\n\nC: 자연 풍경이 내담자에게 원하는 평온함을 느끼게 해주는군요. 스케치할 때의 평온함을 다른 생활 영역으로 확장한다면 어떤 방법이 있을까요?\nCl: 마음챙김을 연습해 볼 수 있을 것 같아요. 주변을 실제로 그리듯이 자세히 바라보는 거예요.\n\nC: 마음챙김은 그림을 그릴 때 세부적인 부분을 관찰하는 것처럼, 일상에서도 현재의 경험에 집중하는 연습이 될 수 있어요.\nCl: 네. 일상에서 작은 부분에 집중하면 현재에 머물면서 스트레스를 줄이는 데 도움이 될 것 같아요.\n\nC: 이런 알아차림을 연습하면 일상의 어려움을 경험하는 방식에는 어떤 변화가 생길까요?\nCl: 부정적인 생각이나 불안에 완전히 휩쓸리지 않고, 지금 일어나고 있는 일에 집중할 수 있을 것 같아요.\n\nC: 생각에 휩쓸리지 않으면 상황을 더 분명하게 볼 수 있겠네요. 부정적인 생각이 떠올랐을 때 현실적인 걱정과 왜곡된 생각을 어떻게 구분할 수 있을까요?\nCl: 그 생각이 사실인지, 아니면 제가 추측하고 있는 건지 질문해 볼 수 있을 것 같아요. 전에 이야기했던 것처럼요.\n\nC: 그런 방식으로 추측을 점검하면 상황을 조금 더 현실적으로 바라볼 수 있겠어요. 그 생각이 나타났을 때 점검하도록 알려주는 장치로는 무엇이 있을까요?\nCl: 스케치하기 전에 장면을 메모하듯이 생각을 적을 수 있을 것 같아요. 한쪽에는 제가 한 추측을 쓰고, 다른 쪽에는 조금 더 긍정적이거나 현실적인 관점을 쓰는 거예요.\n\nC: 생각을 종이에 적으면 머릿속의 막연한 내용을 눈에 보이는 형태로 바꿀 수 있고, 생각이 덜 위협적으로 느껴질 수도 있겠어요.\nCl: 생각에 대한 대차대조표를 만드는 것 같겠네요. 그러면 조금 더 객관적으로 볼 수 있을 것 같아요.\n\nC: 객관적인 관점은 즉각적인 느낌에 끌려가는 것을 줄이는 데 도움이 될 수 있어요. 생각을 기록하는 과정은 스케치할 때의 진정 효과와 어떤 점에서 비슷할까요?\nCl: 머릿속에 엉켜 있는 걸 빈 종이에 옮기는 것처럼 느껴져서 후련할 것 같아요.\n\nC: 복잡한 내용을 밖으로 꺼내 정리하면 감정을 안정시키는 데도 도움이 될 수 있겠네요. 스케치할 때 함께 사용하는 다른 진정 방법도 있나요?\nCl: 저는 항상 잔잔한 배경음악을 틀어요. 그러면 집중도 잘되고 마음도 편안해져요.\n\nC: 그 음악을 스케치 시간 외의 일상에도 활용한다면 어떤 방식이 가능할까요?\nCl: 집안일을 할 때나 저녁에 쉬기 전에 들을 수 있을 것 같아요. 일상에 계속 깔리는 배경처럼요.\n\nC: 하루의 분위기를 조금 더 안정적으로 만드는 데 도움이 될 수 있겠어요. 스트레스가 특히 심할 때 창작 활동을 활용해 기분을 전환한다면 어떻게 해볼 수 있을까요?\nCl: 너무 벅찰 때 5분 정도라도 잠깐 스케치할 수 있을 것 같아요. 간단한 모양만 그려도 되고요.\n\nC: 짧은 창작 휴식도 스트레스 상황에서 잠시 떨어져 균형을 되찾는 전환점이 될 수 있어요.\nCl: 네. 걱정에 계속 빠져 있지 않고 머리를 잠깐 초기화할 수 있을 것 같아요.\n\nC: 수채화나 점토처럼 다른 재료를 사용해 보는 것은 다양성과 감정적 유연성을 높이는 데 어떤 도움이 될까요?\nCl: 수채화나 점토를 시도해 볼 수 있을 것 같아요. 손으로 직접 만지는 활동이 다른 감각도 사용하게 하고 즐거움을 줄 수도 있을 것 같아요.\n\nC: 다양한 재료를 사용하면 더 많은 감각을 자극하고 창작 표현을 넓힐 수 있겠어요. 예상하지 못한 즐거움을 발견할 수도 있고요.\nCl: 저는 가끔 새로운 걸 탐색하면서 스스로 놀라는 걸 좋아해서, 재미있을 것 같아요.\n\nC: 창작 활동에서 보이는 탐색적인 태도가 다른 생활 영역에는 어떤 영향을 줄 수 있을까요?\nCl: 새로운 경험에 좀 더 열려 있거나, 익숙하지 않은 걸 시도할 때 덜 무서워할 수 있을 것 같아요.\n\nC: 낯선 경험을 두려움보다 호기심으로 바라보면 사회적 상황에서도 새로운 경험으로 이어질 수 있겠네요.\nCl: 초대를 받았을 때 이전보다 조금 더 자주 “네”라고 말해보고, 상황을 너무 미리 판단하지 않아 볼 수 있을 것 같아요.\n\nC: 사회적 상황에 조금 더 참여하면 새로운 관계를 만들고 경험의 폭을 넓힐 기회가 생길 수 있어요. 새롭게 시작된 관계를 이어가기 위해 어떤 방법을 사용할 수 있을까요?\nCl: 새로 만난 사람과 미술처럼 서로 관심 있는 주제로 제가 먼저 이야기를 시작해 볼 수 있을 것 같아요.\n\nC: 공통 관심사에 관해 대화하면 관계를 형성하는 데 도움이 될 수 있겠어요.\nCl: 이런 노력들이 앞으로 제 사회적 관계에 좋은 영향을 줄 수 있을 것 같아서 기대돼요.\n\nC: 오늘 이야기를 마무리하기 전에 추가로 마음에 남는 내용이 있나요?\nCl: 아니요. 지금 이야기한 변화와 아이디어를 계속 실천해 볼 준비가 된 것 같고, 조금 희망적이에요.\n\nC: 변화를 시도하려는 태도와 자신의 패턴을 살펴보려는 노력이 확인됩니다. 다음 회기에는 스케치와 마음챙김 기록을 실제로 사용해 본 경험, 그리고 사회적 초대에 반응하는 방식에 어떤 변화가 있었는지 함께 살펴보겠습니다.",
   previous_session_summary: buildPreviousSessionSummary(defaultPreviousSessionIds),
-  counseling_goal: "사회적 상황에서 타인이 자신을 부정적으로 평가할 것이라는 자동적 추측을 알아차리고 사실 여부를 점검한다. 스케치와 마음챙김을 일상적인 정서조절 활동으로 구조화하고, 부담이 낮은 사회적 참여를 점진적으로 늘린다.",
-  psychological_test_summary: "초기면접 시 현재의 정서 상태와 사회적 상황에서의 어려움을 파악하기 위해 자기보고식 선별검사를 실시하였다. 사회적 상호작용 불안 척도(SIAS)는 46점으로 나타났으며, 새로운 사람과 대화를 시작하는 상황, 여러 사람이 있는 장소에 들어가는 상황, 자신의 말이나 행동이 타인에게 어떻게 보였는지를 반복적으로 되짚는 상황에서 불편감이 두드러졌다. 검사 결과는 내담자가 면담에서 보고한 타인의 평가에 대한 걱정, 사회적 상황 이전의 예기불안, 모임 초대를 회피하는 행동과 대체로 일치하였다.\n\n불안 증상의 전반적인 수준을 확인하기 위해 실시한 Beck 불안척도(BAI)는 18점으로 확인되었다. 내담자는 긴장감, 쉽게 편안해지지 못하는 느낌, 불안한 일이 생길 것 같은 두려움 등을 주로 보고하였다. 심박 증가나 호흡곤란처럼 급격한 신체 증상은 상대적으로 두드러지지 않았으며, 현재의 불안은 공황 증상보다 사회적 평가 상황과 대인관계에서의 긴장에 더 밀접하게 연결되어 있는 것으로 보인다.\n\n우울 증상 선별을 위한 PHQ-9은 7점으로 경미한 수준이었다. 피로감, 활동에 대한 의욕 저하, 자신에 대한 부정적인 평가 문항에서 일부 어려움이 보고되었으나, 지속적인 우울감이나 전반적인 흥미 상실이 주된 호소로 나타나지는 않았다. 현재 관찰되는 기분 저하는 사회적 회피 이후의 고립감과 자기비난, 대인관계에서 느끼는 긴장에 영향을 받는 것으로 이해할 수 있다.\n\n자살위험 선별 면담에서 현재의 자살사고, 자살 계획, 자해 행동 및 과거 자살 시도는 모두 부인하였다. 자신이나 타인에게 위해를 가하려는 사고도 보고하지 않았다. 보호요인으로는 안정적인 주거 환경, 지지적인 룸메이트와의 관계, 창작 활동에 대한 지속적인 관심, 상담 과정에 대한 협조적인 태도, 자신의 상태를 개선하려는 동기가 확인되었다. 현재 급성 위험도는 낮은 수준으로 평가되며, 향후 정서 상태가 급격히 악화되거나 사회적 고립이 증가할 경우 위험도를 다시 확인할 필요가 있다.\n\n검사 문항에 대한 무응답은 없었고 반응의 일관성은 전반적으로 양호하였다. 검사 결과와 면담 내용을 종합하면 사회적 평가에 대한 민감성, 예기불안, 회피적 대처가 현재 어려움의 핵심으로 보인다. 현재 단계에서는 사회불안 관련 증상과 기능 손상 정도를 지속적으로 확인하는 작업가설을 유지한다. 검사 결과만으로 진단을 확정하지 않으며, 실제 사회적 상황에서의 기능 수준, 증상의 지속 기간, 직업 및 대인관계에 미치는 영향을 추가로 관찰할 필요가 있다.\n\n5회기에는 심리검사 재검사를 실시하지 않았다. 초기검사 결과는 상담 목표 설정과 변화 경과를 확인하기 위한 기준 자료로 활용한다. 향후 8회기 전후에 SIAS와 BAI를 재실시하여 사회적 상황에 대한 불안, 회피 행동, 일상 기능의 변화를 초기 결과와 비교할 예정이다.",
-  key_issue_tags: ["사회적 상황 불안", "평가에 대한 추측", "사회적 회피", "창작 활동", "마음챙김", "점진적 참여"],
-  nonverbal_notes: "내담자는 정시에 참여하였고 복장과 위생 상태는 단정하였다. 의식은 명료하였으며 시간, 장소, 사람에 대한 지남력은 양호하였다. 회기 초반 사회적 초대와 타인의 평가에 대한 걱정을 이야기할 때 시선이 잠시 아래로 향하고 손가락을 만지는 모습이 관찰되었으며, 목소리 크기가 다소 작아지고 발화 속도가 느려졌다. 질문에는 관련성 있게 답하였고 사고 과정은 논리적이고 목표 지향적이었다.\n\n스케치와 자연 풍경을 이야기할 때에는 표정이 부드러워지고 미소가 증가하였으며, 상담자와의 눈맞춤도 비교적 자연스럽게 유지되었다. 생각을 사실과 추측으로 나누는 방법을 설명한 뒤 내담자가 “생각의 대차대조표”라고 표현할 때 자발적인 웃음이 나타났고, 기록 방법을 구체적으로 질문하는 등 참여도가 높아졌다. 회기 후반 사회적 초대에 조금 더 열린 태도로 반응해 보겠다는 계획을 말할 때 자세가 곧아지고 목소리 크기와 말의 속도가 안정되었다. 뚜렷한 정신운동성 초조나 지연, 지각 이상을 시사하는 행동은 관찰되지 않았다.",
   target_document_type: 'session_note',
   persist: false,
+} as SessionInput
+
+const STATIC_DOCUMENT_CAPABILITIES: DocumentCapabilitiesResponse = {
+  docx: { available: true },
+  pdf: { available: false, reason: '정적 데모에서는 PDF 내보내기를 사용하지 않습니다.' },
+  hwpx: { available: false, reason: '정적 데모에서는 HWPX 내보내기를 사용하지 않습니다.' },
+}
+
+function getFixtureSectionContent(documentType: 'session_summary' | 'session_note', titlePattern: RegExp): string {
+  return (
+    COUNSELOR_DEMO_FIXTURE.documents[documentType].sections.find((section) => titlePattern.test(section.title))
+      ?.content || PLACEHOLDER_TEXT
+  )
+}
+
+function buildStaticDemoResult(): NoteDraftResponse {
+  return {
+    case_id: canonicalMuspsyCase.case_id,
+    session_number: canonicalMuspsyCase.session_number,
+    session_summary: getFixtureSectionContent('session_summary', /상담 내용/),
+    main_issue: getFixtureSectionContent('session_summary', /주호소/),
+    counselor_intervention: getFixtureSectionContent('session_summary', /상담자 개입/),
+    client_response: getFixtureSectionContent('session_summary', /내담자 반응/),
+    next_plan: getFixtureSectionContent('session_summary', /다음 회기 계획/),
+    evidence_check: [],
+    missing_items: COUNSELOR_DEMO_FIXTURE.missingItems,
+    warnings: COUNSELOR_DEMO_FIXTURE.warnings,
+  }
+}
+
+function sourceBadgeForEvidence(sourceType: string): SourceBadgeKind {
+  if (sourceType === 'transcript') return 'transcript'
+  if (sourceType === 'previous_summary') return 'previous'
+  if (sourceType === 'counselor_memo') return 'memo'
+  return 'ai'
+}
+
+function buildStaticDemoDraftSections(): DraftSection[] {
+  return COUNSELOR_DEMO_FIXTURE.documents.session_summary.sections.map((section) => {
+    const evidence = section.evidenceIds.flatMap((evidenceId) => {
+      const item = COUNSELOR_DEMO_FIXTURE.evidences[evidenceId]
+      return item
+        ? [
+            {
+              label: item.sourceLabel,
+              excerpt: item.excerpt,
+              confidence: 'high' as EvidenceConfidence,
+              needsReview: Boolean(item.warning),
+            },
+          ]
+        : []
+    })
+    const sourceBadges = Array.from(
+      new Set<SourceBadgeKind>([
+        'ai',
+        ...section.evidenceIds.flatMap((evidenceId) => {
+          const item = COUNSELOR_DEMO_FIXTURE.evidences[evidenceId]
+          return item ? [sourceBadgeForEvidence(item.sourceType)] : []
+        }),
+        ...(section.status === 'needs_review' ? (['needs_review'] as SourceBadgeKind[]) : []),
+      ]),
+    )
+
+    return {
+      id: section.id,
+      title: section.title,
+      content: section.content,
+      sourceBadges,
+      confidence: section.status === 'needs_review' ? 'low' : 'high',
+      evidence,
+      visible: true,
+      editable: true,
+      toggleable: true,
+    }
+  })
+}
+
+function buildStaticFinalDocumentSections(documentType: FinalDocumentType): FinalDocumentSection[] {
+  if (documentType === 'termination_report') {
+    return [
+      {
+        id: 'termination-not-available',
+        title: '종결 보고서',
+        content: '[상담사 확인 필요] 이 정적 데모에는 사전 생성된 종결 보고서가 포함되어 있지 않습니다.',
+        contentKind: 'paragraph',
+      },
+    ]
+  }
+
+  return COUNSELOR_DEMO_FIXTURE.documents.session_note.sections.map((section) => ({
+    id: section.id,
+    title: section.title,
+    content: section.content,
+    contentKind: 'paragraph',
+  }))
+}
+
+function buildStaticSupervisionReport(): SupervisionReportDraft {
+  return {
+    reportId: 'static-muspsy-1416-candidate-05',
+    caseId: canonicalMuspsyCase.case_id,
+    reportType: 'personal_counseling_supervision',
+    title: '개인상담 사례 수퍼비전 보고서 초안',
+    meta: {
+      clientAlias: canonicalMuspsyCase.case_id,
+      sessionNumber: canonicalMuspsyCase.session_number,
+      reportDate: canonicalMuspsyCase.session_date,
+      counselorName: canonicalMuspsyCase.counselor_name,
+      institution: COUNSELOR_DEMO_FIXTURE.clientInfo.institution,
+    },
+    sections: COUNSELOR_DEMO_FIXTURE.documents.supervision_report.sections.map((section) => ({
+      id: section.id,
+      title: section.title,
+      level: /^[A-Z]\./.test(section.title) ? 1 : 2,
+      contentBlocks: [
+        {
+          id: `${section.id}-content`,
+          type: section.status === 'needs_review' ? 'placeholder' : 'paragraph',
+          text: section.content,
+          evidenceIds: section.evidenceIds,
+          aiGenerated: true,
+          demoValue: false,
+          reviewStatus: section.status === 'needs_review' ? 'needs_human_input' : 'unchecked',
+          warnings: section.status === 'needs_review' ? ['상담사 확인 필요'] : [],
+        },
+      ],
+      status: section.status === 'needs_review' ? 'needs_review' : 'complete',
+    })),
+    aiReview: {
+      completionChecklist: COUNSELOR_DEMO_FIXTURE.documents.supervision_report.sections.map((section) => ({
+        label: section.title,
+        status: section.status === 'needs_review' ? 'partial' : 'done',
+      })),
+      missingFields: COUNSELOR_DEMO_FIXTURE.missingItems,
+      demoInputs: [],
+      needsHumanReview: COUNSELOR_DEMO_FIXTURE.documents.supervision_report.sections
+        .filter((section) => section.status === 'needs_review')
+        .map((section) => ({
+          sectionId: section.id,
+          message: `${section.title}: 상담사 확인 필요`,
+          severity: 'medium',
+        })),
+      unsupportedClaims: [],
+      suggestedSupervisionQuestions: [],
+      caution: COUNSELOR_DEMO_FIXTURE.warnings.join(' '),
+    },
+    evidenceIndex: Object.fromEntries(
+      Object.entries(COUNSELOR_DEMO_FIXTURE.evidences).map(([id, evidence]) => [
+        id,
+        { label: evidence.sourceLabel, text: evidence.excerpt },
+      ]),
+    ),
+  }
 }
 
 export default function SessionDraftPage() {
   const [currentScreen, setCurrentScreen] = useState<AppScreen>('session_input')
   const [form, setForm] = useState<SessionInput>(initialForm)
-  const [sessionTopic, setSessionTopic] = useState('발표 이후 비교사고와 회피 행동 점검')
+  const [sessionTopic, setSessionTopic] = useState(canonicalMuspsyCase.key_issue_tags.join(', '))
   const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>('session_note')
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
@@ -407,17 +436,13 @@ export default function SessionDraftPage() {
   const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(defaultVisibleSectionIds)
   const [editingSectionId, setEditingSectionId] = useState<DraftSectionId | null>(null)
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<DraftSectionId | null>(null)
-  const [temporaryDraftId, setTemporaryDraftId] = useState<string | null>(null)
-  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const isSavingDraft = false
   const [draftSaveMessage, setDraftSaveMessage] = useState<string | null>(null)
-  const [isRecomposingDraft, setIsRecomposingDraft] = useState(false)
+  const isRecomposingDraft = false
   const [draftRecomposeMessage, setDraftRecomposeMessage] = useState<string | null>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
-  const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
+  const isGeneratingFinalDocument = false
   const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null)
-  const [isConfirmingNote, setIsConfirmingNote] = useState(false)
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmGeneratedNoteResponse | null>(null)
-  const [confirmationError, setConfirmationError] = useState<string | null>(null)
   const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(null)
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
@@ -425,8 +450,8 @@ export default function SessionDraftPage() {
   const [isExportingDocument, setIsExportingDocument] = useState(false)
   const [documentExportError, setDocumentExportError] = useState<string | null>(null)
   const [documentExportStatus, setDocumentExportStatus] = useState<string | null>(null)
-  const [documentCapabilities, setDocumentCapabilities] = useState<DocumentCapabilitiesResponse | null>(null)
-  const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
+  const documentCapabilities = STATIC_DOCUMENT_CAPABILITIES
+  const documentCapabilitiesError = null
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
   const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
 
@@ -568,7 +593,6 @@ export default function SessionDraftPage() {
         warnings: [],
         file,
         objectUrl,
-        expectedSpeakers: 2,
         appliedTargets: [],
       }
     })
@@ -610,24 +634,25 @@ export default function SessionDraftPage() {
     const target = materials.find((material) => material.id === materialId)
     if (!target?.file) return
     setMaterials((prev) =>
-      prev.map((material) =>
-        material.id === materialId
-          ? {
-              ...material,
-              status: 'transcribing',
-              error: undefined,
-              dirtySinceApply: material.status === 'transcribed' ? true : material.dirtySinceApply,
-              appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
-            }
-          : material,
-      ),
+      prev.map((material) => (material.id === materialId ? { ...material, status: 'transcribing', error: undefined } : material)),
     )
     try {
-      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe', target.expectedSpeakers || 2)
+      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe')
       setMaterials((prev) =>
         prev.map((material) =>
           material.id === materialId
-            ? buildTranscribedAudioMaterial(material, transcription)
+            ? {
+                ...material,
+                status: 'transcribed',
+                transcriptText: transcription.transcript_text,
+                segments: transcription.segments,
+                durationSeconds: transcription.duration_seconds,
+                language: transcription.language,
+                warnings: transcription.warnings,
+                error: undefined,
+                file: undefined,
+                appliedTargets: material.appliedTargets,
+              }
             : material,
         ),
       )
@@ -643,46 +668,25 @@ export default function SessionDraftPage() {
     }
   }
 
+  const updateAudioTranscript = (materialId: string, text: string) => {
+    setMaterials((prev) =>
+      prev.map((material) => (material.id === materialId ? { ...material, transcriptText: text } : material)),
+    )
+  }
+
   const updateAudioSegmentText = (materialId: string, segmentId: number, text: string) => {
     setMaterials((prev) =>
       prev.map((material) =>
         material.id === materialId
-          ? markAudioMaterialDirty({
+          ? {
               ...material,
               segments: (material.segments || []).map((segment) =>
                 segment.id === segmentId ? { ...segment, text } : segment,
               ),
-            })
-          : material,
-      ),
-    )
-  }
-
-  const updateAudioSpeakerRole = (materialId: string, speakerKey: string, role: SpeakerRole) => {
-    setMaterials((prev) =>
-      prev.map((material) =>
-        material.id === materialId
-          ? markAudioMaterialDirty({
-              ...material,
-              speakerRoleMap: {
-                ...(material.speakerRoleMap || {}),
-                [speakerKey]: role,
-              },
-            })
-          : material,
-      ),
-    )
-  }
-
-  const updateAudioExpectedSpeakers = (materialId: string, value: number) => {
-    const safeValue = Math.min(4, Math.max(1, value))
-    setMaterials((prev) =>
-      prev.map((material) =>
-        material.id === materialId
-          ? markAudioMaterialDirty({
-              ...material,
-              expectedSpeakers: safeValue,
-            })
+              transcriptText: (material.segments || [])
+                .map((segment) => (segment.id === segmentId ? text : segment.text))
+                .join('\n'),
+            }
           : material,
       ),
     )
@@ -728,74 +732,13 @@ export default function SessionDraftPage() {
     setMaterialModal(null)
   }
 
-  const applyAudioTranscriptToForm = (materialId: string, mode: MaterialApplyMode) => {
-    const material = materials.find((item) => item.id === materialId)
-    if (!material || material.kind !== 'audio') return
-    const speakerRoleMap = material.speakerRoleMap || {}
-    const transcriptText = buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText || ''
-    const nonverbalNotes = buildNonverbalNotes(material.segments || [], speakerRoleMap) || material.nonverbalNotes || ''
-    if (!transcriptText.trim()) return
-
-    const isReapply =
-      Boolean(material.dirtySinceApply) &&
-      (material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined)
-    const nextTranscriptText = isReapply
-      ? replaceAppliedAudioBlock(form.transcript_text, material.lastAppliedTranscriptText || '', transcriptText)
-      : mergeMaterialText(form.transcript_text, transcriptText, mode)
-    const nextNonverbalNotes = isReapply
-      ? replaceAppliedAudioBlock(
-          form.nonverbal_notes || '',
-          material.lastAppliedNonverbalNotes || '',
-          nonverbalNotes,
-        )
-      : mergeMaterialText(form.nonverbal_notes || '', nonverbalNotes, mode)
-
-    if (nextTranscriptText === null || nextNonverbalNotes === null) {
-      setMaterials((prev) =>
-        prev.map((item) =>
-          item.id === materialId
-            ? {
-                ...item,
-                error: '이전에 반영한 오디오 블록이 회기 입력에서 수정되어 자동으로 교체할 수 없습니다. 현재 입력을 확인한 뒤 다시 반영해주세요.',
-              }
-            : item,
-        ),
-      )
-      return
-    }
-
-    setForm((prev) => ({
-      ...prev,
-      transcript_text: nextTranscriptText,
-      nonverbal_notes: nextNonverbalNotes,
-    }))
-    setMaterials((prev) =>
-      prev.map((item) =>
-        item.id === materialId
-          ? {
-              ...item,
-              transcriptText,
-              nonverbalNotes,
-              appliedTargets: Array.from(new Set([...item.appliedTargets, ...AUDIO_APPLY_TARGETS])),
-              dirtySinceApply: false,
-              lastAppliedTranscriptText: transcriptText,
-              lastAppliedNonverbalNotes: nonverbalNotes,
-              lastAppliedMode: isReapply ? item.lastAppliedMode || mode : mode,
-              error: undefined,
-            }
-          : item,
-      ),
-    )
-    setMaterialModal(null)
-  }
-
   const revokeObjectUrl = (objectUrl?: string) => {
     if (!objectUrl) return
     URL.revokeObjectURL(objectUrl)
     objectUrlsRef.current.delete(objectUrl)
   }
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (unappliedReadyMaterials.length > 0) {
       setHasSubmitted(true)
@@ -814,69 +757,36 @@ export default function SessionDraftPage() {
     setSupervisionReportDraft(null)
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
-    setConfirmationResult(null)
-    setConfirmationError(null)
 
-    try {
-      const data = await generateNoteDraft(form)
-      setResult(data)
-      setDraftSections(buildDocumentSections(data, form, sessionTopic, visibleSectionIds))
-      setCurrentScreen('summary_draft')
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : '회기요약 생성 중 오류가 발생했습니다. 백엔드 서버가 실행 중인지 확인해주세요.'
-      setError(message)
-    } finally {
-      setIsLoading(false)
-    }
+    const data = buildStaticDemoResult()
+    const sections = buildStaticDemoDraftSections()
+    setResult(data)
+    setDraftSections(sections)
+    setVisibleSectionIds(new Set(sections.map((section) => section.id)))
+    setCurrentScreen('summary_draft')
+    setIsLoading(false)
   }
 
-  const toggleSectionVisibility = async (sectionId: DraftSectionId) => {
-    const previousVisibleSectionIds = new Set(visibleSectionIds)
-    const nextVisibleSectionIds = new Set(previousVisibleSectionIds)
+  const toggleSectionVisibility = (sectionId: DraftSectionId) => {
+    const nextVisibleSectionIds = new Set(visibleSectionIds)
     if (nextVisibleSectionIds.has(sectionId)) {
       nextVisibleSectionIds.delete(sectionId)
     } else {
       nextVisibleSectionIds.add(sectionId)
     }
 
-    if (!result) {
-      setVisibleSectionIds(nextVisibleSectionIds)
-      return
-    }
-
-    setIsRecomposingDraft(true)
-    setDraftRecomposeMessage('선택 항목 기준으로 AI 초안을 재구성 중입니다.')
-
-    try {
-      const recomposed = await recomposeNoteDraft({
-        session_input: form,
-        session_topic: sessionTopic,
-        visible_section_ids: Array.from(nextVisibleSectionIds),
-      })
-      const nextVisibleSet = new Set<DraftSectionId>(recomposed.visibleSectionIds)
-      setResult(recomposed.note)
-      setVisibleSectionIds(nextVisibleSet)
-      setDraftSections(buildDocumentSections(recomposed.note, form, sessionTopic, nextVisibleSet))
-      setExpandedEvidenceId(null)
-      setEditingSectionId(null)
-      setConfirmationResult(null)
-      setConfirmationError(null)
-      setDraftRecomposeMessage(recomposed.cacheHit ? '저장된 재구성 초안을 사용했습니다.' : 'AI 초안을 다시 재구성했습니다.')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '요약초안 재구성 중 오류가 발생했습니다.'
-      setVisibleSectionIds(previousVisibleSectionIds)
-      setDraftRecomposeMessage(`재구성 실패 · ${message}`)
-    } finally {
-      setIsRecomposingDraft(false)
-    }
+    setVisibleSectionIds(nextVisibleSectionIds)
+    setDraftSections((current) =>
+      current.map((section) =>
+        section.id === sectionId ? { ...section, visible: nextVisibleSectionIds.has(sectionId) } : section,
+      ),
+    )
+    setExpandedEvidenceId(null)
+    setEditingSectionId(null)
+    setDraftRecomposeMessage('사전 생성된 초안의 표시 항목을 변경했습니다.')
   }
 
   const updateDraftSectionContent = (sectionId: DraftSectionId, content: string) => {
-    setConfirmationResult(null)
-    setConfirmationError(null)
     setDraftSections((prev) =>
       prev.map((section) => (section.id === sectionId ? { ...section, content } : section)),
     )
@@ -896,8 +806,6 @@ export default function SessionDraftPage() {
       editable: true,
       toggleable: true,
     }
-    setConfirmationResult(null)
-    setConfirmationError(null)
     setDraftSections((prev) => [...prev, newSection])
     setVisibleSectionIds((prev) => new Set(prev).add(id))
   }
@@ -910,8 +818,6 @@ export default function SessionDraftPage() {
     setFinalDocumentSections([])
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
-    setConfirmationResult(null)
-    setConfirmationError(null)
   }
 
   const openCaseList = () => {
@@ -927,60 +833,18 @@ export default function SessionDraftPage() {
     setCurrentScreen('document_transform')
   }
 
-  const refreshDocumentCapabilities = async () => {
-    setDocumentCapabilitiesError(null)
-    try {
-      const capabilities = await getDocumentCapabilities()
-      setDocumentCapabilities(capabilities)
-      return capabilities
-    } catch (err) {
-      console.error('Capabilities fetch failed:', err)
-      setDocumentCapabilitiesError('내보내기 서버 상태 확인 실패')
-      const fallback: DocumentCapabilitiesResponse = {
-        docx: { available: true },
-        pdf: { available: false, reason: '내보내기 서버 상태 확인 실패' },
-        hwpx: { available: false, reason: '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.' },
-      }
-      setDocumentCapabilities(fallback)
-      return fallback
-    }
-  }
-
-  const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
+  const openFinalDocument = (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
     setFinalDocumentType(documentType)
     setFinalDocumentError(null)
     setDocumentExportError(null)
     setDocumentExportStatus(null)
-    await refreshDocumentCapabilities()
-
     if (documentType === 'supervision_report') {
       setFinalDocumentSections([])
-      setIsGeneratingFinalDocument(true)
-      try {
-        const report = await generateSupervisionReport({
-          session_input: form,
-          session_summary_draft: result.full_response?.session_summary_draft,
-          demo_mode: form.case_id === 'CASE-MUSPSY-1416',
-          report_date: form.session_date,
-          client_alias: getClientAlias(form),
-        })
-        setSupervisionReportDraft(report)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : '수퍼비전 보고서 초안 생성 중 오류가 발생했습니다.'
-        setFinalDocumentError(message)
-      } finally {
-        setIsGeneratingFinalDocument(false)
-      }
+      setSupervisionReportDraft(buildStaticSupervisionReport())
     } else {
       setSupervisionReportDraft(null)
-      setFinalDocumentSections(
-        buildFinalDocumentSections(
-          documentType,
-          draftSections.filter((section) => section.visible),
-          result.missing_items,
-        ),
-      )
+      setFinalDocumentSections(buildStaticFinalDocumentSections(documentType))
     }
 
     setCurrentScreen('final_document')
@@ -1011,48 +875,12 @@ export default function SessionDraftPage() {
     setEditingSupervisionText('')
   }
 
-  const handleTemporarySave = async () => {
-    setIsSavingDraft(true)
-    setDraftSaveMessage(null)
-
-    try {
-      const response = await saveTemporaryDraft({
-        draft_id: temporaryDraftId || undefined,
-        case_id: form.case_id,
-        session_number: form.session_number,
-        session_date: form.session_date,
-        counselor_name: form.counselor_name,
-        screen: currentScreen,
-        form,
-        session_topic: sessionTopic,
-        is_deidentified: isDeidentified,
-        selected_previous_session_ids: selectedPreviousSessionIds,
-        attachments: serializeMaterialsForDraft(materials),
-        visible_section_ids: Array.from(visibleSectionIds),
-        draft_sections: draftSections,
-        final_document_sections: finalDocumentSections,
-        result,
-        final_document_type: finalDocumentType,
-        supervision_report_draft: supervisionReportDraft,
-      })
-      setTemporaryDraftId(response.draft_id)
-      setDraftSaveMessage(`임시저장 완료 · ${formatSavedTime(response.saved_at)}`)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '임시저장 중 오류가 발생했습니다.'
-      setDraftSaveMessage(`임시저장 실패 · ${message}`)
-    } finally {
-      setIsSavingDraft(false)
-    }
+  const handleTemporarySave = () => {
+    setDraftSaveMessage('정적 데모 모드에서는 서버나 DB에 저장하지 않습니다.')
   }
 
   const handleDownloadDocument = async (format: DocumentExportFormat) => {
     if (!result) return
-    if (finalDocumentType === 'supervision_report' && format === 'pdf') {
-      setDocumentExportError(null)
-      setDocumentExportStatus('브라우저 인쇄에서 PDF로 저장할 수 있습니다.')
-      window.print()
-      return
-    }
     if (format === 'pdf' && (!documentCapabilities || documentCapabilities.pdf.available === false)) {
       setDocumentExportError(
         documentCapabilities
@@ -1066,18 +894,6 @@ export default function SessionDraftPage() {
     setDocumentExportStatus(null)
 
     try {
-      if (finalDocumentType === 'supervision_report' && format === 'docx' && supervisionReportDraft) {
-        const report = applyPendingSupervisionEdit(
-          supervisionReportDraft,
-          editingSupervisionBlockId,
-          editingSupervisionText,
-        )
-        const filename = await exportSupervisionReportDocx(report, resolveSupervisionMeta(report))
-        setDocumentExportError(null)
-        setDocumentExportStatus(`Word 다운로드를 시작했습니다. (${filename})`)
-        return
-      }
-
       const request = buildDocumentExportRequest({
         documentType: finalDocumentType,
         editingSupervisionBlockId,
@@ -1096,43 +912,10 @@ export default function SessionDraftPage() {
       triggerBlobDownload(blob, filename)
       setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : 'Word'} 다운로드를 시작했습니다.`)
     } catch (err) {
-      console.error('Document download failed:', err)
-      setDocumentExportError(
-        finalDocumentType === 'supervision_report' && format === 'docx'
-          ? '문서 파일을 생성하지 못했습니다. 다시 시도해주세요.'
-          : '문서 다운로드에 실패했습니다. 잠시 후 다시 시도해주세요.',
-      )
+      const message = err instanceof Error ? err.message : '문서 내보내기 중 오류가 발생했습니다.'
+      setDocumentExportError(message)
     } finally {
       setIsExportingDocument(false)
-    }
-  }
-
-  const handleConfirmNote = async () => {
-    if (!result) return
-    const noteId = result.full_response?.persistence_report?.note_id
-    if (!noteId) {
-      setConfirmationError('저장된 note_id가 없어 확인 저장을 할 수 없습니다. persist=true와 서버 persistence 설정이 필요합니다.')
-      return
-    }
-
-    setIsConfirmingNote(true)
-    setConfirmationError(null)
-    try {
-      const response = await confirmGeneratedNote({
-        note_id: noteId,
-        confirmed_note: buildConfirmedNotePayload(finalDocumentType, draftSections.filter((section) => section.visible)),
-        counselor_edited: true,
-        create_case_memory: true,
-      })
-      setConfirmationResult(response)
-    } catch (err) {
-      const apiError = err as { response?: { data?: { detail?: string } } }
-      setConfirmationError(
-        apiError.response?.data?.detail ||
-          (err instanceof Error ? err.message : '상담사 확인 저장 중 오류가 발생했습니다.'),
-      )
-    } finally {
-      setIsConfirmingNote(false)
     }
   }
 
@@ -1168,7 +951,7 @@ export default function SessionDraftPage() {
             cases={caseSummaries}
             onCreateSession={openSessionInput}
             onOpenCase={() => {
-              setForm((prev) => ({ ...prev, case_id: 'CASE-MUSPSY-1416', session_number: 5 }))
+              setForm(initialForm)
               setCurrentScreen(result ? 'summary_draft' : 'session_input')
             }}
           />
@@ -1225,8 +1008,6 @@ export default function SessionDraftPage() {
                   onToggleEvidence={(sectionId) =>
                     setExpandedEvidenceId((current) => (current === sectionId ? null : sectionId))
                   }
-                  templateContext={result.full_response?.retrieved_template_context}
-                  retrievalReport={result.full_response?.retrieval_report}
                 />
               )}
 
@@ -1287,9 +1068,6 @@ export default function SessionDraftPage() {
                 />
               ) : (
                 <FinalReviewPanel
-                  confirmationError={confirmationError}
-                  confirmationResult={confirmationResult}
-                  confirmationSections={draftSections.filter((section) => section.visible)}
                   documentType={finalDocumentType}
                   capabilities={documentCapabilities}
                   capabilitiesError={documentCapabilitiesError}
@@ -1297,14 +1075,11 @@ export default function SessionDraftPage() {
                   exportError={documentExportError}
                   exportStatus={documentExportStatus}
                   isExporting={isExportingDocument}
-                  isConfirming={isConfirmingNote}
                   isSavingDraft={isSavingDraft}
                   missingItems={result?.missing_items || []}
-                  noteId={result?.full_response?.persistence_report?.note_id || null}
                   warnings={result?.warnings || []}
                   onBack={() => setCurrentScreen('document_transform')}
                   onDownload={handleDownloadDocument}
-                  onConfirm={handleConfirmNote}
                   onTemporarySave={handleTemporarySave}
                 />
               )
@@ -1347,13 +1122,11 @@ export default function SessionDraftPage() {
           audioCapabilities={audioCapabilities}
           audioCapabilitiesError={audioCapabilitiesError}
           onAddAudioFiles={addAudioFiles}
-          onApplyAudioTranscript={applyAudioTranscriptToForm}
           onApplyMaterial={applyMaterialToForm}
           onRefreshAudioCapabilities={refreshAudioCapabilities}
           onTranscribeAudio={transcribeAudioMaterial}
-          onUpdateAudioExpectedSpeakers={updateAudioExpectedSpeakers}
           onUpdateAudioSegmentText={updateAudioSegmentText}
-          onUpdateAudioSpeakerRole={updateAudioSpeakerRole}
+          onUpdateAudioTranscript={updateAudioTranscript}
           onUploadDocumentFiles={uploadDocumentFiles}
         />
       )}
@@ -1435,21 +1208,18 @@ function AppSidebar({
 
           <div className="space-y-2 border-t border-slate-200 pt-4">
             <p className="px-1 text-[10px] font-medium text-slate-400">최근 케이스</p>
-            <CaseListItem name="가명 다은" status="진행중" meta="성인 · 5회기" active />
-            <CaseListItem name="신데렐라" status="진행중" meta="직장인 · 3회기" />
-            <CaseListItem name="흥부" status="종결" meta="직장인 · 12회기" tone="green" />
-            <CaseListItem name="팥쥐" status="대기중" meta="성인 · 1회기" tone="orange" />
+            <CaseListItem name={canonicalMuspsyCase.case_id} status="진행중" meta="개인상담 · 5회기" active />
           </div>
         </div>
 
         <div className={`${collapsed ? 'hidden' : 'mt-auto border-t border-slate-200 px-3 py-3'}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 font-semibold text-white">
-              박
+              데
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-900">박상담사</p>
-              <p className="text-[11px] text-slate-500">2급 심리상담사</p>
+              <p className="text-xs font-semibold text-slate-900">{canonicalMuspsyCase.counselor_name}</p>
+              <p className="text-[11px] text-slate-500">정적 데모</p>
             </div>
           </div>
         </div>
@@ -1769,52 +1539,87 @@ function SessionInputWorkspace({
   materials: UploadedMaterial[]
   sessionTopic: string
 }) {
+  // UI-only fields; not persisted or submitted.
+  // SessionInput 타입과 백엔드에 상담 시작/종료 시간 필드가 없어 화면 표시 용도로만 관리한다.
+  // 저장이 필요해지면 별도 작업으로 타입/스키마 확장과 함께 진행한다.
+  const [sessionStartTime, setSessionStartTime] = useState('10:00')
+  const [sessionEndTime, setSessionEndTime] = useState('10:50')
+
   return (
     <form id="session-input-form" onSubmit={onSubmit} className="session-input-form">
-      <section className="session-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <User className="h-4 w-4 text-blue-700" />
-              <p className="text-base font-bold tracking-normal text-slate-950">내담자 / 회기 기본 정보</p>
-            </div>
-            <h1 className="mt-3 text-xl font-bold tracking-normal text-slate-950">{getClientDisplayName(form)}</h1>
-          </div>
-          <button
-            type="button"
-            onClick={onEditBasicInfo}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
-          >
-            <Edit3 className="h-3.5 w-3.5" />
-            수정하기
-          </button>
-        </div>
-        <dl className="mt-3 grid gap-4 sm:grid-cols-[120px_minmax(0,1fr)_120px]">
-          <InfoRow label="회기" value={`${form.session_number}회기`} />
-          <InfoRow label="회기 주제" value={sessionTopic || '미정'} />
-          <InfoRow label="날짜" value={form.session_date || '미정'} />
-        </dl>
-      </section>
+      {/* TODO(design-token): 화면 배경 #F5F5F5, 배지 #6494FF는 전역 토큰 확정 후 tailwind.config로 이동 */}
+      <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4 py-2">
+        <BasicInfoCard
+          clientDisplayName={getClientDisplayName(form)}
+          onEditBasicInfo={onEditBasicInfo}
+          sessionDate={form.session_date}
+          sessionNumber={form.session_number}
+          sessionTopic={sessionTopic}
+        />
 
-      <section className="session-card session-material-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <FolderOpen className="h-4 w-4 text-blue-700" />
-              <h2 className="text-lg font-bold tracking-normal">상담 자료</h2>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">이번 회기 요약에 사용할 자료를 한 곳에서 관리합니다.</p>
-          </div>
-        </div>
+        <section className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold tracking-normal text-slate-900">새 회기 시작</h2>
 
-        {!hasMaterialRows ? (
-          <div className="session-material-content mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
-            <FileText className="mx-auto h-7 w-7 text-slate-400" aria-hidden="true" />
-            <p className="mt-3 text-sm font-medium text-slate-700">이번 회기요약에 사용할 자료를 추가해주세요.</p>
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">상담 일시</p>
+            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_110px_14px_110px] items-center gap-2">
+              <button
+                type="button"
+                onClick={onEditBasicInfo}
+                className="flex h-11 items-center rounded-[10px] border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-700 hover:bg-slate-100"
+                title="날짜는 기본 정보에서 수정합니다"
+              >
+                {form.session_date || '날짜 미정'}
+              </button>
+              {/* UI-only field; not persisted or submitted */}
+              <input
+                type="time"
+                value={sessionStartTime}
+                onChange={(event) => setSessionStartTime(event.target.value)}
+                aria-label="상담 시작 시간 (화면 표시용)"
+                className="h-11 rounded-[10px] border border-slate-200 bg-slate-50 px-2 text-center text-sm text-slate-700"
+              />
+              <span className="text-center text-sm text-slate-400">~</span>
+              {/* UI-only field; not persisted or submitted */}
+              <input
+                type="time"
+                value={sessionEndTime}
+                onChange={(event) => setSessionEndTime(event.target.value)}
+                aria-label="상담 종료 시간 (화면 표시용)"
+                className="h-11 rounded-[10px] border border-slate-200 bg-slate-50 px-2 text-center text-sm text-slate-700"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-slate-400">시간은 화면 표시용이며 저장·요약 생성에는 사용되지 않습니다.</p>
           </div>
-        ) : (
-          <div className="session-material-content mt-3 divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white">
-            {form.transcript_text.trim() && (
+
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">음성 자료</p>
+            <button
+              type="button"
+              onClick={() => onEditMaterial('audio_upload')}
+              className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Mic className="h-4 w-4 text-blue-600" />
+              음성 파일 추가
+            </button>
+            <p className="mt-1.5 text-xs text-slate-400">현재는 음성 파일 업로드 후 자동 축어록(지원 환경)만 제공합니다.</p>
+          </div>
+
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">자료 업로드</p>
+            <button
+              type="button"
+              onClick={onAddMaterial}
+              className="mt-2 flex w-full flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-7 text-center hover:bg-slate-50"
+            >
+              <Upload className="h-6 w-6 text-slate-500" aria-hidden="true" />
+              <span className="text-sm font-medium text-slate-700">클릭하여 파일을 선택하거나 직접 입력해주세요.</span>
+              <span className="text-xs text-slate-400">STT 자료, 검사 결과 PDF, 워드 파일 등 · 최대 20MB</span>
+            </button>
+
+            {hasMaterialRows && (
+              <div className="mt-3 divide-y divide-slate-200 rounded-[10px] border border-slate-200 bg-white">
+                {form.transcript_text.trim() && (
               <MaterialRow
                 label="축어록/STT"
                 meta={`${countCharacters(form.transcript_text)}자 입력됨`}
@@ -1844,26 +1649,34 @@ function SessionInputWorkspace({
                 material={material}
                 transcriptionAvailable={Boolean(audioCapabilities?.transcription.available)}
                 transcriptionReason={audioCapabilities?.transcription.reason || null}
-                onApply={() => onOpenMaterial(material.id, material.kind === 'audio' ? 'audio_review' : 'material_apply')}
+                onApply={() => onOpenMaterial(material.id, 'material_apply')}
                 onDelete={() => onRemoveMaterial(material.id)}
                 onPreview={() => onOpenMaterial(material.id, material.kind === 'audio' ? 'audio_review' : 'document_preview')}
                 onTranscribe={() => onTranscribeAudio(material.id)}
               />
             ))}
+              </div>
+            )}
           </div>
-        )}
 
-        <div className="session-material-actions grid gap-3 sm:grid-cols-[minmax(0,1fr)_210px]">
-          <button
-            type="button"
-            onClick={onAddMaterial}
-            className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            상담 자료 업로드
-          </button>
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">메모</p>
+            {/* 인라인 편집은 props 계약(외부 시그니처 유지) 때문에 보류 — 기존 edit_memo 모달 흐름 사용.
+                다음 커밋에서 계약 변경 승인 시 인라인 textarea로 전환 가능 */}
+            <button
+              type="button"
+              onClick={() => onEditMaterial('edit_memo')}
+              className="mt-2 block min-h-[96px] w-full whitespace-pre-line rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100"
+            >
+              {form.counselor_memo.trim() ? (
+                form.counselor_memo
+              ) : (
+                <span className="text-slate-400">회기 중 특이사항, 상담사 소견 등을 입력하세요 (클릭하여 편집)</span>
+              )}
+            </button>
+          </div>
 
-          <label className="inline-flex h-8 items-center justify-between gap-3 rounded-md bg-blue-50 px-3 text-blue-700">
+          <label className="mt-5 flex items-center justify-between gap-3 rounded-[10px] bg-blue-50 px-3 py-2.5 text-blue-700">
             <span className="flex items-center gap-2 text-xs font-semibold text-blue-700">
               <ShieldCheck className="h-3.5 w-3.5 text-blue-700" />
               개인정보 비식별화
@@ -1875,58 +1688,29 @@ function SessionInputWorkspace({
               className="h-3.5 w-3.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
             />
           </label>
-        </div>
-      </section>
+        </section>
 
-      <section className="session-card session-process-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center gap-2">
-          <RefreshCcw className="h-4 w-4 text-blue-700" />
-          <h2 className="text-lg font-bold">처리 상태</h2>
-        </div>
-        {isLoading && <p className="mt-2 text-xs font-medium text-blue-700">구조화 → 회기요약 → 검증 진행 중...</p>}
-        <div className="mt-3 grid gap-2 md:grid-cols-5">
-          {processSteps.map((step, index) => {
-            const isDone = index < completedSteps
-            const isActive = isLoading && index === completedSteps
-            return (
-              <div
-                key={step}
-                className={`process-step flex items-center gap-1.5 rounded-md border px-2 text-xs font-semibold ${
-                  isDone || isActive ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-slate-200 bg-slate-50 text-slate-500'
-                }`}
-              >
-                <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-                    isDone
-                      ? 'border-blue-200 bg-blue-600 text-white'
-                      : isActive
-                        ? 'border-blue-200 bg-blue-50 text-blue-700'
-                        : 'border-slate-200 bg-white text-slate-400'
-                  }`}
-                >
-                  {isDone ? (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  ) : isActive ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-                <span className="truncate">{step}</span>
-              </div>
-            )
-          })}
-        </div>
-      </section>
+        {/* 확정 hex #2563EB == tailwind blue-600 (동일값 확인됨) */}
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+        >
+          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
+          사전 생성 요약 불러오기
+        </button>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4" />
-            <p>{error}</p>
+        <ProcessStatusCard completedSteps={completedSteps} isLoading={isLoading} steps={processSteps} />
+
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4" />
+              <p>{error}</p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </form>
   )
 }
@@ -1939,8 +1723,6 @@ function SummaryDraftWorkspace({
   onEditSection,
   onToggleEvidence,
   sections,
-  templateContext,
-  retrievalReport,
 }: {
   editingSectionId: DraftSectionId | null
   expandedEvidenceId: DraftSectionId | null
@@ -1949,17 +1731,9 @@ function SummaryDraftWorkspace({
   onEditSection: (sectionId: DraftSectionId | null) => void
   onToggleEvidence: (sectionId: DraftSectionId) => void
   sections: DraftSection[]
-  templateContext: RetrievedTemplateContext | null | undefined
-  retrievalReport: RetrievalReport | null | undefined
 }) {
   return (
     <section className="space-y-3">
-      <TemplateKbStatusCard
-        templateContext={templateContext}
-        retrievalReport={retrievalReport}
-        isDemo={false}
-      />
-
       <div className="rounded-[8px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">i</span>
@@ -2296,17 +2070,15 @@ function SupervisionReportWorkspace({
 
   const tocSections = report.sections.filter((section) => section.level === 1)
   const editableSections = report.sections.filter((section) => section.level !== 1)
-  const resolvedMeta = resolveSupervisionMeta(report)
 
   return (
-    <>
-    <section className="supervision-screen-report rounded-[7px] border border-slate-200 bg-white shadow-sm">
+    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
       <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold tracking-normal">{report.title}</h1>
             <p className="mt-1.5 text-xs font-bold text-blue-50">
-              내담자: {resolvedMeta.clientAlias} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
+              내담자: {report.meta.clientAlias || PLACEHOLDER_TEXT} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
             </p>
           </div>
           <button
@@ -2321,14 +2093,14 @@ function SupervisionReportWorkspace({
 
       <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
         {[
-          ['상담자', resolvedMeta.counselorName],
-          ['소속 상담기관', resolvedMeta.institution],
-          ['수퍼바이저', resolvedMeta.supervisor],
-          ['수퍼비전 일시 및 장소', resolvedMeta.supervisionDatePlace],
+          ['상담자', report.meta.counselorName],
+          ['소속 상담기관', report.meta.institution],
+          ['수퍼바이저', report.meta.supervisor],
+          ['수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
         ].map(([label, value]) => (
           <div key={label} className="rounded-[8px] bg-slate-50 px-3 py-2">
             <p className="text-xs font-bold text-slate-500">{label}</p>
-            <p className="mt-1 text-sm font-bold text-slate-950">{value}</p>
+            <p className="mt-1 text-sm font-bold text-slate-950">{value || PLACEHOLDER_TEXT}</p>
           </div>
         ))}
       </div>
@@ -2370,69 +2142,7 @@ function SupervisionReportWorkspace({
         )}
       </div>
     </section>
-    <SupervisionPrintableReport report={report} />
-    </>
   )
-}
-
-function SupervisionPrintableReport({ report }: { report: SupervisionReportDraft }) {
-  const meta = resolveSupervisionMeta(report)
-
-  return createPortal(
-    <article id="supervision-print-document" className="supervision-print-document" aria-hidden="true">
-      <h1 className="supervision-print-title">개인상담 사례 수퍼비전 보고서</h1>
-      <table className="supervision-print-meta">
-        <tbody>
-          <tr><th>내담자</th><td>{meta.clientAlias}</td><th>회기</th><td>{report.meta.sessionNumber}회기</td></tr>
-          <tr><th>기준일</th><td>{report.meta.reportDate}</td><th>상담자</th><td>{meta.counselorName}</td></tr>
-          <tr><th>소속 상담기관</th><td>{meta.institution}</td><th>수퍼바이저</th><td>{meta.supervisor}</td></tr>
-          <tr><th>수퍼비전 일시 및 장소</th><td colSpan={3}>{meta.supervisionDatePlace}</td></tr>
-        </tbody>
-      </table>
-
-      <div className="supervision-print-sections">
-        {report.sections.map((section) => (
-          <section key={section.id} className={`supervision-print-section supervision-print-level-${section.level}`}>
-            {section.level === 1 ? <h2>{section.title}</h2> : <h3>{section.title}</h3>}
-            <div className="supervision-print-blocks">
-              {section.contentBlocks.map((block) => <SupervisionPrintableBlock key={block.id} block={block} />)}
-            </div>
-          </section>
-        ))}
-      </div>
-    </article>,
-    document.body,
-  )
-}
-
-function SupervisionPrintableBlock({ block }: { block: SupervisionContentBlock }) {
-  if (block.type === 'table' && block.rows?.length) {
-    const headers = Object.keys(block.rows[0])
-    return (
-      <table className="supervision-print-table">
-        <thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
-        <tbody>{block.rows.map((row, index) => (
-          <tr key={`${block.id}-print-${index}`}>{headers.map((header) => <td key={header}>{row[header]}</td>)}</tr>
-        ))}</tbody>
-      </table>
-    )
-  }
-
-  if (block.type === 'transcript' && block.speakerTurns?.length) {
-    return <div className="supervision-print-transcript">{block.speakerTurns.map((turn) => (
-      <p key={turn.turnId}><strong>{turn.speaker === 'client' ? '내담자' : '상담자'}:</strong> {turn.text}</p>
-    ))}</div>
-  }
-
-  const value = displaySupervisionBlockText(block.text)
-  const lines = value.split(/\r?\n/).filter(Boolean)
-  const isList = lines.length > 0 && lines.every((line) => /^\s*[-*•]\s+/.test(line))
-  if (isList) {
-    return <ul className="supervision-print-list">{lines.map((line, index) => (
-      <li key={`${block.id}-${index}`}>{line.replace(/^\s*[-*•]\s+/, '')}</li>
-    ))}</ul>
-  }
-  return <p className="supervision-print-paragraph">{value}</p>
 }
 
 function SupervisionReportSectionView({
@@ -2636,14 +2346,14 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   if (block.type === 'reflection_box') {
     return (
       <div className="rounded-[8px] border border-blue-100 bg-blue-50/70 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
-        {displaySupervisionBlockText(block.text)}
+        {block.text || PLACEHOLDER_TEXT}
       </div>
     )
   }
 
   return (
     <p className={`whitespace-pre-wrap text-[13px] font-semibold leading-6 ${block.type === 'placeholder' ? 'text-rose-700' : 'text-slate-900'}`}>
-      {displaySupervisionBlockText(block.text)}
+      {block.text || PLACEHOLDER_TEXT}
     </p>
   )
 }
@@ -2734,7 +2444,6 @@ function SupervisionReviewPanel({
           isExporting={isExporting}
           status={exportStatus}
           onDownload={onDownload}
-          supervisionMode
         />
       </div>
     </aside>
@@ -3040,28 +2749,36 @@ function PreviousSessionLinkPanel({
         {previousSessionOptions.map((session) => {
           const selected = selectedIds.includes(session.id)
           return (
-            <button
+            <div
               key={session.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => onToggle(session.id)}
-              className={`min-h-[110px] w-full rounded-[9px] border p-3.5 text-left transition ${
+              className={`w-full rounded-[9px] border p-3.5 transition ${
                 selected
                   ? 'border-blue-600 bg-blue-50 shadow-sm'
                   : 'border-slate-300 bg-white hover:border-blue-300 hover:bg-blue-50/40'
               }`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-bold text-blue-700">{session.label}</p>
-                  <p className="mt-1 text-[11px] font-medium text-slate-500">{session.date}</p>
+              <button
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onToggle(session.id)}
+                className="w-full text-left"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-bold text-blue-700">{session.label}</p>
+                    <p className="mt-1 text-[11px] font-medium text-slate-500">{session.date}</p>
+                  </div>
+                  {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-700" />}
                 </div>
-                {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-700" />}
-              </div>
-              <p className="mt-3 overflow-hidden text-[12.5px] font-semibold leading-5 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                {session.summary}
-              </p>
-            </button>
+                <p className="mt-3 text-[12.5px] font-semibold leading-5 text-slate-900">{session.summary}</p>
+              </button>
+              <details className="mt-3 border-t border-blue-100 pt-3">
+                <summary className="cursor-pointer text-xs font-bold text-blue-700">MusPsy 원문 보기</summary>
+                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-[6px] bg-white p-3 text-[11px] leading-5 text-slate-700">
+                  {session.detail}
+                </pre>
+              </details>
+            </div>
           )
         })}
       </div>
@@ -3071,9 +2788,6 @@ function PreviousSessionLinkPanel({
 }
 
 function FinalReviewPanel({
-  confirmationError,
-  confirmationResult,
-  confirmationSections,
   documentType,
   capabilities,
   capabilitiesError,
@@ -3081,19 +2795,13 @@ function FinalReviewPanel({
   exportError,
   exportStatus,
   isExporting,
-  isConfirming,
   isSavingDraft,
   missingItems,
-  noteId,
   onBack,
   onDownload,
-  onConfirm,
   onTemporarySave,
   warnings,
 }: {
-  confirmationError: string | null
-  confirmationResult: ConfirmGeneratedNoteResponse | null
-  confirmationSections: DraftSection[]
   documentType: FinalDocumentType
   capabilities: DocumentCapabilitiesResponse | null
   capabilitiesError: string | null
@@ -3101,13 +2809,10 @@ function FinalReviewPanel({
   exportError: string | null
   exportStatus: string | null
   isExporting: boolean
-  isConfirming: boolean
   isSavingDraft: boolean
   missingItems: string[]
-  noteId: string | null
   onBack: () => void
   onDownload: (format: DocumentExportFormat) => void
-  onConfirm: () => void
   onTemporarySave: () => void
   warnings: string[]
 }) {
@@ -3152,15 +2857,6 @@ function FinalReviewPanel({
         }
       />
 
-      <FinalConfirmationCard
-        error={confirmationError}
-        isConfirming={isConfirming}
-        noteId={noteId}
-        result={confirmationResult}
-        sections={confirmationSections}
-        onConfirm={onConfirm}
-      />
-
       <div className="mt-auto space-y-3 pt-8">
         {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
         <button
@@ -3192,7 +2888,6 @@ function DownloadControls({
   isExporting,
   onDownload,
   status,
-  supervisionMode = false,
 }: {
   capabilities: DocumentCapabilitiesResponse | null
   capabilitiesError: string | null
@@ -3200,16 +2895,13 @@ function DownloadControls({
   isExporting: boolean
   onDownload: (format: DocumentExportFormat) => void
   status: string | null
-  supervisionMode?: boolean
 }) {
-  const pdfUnavailableReason = supervisionMode
-    ? null
-    : !capabilities
-    ? '내보내기 기능을 확인 중입니다.'
+  const pdfUnavailableReason = !capabilities
+    ? '문서 내보내기 지원 상태를 확인한 뒤 PDF를 사용할 수 있습니다.'
     : capabilities.pdf.available === false
       ? capabilityReasonToKorean(capabilities.pdf.reason)
       : capabilitiesError
-        ? '내보내기 기능이 비활성화되었습니다.'
+        ? '문서 내보내기 지원 상태를 확인하지 못해 PDF 다운로드를 비활성화했습니다.'
         : null
   const pdfDisabled = isExporting || Boolean(pdfUnavailableReason)
 
@@ -3236,79 +2928,13 @@ function DownloadControls({
           className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
         >
           {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
-          {supervisionMode ? '인쇄 / PDF' : 'PDF(.pdf)'}
+          PDF(.pdf)
         </button>
       </div>
       {pdfUnavailableReason && <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">{pdfUnavailableReason}</p>}
-      {supervisionMode && <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">브라우저 인쇄에서 PDF로 저장할 수 있습니다.</p>}
       {status && <p className="mt-2 text-xs font-semibold text-emerald-700">{status}</p>}
       {error && <p className="mt-2 text-xs font-semibold leading-5 text-red-700">{error}</p>}
     </div>
-  )
-}
-
-function FinalConfirmationCard({
-  error,
-  isConfirming,
-  noteId,
-  onConfirm,
-  result,
-  sections,
-}: {
-  error: string | null
-  isConfirming: boolean
-  noteId: string | null
-  onConfirm: () => void
-  result: ConfirmGeneratedNoteResponse | null
-  sections: DraftSection[]
-}) {
-  return (
-    <section className="mt-4 rounded-[8px] border border-emerald-200 bg-emerald-50 p-3">
-      <div className="flex items-start gap-2">
-        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
-        <div>
-          <h3 className="text-sm font-extrabold text-emerald-950">상담사 확인 저장</h3>
-          <p className="mt-1 text-xs font-semibold leading-5 text-emerald-900">
-            확인된 내용은 서버 설정에서 case memory가 켜진 경우 다음 회기 참고 기억으로 색인됩니다.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-3 rounded-[7px] bg-white/80 p-2">
-        <p className="text-[11px] font-bold text-slate-500">저장될 섹션</p>
-        <ul className="mt-1 space-y-1 text-xs font-semibold leading-5 text-slate-900">
-          {sections.map((section) => (
-            <li key={section.id}>- {section.title}</li>
-          ))}
-        </ul>
-      </div>
-
-      {result && (
-        <p className="mt-3 rounded-[7px] bg-white px-2 py-2 text-xs font-bold leading-5 text-emerald-800">
-          {result.confirmation_status} / {result.confirmed_at} / memory chunks {result.memory_chunk_count}
-        </p>
-      )}
-      {error && (
-        <p className="mt-3 flex gap-1.5 rounded-[7px] bg-white px-2 py-2 text-xs font-bold leading-5 text-red-700">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {error}
-        </p>
-      )}
-      {!noteId && (
-        <p className="mt-3 text-xs font-semibold leading-5 text-emerald-900">
-          현재 초안은 서버에 note_id가 저장되지 않아 확인 저장을 보낼 수 없습니다.
-        </p>
-      )}
-      <button
-        type="button"
-        onClick={onConfirm}
-        disabled={isConfirming || !noteId}
-        className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[6px] bg-emerald-700 px-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-      >
-        {isConfirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-        {isConfirming ? '확인 저장 중' : '상담사 확인 및 저장'}
-      </button>
-    </section>
   )
 }
 
@@ -3331,9 +2957,9 @@ function FinalReviewCard({ items, title }: { items: string[]; title: string }) {
 }
 
 const highlightPhrases = [
-  '진로 및 취업 준비 과정',
-  '진로 및 취업 준비 과정에서 지속적인 불안과 압박감을 경험함',
-  '또래와의 비교',
+  '사회적 상황 불안',
+  '타인의 평가에 대한 추측',
+  '사회적 회피',
   '자기비난',
   '자동사고와 감정 반응',
   '자신의 가치를 평가하는 경향이 확인되었다',
@@ -3370,43 +2996,6 @@ function HighlightedText({ text }: { text: string }) {
   return <>{parts}</>
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[8px] bg-slate-50 px-3 py-2">
-      <dt className="text-xs font-bold text-slate-950">{label}</dt>
-      <dd className="mt-1 truncate text-xs font-semibold text-blue-700">{value}</dd>
-    </div>
-  )
-}
-
-function MaterialRow({
-  actionLabel,
-  label,
-  meta,
-  onAction,
-}: {
-  actionLabel: string
-  label: string
-  meta: string
-  onAction: () => void
-}) {
-  return (
-    <div className="material-row flex items-center justify-between gap-3 px-3 py-1">
-      <div className="min-w-0">
-        <p className="text-sm font-bold text-slate-950">{label}</p>
-        <p className="mt-0.5 truncate text-xs text-slate-500">{meta}</p>
-      </div>
-      <button
-        type="button"
-        onClick={onAction}
-        className="h-7 shrink-0 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
-      >
-        {actionLabel}
-      </button>
-    </div>
-  )
-}
-
 function UploadedMaterialRow({
   material,
   onApply,
@@ -3428,7 +3017,6 @@ function UploadedMaterialRow({
   const isDocumentReady = material.kind === 'document' && ['completed', 'warning'].includes(material.status) && hasText
   const isAudioReady = material.kind === 'audio' && material.status === 'transcribed' && hasText
   const canApply = isDocumentReady || isAudioReady
-  const needsApply = canApply && (material.appliedTargets.length === 0 || material.dirtySinceApply)
   const canPreview = canApply
   const canTranscribe =
     material.kind === 'audio' &&
@@ -3437,7 +3025,7 @@ function UploadedMaterialRow({
     transcriptionAvailable
 
   return (
-    <div className={`material-row px-3 py-2 ${needsApply ? 'bg-amber-50' : ''}`}>
+    <div className="material-row px-3 py-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-slate-950">
@@ -3456,8 +3044,6 @@ function UploadedMaterialRow({
           <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-blue-600" />
         ) : material.status === 'failed' ? (
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0 text-rose-600" />
-        ) : needsApply ? (
-          <AlertTriangle className="mt-1 h-4 w-4 shrink-0 text-amber-600" />
         ) : (
           <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-emerald-600" />
         )}
@@ -3555,15 +3141,13 @@ function MaterialModal({
   materials,
   mode,
   onAddAudioFiles,
-  onApplyAudioTranscript,
   onApplyMaterial,
   onClose,
   onModeChange,
   onRefreshAudioCapabilities,
   onTranscribeAudio,
-  onUpdateAudioExpectedSpeakers,
   onUpdateAudioSegmentText,
-  onUpdateAudioSpeakerRole,
+  onUpdateAudioTranscript,
   onUpdateField,
   onUpdateSessionTopic,
   onUploadDocumentFiles,
@@ -3576,15 +3160,13 @@ function MaterialModal({
   materials: UploadedMaterial[]
   mode: MaterialModalMode
   onAddAudioFiles: (files: FileList | null) => void
-  onApplyAudioTranscript: (materialId: string, mode: MaterialApplyMode) => void
   onApplyMaterial: (materialId: string, target: MaterialApplyTarget, mode: MaterialApplyMode) => void
   onClose: () => void
   onModeChange: (mode: MaterialModalMode) => void
   onRefreshAudioCapabilities: () => Promise<AudioCapabilitiesResponse>
   onTranscribeAudio: (materialId: string) => void
-  onUpdateAudioExpectedSpeakers: (materialId: string, value: number) => void
   onUpdateAudioSegmentText: (materialId: string, segmentId: number, text: string) => void
-  onUpdateAudioSpeakerRole: (materialId: string, speakerKey: string, role: SpeakerRole) => void
+  onUpdateAudioTranscript: (materialId: string, text: string) => void
   onUpdateField: (field: keyof SessionInput, value: string | number) => void
   onUpdateSessionTopic: (value: string) => void
   onUploadDocumentFiles: (files: FileList | null) => Promise<void>
@@ -3850,18 +3432,54 @@ function MaterialModal({
           {mode === 'audio_review' && selectedMaterial && (
             <div className="space-y-4">
               <MaterialSummary material={selectedMaterial} />
-              <AudioTranscriptEditor
-                material={selectedMaterial}
-                applyMode={applyMode}
-                transcriptionAvailable={transcriptionAvailable}
-                transcriptionReason={audioCapabilities?.transcription.reason || null}
-                onApply={() => onApplyAudioTranscript(selectedMaterial.id, applyMode)}
-                onApplyModeChange={setApplyMode}
-                onExpectedSpeakersChange={(value) => onUpdateAudioExpectedSpeakers(selectedMaterial.id, value)}
-                onTranscribe={() => onTranscribeAudio(selectedMaterial.id)}
-                onUpdateSegmentText={(segmentId, text) => onUpdateAudioSegmentText(selectedMaterial.id, segmentId, text)}
-                onUpdateSpeakerRole={(speakerKey, role) => onUpdateAudioSpeakerRole(selectedMaterial.id, speakerKey, role)}
-              />
+              {selectedMaterial.objectUrl && <audio controls src={selectedMaterial.objectUrl} className="w-full" />}
+              {selectedMaterial.status !== 'transcribed' && (
+                <button
+                  type="button"
+                  disabled={!transcriptionAvailable || selectedMaterial.status === 'transcribing'}
+                  onClick={() => onTranscribeAudio(selectedMaterial.id)}
+                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {selectedMaterial.status === 'transcribing' ? '축어록 생성 중' : '축어록 생성'}
+                </button>
+              )}
+              {(selectedMaterial.segments || []).length > 0 && (
+                <div className="space-y-2">
+                  {(selectedMaterial.segments || []).map((segment) => (
+                    <label key={segment.id} className="block rounded-md border border-slate-200 p-3">
+                      <span className="text-xs font-semibold text-slate-500">
+                        {formatSeconds(segment.start)} - {formatSeconds(segment.end)}
+                      </span>
+                      <input
+                        value={segment.text}
+                        onChange={(event) => onUpdateAudioSegmentText(selectedMaterial.id, segment.id, event.target.value)}
+                        className={inputClass}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <Field label="전체 축어록" htmlFor="audio_transcript_text">
+                <textarea
+                  id="audio_transcript_text"
+                  value={selectedMaterial.transcriptText || ''}
+                  onChange={(event) => onUpdateAudioTranscript(selectedMaterial.id, event.target.value)}
+                  className={`${textareaClass} min-h-[220px]`}
+                />
+              </Field>
+              {selectedMaterial.status === 'transcribed' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApplyTarget('transcript_text')
+                    setApplyMode(form.transcript_text.trim() ? 'append' : 'replace')
+                    onModeChange('material_apply')
+                  }}
+                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                >
+                  축어록에 반영
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -4175,7 +3793,7 @@ function buildFinalDocumentSections(
         '주요 호소',
         [
           getSection('main_issue', '주요 호소 내용을 상담사가 확인해야 합니다.'),
-          '진로 및 취업 준비 과정에서의 불안과 자기비난 사고를 중심으로 보고함.',
+          '제공된 현재 회기 자료에 근거한 주호소를 중심으로 보고함.',
         ],
       ),
       makeSection('session_content', '상담 내용', getSection('session_content', '상담 내용을 확인해야 합니다.')),
@@ -4210,19 +3828,6 @@ function buildFinalDocumentSections(
     makeSection('client_response', '내담자 반응', getSection('client_response', '내담자 반응을 확인해야 합니다.')),
     makeSection('next_plan', '다음 계획', getSection('next_plan', '다음 계획을 확인해야 합니다.')),
   ]
-}
-
-function buildConfirmedNotePayload(documentType: FinalDocumentType, sections: DraftSection[]): Record<string, unknown> {
-  return {
-    status: 'counselor_confirmed',
-    document_type: documentType,
-    confirmed_section_ids: sections.map((section) => section.id),
-    sections: sections.reduce<Record<string, string>>((payload, section) => {
-      const sectionKey = section.id === 'main_issue' ? 'presenting_problem' : String(section.id)
-      payload[sectionKey] = section.content
-      return payload
-    }, {}),
-  }
 }
 
 function supervisionBlockToEditableText(block: SupervisionContentBlock): string {
@@ -4501,62 +4106,11 @@ function getFileExtension(filename: string): string {
 
 function mergeMaterialText(current: string, incoming: string, mode: MaterialApplyMode): string {
   const cleanIncoming = incoming.trim()
-  if (!cleanIncoming) return mode === 'replace' ? '' : current.trim()
   if (mode === 'replace' || !current.trim()) return cleanIncoming
   return `${current.trim()}\n\n${cleanIncoming}`
 }
 
-function buildTranscribedAudioMaterial(
-  material: UploadedMaterial,
-  transcription: AudioTranscriptionResponse,
-): UploadedMaterial {
-  const speakerRoleMap = buildInitialSpeakerRoleMap(transcription.segments, material.speakerRoleMap)
-  const transcriptText = buildTranscriptText(transcription.segments, speakerRoleMap) || transcription.transcript_text
-  const nonverbalNotes = buildNonverbalNotes(transcription.segments, speakerRoleMap) || transcription.nonverbal_notes
-  return {
-    ...material,
-    status: 'transcribed',
-    transcriptText,
-    segments: transcription.segments,
-    durationSeconds: transcription.duration_seconds,
-    language: transcription.language,
-    runtimeMode: transcription.runtime_mode,
-    diarizationStatus: transcription.diarization_status,
-    languageProbability: transcription.language_probability,
-    nonverbalNotes,
-    speakerRoleMap,
-    warnings: transcription.warnings,
-    error: undefined,
-    dirtySinceApply: true,
-    appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
-  }
-}
-
-function buildInitialSpeakerRoleMap(segments: AudioSegment[], previous: SpeakerRoleMap = {}): SpeakerRoleMap {
-  return segments.reduce<SpeakerRoleMap>((map, segment) => {
-    const speakerKey = getSegmentSpeakerKey(segment)
-    map[speakerKey] = previous[speakerKey] || 'unassigned'
-    return map
-  }, {})
-}
-
-function markAudioMaterialDirty(material: UploadedMaterial): UploadedMaterial {
-  if (material.kind !== 'audio') return material
-  const speakerRoleMap = buildInitialSpeakerRoleMap(material.segments || [], material.speakerRoleMap)
-  return {
-    ...material,
-    speakerRoleMap,
-    transcriptText: buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText,
-    nonverbalNotes: buildNonverbalNotes(material.segments || [], speakerRoleMap),
-    dirtySinceApply: true,
-    appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
-  }
-}
-
 function materialMetaText(material: UploadedMaterial): string {
-  if (material.kind === 'audio' && material.dirtySinceApply && getMaterialText(material).trim()) {
-    return '축어록 수정사항이 회기 입력에 아직 다시 반영되지 않았습니다.'
-  }
   if (material.appliedTargets.length) {
     return `${material.appliedTargets.map((target) => materialApplyTargetLabel[target]).join(', ')}에 반영 완료`
   }
@@ -4566,7 +4120,7 @@ function materialMetaText(material: UploadedMaterial): string {
   if (material.status === 'failed') return '처리 실패'
   if (material.kind === 'audio') {
     const duration = material.durationSeconds ? ` · ${formatSeconds(material.durationSeconds)}` : ''
-    const count = countCharacters(getMaterialText(material))
+    const count = countCharacters(material.transcriptText || '')
     return material.status === 'transcribed'
       ? `축어록 생성 완료 · 아직 요약에 미반영 · ${count}자${duration}`
       : `음성 자료${duration}`
@@ -4599,20 +4153,12 @@ function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
     error: material.error,
     durationSeconds: material.durationSeconds,
     language: material.language,
-    runtimeMode: material.runtimeMode,
-    diarizationStatus: material.diarizationStatus,
-    languageProbability: material.languageProbability,
-    speakerRoleMap: material.speakerRoleMap,
-    nonverbalNotes: material.nonverbalNotes,
-    dirtySinceApply: material.dirtySinceApply,
-    expectedSpeakers: material.expectedSpeakers,
     appliedTargets: material.appliedTargets,
   }))
 }
 
 const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
   transcript_text: '축어록',
-  nonverbal_notes: '비언어 관찰 메모',
   counselor_memo: '상담사 메모',
   previous_session_summary: '이전 회기 요약',
   psychological_test_summary: '심리검사 요약',

@@ -4,23 +4,45 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
-const hook = fs.readFileSync('src/hooks/useCounselorDemo.ts', 'utf8')
-const page = fs.readFileSync('src/pages/CounselorDemoPage.tsx', 'utf8')
+const app = fs.readFileSync('src/App.tsx', 'utf8')
+const sessionPage = fs.readFileSync('src/pages/SessionDraftPage.tsx', 'utf8')
 const fixture = fs.readFileSync('src/data/counselorDemoFixture.ts', 'utf8')
-const sourcePanel = fs.readFileSync('src/components/counselor-demo/SessionSourcePanel.tsx', 'utf8')
-const demoSource = [hook, page, fixture, sourcePanel].join('\n')
+const activeDemoSource = [app, sessionPage, fixture].join('\n')
+
+assert(!app.includes('CounselorDemoPage'), 'production flow must not render the counselor-review workspace')
+assert(!app.includes('isCounselorDemoRoute'), 'production flow must not intercept /demo routes')
+assert(app.includes('<LandingPage'), 'existing landing flow must remain active')
+assert(app.includes('<SessionDraftPage'), 'existing session flow must remain active')
+
+assert(
+  sessionPage.includes("import { COUNSELOR_DEMO_FIXTURE } from '../data/counselorDemoFixture'"),
+  'existing SessionDraftPage must load the MusPsy fixture',
+)
+assert(
+  sessionPage.includes('buildStaticDemoDraftSections()'),
+  'existing summary flow must load the pre-generated Candidate-05 summary',
+)
+assert(
+  sessionPage.includes('buildStaticFinalDocumentSections(documentType)'),
+  'existing document flow must load the pre-generated Candidate-05 session note',
+)
+assert(
+  sessionPage.includes('buildStaticSupervisionReport()'),
+  'existing report flow must load the pre-generated Candidate-05 supervision report',
+)
+assert(
+  sessionPage.includes('정적 데모 모드에서는 서버나 DB에 저장하지 않습니다.'),
+  'static demo save action must remain local-only',
+)
 
 for (const apiSymbol of [
   'generateNoteDraft',
   'generateSupervisionReport',
-  'confirmGeneratedNote',
-  'create_case_memory',
+  'recomposeNoteDraft',
+  'saveTemporaryDraft',
 ]) {
-  assert(!demoSource.includes(apiSymbol), `counselor demo must not reference ${apiSymbol}`)
+  assert(!sessionPage.includes(apiSymbol), `static production demo must not reference ${apiSymbol}`)
 }
-
-assert(page.includes('useDocumentExport({ localOnly: true })'), 'demo export capability check must stay local')
-assert(page.includes('생성·저장 API를 호출하지 않습니다'), 'pre-generated mode must be visible in the UI')
 
 for (const selectedDocument of [
   '문서_A_회기요약.txt?raw',
@@ -37,26 +59,27 @@ for (let sessionNumber = 1; sessionNumber <= 4; sessionNumber += 1) {
   )
 }
 
+assert(sessionPage.includes('MusPsy 원문 보기'), 'sessions 1-4 must expose their raw source in the existing history UI')
 assert(fixture.includes("'session_summary'"), 'session summary fixture is required')
 assert(fixture.includes("'session_note'"), 'session note fixture is required')
 assert(fixture.includes("'supervision_report'"), 'supervision report fixture is required')
-assert(sourcePanel.includes('demoData.sessionSources.history.map'), 'sessions 1-4 must be selectable')
-assert(sourcePanel.includes('MusPsy 원문 보기'), 'prior session source must be accessible')
 
 for (const legacyMarker of [
   'CASE-DEMO-001',
   'CASE-2026-05',
+  '가명 은하',
   '김민서',
   '민서 씨',
   '취업 면접',
   'Synthetic 자료',
 ]) {
-  assert(!demoSource.includes(legacyMarker), `legacy counselor demo marker exposed: ${legacyMarker}`)
+  assert(!activeDemoSource.includes(legacyMarker), `legacy counselor demo marker exposed: ${legacyMarker}`)
 }
 
 const canonicalCase = JSON.parse(
   fs.readFileSync('../sample_data/muspsy_demo/session_input_005_muspsy_1416_ko.json', 'utf8'),
 )
 assert(canonicalCase.case_id === 'CASE-MUSPSY-1416', 'canonical demo case must be CASE-MUSPSY-1416')
+assert(canonicalCase.persist !== true, 'canonical demo must not enable persistence')
 
-console.log('counselor demo pre-generated fixture verification passed')
+console.log('existing Re:mind UI + MusPsy static fixture verification passed')
