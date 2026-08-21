@@ -189,7 +189,7 @@ export const COUNSELOR_DEMO_FIXTURE: CounselorDemoFixtureData = {
 
 function parseBracketedDocument(raw: string, idPrefix: string): DemoDraftSection[] {
   const normalized = normalizeNewlines(raw)
-  const matches = [...normalized.matchAll(/^\[([^\]]+)\]\s*$/gm)]
+  const matches = [...normalized.matchAll(/^\[(?!상담사 확인 필요\]$)([^\]]+)\]\s*$/gm)]
 
   return matches.map((match, index) => {
     const contentStart = (match.index || 0) + match[0].length

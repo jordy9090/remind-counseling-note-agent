@@ -225,7 +225,7 @@ const defaultVisibleSectionIds = new Set<DraftSectionId>(defaultChecklistItems.m
 const previousSessionOptions: PreviousSessionOption[] = COUNSELOR_DEMO_FIXTURE.sessionSources.history.map((session) => ({
   id: `session-${session.sessionNumber}`,
   label: `${session.sessionNumber}회기`,
-  date: '날짜 확인 필요',
+  date: 'MusPsy 기록',
   summary: session.summary,
   detail: session.rawSource,
 }))
@@ -2735,6 +2735,9 @@ function PreviousSessionLinkPanel({
   onToggle: (sessionId: string) => void
   selectedIds: string[]
 }) {
+  const [activeSessionId, setActiveSessionId] = useState(previousSessionOptions[0]?.id || '')
+  const activeSession = previousSessionOptions.find((session) => session.id === activeSessionId)
+
   return (
     <section>
       <div className="flex items-start gap-2.5">
@@ -2749,39 +2752,48 @@ function PreviousSessionLinkPanel({
         {previousSessionOptions.map((session) => {
           const selected = selectedIds.includes(session.id)
           return (
-            <div
+            <button
               key={session.id}
-              className={`w-full rounded-[9px] border p-3.5 transition ${
+              type="button"
+              aria-pressed={selected}
+              onClick={() => {
+                setActiveSessionId(session.id)
+                onToggle(session.id)
+              }}
+              className={`min-h-[110px] w-full rounded-[9px] border p-3.5 text-left transition ${
                 selected
                   ? 'border-blue-600 bg-blue-50 shadow-sm'
                   : 'border-slate-300 bg-white hover:border-blue-300 hover:bg-blue-50/40'
               }`}
             >
-              <button
-                type="button"
-                aria-pressed={selected}
-                onClick={() => onToggle(session.id)}
-                className="w-full text-left"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-bold text-blue-700">{session.label}</p>
-                    <p className="mt-1 text-[11px] font-medium text-slate-500">{session.date}</p>
-                  </div>
-                  {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-700" />}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-bold text-blue-700">{session.label}</p>
+                  <p className="mt-1 text-[11px] font-medium text-slate-500">{session.date}</p>
                 </div>
-                <p className="mt-3 text-[12.5px] font-semibold leading-5 text-slate-900">{session.summary}</p>
-              </button>
-              <details className="mt-3 border-t border-blue-100 pt-3">
-                <summary className="cursor-pointer text-xs font-bold text-blue-700">MusPsy 원문 보기</summary>
-                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-[6px] bg-white p-3 text-[11px] leading-5 text-slate-700">
-                  {session.detail}
-                </pre>
-              </details>
-            </div>
+                {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-700" />}
+              </div>
+              <p className="mt-3 overflow-hidden text-[12.5px] font-semibold leading-5 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                {session.summary}
+              </p>
+            </button>
           )
         })}
       </div>
+
+      {activeSession && (
+        <div className="mt-4 border-t border-slate-200 pt-4">
+          <p className="text-sm font-bold text-slate-950">{activeSession.label} 자료</p>
+          <p className="mt-3 text-xs font-bold text-blue-700">[회기 요약]</p>
+          <p className="mt-1.5 whitespace-pre-wrap text-[11px] font-semibold leading-5 text-slate-700">
+            {activeSession.summary}
+          </p>
+          <p className="mt-4 text-xs font-bold text-blue-700">[상담 원문]</p>
+          <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-slate-700">
+            {activeSession.detail}
+          </pre>
+        </div>
+      )}
 
     </section>
   )
@@ -4208,12 +4220,6 @@ const transformOptions: Array<{
     title: '슈퍼비전 보고서',
     description: '회기요약을 바탕으로 슈퍼비전 보고서 초안을 구성합니다.',
     requiredFields: ['내담자 기본 정보', '상담신청경위', '가족관계', '사례개념화', '슈퍼비전 요청사항'],
-  },
-  {
-    id: 'termination_report',
-    title: '종결 보고서',
-    description: '여러 회기 요약을 종결 보고서 형식으로 정리하는 화면입니다.',
-    requiredFields: ['전체 회기 목록', '종결 사유', '목표 달성 정도', '향후 권고'],
   },
 ]
 

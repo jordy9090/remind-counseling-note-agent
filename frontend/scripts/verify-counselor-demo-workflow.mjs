@@ -59,7 +59,9 @@ for (let sessionNumber = 1; sessionNumber <= 4; sessionNumber += 1) {
   )
 }
 
-assert(sessionPage.includes('MusPsy 원문 보기'), 'sessions 1-4 must expose their raw source in the existing history UI')
+assert(sessionPage.includes('[회기 요약]'), 'sessions 1-4 must expose their summary in the existing history panel')
+assert(sessionPage.includes('[상담 원문]'), 'sessions 1-4 must expose their raw source in the existing history panel')
+assert(!sessionPage.includes("id: 'termination_report',\n    title: '종결 보고서'"), 'counselor demo must not expose a termination report option')
 assert(fixture.includes("'session_summary'"), 'session summary fixture is required')
 assert(fixture.includes("'session_note'"), 'session note fixture is required')
 assert(fixture.includes("'supervision_report'"), 'supervision report fixture is required')
@@ -72,6 +74,7 @@ for (const legacyMarker of [
   '민서 씨',
   '취업 면접',
   'Synthetic 자료',
+  '[PERSON]',
 ]) {
   assert(!activeDemoSource.includes(legacyMarker), `legacy counselor demo marker exposed: ${legacyMarker}`)
 }
