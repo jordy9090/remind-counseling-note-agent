@@ -25,12 +25,15 @@ class Settings(BaseSettings):
     remind_preview_api_token: Optional[str] = None
     remind_preview_actor: str = "preview_server_actor"
     remind_allow_local_bypass: bool = False
+    allow_legacy_preview_token: bool = False
     enable_real_user_auth: bool = False
 
     # Supabase: 기존 임시저장 persistence와 V1 note/RAG persistence를 모두 지원한다.
     # SUPABASE_SERVICE_KEY는 팀원의 drafts 저장 구현, SUPABASE_SERVICE_ROLE_KEY는
     # Re:mind V1 note/RAG 저장 구현에서 사용할 수 있게 둘 다 허용한다.
     supabase_url: Optional[str] = None
+    supabase_publishable_key: Optional[str] = None
+    supabase_anon_key: Optional[str] = None
     supabase_service_key: Optional[str] = None
     supabase_service_role_key: Optional[str] = None
     supabase_drafts_table: str = "counseling_drafts"
@@ -60,6 +63,11 @@ class Settings(BaseSettings):
         return self.supabase_service_role_key or self.supabase_service_key
 
     @property
+    def effective_supabase_auth_key(self) -> str | None:
+        """Server-side key used only to ask Supabase Auth to validate a user JWT."""
+        return self.supabase_publishable_key or self.supabase_anon_key or self.effective_supabase_key
+
+    @property
     def supabase_enabled(self) -> bool:
         """Supabase URL/키가 모두 설정되면 DB 저장 모드"""
         return bool(self.supabase_url and self.effective_supabase_key)
@@ -86,7 +94,9 @@ class Settings(BaseSettings):
 
 def validate_runtime_security() -> None:
     """Fail closed when persistent counseling state could be exposed."""
-    has_access_guard = bool(settings.remind_preview_api_token) or settings.enable_real_user_auth
+    has_access_guard = (
+        bool(settings.remind_preview_api_token) and settings.allow_legacy_preview_token
+    ) or settings.enable_real_user_auth
     if settings.local_preview_bypass_enabled:
         has_access_guard = True
     if settings.enable_persistence and not has_access_guard:

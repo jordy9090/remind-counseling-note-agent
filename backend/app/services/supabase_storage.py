@@ -171,6 +171,14 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         return report
 
     try:
+        existing_case = storage.maybe_single(
+            "cases",
+            {"id": f"eq.{session_input.case_id}", "select": "id,user_id,counselor_id"},
+        )
+        if existing_case:
+            owner = str(existing_case.get("user_id") or existing_case.get("counselor_id") or "").strip()
+            if owner and owner != actor:
+                raise SupabaseStorageError("동일한 케이스 ID가 다른 사용자에게 이미 등록되어 있습니다.")
         storage.upsert(
             "cases",
             [
@@ -178,6 +186,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
                     "id": session_input.case_id,
                     "case_alias": session_input.case_id,
                     "counselor_id": actor or None,
+                    "user_id": actor,
                     "status": "active",
                 }
             ],
@@ -185,7 +194,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
         session_rows = storage.upsert(
             "sessions",
-            [_build_session_row(session_input, result)],
+            [_build_session_row(session_input, result, user_id=actor)],
             on_conflict="case_id,session_number",
         )
         session_id = str(session_rows[0]["id"]) if session_rows else None
@@ -202,6 +211,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
                     "confirmed_json": {},
                     "counselor_edited": False,
                     "confirmation_status": "draft",
+                    "user_id": actor,
                 }
             ],
         )
@@ -215,6 +225,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
                 "source_ref": ",".join(item.source_refs),
                 "source_text": item.content,
                 "linked_field": item.field,
+                "user_id": actor,
             }
             for item in result.evidence_mapped_data.items
         ]
@@ -229,6 +240,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
                     "session_id": session_id,
                     "note_id": report.note_id,
                     "report_json": result.verification_report.model_dump(mode="json"),
+                    "user_id": actor,
                 }
             ],
             return_representation=False,
@@ -248,9 +260,9 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     if not settings.supabase_configured:
         raise NoteConfirmationError(503, "Supabase credentials are missing; note confirmation cannot be validated.")
 
-    note = _fetch_generated_note(request.note_id)
-    session = _fetch_session_for_note(note)
-    case = _fetch_case_for_session(session)
+    note = _fetch_generated_note(request.note_id, actor=actor)
+    session = _fetch_session_for_note(note, actor=actor)
+    case = _fetch_case_for_session(session, actor=actor)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
     _validate_confirmation_status(note, request.confirmed_note, counselor_edited=request.counselor_edited)
 
@@ -273,7 +285,7 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     embedding_count = 0
     if request.create_case_memory and settings.enable_case_memory:
         chunks = _case_memory_rows_from_confirmed_note(request, context)
-        existing_chunks = _existing_memory_chunks_by_field(context.note_id)
+        existing_chunks = _existing_memory_chunks_by_field(context.note_id, user_id=actor)
         embedding_count = _attach_embeddings(chunks, existing_chunks=existing_chunks)
         if chunks:
             storage.upsert("case_memory_chunks", chunks, on_conflict="source_note_id,field_type")
@@ -300,12 +312,13 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     )
 
 
-def _fetch_generated_note(note_id: str) -> dict[str, Any]:
+def _fetch_generated_note(note_id: str, *, actor: str) -> dict[str, Any]:
     note = storage.maybe_single(
         "generated_notes",
         {
             "id": f"eq.{note_id}",
-            "select": "id,case_id,session_id,note_type,draft_json,confirmed_json,confirmation_status,confirmed_by,created_at",
+            "user_id": f"eq.{actor}",
+            "select": "id,case_id,session_id,note_type,draft_json,confirmed_json,confirmation_status,confirmed_by,user_id,created_at",
         },
     )
     if note is None:
@@ -315,13 +328,14 @@ def _fetch_generated_note(note_id: str) -> dict[str, Any]:
     return note
 
 
-def _fetch_session_for_note(note: dict[str, Any]) -> dict[str, Any]:
+def _fetch_session_for_note(note: dict[str, Any], *, actor: str) -> dict[str, Any]:
     session_id = str(note.get("session_id") or "")
     session = storage.maybe_single(
         "sessions",
         {
             "id": f"eq.{session_id}",
-            "select": "id,case_id,session_number,session_date,session_title",
+            "user_id": f"eq.{actor}",
+            "select": "id,case_id,session_number,session_date,session_title,user_id",
         },
     )
     if session is None:
@@ -331,13 +345,14 @@ def _fetch_session_for_note(note: dict[str, Any]) -> dict[str, Any]:
     return session
 
 
-def _fetch_case_for_session(session: dict[str, Any]) -> dict[str, Any]:
+def _fetch_case_for_session(session: dict[str, Any], *, actor: str) -> dict[str, Any]:
     case_id = str(session.get("case_id") or "")
     case = storage.maybe_single(
         "cases",
         {
             "id": f"eq.{case_id}",
-            "select": "id,case_alias,counselor_id,status",
+            "user_id": f"eq.{actor}",
+            "select": "id,case_alias,counselor_id,user_id,status",
         },
     )
     if case is None:
@@ -412,9 +427,10 @@ def _raw_input_text(session_input: SessionInput) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse) -> dict[str, Any]:
+def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse, *, user_id: str) -> dict[str, Any]:
     return {
         "case_id": session_input.case_id,
+        "user_id": user_id,
         "session_number": session_input.session_number,
         "session_date": session_input.session_date or None,
         "session_title": _session_title(session_input),
@@ -465,6 +481,7 @@ def _case_memory_rows_from_confirmed_note(
         rows.append(
             {
                 "counselor_id": context.counselor_id,
+                "user_id": context.counselor_id,
                 "case_id": context.case_id,
                 "session_id": context.session_id,
                 "source_note_id": context.note_id,
@@ -484,11 +501,12 @@ def _case_memory_rows_from_confirmed_note(
     return rows
 
 
-def _existing_memory_chunks_by_field(note_id: str) -> dict[str, dict[str, Any]]:
+def _existing_memory_chunks_by_field(note_id: str, *, user_id: str) -> dict[str, dict[str, Any]]:
     rows = storage.select(
         "case_memory_chunks",
         {
             "source_note_id": f"eq.{note_id}",
+            "user_id": f"eq.{user_id}",
             "select": "id,field_type,content_hash,embedding_model,embedding",
             "limit": 100,
         },

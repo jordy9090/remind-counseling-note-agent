@@ -1,7 +1,9 @@
 """Routes for extracting uploaded counseling document materials."""
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app.schemas.material import DocumentExtractionResponse
@@ -10,11 +12,13 @@ from app.services.upload_validation import UploadValidationError, cleanup_temp_f
 
 router = APIRouter(prefix="/api/materials", tags=["materials"])
 document_extraction_service = DocumentExtractionService()
+AuthenticatedUser = Annotated[str, Depends(require_preview_access)]
 
 
 @router.post("/documents/extract", response_model=DocumentExtractionResponse)
 async def extract_document_material(
     response: Response,
+    actor: AuthenticatedUser,
     file: UploadFile = File(...),
 ) -> DocumentExtractionResponse:
     """Extract text from a temporary document upload without storing raw bytes."""
@@ -31,3 +35,4 @@ async def extract_document_material(
     finally:
         if validated is not None:
             cleanup_temp_file(validated.temp_path)
+from app.api.security import require_preview_access

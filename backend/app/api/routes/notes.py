@@ -80,13 +80,13 @@ async def generate_supervision_report(request: SupervisionReportRequest, actor: 
 @router.post("/drafts", response_model=TemporaryDraftSaveResponse)
 async def save_note_draft(draft: TemporaryDraftSaveRequest, actor: PreviewActor) -> TemporaryDraftSaveResponse:
     """Persist a counselor's temporary workspace draft."""
-    return save_temporary_draft(draft)
+    return save_temporary_draft(draft, actor=actor)
 
 
 @router.get("/drafts/{draft_id}", response_model=TemporaryDraftRecord)
 async def get_note_draft(draft_id: str, actor: PreviewActor) -> TemporaryDraftRecord:
     """Return a saved temporary draft."""
-    draft = get_temporary_draft(draft_id)
+    draft = get_temporary_draft(draft_id, actor=actor)
     if draft is None:
         raise HTTPException(status_code=404, detail="임시저장 초안을 찾을 수 없습니다.")
     return draft
@@ -95,7 +95,7 @@ async def get_note_draft(draft_id: str, actor: PreviewActor) -> TemporaryDraftRe
 @router.get("/drafts", response_model=list[TemporaryDraftRecord])
 async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> list[TemporaryDraftRecord]:
     """Return temporary drafts, optionally filtered by case id."""
-    return list_temporary_drafts(case_id=case_id)
+    return list_temporary_drafts(actor=actor, case_id=case_id)
 
 
 def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:

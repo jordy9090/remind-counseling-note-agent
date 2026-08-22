@@ -131,7 +131,9 @@ type MaterialApplyTarget =
   | 'psychological_test_summary'
 type MaterialApplyMode = 'append' | 'replace'
 
-const DOCUMENT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+const DOCUMENT_UPLOAD_MAX_BYTES = Number(import.meta.env.VITE_DOCUMENT_UPLOAD_MAX_BYTES)
+  || (import.meta.env.PROD ? 4 * 1024 * 1024 : 20 * 1024 * 1024)
+const DOCUMENT_UPLOAD_LIMIT_LABEL = `${Math.floor(DOCUMENT_UPLOAD_MAX_BYTES / 1024 / 1024)}MB`
 const AUDIO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
 const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['.pdf', '.docx', '.txt'])
 const AUDIO_UPLOAD_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav'])
@@ -1512,7 +1514,7 @@ function SessionInputWorkspace({
             >
               <Upload className="h-6 w-6 text-slate-500" aria-hidden="true" />
               <span className="text-sm font-medium text-slate-700">클릭하여 파일을 선택하거나 직접 입력해주세요.</span>
-              <span className="text-xs text-slate-400">STT 자료, 검사 결과 PDF, 워드 파일 등 · 최대 20MB</span>
+              <span className="text-xs text-slate-400">TXT, PDF, DOCX · 최대 {DOCUMENT_UPLOAD_LIMIT_LABEL}</span>
             </button>
 
             {hasMaterialRows && (
@@ -3917,13 +3919,13 @@ function validateSelectedFile(file: File, kind: UploadedMaterialKind): UploadedM
   const extension = getFileExtension(file.name)
   const allowed = kind === 'document' ? DOCUMENT_UPLOAD_EXTENSIONS : AUDIO_UPLOAD_EXTENSIONS
   const maxBytes = kind === 'document' ? DOCUMENT_UPLOAD_MAX_BYTES : AUDIO_UPLOAD_MAX_BYTES
-  const defaultLimitLabel = kind === 'document' ? '20MB' : '500MB'
+  const defaultLimitLabel = kind === 'document' ? DOCUMENT_UPLOAD_LIMIT_LABEL : '500MB'
 
   if (!allowed.has(extension)) {
     return buildFailedMaterial(file, kind, `지원하지 않는 파일 형식입니다. ${Array.from(allowed).join(', ')} 파일을 선택해주세요.`)
   }
   if (file.size > maxBytes) {
-    return buildFailedMaterial(file, kind, `기본 업로드 제한(${defaultLimitLabel})을 초과했습니다.`)
+    return buildFailedMaterial(file, kind, `파일 용량이 업로드 제한(${defaultLimitLabel})을 초과했습니다.`)
   }
   if (file.size === 0) {
     return buildFailedMaterial(file, kind, '빈 파일은 업로드할 수 없습니다.')

@@ -32,7 +32,7 @@ async def save_note_draft(
     draft: TemporaryDraftSaveRequest,
     actor: PreviewActor,
 ) -> TemporaryDraftSaveResponse:
-    return save_temporary_draft(draft)
+    return save_temporary_draft(draft, actor=actor)
 
 
 @app.get("/", response_model=list[TemporaryDraftRecord])
@@ -41,7 +41,7 @@ async def list_note_drafts(
     actor: PreviewActor,
     case_id: str | None = None,
 ) -> list[TemporaryDraftRecord]:
-    return list_temporary_drafts(case_id=case_id)
+    return list_temporary_drafts(actor=actor, case_id=case_id)
 
 
 @app.get("/{draft_id}", response_model=TemporaryDraftRecord)
@@ -50,7 +50,7 @@ async def get_note_draft(
     draft_id: str,
     actor: PreviewActor,
 ) -> TemporaryDraftRecord:
-    draft = get_temporary_draft(draft_id)
+    draft = get_temporary_draft(draft_id, actor=actor)
     if draft is None:
         raise HTTPException(status_code=404, detail="임시저장 초안을 찾을 수 없습니다.")
     return draft

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import io
 from pathlib import Path
 import unittest
 import unittest.mock
@@ -26,6 +27,7 @@ from api.notes.drafts import app as drafts_app
 from api.notes.confirm import app as confirm_app
 from api.documents.export import app as export_app
 from api.documents.capabilities import app as capabilities_app
+material_extract_app = importlib.import_module("api.materials.documents.extract").app
 
 from app.core.config import settings
 
@@ -41,6 +43,9 @@ class TestVercelWrappers(unittest.TestCase):
         self.orig_case_memory = settings.enable_case_memory
         self.orig_supabase_url = settings.supabase_url
         self.orig_supabase_role_key = settings.supabase_service_role_key
+        self.orig_real_user_auth = settings.enable_real_user_auth
+        self.orig_legacy_preview_token = settings.allow_legacy_preview_token
+        self.orig_supabase_publishable_key = settings.supabase_publishable_key
 
         # Configure for strict preview validation
         settings.runtime_environment = "production"
@@ -51,6 +56,8 @@ class TestVercelWrappers(unittest.TestCase):
         settings.enable_case_memory = False
         settings.supabase_url = None
         settings.supabase_service_role_key = None
+        settings.enable_real_user_auth = False
+        settings.allow_legacy_preview_token = True
 
     def tearDown(self):
         # Restore settings
@@ -62,6 +69,9 @@ class TestVercelWrappers(unittest.TestCase):
         settings.enable_case_memory = self.orig_case_memory
         settings.supabase_url = self.orig_supabase_url
         settings.supabase_service_role_key = self.orig_supabase_role_key
+        settings.enable_real_user_auth = self.orig_real_user_auth
+        settings.allow_legacy_preview_token = self.orig_legacy_preview_token
+        settings.supabase_publishable_key = self.orig_supabase_publishable_key
 
     def test_generate_endpoint_requires_token(self):
         client = TestClient(generate_app)
@@ -91,6 +101,18 @@ class TestVercelWrappers(unittest.TestCase):
         data = response.json()
         self.assertIn("session_summary_draft", data)
         self.assertEqual(data["stub"], True)
+
+    def test_api_fails_closed_when_real_auth_is_not_configured(self):
+        settings.allow_legacy_preview_token = False
+        settings.enable_real_user_auth = False
+        client = TestClient(material_extract_app)
+        response = client.post(
+            "/",
+            files={"file": ("session.txt", "safe test", "text/plain")},
+            headers={"X-Remind-Preview-Token": "secret-test-token"},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("사용자 인증", response.json()["detail"])
 
     def test_confirm_endpoint_requires_token(self):
         client = TestClient(confirm_app)
@@ -281,6 +303,14 @@ class TestVercelWrappers(unittest.TestCase):
         response = client.get("/", headers={"X-Remind-Preview-Token": "secret-test-token"})
         self.assertEqual(response.status_code, 200)
 
+    def test_draft_database_keys_are_scoped_per_user(self):
+        from app.services.supabase_store import _scoped_draft_id
+
+        first = _scoped_draft_id("draft_shared", user_id="user-a")
+        second = _scoped_draft_id("draft_shared", user_id="user-b")
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, _scoped_draft_id("draft_shared", user_id="user-a"))
+
     def test_capabilities_endpoint_requires_token(self):
         client = TestClient(capabilities_app)
         response = client.get("/")
@@ -289,6 +319,42 @@ class TestVercelWrappers(unittest.TestCase):
         response = client.get("/", headers={"X-Remind-Preview-Token": "secret-test-token"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["docx"]["available"])
+
+    def test_material_extract_endpoint_requires_token_and_extracts_txt(self):
+        client = TestClient(material_extract_app)
+        files = {"file": ("session.txt", "상담사가 입력한 테스트 문장입니다.", "text/plain")}
+
+        response = client.post("/", files=files)
+        self.assertEqual(response.status_code, 401)
+
+        response = client.post(
+            "/",
+            files=files,
+            headers={"X-Remind-Preview-Token": "secret-test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("테스트 문장", response.json()["extracted_text"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    @unittest.mock.patch("app.api.security.urlopen")
+    def test_material_extract_uses_supabase_bearer_identity(self, mock_urlopen):
+        settings.enable_real_user_auth = True
+        settings.supabase_url = "https://mock.supabase.co"
+        settings.supabase_publishable_key = "mock-publishable-key"
+
+        auth_response = unittest.mock.MagicMock()
+        auth_response.__enter__.return_value.read.return_value = b'{"id":"user-a"}'
+        mock_urlopen.return_value = auth_response
+
+        client = TestClient(material_extract_app)
+        files = {"file": ("session.txt", io.BytesIO(b"safe test content"), "text/plain")}
+        self.assertEqual(client.post("/", files=files).status_code, 401)
+
+        files = {"file": ("session.txt", io.BytesIO(b"safe test content"), "text/plain")}
+        response = client.post("/", files=files, headers={"Authorization": "Bearer valid-user-token"})
+        self.assertEqual(response.status_code, 200)
+        request = mock_urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer valid-user-token")
 
     def test_export_endpoint_requires_token(self):
         client = TestClient(export_app)

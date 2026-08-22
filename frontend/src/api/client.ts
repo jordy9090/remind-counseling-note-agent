@@ -21,19 +21,20 @@ import type {
   TemporaryDraftSaveRequest,
   TemporaryDraftSaveResponse,
 } from '../types/session'
+import { getAccessToken } from '../lib/supabase'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const PREVIEW_API_TOKEN = import.meta.env.VITE_REMIND_PREVIEW_API_TOKEN || ''
 
 const client = axios.create({
   baseURL: API_BASE_URL,
   timeout: 90000,
 })
 
-client.interceptors.request.use((config) => {
-  if (PREVIEW_API_TOKEN) {
+client.interceptors.request.use(async (config) => {
+  const accessToken = await getAccessToken()
+  if (accessToken) {
     config.headers = config.headers ?? {}
-    config.headers['X-Remind-Preview-Token'] = PREVIEW_API_TOKEN
+    config.headers.Authorization = `Bearer ${accessToken}`
   }
   return config
 })
@@ -186,6 +187,21 @@ function normalizeApiError(error: unknown, fallback: string): Error {
     }
     if (Array.isArray(detail) && detail.length) {
       return new Error(detail.map((item) => item?.msg || String(item)).join('\n'))
+    }
+    if (error.response?.status === 401) {
+      return new Error('로그인이 필요하거나 로그인 세션이 만료되었습니다.')
+    }
+    if (error.response?.status === 413) {
+      return new Error('파일 용량이 서버 업로드 제한을 초과했습니다.')
+    }
+    if (error.response?.status === 415) {
+      return new Error('지원하지 않는 파일 형식입니다. TXT, PDF 또는 DOCX 파일을 선택해주세요.')
+    }
+    if (error.response?.status === 404) {
+      return new Error('업로드 API를 찾을 수 없습니다. 배포 상태를 확인해주세요.')
+    }
+    if (error.response && error.response.status >= 500) {
+      return new Error('서버에서 파일을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.')
     }
     if (typeof error.message === 'string' && error.message.trim()) {
       return new Error(error.message)

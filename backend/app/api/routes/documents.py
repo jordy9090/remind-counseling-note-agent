@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from io import BytesIO
 
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -17,10 +19,11 @@ from app.services.document_export import (
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 document_export_service = DocumentExportService()
+AuthenticatedUser = Annotated[str, Depends(require_preview_access)]
 
 
 @router.post("/export")
-async def export_document(request: DocumentExportRequest) -> StreamingResponse:
+async def export_document(request: DocumentExportRequest, actor: AuthenticatedUser) -> StreamingResponse:
     """Generate a downloadable document from the latest final-document draft."""
     try:
         result = await run_in_threadpool(document_export_service.export, request)
@@ -37,6 +40,7 @@ async def export_document(request: DocumentExportRequest) -> StreamingResponse:
 
 
 @router.get("/capabilities", response_model=DocumentCapabilitiesResponse)
-async def get_document_capabilities() -> dict[str, dict[str, str | bool | None]]:
+async def get_document_capabilities(actor: AuthenticatedUser) -> dict[str, dict[str, str | bool | None]]:
     """Return server-side export runtime capabilities."""
     return await run_in_threadpool(document_export_service.capabilities)
+from app.api.security import require_preview_access

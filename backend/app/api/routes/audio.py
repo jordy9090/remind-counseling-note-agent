@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import re
 from functools import partial
+from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app.schemas.audio import AudioCapabilitiesResponse, AudioTranscriptionResponse
@@ -20,10 +21,11 @@ from app.services.audio_transcription import (
 from app.services.upload_validation import UploadValidationError, cleanup_temp_file, persist_upload_to_temp
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
+AuthenticatedUser = Annotated[str, Depends(require_preview_access)]
 
 
 @router.get("/capabilities", response_model=AudioCapabilitiesResponse)
-async def audio_capabilities(response: Response) -> AudioCapabilitiesResponse:
+async def audio_capabilities(response: Response, actor: AuthenticatedUser) -> AudioCapabilitiesResponse:
     """Return upload/transcription runtime capability status."""
     response.headers["Cache-Control"] = "no-store"
     return get_audio_capabilities()
@@ -32,6 +34,7 @@ async def audio_capabilities(response: Response) -> AudioCapabilitiesResponse:
 @router.post("/transcribe", response_model=AudioTranscriptionResponse)
 async def transcribe_audio(
     response: Response,
+    actor: AuthenticatedUser,
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
     task: str = Form(default="transcribe"),
@@ -75,3 +78,4 @@ def validate_audio_request(language: str | None, task: str, expected_speakers: i
         raise HTTPException(status_code=422, detail="language는 2~10자의 안전한 언어 코드여야 합니다.")
     if not 1 <= expected_speakers <= 4:
         raise HTTPException(status_code=422, detail="expected_speakers는 1~4 사이여야 합니다.")
+from app.api.security import require_preview_access
