@@ -88,7 +88,6 @@ remind-counseling-note-agent/
 │   ├── architecture.md
 │   ├── schema.md
 │   ├── api_contract.md
-│   ├── demo_scenario.md
 │   ├── security_checklist.md
 │   ├── supabase_schema.sql
 │   ├── kb_seed_examples.json
