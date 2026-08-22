@@ -44,10 +44,15 @@ class EvaluationIntegrityTests(unittest.TestCase):
         for term in LEGACY_TERMS:
             self.assertNotIn(term, text)
 
-    def test_muspsy_1416_is_canonical_demo(self):
+    def test_muspsy_fixture_is_test_only_and_not_in_frontend(self):
         self.assertEqual(canonical_input().case_id, "CASE-MUSPSY-1416")
-        fixture = (ROOT / "frontend/src/data/counselorDemoFixture.ts").read_text(encoding="utf-8")
-        self.assertIn("session_input_005_muspsy_1416_ko.json", fixture)
+        frontend_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "frontend/src").rglob("*")
+            if path.is_file() and path.suffix in {".ts", ".tsx"}
+        )
+        self.assertNotIn("CASE-MUSPSY", frontend_text)
+        self.assertNotIn("muspsy_demo", frontend_text)
 
     def test_no_internal_placeholder_in_counselor_output(self):
         ordinary_role_text, _ = deidentify_text("내담자는 예정된 시간에 참여하였다.")

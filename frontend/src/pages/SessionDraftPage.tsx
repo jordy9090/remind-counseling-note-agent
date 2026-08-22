@@ -33,11 +33,10 @@ import {
 import BasicInfoCard from '../components/session-input/BasicInfoCard'
 import MaterialRow from '../components/session-input/MaterialRow'
 import ProcessStatusCard from '../components/session-input/ProcessStatusCard'
-import canonicalMuspsyCase from '../../../sample_data/muspsy_demo/session_input_005_muspsy_1416_ko.json'
-import { COUNSELOR_DEMO_FIXTURE } from '../data/counselorDemoFixture'
 import {
   downloadDocumentExport,
   extractDocumentMaterial,
+  generateNoteDraft,
   generateSupervisionReport,
   getAudioCapabilities,
   transcribeAudio,
@@ -223,16 +222,8 @@ const defaultChecklistItems: ChecklistItem[] = [
 
 const defaultVisibleSectionIds = new Set<DraftSectionId>(defaultChecklistItems.map((item) => item.id))
 
-const previousSessionOptions: PreviousSessionOption[] = COUNSELOR_DEMO_FIXTURE.sessionSources.history.map((session) => ({
-  id: `session-${session.sessionNumber}`,
-  label: `${session.sessionNumber}회기`,
-  date: 'MusPsy 기록',
-  summary: session.summary,
-  detail: session.rawSource,
-}))
-
-const defaultPreviousSessionIds = ['session-1', 'session-2', 'session-3', 'session-4']
-const demoClientName = canonicalMuspsyCase.case_id
+const previousSessionOptions: PreviousSessionOption[] = []
+const defaultPreviousSessionIds: string[] = []
 
 function buildPreviousSessionSummary(selectedIds: string[]): string {
   return previousSessionOptions
@@ -241,186 +232,35 @@ function buildPreviousSessionSummary(selectedIds: string[]): string {
     .join('\n\n')
 }
 
-const caseSummaries: CaseSummary[] = [
-  {
-    id: canonicalMuspsyCase.case_id,
-    name: demoClientName,
-    type: '개인 상담',
-    lastDate: '2026. 05. 24',
-    counselor: canonicalMuspsyCase.counselor_name,
-    mainIssue: canonicalMuspsyCase.key_issue_tags.slice(0, 3).join(', '),
-    status: '진행중',
-    sessionCount: 5,
-    progressLabel: '상담 진행중',
-    progress: 62,
-  },
-]
+const caseSummaries: CaseSummary[] = []
 
-const initialForm = {
-  ...canonicalMuspsyCase,
-  client_alias: demoClientName,
-  previous_session_summary: buildPreviousSessionSummary(defaultPreviousSessionIds),
+const initialForm: SessionInput = {
+  case_id: '',
+  client_alias: '',
+  session_number: 1,
+  session_date: '',
+  counselor_name: '',
+  counselor_memo: '',
+  transcript_text: '',
+  previous_session_summary: '',
+  counseling_goal: '',
+  psychological_test_summary: '',
+  key_issue_tags: [],
+  nonverbal_notes: '',
   target_document_type: 'session_note',
   persist: false,
-} as SessionInput
+}
 
 const STATIC_DOCUMENT_CAPABILITIES: DocumentCapabilitiesResponse = {
   docx: { available: true },
-  pdf: { available: false, reason: '정적 데모에서는 PDF 내보내기를 사용하지 않습니다.' },
-  hwpx: { available: false, reason: '정적 데모에서는 HWPX 내보내기를 사용하지 않습니다.' },
-}
-
-function getFixtureSectionContent(documentType: 'session_summary' | 'session_note', titlePattern: RegExp): string {
-  return (
-    COUNSELOR_DEMO_FIXTURE.documents[documentType].sections.find((section) => titlePattern.test(section.title))
-      ?.content || PLACEHOLDER_TEXT
-  )
-}
-
-function buildStaticDemoResult(): NoteDraftResponse {
-  return {
-    case_id: canonicalMuspsyCase.case_id,
-    session_number: canonicalMuspsyCase.session_number,
-    session_summary: getFixtureSectionContent('session_summary', /상담 내용/),
-    main_issue: getFixtureSectionContent('session_summary', /주호소/),
-    counselor_intervention: getFixtureSectionContent('session_summary', /상담자 개입/),
-    client_response: getFixtureSectionContent('session_summary', /내담자 반응/),
-    next_plan: getFixtureSectionContent('session_summary', /다음 회기 계획/),
-    evidence_check: [],
-    missing_items: COUNSELOR_DEMO_FIXTURE.missingItems,
-    warnings: COUNSELOR_DEMO_FIXTURE.warnings,
-  }
-}
-
-function sourceBadgeForEvidence(sourceType: string): SourceBadgeKind {
-  if (sourceType === 'transcript') return 'transcript'
-  if (sourceType === 'previous_summary') return 'previous'
-  if (sourceType === 'counselor_memo') return 'memo'
-  return 'ai'
-}
-
-function buildStaticDemoDraftSections(): DraftSection[] {
-  return COUNSELOR_DEMO_FIXTURE.documents.session_summary.sections.map((section) => {
-    const evidence = section.evidenceIds.flatMap((evidenceId) => {
-      const item = COUNSELOR_DEMO_FIXTURE.evidences[evidenceId]
-      return item
-        ? [
-            {
-              label: item.sourceLabel,
-              excerpt: item.excerpt,
-              confidence: 'high' as EvidenceConfidence,
-              needsReview: Boolean(item.warning),
-            },
-          ]
-        : []
-    })
-    const sourceBadges = Array.from(
-      new Set<SourceBadgeKind>([
-        'ai',
-        ...section.evidenceIds.flatMap((evidenceId) => {
-          const item = COUNSELOR_DEMO_FIXTURE.evidences[evidenceId]
-          return item ? [sourceBadgeForEvidence(item.sourceType)] : []
-        }),
-        ...(section.status === 'needs_review' ? (['needs_review'] as SourceBadgeKind[]) : []),
-      ]),
-    )
-
-    return {
-      id: section.id,
-      title: section.title,
-      content: section.content,
-      sourceBadges,
-      confidence: section.status === 'needs_review' ? 'low' : 'high',
-      evidence,
-      visible: true,
-      editable: true,
-      toggleable: true,
-    }
-  })
-}
-
-function buildStaticFinalDocumentSections(documentType: FinalDocumentType): FinalDocumentSection[] {
-  if (documentType === 'termination_report') {
-    return [
-      {
-        id: 'termination-not-available',
-        title: '종결 보고서',
-        content: '[상담사 확인 필요] 이 정적 데모에는 사전 생성된 종결 보고서가 포함되어 있지 않습니다.',
-        contentKind: 'paragraph',
-      },
-    ]
-  }
-
-  return COUNSELOR_DEMO_FIXTURE.documents.session_note.sections.map((section) => ({
-    id: section.id,
-    title: section.title,
-    content: section.content,
-    contentKind: 'paragraph',
-  }))
-}
-
-function buildStaticSupervisionReport(): SupervisionReportDraft {
-  return {
-    reportId: 'static-muspsy-1416-candidate-05',
-    caseId: canonicalMuspsyCase.case_id,
-    reportType: 'personal_counseling_supervision',
-    title: '개인상담(공개상담) 사례 수퍼비전 보고서',
-    meta: {
-      clientAlias: canonicalMuspsyCase.case_id,
-      sessionNumber: canonicalMuspsyCase.session_number,
-      reportDate: canonicalMuspsyCase.session_date,
-      counselorName: canonicalMuspsyCase.counselor_name,
-      institution: COUNSELOR_DEMO_FIXTURE.clientInfo.institution,
-    },
-    sections: COUNSELOR_DEMO_FIXTURE.documents.supervision_report.sections.map((section) => ({
-      id: section.id,
-      title: section.title,
-      level: /^[A-Z]\./.test(section.title) ? 1 : 2,
-      contentBlocks: [
-        {
-          id: `${section.id}-content`,
-          type: section.status === 'needs_review' ? 'placeholder' : 'paragraph',
-          text: section.content,
-          evidenceIds: section.evidenceIds,
-          aiGenerated: true,
-          demoValue: false,
-          reviewStatus: section.status === 'needs_review' ? 'needs_human_input' : 'unchecked',
-          warnings: section.status === 'needs_review' ? ['상담사 확인 필요'] : [],
-        },
-      ],
-      status: section.status === 'needs_review' ? 'needs_review' : 'complete',
-    })),
-    aiReview: {
-      completionChecklist: COUNSELOR_DEMO_FIXTURE.documents.supervision_report.sections.map((section) => ({
-        label: section.title,
-        status: section.status === 'needs_review' ? 'partial' : 'done',
-      })),
-      missingFields: COUNSELOR_DEMO_FIXTURE.missingItems,
-      demoInputs: [],
-      needsHumanReview: COUNSELOR_DEMO_FIXTURE.documents.supervision_report.sections
-        .filter((section) => section.status === 'needs_review')
-        .map((section) => ({
-          sectionId: section.id,
-          message: `${section.title}: 상담사 확인 필요`,
-          severity: 'medium',
-        })),
-      unsupportedClaims: [],
-      suggestedSupervisionQuestions: [],
-      caution: COUNSELOR_DEMO_FIXTURE.warnings.join(' '),
-    },
-    evidenceIndex: Object.fromEntries(
-      Object.entries(COUNSELOR_DEMO_FIXTURE.evidences).map(([id, evidence]) => [
-        id,
-        { label: evidence.sourceLabel, text: evidence.excerpt },
-      ]),
-    ),
-  }
+  pdf: { available: false, reason: '현재 실행 환경에서 PDF 내보내기를 사용할 수 없습니다.' },
+  hwpx: { available: false, reason: 'HWPX 내보내기는 아직 지원하지 않습니다.' },
 }
 
 export default function SessionDraftPage() {
   const [currentScreen, setCurrentScreen] = useState<AppScreen>('session_input')
   const [form, setForm] = useState<SessionInput>(initialForm)
-  const [sessionTopic, setSessionTopic] = useState(canonicalMuspsyCase.key_issue_tags.join(', '))
+  const [sessionTopic, setSessionTopic] = useState('')
   const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>('session_note')
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
@@ -739,8 +579,18 @@ export default function SessionDraftPage() {
     objectUrlsRef.current.delete(objectUrl)
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!form.case_id.trim()) {
+      setHasSubmitted(true)
+      setError('기본 정보에서 내담자/케이스를 입력해주세요.')
+      return
+    }
+    if (!hasUsableNoteInput) {
+      setHasSubmitted(true)
+      setError('상담사 메모, 축어록, 이전 회기 요약 중 하나 이상을 입력해주세요.')
+      return
+    }
     if (unappliedReadyMaterials.length > 0) {
       setHasSubmitted(true)
       setError('아직 회기 입력에 반영되지 않은 업로드 자료가 있습니다. 자료에 반영하거나 삭제한 뒤 요약초안을 생성해주세요.')
@@ -759,13 +609,18 @@ export default function SessionDraftPage() {
     setExpandedEvidenceId(null)
     setEditingSectionId(null)
 
-    const data = buildStaticDemoResult()
-    const sections = buildStaticDemoDraftSections()
-    setResult(data)
-    setDraftSections(sections)
-    setVisibleSectionIds(new Set(sections.map((section) => section.id)))
-    setCurrentScreen('summary_draft')
-    setIsLoading(false)
+    try {
+      const data = await generateNoteDraft({ ...form, persist: false })
+      const sections = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
+      setResult(data)
+      setDraftSections(sections)
+      setVisibleSectionIds(new Set(sections.map((section) => section.id)))
+      setCurrentScreen('summary_draft')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const toggleSectionVisibility = (sectionId: DraftSectionId) => {
@@ -881,7 +736,7 @@ export default function SessionDraftPage() {
       }
     } else {
       setSupervisionReportDraft(null)
-      setFinalDocumentSections(buildStaticFinalDocumentSections(documentType))
+      setFinalDocumentSections(buildFinalDocumentSections(documentType, draftSections, result.missing_items))
       setCurrentScreen('final_document')
     }
   }
@@ -912,7 +767,7 @@ export default function SessionDraftPage() {
   }
 
   const handleTemporarySave = () => {
-    setDraftSaveMessage('정적 데모 모드에서는 서버나 DB에 저장하지 않습니다.')
+    setDraftSaveMessage('현재 작성 내용은 이 브라우저 세션에 유지됩니다.')
   }
 
   const handleDownloadDocument = async (format: DocumentExportFormat) => {
@@ -1242,20 +1097,19 @@ function AppSidebar({
             </SidebarButton>
           </nav>
 
-          <div className="space-y-2 border-t border-slate-200 pt-4">
-            <p className="px-1 text-[10px] font-medium text-slate-400">최근 케이스</p>
-            <CaseListItem name={canonicalMuspsyCase.case_id} status="진행중" meta="개인상담 · 5회기" active />
+          <div className="border-t border-slate-200 px-1 pt-4 text-[10px] font-medium text-slate-400">
+            최근 케이스가 없습니다.
           </div>
         </div>
 
         <div className={`${collapsed ? 'hidden' : 'mt-auto border-t border-slate-200 px-3 py-3'}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 font-semibold text-white">
-              데
+              상
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-900">{canonicalMuspsyCase.counselor_name}</p>
-              <p className="text-[11px] text-slate-500">정적 데모</p>
+              <p className="text-xs font-semibold text-slate-900">상담사</p>
+              <p className="text-[11px] text-slate-500">로컬 작업</p>
             </div>
           </div>
         </div>
@@ -1479,6 +1333,14 @@ function CaseListWorkspace({
           <CaseCard key={caseItem.id} caseItem={caseItem} onOpen={() => onOpenCase(caseItem)} />
         ))}
       </div>
+      {!cases.length && (
+        <div className="max-w-[790px] rounded-[10px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+          <p className="text-sm font-semibold text-slate-600">아직 등록된 케이스가 없습니다.</p>
+          <button type="button" onClick={onCreateSession} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+            첫 회기 입력하기
+          </button>
+        </div>
+      )}
     </section>
   )
 }
@@ -1733,7 +1595,7 @@ function SessionInputWorkspace({
           className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
         >
           {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
-          사전 생성 요약 불러오기
+          요약 초안 생성
         </button>
 
         <ProcessStatusCard completedSteps={completedSteps} isLoading={isLoading} steps={processSteps} />
@@ -3206,6 +3068,15 @@ function MaterialModal({
                   onChange={(event) => onUpdateField('client_alias', event.target.value)}
                   className={inputClass}
                   placeholder="비워두면 케이스 ID로 표시됩니다."
+                />
+              </Field>
+              <Field label="상담자" htmlFor="modal_counselor_name">
+                <input
+                  id="modal_counselor_name"
+                  value={form.counselor_name}
+                  onChange={(event) => onUpdateField('counselor_name', event.target.value)}
+                  className={inputClass}
+                  placeholder="상담자 이름을 입력하세요."
                 />
               </Field>
               <Field label="회기 번호" htmlFor="modal_session_number">
