@@ -163,6 +163,17 @@ class DocumentTransformPreview(BaseModel):
     notice: str
 
 
+class GeneratedDocumentDraft(BaseModel):
+    """Counselor-facing document assembled from grounded pipeline fields."""
+
+    document_type: TargetDocumentType
+    status: Literal["draft_requires_counselor_confirmation"] = "draft_requires_counselor_confirmation"
+    sections: dict[str, str] = Field(default_factory=dict)
+    source_refs: dict[str, list[str]] = Field(default_factory=dict)
+    missing_or_review_fields: list[str] = Field(default_factory=list)
+    notice: str = "AI 초안입니다. 상담사가 근거와 임상 판단을 확인해야 합니다."
+
+
 class RetrievedEvidenceItem(BaseModel):
     id: str | None = None
     source_type: str = ""
@@ -245,6 +256,8 @@ class GenerateNoteResponse(BaseModel):
     session_summary_draft: SessionSummaryDraft
     verification_report: VerificationReport
     document_transform_preview: DocumentTransformPreview
+    session_note_draft: GeneratedDocumentDraft | None = None
+    termination_report_draft: GeneratedDocumentDraft | None = None
     confirmed_session_note: dict[str, Any] = Field(default_factory=dict)
     sanitized_input: SanitizedInput
     retrieved_case_context: list[RetrievedCaseContextItem] = Field(default_factory=list)

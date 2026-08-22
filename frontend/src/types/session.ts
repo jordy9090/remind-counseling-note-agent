@@ -206,6 +206,8 @@ export interface GenerateNoteResponse {
   session_summary_draft: SessionSummaryDraft
   verification_report: VerificationReport
   document_transform_preview: DocumentTransformPreview
+  session_note_draft?: GeneratedDocumentDraft | null
+  termination_report_draft?: GeneratedDocumentDraft | null
   confirmed_session_note: Record<string, unknown>
   sanitized_input: SanitizedInput
   retrieved_case_context: RetrievedCaseContextItem[]
@@ -214,6 +216,15 @@ export interface GenerateNoteResponse {
   retrieval_report: RetrievalReport
   persistence_report: PersistenceReport
   stub: boolean
+}
+
+export interface GeneratedDocumentDraft {
+  document_type: TargetDocumentType
+  status: 'draft_requires_counselor_confirmation'
+  sections: Record<string, string>
+  source_refs: Record<string, string[]>
+  missing_or_review_fields: string[]
+  notice: string
 }
 
 export interface ConfirmGeneratedNoteRequest {

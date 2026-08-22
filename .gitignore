@@ -32,6 +32,12 @@ HW1_remind_submission.zip
 remind-counseling-note-agent/
 sample_exports/
 __pycache__/
+eval_outputs_v2/
+eval_outputs_v3/
+eval_outputs_v4/
+eval_outputs*.zip
+counselor_demo_ready/
+counselor_demo_ready.zip
 
 # OS
 .DS_Store

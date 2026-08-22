@@ -20,6 +20,7 @@ from app.graph.nodes import (
 )
 from app.schemas.note import (
     DocumentTransformPreview,
+    GeneratedDocumentDraft,
     EvidenceMappedData,
     GenerateNoteResponse,
     RetrievedCaseContextItem,
@@ -50,10 +51,13 @@ class NoteGraphState(TypedDict, total=False):
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
     verification_report: VerificationReport
+    initial_verification_report: VerificationReport
     revision_attempted: bool
     revision_needs_reverify: bool
     revision_reason: str
     document_transform_preview: DocumentTransformPreview
+    session_note_draft: GeneratedDocumentDraft
+    termination_report_draft: GeneratedDocumentDraft
     confirmed_session_note: dict[str, Any]
     stub: bool
 
@@ -120,6 +124,8 @@ def run_note_pipeline(
         session_summary_draft=state["session_summary_draft"],
         verification_report=state["verification_report"],
         document_transform_preview=state["document_transform_preview"],
+        session_note_draft=state.get("session_note_draft"),
+        termination_report_draft=state.get("termination_report_draft"),
         confirmed_session_note=confirmed_session_note,
         retrieved_case_context=state.get("retrieved_case_context") or [],
         retrieved_template_context=state.get("retrieved_template_context"),

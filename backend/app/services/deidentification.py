@@ -64,10 +64,82 @@ MASK_RULES = [
     MaskRule(
         "person_name",
         "[PERSON]",
-        re.compile(r"(?:이름|성명|내담자|학생|담임|보호자|어머니|아버지)\s*[:은는이가]?\s*([가-힣]{2,4})"),
+        # Role nouns such as "내담자는 예정된 시간에..." are ordinary
+        # counseling prose, not name labels.  Only explicit identity labels or
+        # role + name constructions are masked here.
+        re.compile(
+            r"(?:(?:이름|성명)\s*[:은는이가]?\s*[가-힣]{2,4}|"
+            r"(?:학생|담임|보호자|어머니|아버지)\s*[:은는이가]\s*[가-힣]{2,4}(?=\s*(?:님|씨|$|[,.;])))"
+        ),
         "Explicit names should be replaced with aliases.",
     ),
 ]
+
+
+COUNSELOR_PLACEHOLDER_LABELS = {
+    "[PERSON]": "내담자",
+    "[NAME]": "내담자",
+    "[LOCATION]": "장소 정보 비공개",
+    "[ADDRESS]": "장소 정보 비공개",
+    "[INSTITUTION]": "기관 정보 비공개",
+    "[EMAIL]": "연락처 정보 비공개",
+    "[PHONE]": "연락처 정보 비공개",
+    "[ACCOUNT]": "계정 정보 비공개",
+    "[RRN]": "식별정보 비공개",
+    "[STUDENT_ID]": "식별정보 비공개",
+    "[REDACTED]": "비식별 처리됨",
+}
+
+
+def render_counselor_text(text: str, *, client_alias: str = "") -> str:
+    """Render internal privacy tokens into counselor-readable Korean labels."""
+    rendered = text or ""
+    person_label = client_alias.strip() or "내담자"
+    particle_pairs = {
+        "은": ("은", "는"),
+        "는": ("은", "는"),
+        "이": ("이", "가"),
+        "가": ("이", "가"),
+        "을": ("을", "를"),
+        "를": ("을", "를"),
+        "과": ("과", "와"),
+        "와": ("과", "와"),
+    }
+    for placeholder in ("[PERSON]", "[NAME]"):
+        for supplied, (with_final, without_final) in particle_pairs.items():
+            rendered = rendered.replace(
+                placeholder + supplied,
+                person_label + (with_final if _has_final_consonant(person_label) else without_final),
+            )
+    for placeholder, label in COUNSELOR_PLACEHOLDER_LABELS.items():
+        rendered = rendered.replace(
+            placeholder,
+            person_label if placeholder in {"[PERSON]", "[NAME]"} else label,
+        )
+    return rendered
+
+
+def _has_final_consonant(value: str) -> bool:
+    if not value:
+        return False
+    code = ord(value[-1])
+    return 0xAC00 <= code <= 0xD7A3 and (code - 0xAC00) % 28 != 0
+
+
+def render_counselor_value(value, *, client_alias: str = ""):
+    """Recursively render strings while preserving JSON-compatible shapes."""
+    if isinstance(value, str):
+        return render_counselor_text(value, client_alias=client_alias)
+    if isinstance(value, dict):
+        return {
+            key: render_counselor_value(item, client_alias=client_alias)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [render_counselor_value(item, client_alias=client_alias) for item in value]
+    if isinstance(value, tuple):
+        return tuple(render_counselor_value(item, client_alias=client_alias) for item in value)
+    return value
 
 
 def deidentify_text(text: str, source: str = "") -> tuple[str, list[SensitiveInfoCandidate]]:

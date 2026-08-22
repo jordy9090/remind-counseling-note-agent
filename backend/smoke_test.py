@@ -1055,7 +1055,7 @@ def main() -> None:
         os.environ["TEMP_DRAFT_DIR"] = temp_dir
         os.environ["RECOMPOSE_CACHE_DIR"] = str(Path(temp_dir) / "recompose")
 
-        sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "session_input_001.json"
+        sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "muspsy_demo" / "session_input_005_muspsy_1416_ko.json"
         payload = json.loads(sample_path.read_text(encoding="utf-8"))
         missing_token = client.post("/api/notes/generate", json=payload)
         assert missing_token.status_code == 401
@@ -1181,7 +1181,7 @@ def main() -> None:
                         session_id="prior-session-1",
                         session_number=1,
                         session_date="2026-05-01",
-                        summary="이전 회기에서는 진로 불안과 회피 행동을 다룸.",
+                        summary="이전 회기에서는 사회적 상황 불안과 회피 행동을 다룸.",
                         evidence_items=[
                             RetrievedEvidenceItem(
                                 id="evidence-1",
@@ -1494,7 +1494,7 @@ def main() -> None:
 
         recompose_payload = {
             "session_input": payload,
-            "session_topic": "진로 불안과 자기비난 사고 점검",
+            "session_topic": "사회적 상황 불안과 평가에 대한 추측 점검",
             "visible_section_ids": ["main_issue", "session_theme", "session_content"],
         }
         first_recompose = client.post("/api/notes/recompose", json=recompose_payload, headers=preview_headers)
@@ -1513,9 +1513,9 @@ def main() -> None:
         supervision_payload = {
             "session_input": payload,
             "session_summary_draft": data["session_summary_draft"],
-            "demo_mode": True,
+            "demo_mode": False,
             "report_date": payload["session_date"],
-            "client_alias": "가명 은하",
+            "client_alias": payload["case_id"],
         }
         supervision_response = client.post("/api/notes/supervision-report", json=supervision_payload, headers=preview_headers)
         assert supervision_response.status_code == 200, supervision_response.text
@@ -1523,17 +1523,13 @@ def main() -> None:
         assert supervision["title"] == "개인상담 사례 수퍼비전 보고서 초안"
         assert supervision["reportType"] == "personal_counseling_supervision"
         assert supervision["sections"]
-        assert any(section["title"] == "C-1. 상담진행 과정 및 회기주제" for section in supervision["sections"])
-        assert supervision["meta"]["institution"] == "마음연결 심리상담센터"
-        assert supervision["meta"]["supervisor"] == "김수현 상담심리사 1급"
+        assert any(section["title"] == "C-1. 회기 진행 요약" for section in supervision["sections"])
+        assert supervision["meta"]["institution"] == "[상담사 확인 필요]"
+        assert supervision["meta"]["supervisor"] == "[상담사 확인 필요]"
         assert supervision["aiReview"]["completionChecklist"]
         assert supervision["aiReview"]["missingFields"]
-        assert supervision["aiReview"]["demoInputs"]
-        assert any(
-            block.get("demoValue")
-            for section in supervision["sections"]
-            for block in section.get("contentBlocks", [])
-        )
+        assert supervision["aiReview"]["demoInputs"] == []
+        assert not any(block.get("demoValue") for section in supervision["sections"] for block in section.get("contentBlocks", []))
         assert supervision["aiReview"]["suggestedSupervisionQuestions"]
 
         session_export_payload = {
@@ -1544,7 +1540,7 @@ def main() -> None:
             "session_date": "2026-05-24",
             "title": "상담 회기 기록",
             "metadata": {
-                "client_alias": "가명 은하",
+                "client_alias": "CASE-MUSPSY-1416",
                 "counselor_name": "박상담사",
                 "missing_items": ["상담 목표 표현 구체화 필요"],
                 "warnings": ["근거 부족 검토 문구"],
@@ -1553,7 +1549,7 @@ def main() -> None:
                 {
                     "id": "main_issue",
                     "title": "주요 호소",
-                    "content": "진로 불안과 자기비난 사고를 호소함.",
+                    "content": "사회적 상황에서 평가에 대한 불안과 회피를 보고함.",
                 },
                 {
                     "id": "session_content",
@@ -1573,7 +1569,7 @@ def main() -> None:
         assert not any(char in filename for char in '<>:"/\\|?*')
         docx_text = _extract_docx_text(docx_response.content)
         assert "상담 회기 기록" in docx_text
-        assert "가명 은하" in docx_text
+        assert "CASE-MUSPSY-1416" in docx_text
         assert "첫 줄 상담 내용" in docx_text
         assert "둘째 줄 상담 내용" in docx_text
         assert "최종 수정 내용이 반영됨." in docx_text
@@ -1589,7 +1585,7 @@ def main() -> None:
         real_case_response = client.post("/api/documents/export", json=real_case_without_alias_payload)
         assert real_case_response.status_code == 200, real_case_response.text
         real_case_text = _extract_docx_text(real_case_response.content)
-        assert "가명 은하" not in real_case_text
+        assert "CASE-MUSPSY-1416" not in real_case_text
         assert "내담자 가명" not in real_case_text
 
         supervision_export_payload = {
@@ -1600,7 +1596,7 @@ def main() -> None:
             "session_date": payload["session_date"],
             "title": "개인상담 사례 수퍼비전 보고서",
             "metadata": {
-                "client_alias": "가명 은하",
+                "client_alias": "CASE-MUSPSY-1416",
                 "counselor_name": "박상담사",
                 "supervisor": "이수현 상담심리사 1급",
             },
@@ -1716,7 +1712,7 @@ class FakeConfirmationStorage:
         self.retrieval_enabled = True
         self.note_id = "00000000-0000-0000-0000-000000000101"
         self.session_id = "00000000-0000-0000-0000-000000000102"
-        self.case_id = "CASE-DEMO-001"
+        self.case_id = "CASE-MUSPSY-1416"
         self.drop_session = False
         self.generated_notes = [
             {

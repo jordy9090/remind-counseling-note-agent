@@ -153,7 +153,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
               </div>
             </div>
 
-            <SummaryLine scale={scale} title="주요 호소" badge="STT 근거 3개" text="진로·취업 준비 과정에서 불안과 압박감을 호소함." />
+            <SummaryLine scale={scale} title="주요 호소" badge="STT 근거 3개" text="사회적 상황에서 타인의 평가를 예상하며 불안과 회피를 경험함." />
             <SummaryLine scale={scale} title="상담자 개입" badge="메모 기반" text="감정 명료화와 현실 검증 질문으로 불안을 구체화함." />
             <SummaryLine scale={scale} title="내담자 반응" badge="원문 근거 있음" text="또래 비교 이후 자기비난과 자신감 저하를 보고함." />
 

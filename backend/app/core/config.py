@@ -1,7 +1,11 @@
 """설정 관리: 환경변수 로드 및 Pydantic 설정"""
+from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings
+
+
+BACKEND_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
@@ -43,7 +47,7 @@ class Settings(BaseSettings):
     disable_embedding_cache: bool = False
 
     class Config:
-        env_file = ".env"
+        env_file = str(BACKEND_ENV_FILE)
         env_file_encoding = "utf-8"
 
     @property
@@ -66,7 +70,10 @@ class Settings(BaseSettings):
 
     @property
     def normalized_supabase_url(self) -> str:
-        return (self.supabase_url or "").rstrip("/")
+        url = (self.supabase_url or "").rstrip("/")
+        if url.endswith("/rest/v1"):
+            url = url[: -len("/rest/v1")]
+        return url
 
     @property
     def is_local_environment(self) -> bool:

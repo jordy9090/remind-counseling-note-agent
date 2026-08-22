@@ -39,6 +39,8 @@ class TestVercelWrappers(unittest.TestCase):
         self.orig_use_stub = settings.use_stub
         self.orig_persistence = settings.enable_persistence
         self.orig_case_memory = settings.enable_case_memory
+        self.orig_supabase_url = settings.supabase_url
+        self.orig_supabase_role_key = settings.supabase_service_role_key
 
         # Configure for strict preview validation
         settings.runtime_environment = "production"
@@ -47,6 +49,8 @@ class TestVercelWrappers(unittest.TestCase):
         settings.use_stub = True  # force stub logic to avoid external OpenAI calls
         settings.enable_persistence = False
         settings.enable_case_memory = False
+        settings.supabase_url = None
+        settings.supabase_service_role_key = None
 
     def tearDown(self):
         # Restore settings
@@ -56,6 +60,8 @@ class TestVercelWrappers(unittest.TestCase):
         settings.use_stub = self.orig_use_stub
         settings.enable_persistence = self.orig_persistence
         settings.enable_case_memory = self.orig_case_memory
+        settings.supabase_url = self.orig_supabase_url
+        settings.supabase_service_role_key = self.orig_supabase_role_key
 
     def test_generate_endpoint_requires_token(self):
         client = TestClient(generate_app)
@@ -63,7 +69,7 @@ class TestVercelWrappers(unittest.TestCase):
             "case_id": "CASE-MUSPSY-1416",
             "session_number": 5,
             "session_date": "2026.04.28",
-            "counselor_name": "이수진",
+            "counselor_name": "데모 상담사",
             "counselor_memo": "메모",
             "transcript_text": "축어록",
             "previous_session_summary": "이전 요약",
@@ -248,7 +254,7 @@ class TestVercelWrappers(unittest.TestCase):
                 "case_id": "CASE-MUSPSY-1416",
                 "session_number": 5,
                 "session_date": "2026.04.28",
-                "counselor_name": "이수진",
+                "counselor_name": "데모 상담사",
                 "counselor_memo": "메모",
                 "transcript_text": "축어록",
                 "previous_session_summary": "이전 요약",
