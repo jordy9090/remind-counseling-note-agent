@@ -19,6 +19,12 @@ dependencies = [
     "weasyprint>=62.0",
 ]
 
+[project.optional-dependencies]
+audio-whisperx = [
+    "whisperx==3.8.6",
+    "numpy>=1.26,<3",
+]
+
 [tool.uv]
 # Allow prerelease packages when resolving this MVP demo environment.
 prerelease = "allow"

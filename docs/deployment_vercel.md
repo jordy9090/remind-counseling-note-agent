@@ -13,10 +13,17 @@ The API functions are:
 
 - `GET /api/health`
 - `POST /api/notes/generate`
+- `POST /api/notes/confirm`
+- `POST /api/notes/supervision-report`
+- `GET /api/documents/capabilities`
+- `POST /api/documents/export`
 
 ## Environment variables
 
-For a public class/demo deployment, the app can run without an OpenAI key. If `OPENAI_API_KEY` is missing, the backend uses deterministic stub output.
+For an offline UI-only demo, the app can run without an OpenAI key and falls
+back to deterministic output. The August 20 RAG/persistence demo must use an
+OpenAI key because query embeddings need to be compatible with the remotely
+seeded KB embeddings.
 
 Recommended demo environment:
 

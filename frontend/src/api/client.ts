@@ -3,6 +3,8 @@ import type {
   AudioCapabilitiesResponse,
   AudioTranscriptionResponse,
   DocumentCapabilitiesResponse,
+  ConfirmGeneratedNoteRequest,
+  ConfirmGeneratedNoteResponse,
   EvidenceCheckItem,
   EvidenceConfidence,
   EvidenceSourceType,
@@ -19,6 +21,7 @@ import type {
   TemporaryDraftSaveRequest,
   TemporaryDraftSaveResponse,
 } from '../types/session'
+import { getAccessToken } from '../lib/supabase'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -27,27 +30,47 @@ const client = axios.create({
   timeout: 90000,
 })
 
+client.interceptors.request.use(async (config) => {
+  const accessToken = await getAccessToken()
+  if (accessToken) {
+    config.headers = config.headers ?? {}
+    config.headers.Authorization = `Bearer ${accessToken}`
+  }
+  return config
+})
+
 export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftResponse> => {
-  const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
-    case_id: input.case_id,
-    client_alias: input.client_alias || '',
-    session_number: input.session_number,
-    session_date: input.session_date,
-    counselor_name: input.counselor_name,
-    counselor_memo: input.counselor_memo,
-    transcript_text: input.transcript_text,
-    previous_session_summary: input.previous_session_summary,
-    counseling_goal: input.counseling_goal || '',
-    psychological_test_summary: input.psychological_test_summary || '',
-    key_issue_tags: input.key_issue_tags || [],
-    nonverbal_notes: input.nonverbal_notes || '',
-    target_document_type: input.target_document_type || 'session_note',
-    persist: Boolean(input.persist),
-  })
-  return toNoteDraftResponse(response.data)
+  try {
+    const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
+      case_id: input.case_id,
+      client_alias: input.client_alias || '',
+      session_number: input.session_number,
+      session_date: input.session_date,
+      counselor_name: input.counselor_name,
+      counselor_memo: input.counselor_memo,
+      transcript_text: input.transcript_text,
+      previous_session_summary: input.previous_session_summary,
+      counseling_goal: input.counseling_goal || '',
+      psychological_test_summary: input.psychological_test_summary || '',
+      key_issue_tags: input.key_issue_tags || [],
+      nonverbal_notes: input.nonverbal_notes || '',
+      target_document_type: input.target_document_type || 'session_note',
+      persist: Boolean(input.persist),
+    })
+    return toNoteDraftResponse(response.data)
+  } catch (error) {
+    throw normalizeApiError(error, '회기요약 초안을 생성하지 못했습니다.')
+  }
 }
 
 export const postGenerateNote = generateNoteDraft
+
+export const confirmGeneratedNote = async (
+  request: ConfirmGeneratedNoteRequest,
+): Promise<ConfirmGeneratedNoteResponse> => {
+  const response = await client.post<ConfirmGeneratedNoteResponse>('/api/notes/confirm', request)
+  return response.data
+}
 
 export const saveTemporaryDraft = async (
   draft: TemporaryDraftSaveRequest,
@@ -136,11 +159,13 @@ export const transcribeAudio = async (
   file: File,
   language = 'ko',
   task = 'transcribe',
+  expectedSpeakers = 2,
 ): Promise<AudioTranscriptionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('language', language)
   formData.append('task', task)
+  formData.append('expected_speakers', String(expectedSpeakers))
   try {
     const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
       timeout: 900000,
@@ -162,6 +187,21 @@ function normalizeApiError(error: unknown, fallback: string): Error {
     }
     if (Array.isArray(detail) && detail.length) {
       return new Error(detail.map((item) => item?.msg || String(item)).join('\n'))
+    }
+    if (error.response?.status === 401) {
+      return new Error('로그인이 필요하거나 로그인 세션이 만료되었습니다.')
+    }
+    if (error.response?.status === 413) {
+      return new Error('파일 용량이 서버 업로드 제한을 초과했습니다.')
+    }
+    if (error.response?.status === 415) {
+      return new Error('지원하지 않는 파일 형식입니다. TXT, PDF 또는 DOCX 파일을 선택해주세요.')
+    }
+    if (error.response?.status === 404) {
+      return new Error('업로드 API를 찾을 수 없습니다. 배포 상태를 확인해주세요.')
+    }
+    if (error.response && error.response.status >= 500) {
+      return new Error('서버에서 파일을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.')
     }
     if (typeof error.message === 'string' && error.message.trim()) {
       return new Error(error.message)

@@ -47,7 +47,7 @@ Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 �
 - 결제/예약/관리자 기능
 - AI 슈퍼비전 또는 자동 사례개념화
 
-문서 업로드는 원본 파일을 저장하지 않고 임시 파일에서 텍스트만 추출한 뒤 정리합니다. TXT는 UTF-8/BOM, DOCX는 문단과 표, PDF는 텍스트 레이어만 지원합니다. 스캔 이미지 PDF는 OCR을 지원하지 않으며 경고를 반환합니다. 음성 자동 축어록은 `ENABLE_AUDIO_TRANSCRIPTION=1`과 `faster-whisper` 런타임이 설정된 로컬/서버에서만 동작합니다. 기본값은 비활성화이며 가짜 축어록을 만들지 않습니다.
+문서 업로드는 원본 파일을 저장하지 않고 임시 파일에서 텍스트만 추출한 뒤 정리합니다. TXT는 UTF-8/BOM, DOCX는 문단과 표, PDF는 텍스트 레이어만 지원합니다. 스캔 이미지 PDF는 OCR을 지원하지 않으며 경고를 반환합니다. 음성 원본은 브라우저 세션의 `File` 참조와 object URL로만 재생/재시도에 사용하며 서버나 Supabase에 영구 저장하지 않습니다. 음성 자동 축어록은 기본 비활성화이고, `AUDIO_TRANSCRIPTION_STUB=1`이면 업로드 음성을 분석하지 않는 시연용 예시 축어록을 반환합니다. 실제 STT는 `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, `AUDIO_TRANSCRIPTION_ENGINE=whisperx`, optional `audio-whisperx` 의존성이 준비된 로컬/서버에서만 동작합니다.
 
 현재 MVP에는 인증이 없습니다. 공개 배포나 공유 데모 환경에는 실제 내담자를 식별할 수 있는 상담 자료, 원본 음성, 심리검사 자료를 업로드하지 마세요.
 
@@ -73,7 +73,7 @@ POST /api/audio/transcribe
 
 `POST /api/materials/documents/extract`는 multipart `file` 필드로 PDF/DOCX/TXT를 받아 텍스트를 추출합니다. 기본 문서 업로드 제한은 20MB이며 `DOCUMENT_UPLOAD_MAX_BYTES`로 조정할 수 있습니다. DOCX는 압축 member 수, 압축 해제 총량, 압축률 제한을 추가로 검사하며 `DOCX_MAX_ARCHIVE_MEMBERS`, `DOCX_MAX_UNCOMPRESSED_BYTES`, `DOCX_MAX_COMPRESSION_RATIO`로 조정할 수 있습니다.
 
-`GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`를 받으며 기본 음성 업로드 제한은 500MB입니다. `AUDIO_UPLOAD_MAX_BYTES`, `ENABLE_AUDIO_TRANSCRIPTION`, `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE` 환경변수로 제어합니다.
+`GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태와 `runtime_mode`(`disabled`, `stub`, `real`)를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`, 선택 `expected_speakers`(기본 2, 범위 1~4)를 받으며 기본 음성 업로드 제한은 500MB입니다. 실제 엔진은 WhisperX 3.8.6의 ASR, 한국어 forced alignment, Community-1 diarization, speaker assignment 공개 API를 사용합니다. 설정은 `.env.example`의 `WHISPERX_*`, `ENABLE_AUDIO_DIARIZATION`, `HF_TOKEN`, `AUDIO_MAX_DURATION_SECONDS`, `AUDIO_MAX_CONCURRENT_JOBS`를 따릅니다.
 
 OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. Supabase 환경변수가 없거나 `ENABLE_RAG=0`, `ENABLE_PERSISTENCE=0`이면 기존처럼 요청 단위 처리만 수행합니다. 따라서 API key와 Supabase credentials 없이도 데모와 smoke test를 실행할 수 있습니다.
 
@@ -169,17 +169,53 @@ Supabase 저장과 lightweight RAG를 켜려면 Supabase SQL editor에서 [docs/
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+RUNTIME_ENVIRONMENT=production
+REMIND_PREVIEW_API_TOKEN=replace-with-preview-only-token
+REMIND_PREVIEW_ACTOR=preview_server_actor
+REMIND_ALLOW_LOCAL_BYPASS=0
 ENABLE_PERSISTENCE=1
 ENABLE_RAG=1
+ENABLE_CASE_MEMORY=1
+ENABLE_DENSE_RETRIEVAL=1
+ENABLE_HYBRID_RETRIEVAL=1
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
+EMBEDDING_CACHE_TTL_SECONDS=300
+EMBEDDING_CACHE_MAX_ENTRIES=256
 SAVE_RAW_INPUT=0
 ```
 
 `POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. `SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 저장하지 않고 sanitized input과 metadata만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
 
-KB seed 예시는 [docs/kb_seed_examples.json](docs/kb_seed_examples.json)에 있습니다. 유료 검사 매뉴얼, 저작권 있는 상담 자료, 실제 내담자 기록은 seed에 넣지 않습니다. Supabase schema를 만든 뒤 demo KB를 넣으려면 repository root에서 다음을 실행합니다.
+배포된 상담 API는 Supabase 사용자 액세스 토큰을 검증합니다. `ENABLE_REAL_USER_AUTH=1`을 활성화하고 프런트엔드에는 publishable key만 제공해야 합니다. `ENABLE_CASE_MEMORY=0`은 안전한 기본값이며, 사용자별 RLS와 보관 정책을 확인한 환경에서만 활성화합니다.
+
+### Supabase pgvector workflow
+
+Shared project ref: `bgjapctiawosgpjcyfuq`
+
+This repo now keeps non-destructive Supabase migrations under
+`supabase/migrations`. The remote project is the source of truth, so pull before
+push whenever Supabase credentials are available.
 
 ```bash
-python scripts/seed_kb_examples.py
+npx supabase login
+npx supabase link --project-ref bgjapctiawosgpjcyfuq
+npx supabase db pull
+npx supabase db push
+```
+
+Do not run `supabase db reset` against the shared project. Review pending
+migrations before applying them, then verify RLS and user ownership with two
+separate test accounts.
+
+Dense retrieval is still opt-in:
+
+```env
+ENABLE_RAG=1
+ENABLE_DENSE_RETRIEVAL=1
+ENABLE_HYBRID_RETRIEVAL=1
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSION=1536
 ```
 
 보안 경계는 [docs/security_checklist.md](docs/security_checklist.md)를 기준으로 확인합니다.
@@ -192,11 +228,15 @@ pnpm install
 pnpm dev
 ```
 
-기본 API 주소는 `http://localhost:8000`입니다. 필요하면 frontend 환경변수로 바꿀 수 있습니다.
+`VITE_API_BASE_URL`을 생략하면 frontend는 same-origin `/api`를 호출합니다. Vite 개발 서버와 로컬 FastAPI를 따로 실행할 때는 아래처럼 backend 주소를 지정합니다.
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=replace-with-publishable-key
 ```
+
+배포 환경에서는 Supabase 이메일 인증을 사용하며, 브라우저에는 publishable key만 제공합니다. 서비스 역할 키는 서버 환경에만 두고 프런트엔드 번들에 포함하지 않습니다.
 
 `pnpm`이 설치되어 있지 않다면 `npm install`과 `npm run dev`를 사용할 수 있습니다. 빌드 검증은 `pnpm build` 또는 `npm run build`로 실행합니다.
 
@@ -218,6 +258,8 @@ Frontend build:
 
 ```bash
 cd frontend
+pnpm verify:material-workflow
+pnpm verify:audio-transcript-workflow
 pnpm build
 ```
 
@@ -237,6 +279,8 @@ curl -F "file=@sample_data/upload_sample.txt;type=text/plain" http://localhost:8
 curl http://localhost:8000/api/audio/capabilities
 ```
 
+H100에서 실제 WhisperX 런타임을 켜는 방법은 [docs/h100_audio_runbook.md](docs/h100_audio_runbook.md)를 따릅니다. 연구용 GPU backend는 공개 인터넷에 노출하지 않고 SSH local port forwarding으로 검증합니다.
+
 ## 문서
 
 - [제품 명세](docs/product_spec.md)
@@ -244,4 +288,6 @@ curl http://localhost:8000/api/audio/capabilities
 - [아키텍처](docs/architecture.md)
 - [스키마](docs/schema.md)
 - [API 계약](docs/api_contract.md)
+- [음성 구성요소 라이선스 및 attribution](docs/THIRD_PARTY_AUDIO_COMPONENTS.md)
+- [H100 음성 STT runbook](docs/h100_audio_runbook.md)
 - [보안 체크리스트](docs/security_checklist.md)

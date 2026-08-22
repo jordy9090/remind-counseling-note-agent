@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from app.core.config import settings
@@ -12,6 +13,7 @@ from app.schemas.note import (
     EvidenceItem,
     EvidenceMappedData,
     EvidenceMappedItem,
+    GeneratedDocumentDraft,
     GroundedItem,
     InputSources,
     RetrievedCaseContextItem,
@@ -29,7 +31,18 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
-from app.services.retrieval import retrieve_case_context, retrieve_document_template, retrieve_privacy_rules
+from app.services.deidentification import deidentify_sources, render_counselor_text
+from app.services.retrieval import (
+    chunks_to_case_context,
+    chunks_to_privacy_rules,
+    chunks_to_template_context,
+    retrieval_query_from_input,
+    retrieve_authoritative_kb_chunks,
+    retrieve_case_context,
+    retrieve_case_memory_chunks,
+    retrieve_document_template,
+    retrieve_privacy_rules,
+)
 
 
 PHONE_RE = re.compile(r"(?:010[-.\s]?\d{4}[-.\s]?\d{4}|\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{4})")
@@ -45,6 +58,16 @@ NEXT_PLAN_RE = re.compile(r"(다음\s*회기|추후|다음에는|검토하기로
 def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     """Detect sensitive candidates and normalize input sources."""
     session_input: SessionInput = state["session_input"]
+    masked_sources, sensitive_candidates = deidentify_sources(
+        {
+            "counselor_memo": session_input.counselor_memo.strip(),
+            "transcript_text": session_input.transcript_text.strip(),
+            "previous_session_summary": session_input.previous_session_summary.strip(),
+            "counseling_goal": session_input.counseling_goal.strip(),
+            "psychological_test_summary": session_input.psychological_test_summary.strip(),
+            "nonverbal_notes": session_input.nonverbal_notes.strip(),
+        }
+    )
     sanitized = SanitizedInput(
         case_id=session_input.case_id,
         client_alias=session_input.client_alias,
@@ -52,15 +75,15 @@ def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
         session_date=session_input.session_date,
         counselor_name=session_input.counselor_name,
         sources=InputSources(
-            counselor_memo=session_input.counselor_memo.strip(),
-            transcript_text=session_input.transcript_text.strip(),
-            previous_session_summary=session_input.previous_session_summary.strip(),
-            counseling_goal=session_input.counseling_goal.strip(),
-            psychological_test_summary=session_input.psychological_test_summary.strip(),
+            counselor_memo=masked_sources["counselor_memo"],
+            transcript_text=masked_sources["transcript_text"],
+            previous_session_summary=masked_sources["previous_session_summary"],
+            counseling_goal=masked_sources["counseling_goal"],
+            psychological_test_summary=masked_sources["psychological_test_summary"],
             key_issue_tags=session_input.key_issue_tags,
-            nonverbal_notes=session_input.nonverbal_notes.strip(),
+            nonverbal_notes=masked_sources["nonverbal_notes"],
         ),
-        sensitive_info_candidates=_detect_sensitive_info(session_input),
+        sensitive_info_candidates=sensitive_candidates,
     )
     return {"sanitized_input": sanitized, "stub": settings.stub_mode}
 
@@ -121,6 +144,150 @@ def retrieve_context(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
+    """Build one retrieval query from sanitized session materials."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    session_input: SessionInput = state["session_input"]
+    report = RetrievalReport(enabled=settings.enable_rag)
+    if not settings.enable_rag:
+        report.notices.append("ENABLE_RAG is false; retrieval skipped.")
+    elif not settings.supabase_configured:
+        report.notices.append("Supabase credentials are missing; retrieval continued with empty context.")
+    if settings.enable_rag and not settings.enable_dense_retrieval:
+        report.notices.append("ENABLE_DENSE_RETRIEVAL is false; using lightweight retrieval only.")
+    return {
+        "retrieval_query": retrieval_query_from_input(session_input.target_document_type, sanitized.sources),
+        "retrieval_report": report,
+    }
+
+
+def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve prior-session context without crossing counselor/case boundaries."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    session_input: SessionInput = state["session_input"]
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    query_text = state.get("retrieval_query") or ""
+    case_context: list[RetrievedCaseContextItem] = []
+    chunks: list[Any] = []
+
+    if not settings.enable_rag:
+        return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
+
+    try:
+        counselor_id = settings.remind_preview_actor
+        if settings.enable_dense_retrieval and counselor_id:
+            chunks = retrieve_case_memory_chunks(
+                query_text=query_text,
+                counselor_id=counselor_id,
+                case_id=sanitized.case_id,
+                max_chunks=5,
+            )
+            case_context = chunks_to_case_context(chunks)
+        elif settings.enable_dense_retrieval:
+            report.notices.append("Dense case-memory retrieval skipped because counselor_id is missing.")
+
+        if not case_context:
+            case_context = retrieve_case_context(sanitized.case_id, max_sessions=3)
+    except Exception as error:
+        report.failures.append(f"case_memory: {error}")
+
+    return {
+        "retrieved_case_context": case_context,
+        "retrieved_case_memory_chunks": chunks,
+        "retrieval_report": report,
+    }
+
+
+def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve template KB and warning-only ethics/privacy/security KB."""
+    session_input: SessionInput = state["session_input"]
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    query_text = state.get("retrieval_query") or ""
+    template_context: RetrievedTemplateContext | None = None
+    privacy_context: list[RetrievedPrivacyRule] = []
+    chunks: list[Any] = []
+
+    if not settings.enable_rag:
+        return {
+            "retrieved_template_context": template_context,
+            "retrieved_privacy_context": privacy_context,
+            "retrieved_authoritative_kb_chunks": chunks,
+            "retrieval_report": report,
+        }
+
+    try:
+        fallback_template = retrieve_document_template(session_input.target_document_type)
+    except Exception as error:
+        report.failures.append(f"document_template: {error}")
+        fallback_template = None
+
+    try:
+        fallback_privacy = retrieve_privacy_rules()
+    except Exception as error:
+        report.failures.append(f"privacy_rules: {error}")
+        fallback_privacy = []
+
+    try:
+        if settings.enable_dense_retrieval:
+            chunks = retrieve_authoritative_kb_chunks(
+                query_text=query_text,
+                target_document_type=session_input.target_document_type,
+                include_warning_rules=True,
+                max_chunks=8,
+            )
+    except Exception as error:
+        report.failures.append(f"authoritative_kb: {error}")
+
+    template_context = chunks_to_template_context(
+        session_input.target_document_type,
+        chunks,
+        fallback=fallback_template,
+    )
+    privacy_context = chunks_to_privacy_rules(chunks, fallback=fallback_privacy)
+
+    return {
+        "retrieved_template_context": template_context,
+        "retrieved_privacy_context": privacy_context,
+        "retrieved_authoritative_kb_chunks": chunks,
+        "retrieval_report": report,
+    }
+
+
+def fuse_and_rerank(state: dict[str, Any]) -> dict[str, Any]:
+    """Finalize retrieval report while preserving the existing API fields."""
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
+    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
+    privacy_context: list[RetrievedPrivacyRule] = state.get("retrieved_privacy_context") or []
+
+    report.case_context_count = len(case_context)
+    report.template_context_found = bool(
+        template_context
+        and (
+            template_context.required_fields
+            or template_context.optional_fields
+            or template_context.counselor_review_fields
+            or template_context.source_refs
+        )
+    )
+    report.privacy_rule_count = len(privacy_context)
+    for chunks in (state.get("retrieved_case_memory_chunks") or [], state.get("retrieved_authoritative_kb_chunks") or []):
+        if not chunks:
+            continue
+        first_chunk = chunks[0]
+        report.embedding_latency_ms += int(getattr(first_chunk, "embedding_latency_ms", 0) or 0)
+        report.rpc_latency_ms += int(getattr(first_chunk, "rpc_latency_ms", 0) or 0)
+        report.retrieval_latency_ms += int(getattr(first_chunk, "total_latency_ms", 0) or 0)
+    if settings.enable_rag:
+        if not case_context:
+            report.notices.append("No prior case-memory context was retrieved.")
+        if template_context is None or not report.template_context_found:
+            report.notices.append("No document-template KB context was retrieved.")
+        if not privacy_context:
+            report.notices.append("No privacy or ethics KB context was retrieved.")
+    return {"retrieval_report": report}
+
+
 def structure_session(state: dict[str, Any]) -> dict[str, Any]:
     """Convert sanitized materials into counseling documentation fields."""
     sanitized: SanitizedInput = state["sanitized_input"]
@@ -138,23 +305,26 @@ def structure_session(state: dict[str, Any]) -> dict[str, Any]:
 def map_evidence(state: dict[str, Any]) -> dict[str, Any]:
     """Flatten structured items and mark review-sensitive evidence types."""
     structured: StructuredCaseData = state["structured_case_data"]
+    sanitized: SanitizedInput = state["sanitized_input"]
+    catalog = _source_catalog(sanitized, state.get("retrieved_case_context") or [])
     mapped_items: list[EvidenceMappedItem] = []
 
-    for field_name, items in structured.model_dump().items():
+    for field_name, items in structured:
         for item in items:
-            evidence_type = item["evidence_type"]
+            item.source_refs = _resolve_source_refs(item.content, item.source_refs, catalog)
+            evidence_type = item.evidence_type
             mapped_items.append(
                 EvidenceMappedItem(
                     field=field_name,
-                    content=item["content"],
+                    content=item.content,
                     evidence_type=evidence_type,
-                    source_refs=item["source_refs"],
+                    source_refs=item.source_refs,
                     requires_review=evidence_type
                     in {"inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based"},
                 )
             )
 
-    return {"evidence_mapped_data": EvidenceMappedData(items=mapped_items)}
+    return {"structured_case_data": structured, "evidence_mapped_data": EvidenceMappedData(items=mapped_items)}
 
 
 def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
@@ -166,9 +336,12 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     session_topic: str = state.get("session_topic") or ""
     case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
     template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    started = time.perf_counter()
     fallback = _mock_summary(sanitized, structured)
     if settings.stub_mode:
-        return {"session_summary_draft": fallback}
+        report.generation_latency_ms += _elapsed_ms(started)
+        return {"session_summary_draft": fallback, "retrieval_report": report}
 
     prompt = _build_summary_prompt(
         sanitized,
@@ -180,7 +353,14 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         template_context,
     )
     summary = get_structured_llm(SessionSummaryDraft).invoke(prompt)
-    return {"session_summary_draft": summary}
+    _normalize_summary_refs(summary, sanitized, case_context)
+    if not re.search(r"(상담자\s*성찰|상담자의\s*(?:내적|정서적)\s*(?:반응|경험)|역전이)", sanitized.sources.counselor_memo):
+        summary.reflection = SummarySection(
+            text="[상담사 확인 필요]", evidence_type="counselor_input",
+            source_refs=[], requires_review=True,
+        )
+    report.generation_latency_ms += _elapsed_ms(started)
+    return {"session_summary_draft": summary, "retrieval_report": report}
 
 
 def verify_output(state: dict[str, Any]) -> dict[str, Any]:
@@ -196,53 +376,141 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
 
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context)
     verification = get_structured_llm(VerificationReport).invoke(prompt)
+    initial: VerificationReport | None = state.get("initial_verification_report")
+    if initial:
+        verification.unsupported_or_risky_claims = _unique_review_claims(
+            [*initial.unsupported_or_risky_claims, *verification.unsupported_or_risky_claims]
+        )
+        verification.weakly_grounded_items = _unique_review_claims(
+            [*initial.weakly_grounded_items, *verification.weakly_grounded_items]
+        )
+    _reconcile_verification_claims(verification, sanitized, state.get("retrieved_case_context") or [])
+    _apply_verification_consistency(summary, verification)
     return {"verification_report": verification}
 
 
-def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
-    """Preview later document transformations from a confirmed session note."""
-    sanitized: SanitizedInput = state["sanitized_input"]
-    summary: SessionSummaryDraft = state["session_summary_draft"]
-    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
-    preview_sections = {
-        "session_summary": summary.session_content.text,
-        "client_main_issue": summary.presenting_problem.text,
-        "next_plan": summary.next_plan.text,
+def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
+    """Mark risky draft sections for counselor review and allow one re-verification pass."""
+    if state.get("revision_attempted"):
+        return {"revision_needs_reverify": False}
+    verification: VerificationReport = state["verification_report"]
+    if not verification.unsupported_or_risky_claims:
+        return {"revision_attempted": False, "revision_needs_reverify": False}
+
+    summary: SessionSummaryDraft = state["session_summary_draft"].model_copy(deep=True)
+    for section in (
+        summary.session_theme,
+        summary.presenting_problem,
+        summary.session_content,
+        summary.counselor_intervention,
+        summary.client_response,
+        summary.reflection,
+        summary.next_plan,
+    ):
+        if section.evidence_type != "direct":
+            section.requires_review = True
+    return {
+        "session_summary_draft": summary,
+        "initial_verification_report": verification.model_copy(deep=True),
+        "revision_attempted": True,
+        "revision_needs_reverify": True,
+        "revision_reason": "Unsupported or risky claims were marked for counselor review.",
     }
-    partially_available_fields: dict[str, str] = {}
-    missing_required_fields = [
-        "내담자 기본 정보",
-        "상담신청경위",
-        "이전 상담 경험",
-        "가족관계",
-        "사례개념화 및 상담방향성",
-        "슈퍼비전 요청사항",
-    ]
 
-    if sanitized.sources.psychological_test_summary:
-        preview_sections["psychological_test_summary"] = sanitized.sources.psychological_test_summary
-        partially_available_fields["심리검사 결과"] = (
-            "입력 요약은 있으나 검사명, 실시일, 세부 척도, 상담적 해석은 상담사 확인 필요"
-        )
-    else:
-        missing_required_fields.append("심리검사 결과")
 
+def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
+    """Assemble complete, evidence-grounded counselor-facing document drafts."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    structured: StructuredCaseData = state["structured_case_data"]
+    summary: SessionSummaryDraft = state["session_summary_draft"].model_copy(deep=True)
+    template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
+    session_input: SessionInput = state["session_input"]
+    client_alias = sanitized.client_alias
+    for section in (
+        summary.session_theme,
+        summary.presenting_problem,
+        summary.session_content,
+        summary.counselor_intervention,
+        summary.client_response,
+        summary.reflection,
+        summary.next_plan,
+    ):
+        section.text = render_counselor_text(section.text, client_alias=client_alias)
+    observations = render_counselor_text(
+        " ".join(item.content for item in structured.nonverbal_observations if item.evidence_type != "needs_review"),
+        client_alias=client_alias,
+    )
+    risk_text, risk_refs = _extract_risk_information(sanitized)
+    risk_text = render_counselor_text(risk_text, client_alias=client_alias)
+    session_sections = {
+        "기본 회기정보": f"사례 ID: {sanitized.case_id}\n회기: {sanitized.session_number}회기\n회기일: {sanitized.session_date or '[상담사 확인 필요]'}\n상담자: {sanitized.counselor_name or '[상담사 확인 필요]'}",
+        "주호소/핵심 문제": summary.presenting_problem.text,
+        "주요 상담내용": summary.session_content.text,
+        "상담자 개입": summary.counselor_intervention.text,
+        "내담자 반응": summary.client_response.text,
+        "관찰사항": observations or "[상담사 확인 필요]",
+        "위험 관련 확인 가능 정보": risk_text,
+        "다음 회기 계획": summary.next_plan.text,
+    }
+    session_refs = {
+        "주호소/핵심 문제": summary.presenting_problem.source_refs,
+        "주요 상담내용": summary.session_content.source_refs,
+        "상담자 개입": summary.counselor_intervention.source_refs,
+        "내담자 반응": summary.client_response.source_refs,
+        "관찰사항": _unique_strings([ref for item in structured.nonverbal_observations for ref in item.source_refs]),
+        "위험 관련 확인 가능 정보": risk_refs,
+        "다음 회기 계획": summary.next_plan.source_refs,
+    }
+    session_note = GeneratedDocumentDraft(
+        document_type="session_note", sections=session_sections, source_refs=session_refs,
+        missing_or_review_fields=[key for key, value in session_sections.items() if value == "[상담사 확인 필요]"],
+    )
+    first_previous = _first_previous_session_text(sanitized.sources.previous_session_summary)
+    termination_sections = {
+        "상담 시작 시 주요 문제": first_previous or "[상담사 확인 필요]",
+        "상담 목표": render_counselor_text(sanitized.sources.counseling_goal, client_alias=client_alias) or "[상담사 확인 필요]",
+        "주요 진행 내용": summary.session_content.text,
+        "관찰된 변화/진전": summary.client_response.text,
+        "남은 어려움": summary.presenting_problem.text,
+        "상담자 개입": summary.counselor_intervention.text,
+        "종결 시 상태": "현재 제공된 자료만으로 종결 여부와 종결 시 상태는 상담사 확인이 필요함.",
+        "추후 계획": summary.next_plan.text,
+    }
+    termination_refs = {
+        "상담 시작 시 주요 문제": ["previous_session_summary"] if first_previous else [],
+        "상담 목표": ["counseling_goal"] if sanitized.sources.counseling_goal else [],
+        "주요 진행 내용": summary.session_content.source_refs,
+        "관찰된 변화/진전": summary.client_response.source_refs,
+        "남은 어려움": summary.presenting_problem.source_refs,
+        "상담자 개입": summary.counselor_intervention.source_refs,
+        "종결 시 상태": [],
+        "추후 계획": summary.next_plan.source_refs,
+    }
+    termination = GeneratedDocumentDraft(
+        document_type="termination_report", sections=termination_sections, source_refs=termination_refs,
+        missing_or_review_fields=["종결 여부", "종결 시 상태"],
+        notice="종결 근거가 없는 진행 중 사례의 검토용 초안입니다. 종결 여부는 상담사가 확인해야 합니다.",
+    )
+    selected = termination if session_input.target_document_type == "termination_report" else session_note
+    missing_required_fields = list(selected.missing_or_review_fields)
     if template_context:
         missing_required_fields = _unique_strings(
             missing_required_fields + template_context.missing_field_checklist
         )
-        for field in template_context.counselor_review_fields:
-            partially_available_fields.setdefault(field, "문서 양식 KB 기준으로 상담사 직접 확인이 필요한 항목")
-
     preview = DocumentTransformPreview(
-        document_type="preview",
+        document_type=selected.document_type,
         available_transforms=["supervision_report", "termination_report"],
-        preview_sections=preview_sections,
-        partially_available_fields=partially_available_fields,
+        preview_sections=selected.sections,
+        partially_available_fields={field: "상담사 직접 확인 필요" for field in selected.missing_or_review_fields},
         missing_required_fields=missing_required_fields,
-        notice="현재 MVP에서는 확정된 회기요약을 기반으로 일부 항목만 미리보기합니다.",
+        notice=selected.notice,
     )
-    return {"document_transform_preview": preview}
+    return {
+        "session_summary_draft": summary,
+        "document_transform_preview": preview,
+        "session_note_draft": session_note,
+        "termination_report_draft": termination,
+    }
 
 
 def _empty_retrieval_state(report: RetrievalReport) -> dict[str, Any]:
@@ -288,7 +556,7 @@ def _mock_structured_case(
     sanitized: SanitizedInput,
     case_context: list[RetrievedCaseContextItem] | None = None,
 ) -> StructuredCaseData:
-    tags = ", ".join(sanitized.sources.key_issue_tags) or "진로 불안과 자기비난 사고"
+    tags = ", ".join(sanitized.sources.key_issue_tags) or "주요 상담 이슈"
     transcript_ref = "transcript_text"
     memo_ref = "counselor_memo"
     prev_ref = "previous_session_summary"
@@ -300,7 +568,7 @@ def _mock_structured_case(
     return StructuredCaseData(
         presenting_problem=[
             EvidenceItem(
-                content="내담자는 진로 불확실성과 취업 준비 과정에서의 불안을 호소함.",
+                content=_first_source_sentence(sanitized.sources.counselor_memo, "주호소는 상담사 확인이 필요함."),
                 evidence_type="direct",
                 source_refs=[transcript_ref, memo_ref],
             )
@@ -321,15 +589,15 @@ def _mock_structured_case(
         ],
         counselor_interventions=[
             EvidenceItem(
-                content="상담자는 내담자의 표현을 구체화하고, 불안과 자기비난 사고를 탐색하도록 질문함.",
+                content=_first_source_sentence(sanitized.sources.counselor_memo, "상담자 개입은 상담사 확인이 필요함."),
                 evidence_type="direct",
                 source_refs=[memo_ref, transcript_ref],
             )
         ],
         client_responses=[
             EvidenceItem(
-                content="내담자는 진로 불확실성과 관련된 불안을 언어화하고 자신의 사고 흐름을 점검함.",
-                evidence_type="inferred",
+                content=_extract_client_utterance(sanitized.sources.transcript_text),
+                evidence_type="direct",
                 source_refs=[transcript_ref],
             )
         ],
@@ -440,14 +708,6 @@ def _mock_verification(
 
 
 def _build_session_content_summary(sanitized: SanitizedInput) -> str:
-    transcript = sanitized.sources.transcript_text
-    if "뒤처" in transcript or "잘못 선택" in transcript:
-        return (
-            "이번 회기에서는 취업 준비 과정에서 나타나는 진로 불안과 자기비난 사고를 다루었다. "
-            "내담자는 주변 친구들의 진로 진행 상황과 자신을 비교하며 뒤처졌다는 느낌을 표현했고, "
-            "선택을 잘못하면 끝이라는 생각이 불안을 키우는 흐름을 보고하였다."
-        )
-
     tags = ", ".join(sanitized.sources.key_issue_tags) or "주요 상담 이슈"
     return (
         f"이번 회기에서는 다음 주제를 다루었다: {tags}. "
@@ -502,9 +762,9 @@ def _extract_next_plan(sanitized: SanitizedInput) -> EvidenceItem:
             )
 
     return EvidenceItem(
-        content="다음 회기에서는 자동사고 기록과 구체적인 행동 계획을 검토함.",
-        evidence_type="inferred",
-        source_refs=["counselor_memo"],
+        content="[상담사 확인 필요]",
+        evidence_type="needs_review",
+        source_refs=[],
     )
 
 
@@ -536,6 +796,171 @@ def _sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+", normalized) if part.strip()]
 
 
+def _first_source_sentence(text: str, fallback: str) -> str:
+    return next(iter(_sentences(text)), fallback)
+
+
+def _extract_risk_information(sanitized: SanitizedInput) -> tuple[str, list[str]]:
+    patterns = re.compile(r"(자살|자해|타해|위험도|급성\s*위험|(?:자신|타인)에게\s*위해|위해를\s*가)")
+    found: list[str] = []
+    refs: list[str] = []
+    for ref, text in (
+        ("counselor_memo", sanitized.sources.counselor_memo),
+        ("psychological_test_summary", sanitized.sources.psychological_test_summary),
+    ):
+        matched = [sentence for sentence in _sentences(text) if patterns.search(sentence)]
+        if matched:
+            found.extend(matched)
+            refs.append(ref)
+    if not found:
+        return "[상담사 확인 필요]", []
+    return " ".join(_unique_strings(found)), refs
+
+
+def _first_previous_session_text(text: str) -> str:
+    match = re.search(r"(?:^|\n)\s*1회기(?:\s*\([^)]*\))?\s*:\s*(.*?)(?=\n\s*2회기(?:\s*\(|\s*:)|$)", text or "", re.DOTALL)
+    return " ".join(match.group(1).split()) if match else ""
+
+
+def _source_catalog(
+    sanitized: SanitizedInput,
+    case_context: list[RetrievedCaseContextItem],
+) -> dict[str, str]:
+    catalog = {
+        "counselor_memo": sanitized.sources.counselor_memo,
+        "transcript_text": sanitized.sources.transcript_text,
+        "previous_session_summary": sanitized.sources.previous_session_summary,
+        "counseling_goal": sanitized.sources.counseling_goal,
+        "psychological_test_summary": sanitized.sources.psychological_test_summary,
+        "key_issue_tags": ", ".join(sanitized.sources.key_issue_tags),
+        "nonverbal_notes": sanitized.sources.nonverbal_notes,
+    }
+    for index, line in enumerate(sanitized.sources.transcript_text.splitlines(), 1):
+        if line.strip():
+            catalog[f"transcript.turn_{index}"] = line.strip()
+    previous_pattern = re.compile(
+        r"(?:^|\n)\s*(\d+)회기(?:\s*\([^)]*\))?\s*:\s*(.*?)(?=\n\s*\d+회기(?:\s*\(|\s*:)|$)",
+        re.DOTALL,
+    )
+    for match in previous_pattern.finditer(sanitized.sources.previous_session_summary):
+        catalog[f"previous_session.{match.group(1)}"] = " ".join(match.group(2).split())
+    for item in case_context:
+        catalog[item.source_ref] = item.summary or json.dumps(item.confirmed_note, ensure_ascii=False)
+        for evidence in item.evidence_items:
+            catalog[evidence.source_ref] = evidence.source_text
+    return {ref: text for ref, text in catalog.items() if text}
+
+
+def _resolve_source_refs(content: str, refs: list[str], catalog: dict[str, str]) -> list[str]:
+    resolved = [ref for ref in refs if ref in catalog]
+    aliases = {
+        "transcript": "transcript_text", "transcript_text": "transcript_text",
+        "memo": "counselor_memo", "counselor_memo": "counselor_memo",
+        "previous_summary": "previous_session_summary", "previous_session_summary": "previous_session_summary",
+        "psychological_test": "psychological_test_summary", "psychological_test_summary": "psychological_test_summary",
+        "nonverbal": "nonverbal_notes", "nonverbal_notes": "nonverbal_notes",
+    }
+    for ref in refs:
+        normalized = aliases.get(ref.lower())
+        if normalized and normalized in catalog:
+            resolved.append(normalized)
+    best = sorted(
+        ((ref, _text_similarity(content, text)) for ref, text in catalog.items()),
+        key=lambda pair: pair[1], reverse=True,
+    )
+    granular = [pair for pair in best if pair[0].startswith(("transcript.turn_", "previous_session."))]
+    if granular and granular[0][1] >= 0.08:
+        resolved.insert(0, granular[0][0])
+    if best and best[0][1] >= 0.08:
+        best_ref = best[0][0]
+        # Prefer a granular transcript/prior-session ref when it carries the claim.
+        if best_ref.startswith(("transcript.turn_", "previous_session.")):
+            resolved.insert(0, best_ref)
+        elif not resolved:
+            resolved.append(best_ref)
+    return _unique_strings(resolved)
+
+
+def _text_similarity(left: str, right: str) -> float:
+    def grams(value: str) -> set[str]:
+        compact = re.sub(r"\s+", "", value or "")
+        return {compact[index:index + 2] for index in range(max(0, len(compact) - 1))}
+    a, b = grams(left), grams(right)
+    return len(a & b) / max(1, len(a))
+
+
+def _normalize_summary_refs(
+    summary: SessionSummaryDraft,
+    sanitized: SanitizedInput,
+    case_context: list[RetrievedCaseContextItem],
+) -> None:
+    catalog = _source_catalog(sanitized, case_context)
+    for section in (
+        summary.session_theme, summary.presenting_problem, summary.session_content,
+        summary.counselor_intervention, summary.client_response, summary.reflection,
+        summary.next_plan,
+    ):
+        section.source_refs = _resolve_source_refs(section.text, section.source_refs, catalog)
+        section.requires_review = section.requires_review or section.evidence_type in {
+            "inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based",
+        }
+
+
+def _unique_review_claims(items: list[ReviewableClaim]) -> list[ReviewableClaim]:
+    seen: set[str] = set()
+    result: list[ReviewableClaim] = []
+    for item in items:
+        key = item.claim.strip()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+
+def _reconcile_verification_claims(
+    verification: VerificationReport,
+    sanitized: SanitizedInput,
+    case_context: list[RetrievedCaseContextItem],
+) -> None:
+    """Keep verifier findings only when the input catalog cannot support them.
+
+    The LLM verifier occasionally labels verbatim counselor input as unsupported
+    despite valid refs in the final draft. This deterministic pass never invents
+    support: it requires measurable overlap with an existing source.
+    """
+    catalog = _source_catalog(sanitized, case_context)
+    remaining: list[ReviewableClaim] = []
+    for item in verification.unsupported_or_risky_claims:
+        refs = _resolve_source_refs(item.claim, [], catalog)
+        supported = [ref for ref in refs if _text_similarity(item.claim, catalog.get(ref, "")) >= 0.08]
+        if supported:
+            verification.grounded_items.append(GroundedItem(claim=item.claim, source_refs=supported))
+        else:
+            remaining.append(item)
+    verification.unsupported_or_risky_claims = remaining
+
+
+def _apply_verification_consistency(
+    summary: SessionSummaryDraft,
+    verification: VerificationReport,
+) -> None:
+    review_claims = [
+        item.claim for item in [
+            *verification.weakly_grounded_items,
+            *verification.unsupported_or_risky_claims,
+        ]
+    ]
+    for section in (
+        summary.session_theme, summary.presenting_problem, summary.session_content,
+        summary.counselor_intervention, summary.client_response, summary.reflection,
+        summary.next_plan,
+    ):
+        if section.evidence_type != "direct" or any(
+            _text_similarity(section.text, claim) >= 0.35 for claim in review_claims
+        ):
+            section.requires_review = True
+
+
 def _ensure_sentence(text: str) -> str:
     stripped = text.strip()
     if not stripped:
@@ -565,17 +990,24 @@ def _build_structure_prompt(
 ) -> str:
     return f"""
 You are generating structured counseling documentation data for Re:mind V1.
-Return only fields allowed by the Pydantic schema.
-Do not diagnose, evaluate risk, or replace counselor judgment.
-If a claim is not directly grounded, mark it as inferred or needs_review.
-Re:mind is not a diagnosis tool, treatment recommendation tool, or counselor evaluation tool.
-
-Retrieved prior-session context is background only. Use it only when it is relevant to the current session.
-Every claim must cite current input source_refs or retrieved prior-session source_refs.
-If a claim depends on prior sessions, set evidence_type to prior_context_based and include the stored source_ref.
-If support is weak, set needs_review or another review-sensitive evidence type.
-
-Document template context can be used only to identify missing fields and counselor-review fields.
+Role: documentation assistant for a counselor, not a clinician and not a supervisor.
+Task: extract and structure only what is supported by allowed sources.
+Language: write every content field in natural Korean; preserve direct Korean client quotations in Korean.
+Output schema: return only fields allowed by the Pydantic schema.
+Source precedence:
+1. current-session counselor-confirmed input
+2. current-session transcript or memo
+3. counselor-confirmed prior-session memory
+4. document-template KB
+5. ethics/privacy/security KB for warnings only
+Required source_refs: every factual claim must cite current input source_refs or retrieved prior-session source_refs.
+Prior-session rule: if a claim depends on prior sessions, set evidence_type to prior_context_based and include the stored source_ref.
+Template rule: document template context can identify missing fields and counselor-review fields only.
+Prohibited actions: diagnosis, psychiatric labels, treatment prescriptions, psychological-test interpretation,
+automatic suicide/self-harm conclusions, counselor scoring, invented client statements, invented nonverbal behavior,
+invented interventions, or unsupported progress claims.
+Uncertainty behavior: if evidence is missing or weak, return needs_review and identify the missing field.
+Failure behavior: prefer a brief needs_review item over a plausible guess.
 
 Sanitized input:
 {_json(sanitized)}
@@ -601,14 +1033,23 @@ def _build_summary_prompt(
     case_context = case_context or []
     return f"""
 Generate an editable Korean counseling session summary draft.
+Role: Korean counseling documentation drafting assistant.
+Task: draft editable text, not final clinical judgment.
 Each section must include evidence_type and source_refs.
-Reflection, case conceptualization, and goal attainment must remain counselor-review areas.
-Do not generate diagnosis, clinical risk scoring, treatment recommendation, psychological test interpretation,
-or counselor performance evaluation.
-Retrieved prior sessions may be used only as traceable background context.
-If a section uses prior-session context, set evidence_type to prior_context_based or mixed and include
-stored_session_note:<session_id> or stored_evidence:<id> in source_refs.
-Do not treat privacy/ethics/template rules as clinical evidence.
+Source precedence:
+1. current-session counselor-confirmed input
+2. current-session transcript or memo
+3. counselor-confirmed prior-session memory
+4. document-template KB
+5. ethics/privacy/security KB for warnings only
+Counselor-review boundaries: reflection, case conceptualization, goal attainment, risk interpretation, and
+psychological-test interpretation must remain counselor-review areas.
+Prohibited actions: diagnosis, clinical risk scoring, treatment recommendation, counselor evaluation,
+invented client statements, invented interventions, invented nonverbal behavior, and unsupported progress claims.
+Prior-session rule: retrieved prior sessions may be used only as traceable background context. If a section uses
+prior-session context, set evidence_type to prior_context_based or mixed and include stored source_refs.
+KB rule: do not treat privacy/ethics/template rules as clinical evidence.
+Uncertainty behavior: if evidence is missing, return needs_review and state the missing field instead of guessing.
 The frontend will display only these requested section ids:
 {_json(requested_section_ids)}
 If requested_section_ids is not empty, rewrite the requested sections as a coherent self-contained draft
@@ -643,12 +1084,16 @@ def _build_verification_prompt(
     privacy_context = privacy_context or []
     return f"""
 Verify the generated counseling note draft.
-Separate grounded items, weakly grounded items, unsupported/risky claims,
+Role: safety and evidence verifier for a counseling documentation draft.
+Task: separate grounded items, weakly grounded items, unsupported/risky claims,
 sensitive information candidates, and counselor-review-required fields.
-Do not make clinical judgments on behalf of the counselor.
-Use retrieved privacy, ethics, and security rules only to flag review items.
-Do not claim legal compliance. Flag sensitive data, consent issues, raw audio storage risk,
-unsupported claims, and counselor-review-needed fields.
+Allowed sources: current input, evidence map, generated draft, and retrieved privacy/ethics/security KB for warnings only.
+Required behavior: every factual generated claim should have valid source_refs. Flag missing source_refs.
+Prohibited actions: do not make clinical judgments, legal-compliance claims, diagnoses, treatment recommendations,
+psychological-test interpretations, or counselor performance evaluations.
+Warning behavior: use retrieved privacy, ethics, and security rules only to flag sensitive data, consent issues,
+raw audio storage risk, access-control risk, unsupported claims, and counselor-review-needed fields.
+Failure behavior: when uncertain, add a reviewable claim instead of approving the claim.
 
 Sanitized input:
 {_json(sanitized)}
@@ -677,3 +1122,7 @@ def _unique_strings(values: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)

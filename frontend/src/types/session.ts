@@ -182,6 +182,10 @@ export interface RetrievalReport {
   case_context_count: number
   template_context_found: boolean
   privacy_rule_count: number
+  embedding_latency_ms: number
+  rpc_latency_ms: number
+  retrieval_latency_ms: number
+  generation_latency_ms: number
   failures: string[]
   notices: string[]
 }
@@ -202,6 +206,8 @@ export interface GenerateNoteResponse {
   session_summary_draft: SessionSummaryDraft
   verification_report: VerificationReport
   document_transform_preview: DocumentTransformPreview
+  session_note_draft?: GeneratedDocumentDraft | null
+  termination_report_draft?: GeneratedDocumentDraft | null
   confirmed_session_note: Record<string, unknown>
   sanitized_input: SanitizedInput
   retrieved_case_context: RetrievedCaseContextItem[]
@@ -210,6 +216,31 @@ export interface GenerateNoteResponse {
   retrieval_report: RetrievalReport
   persistence_report: PersistenceReport
   stub: boolean
+}
+
+export interface GeneratedDocumentDraft {
+  document_type: TargetDocumentType
+  status: 'draft_requires_counselor_confirmation'
+  sections: Record<string, string>
+  source_refs: Record<string, string[]>
+  missing_or_review_fields: string[]
+  notice: string
+}
+
+export interface ConfirmGeneratedNoteRequest {
+  note_id: string
+  confirmed_note: Record<string, unknown>
+  counselor_edited: boolean
+  create_case_memory: boolean
+}
+
+export interface ConfirmGeneratedNoteResponse {
+  note_id: string
+  confirmation_status: 'confirmed' | 'demo_confirmed'
+  confirmed_at: string
+  memory_chunk_count: number
+  memory_embedding_count: number
+  message: string
 }
 
 export type EvidenceSourceType =
@@ -306,6 +337,10 @@ export interface SupervisionContentBlock {
   demoValue: boolean
   reviewStatus: SupervisionReviewStatus
   warnings?: string[]
+  label?: string | null
+  guidance?: string[]
+  evidenceStatus?: 'direct' | 'ai_organized' | 'clinical_review' | 'missing'
+  missingInputs?: string[]
 }
 
 export interface SupervisionReportSection {
@@ -314,6 +349,7 @@ export interface SupervisionReportSection {
   level: 1 | 2 | 3
   contentBlocks: SupervisionContentBlock[]
   status: SupervisionReportStatus
+  guidance?: string[]
 }
 
 export interface SupervisionAiReviewPanel {
@@ -354,7 +390,7 @@ export interface SupervisionReportDraft {
   }
   sections: SupervisionReportSection[]
   aiReview: SupervisionAiReviewPanel
-  evidenceIndex: Record<string, { label: string; text: string }>
+  evidenceIndex: Record<string, { label: string; text: string; sourceType?: string; sessionNumber?: string }>
 }
 
 export interface SupervisionReportRequest {
@@ -366,6 +402,21 @@ export interface SupervisionReportRequest {
   institution?: string
   supervisor?: string
   supervision_date_place?: string
+  maximum_sessions?: number | null
+  session_events?: Array<{
+    session_number?: number | null
+    session_date?: string
+    duration_minutes?: number | null
+    topic?: string
+    attendance_status?: 'completed' | 'cancelled' | 'late' | 'absent' | 'no_show'
+    attendance_reason?: string
+  }>
+  previous_supervisions?: Array<{ supervision_date?: string; feedback?: string }>
+  agreed_counseling_goal?: string
+  clinical_counseling_goal?: string
+  counseling_strategy?: string
+  supervision_request?: string
+  transcript_mode?: 'full' | 'summary'
 }
 
 export type DocumentExportFormat = 'docx' | 'pdf' | 'hwpx'
@@ -387,6 +438,7 @@ export interface DocumentExportContentBlock {
   speaker_turns?: DocumentExportTranscriptTurn[]
   speakerTurns?: DocumentExportTranscriptTurn[]
   warnings?: string[]
+  label?: string | null
 }
 
 export interface DocumentExportSection {
@@ -440,6 +492,15 @@ export interface AudioCapabilitiesResponse {
   upload: AudioCapability
   transcription: AudioCapability
   speaker_diarization: AudioCapability
+  runtime_mode: 'disabled' | 'stub' | 'real'
+}
+
+export interface AudioWord {
+  start?: number | null
+  end?: number | null
+  text: string
+  speaker?: string | null
+  probability?: number | null
 }
 
 export interface AudioSegment {
@@ -447,14 +508,29 @@ export interface AudioSegment {
   start: number
   end: number
   text: string
+  speaker?: string | null
+  pause_before_seconds?: number | null
+  duration_seconds?: number | null
+  speech_rate_wps?: number | null
+  speech_rate_level?: 'slow' | 'typical' | 'fast' | null
+  volume_level?: 'low' | 'typical' | 'high' | null
+  confidence?: number | null
+  words?: AudioWord[]
 }
 
 export interface AudioTranscriptionResponse {
   transcription_id: string
   filename: string
   status: 'completed'
+  runtime_mode: 'stub' | 'real'
+  transcription_engine?: 'whisperx' | 'stub' | null
+  alignment_model?: string | null
+  diarization_model?: string | null
+  alignment_status?: 'completed' | 'fallback' | 'disabled' | null
+  diarization_status: 'completed' | 'fallback' | 'disabled'
   duration_seconds?: number | null
   language?: string | null
+  language_probability?: number | null
   segments: AudioSegment[]
   transcript_text: string
   nonverbal_notes: string
