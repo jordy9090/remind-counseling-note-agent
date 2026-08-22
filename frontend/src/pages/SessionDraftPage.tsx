@@ -38,6 +38,7 @@ import { COUNSELOR_DEMO_FIXTURE } from '../data/counselorDemoFixture'
 import {
   downloadDocumentExport,
   extractDocumentMaterial,
+  generateSupervisionReport,
   getAudioCapabilities,
   transcribeAudio,
 } from '../api/client'
@@ -363,7 +364,7 @@ function buildStaticSupervisionReport(): SupervisionReportDraft {
     reportId: 'static-muspsy-1416-candidate-05',
     caseId: canonicalMuspsyCase.case_id,
     reportType: 'personal_counseling_supervision',
-    title: '개인상담 사례 수퍼비전 보고서 초안',
+    title: '개인상담(공개상담) 사례 수퍼비전 보고서',
     meta: {
       clientAlias: canonicalMuspsyCase.case_id,
       sessionNumber: canonicalMuspsyCase.session_number,
@@ -441,7 +442,7 @@ export default function SessionDraftPage() {
   const isRecomposingDraft = false
   const [draftRecomposeMessage, setDraftRecomposeMessage] = useState<string | null>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
-  const isGeneratingFinalDocument = false
+  const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
   const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null)
   const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(null)
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
@@ -833,7 +834,7 @@ export default function SessionDraftPage() {
     setCurrentScreen('document_transform')
   }
 
-  const openFinalDocument = (documentType: FinalDocumentType = finalDocumentType) => {
+  const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
     setFinalDocumentType(documentType)
     setFinalDocumentError(null)
@@ -841,13 +842,48 @@ export default function SessionDraftPage() {
     setDocumentExportStatus(null)
     if (documentType === 'supervision_report') {
       setFinalDocumentSections([])
-      setSupervisionReportDraft(buildStaticSupervisionReport())
+      setSupervisionReportDraft(null)
+      setIsGeneratingFinalDocument(true)
+      setCurrentScreen('final_document')
+      try {
+        const summarySection = (text: string, sourceRefs: string[] = []) => ({
+          text: text || PLACEHOLDER_TEXT,
+          evidence_type: sourceRefs.length ? ('mixed' as const) : ('needs_review' as const),
+          source_refs: sourceRefs,
+          requires_review: !sourceRefs.length,
+        })
+        const report = await generateSupervisionReport({
+          session_input: { ...form, target_document_type: 'supervision_report', persist: false },
+          session_summary_draft: {
+            session_info: {
+              case_id: form.case_id,
+              client_alias: getClientAlias(form),
+              session_number: form.session_number,
+              session_date: form.session_date,
+              counselor_name: form.counselor_name,
+            },
+            session_theme: summarySection(sessionTopic || result.session_summary, ['counselor_memo']),
+            presenting_problem: summarySection(result.main_issue, ['transcript_text', 'counselor_memo']),
+            session_content: summarySection(result.session_summary, ['transcript_text', 'counselor_memo']),
+            counselor_intervention: summarySection(result.counselor_intervention, ['counselor_memo']),
+            client_response: summarySection(result.client_response, ['transcript_text']),
+            reflection: summarySection(PLACEHOLDER_TEXT),
+            next_plan: summarySection(result.next_plan, ['counselor_memo']),
+          },
+          client_alias: getClientAlias(form),
+          transcript_mode: form.transcript_text.trim() ? 'full' : 'summary',
+        })
+        setSupervisionReportDraft(report)
+      } catch (requestError) {
+        setFinalDocumentError(requestError instanceof Error ? requestError.message : '수퍼비전 보고서 생성에 실패했습니다.')
+      } finally {
+        setIsGeneratingFinalDocument(false)
+      }
     } else {
       setSupervisionReportDraft(null)
       setFinalDocumentSections(buildStaticFinalDocumentSections(documentType))
+      setCurrentScreen('final_document')
     }
-
-    setCurrentScreen('final_document')
   }
 
   const beginEditSupervisionBlock = (block: SupervisionContentBlock) => {
@@ -2046,7 +2082,7 @@ function SupervisionReportWorkspace({
         <div className="text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-700" />
           <p className="mt-4 text-sm font-bold text-slate-900">개인상담 사례 수퍼비전 보고서 초안을 생성 중입니다.</p>
-          <p className="mt-2 text-xs font-semibold text-slate-500">회기요약, 축어록, 상담자 메모의 근거를 연결하고 있습니다.</p>
+          <p className="mt-2 text-xs font-semibold text-slate-500">회기요약, 축어록, 상담자 메모를 정리하고 있습니다.</p>
         </div>
       </div>
     )
@@ -2072,57 +2108,43 @@ function SupervisionReportWorkspace({
   const editableSections = report.sections.filter((section) => section.level !== 1)
 
   return (
-    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
-      <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-normal">{report.title}</h1>
-            <p className="mt-1.5 text-xs font-bold text-blue-50">
-              내담자: {report.meta.clientAlias || PLACEHOLDER_TEXT} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="inline-flex h-8 items-center gap-2 rounded-[5px] bg-white px-5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
-          >
-            <Edit3 className="h-4 w-4" />
-            수정하기
-          </button>
+    <div className="overflow-x-auto rounded-[8px] bg-slate-200/70 px-3 py-6 sm:px-6">
+      <section className="mx-auto min-h-[1120px] w-full max-w-[794px] bg-white px-5 py-7 text-slate-950 shadow-[0_10px_35px_rgba(15,23,42,0.16)] sm:px-10 sm:py-10">
+        <div className="mb-3 text-[11px] font-semibold text-slate-500">
+          <span>내담자: {cleanSupervisionText(report.meta.clientAlias)} · {report.meta.sessionNumber}회기 · {formatCompactDate(report.meta.reportDate)}</span>
         </div>
-      </div>
+        <h1 className="border-2 border-slate-900 px-3 py-4 text-center text-xl font-extrabold tracking-tight sm:text-2xl">{report.title}</h1>
 
-      <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
-        {[
-          ['상담자', report.meta.counselorName],
-          ['소속 상담기관', report.meta.institution],
-          ['수퍼바이저', report.meta.supervisor],
-          ['수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-[8px] bg-slate-50 px-3 py-2">
-            <p className="text-xs font-bold text-slate-500">{label}</p>
-            <p className="mt-1 text-sm font-bold text-slate-950">{value || PLACEHOLDER_TEXT}</p>
-          </div>
-        ))}
-      </div>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[620px] border-collapse text-[12px] sm:text-[13px]">
+            <tbody>
+              {[
+                ['상담자', report.meta.counselorName, '소속 상담기관', report.meta.institution],
+                ['수퍼바이저', report.meta.supervisor, '수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
+              ].map((row) => (
+                <tr key={row[0]}>
+                  {row.map((value, index) => index % 2 === 0 ? (
+                    <th key={`${row[0]}-${index}`} className="w-[18%] border border-slate-500 bg-slate-100 px-2 py-2 text-left font-bold">{value}</th>
+                  ) : (
+                    <td key={`${row[0]}-${index}`} className="w-[32%] border border-slate-500 px-2 py-2 font-semibold">{cleanSupervisionText(value)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      <div className="px-4 pb-3">
-        <p className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-slate-600">
-          <Info className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-          하이라이트된 문장은 AI가 생성한 문장입니다.
-        </p>
-      </div>
-
-      <div className="border-y border-slate-100 bg-slate-50/70 px-4 py-3">
+      <div className="mt-4 border-y border-slate-200 py-2">
         <div className="flex flex-wrap gap-2">
           {tocSections.map((section) => (
-            <span key={section.id} className="rounded-full border border-blue-100 bg-white px-3 py-1 text-xs font-bold text-blue-700">
+            <span key={section.id} className="text-[11px] font-bold text-slate-600">
               {section.title}
             </span>
           ))}
         </div>
       </div>
 
-      <div className="px-4 pb-5">
+      <div className="pb-5">
         {report.sections.map((section) => (
           <SupervisionReportSectionView
             key={section.id}
@@ -2141,7 +2163,8 @@ function SupervisionReportWorkspace({
           <p className="py-10 text-center text-sm font-semibold text-slate-500">표시할 보고서 섹션이 없습니다.</p>
         )}
       </div>
-    </section>
+      </section>
+    </div>
   )
 }
 
@@ -2168,23 +2191,24 @@ function SupervisionReportSectionView({
 }) {
   if (section.level === 1) {
     return (
-      <section className="border-b border-[#c7d0df] py-5">
-        <h2 className="text-lg font-extrabold text-slate-950">{section.title}</h2>
+      <section className="pb-2 pt-8 first:pt-6">
+        <h2 className="border-b-2 border-slate-900 pb-2 text-lg font-extrabold text-slate-950">{section.title}</h2>
       </section>
     )
   }
 
-  const SectionIcon = getFinalDocumentSectionIcon(section.title)
-
   return (
-    <section className="border-b border-[#c7d0df] py-5 last:border-b-0">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-1.5 text-base font-bold text-blue-700">
-          <SectionIcon className="h-4 w-4 shrink-0" />
-          {section.title}
-        </h2>
-        <SupervisionStatusBadge status={section.status} />
-      </div>
+    <section className="py-4">
+      <h3 className="text-[15px] font-extrabold text-slate-950">{section.title}</h3>
+
+      {Boolean(section.guidance?.length) && (
+        <details className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+          <summary className="cursor-pointer font-bold">원본 양식 작성 가이드</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            {section.guidance?.map((guide) => <li key={guide}>{guide}</li>)}
+          </ul>
+        </details>
+      )}
 
       <div className="mt-3 space-y-3">
         {section.contentBlocks.map((block) => (
@@ -2228,21 +2252,10 @@ function SupervisionContentBlockView({
   onToggleEvidence: () => void
 }) {
   return (
-    <div className="relative rounded-[8px] border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        <SupervisionBlockChip label="초안" tone="slate" />
-        {block.aiGenerated && <SupervisionBlockChip label="AI 생성" tone="blue" />}
-        {(block.reviewStatus === 'needs_human_input' || Boolean(block.warnings?.length)) && (
-          <SupervisionBlockChip label="확인 필요" tone="rose" />
-        )}
-        {block.reviewStatus === 'edited' && <SupervisionBlockChip label="수정됨" tone="amber" />}
-        {block.demoValue && <SupervisionBlockChip label="데모값" tone="amber" />}
-        {Boolean(block.evidenceIds.length) && (
-          <button type="button" onClick={onToggleEvidence} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-            근거 확인
-          </button>
-        )}
-      </div>
+    <div className="relative border-l-2 border-slate-200 py-2 pl-3">
+      {block.label && <div className="mb-2 flex flex-wrap gap-1.5">
+        {block.label && <span className="mr-1 text-[12px] font-extrabold text-slate-800">{block.label}</span>}
+      </div>}
 
       {editing ? (
         <textarea
@@ -2267,34 +2280,6 @@ function SupervisionContentBlockView({
         </button>
       )}
 
-      {Boolean(block.warnings?.length) && (
-        <ul className="mt-2 space-y-1 text-[11px] font-semibold leading-4 text-amber-700">
-          {block.warnings?.map((warning) => <li key={warning}>· {warning}</li>)}
-        </ul>
-      )}
-
-      {evidenceOpen && (
-        <div className="absolute right-3 top-9 z-20 max-h-[240px] w-[260px] overflow-auto rounded-[8px] border border-slate-100 bg-white p-3 text-left shadow-[0_14px_32px_rgba(15,23,42,0.18)]">
-          <p className="text-xs font-extrabold text-slate-950">연결 근거</p>
-          {block.evidenceIds.length ? (
-            <div className="mt-2 space-y-2">
-              {block.evidenceIds.map((evidenceId) => {
-                const evidence = evidenceIndex[evidenceId]
-                return (
-                  <div key={evidenceId} className="rounded-md bg-slate-50 p-2">
-                    <p className="text-[10px] font-bold text-blue-700">{evidence?.label || evidenceId}</p>
-                    <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-700">
-                      {evidence?.text || evidenceId}
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="mt-2 text-[11px] font-semibold text-slate-500">연결된 근거가 없어 상담사 확인이 필요합니다.</p>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -2303,12 +2288,12 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   if (block.type === 'table' && block.rows?.length) {
     const headers = Object.keys(block.rows[0])
     return (
-      <div className="overflow-hidden rounded-[7px] border border-slate-200">
-        <table className="w-full border-collapse text-left text-[12px] font-semibold">
-          <thead className="bg-slate-50 text-slate-500">
+      <div className="overflow-x-auto border border-slate-400">
+        <table className="w-full min-w-[680px] border-collapse text-left text-[12px] font-semibold">
+          <thead className="bg-slate-100 text-slate-800">
             <tr>
               {headers.map((header) => (
-                <th key={header} className="border-b border-slate-200 px-2 py-2">
+                <th key={header} className="border border-slate-400 px-2 py-2">
                   {header}
                 </th>
               ))}
@@ -2316,10 +2301,10 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
           </thead>
           <tbody className="text-slate-900">
             {block.rows.map((row, index) => (
-              <tr key={`${block.id}-${index}`} className="border-b border-slate-100 last:border-b-0">
+              <tr key={`${block.id}-${index}`}>
                 {headers.map((header) => (
-                  <td key={header} className="px-2 py-2 align-top">
-                    {row[header]}
+                  <td key={header} className="border border-slate-300 px-2 py-2 align-top">
+                    {cleanSupervisionText(row[header])}
                   </td>
                 ))}
               </tr>
@@ -2333,10 +2318,10 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   if (block.type === 'transcript' && block.speakerTurns?.length) {
     return (
       <div className="space-y-2">
-        {block.speakerTurns.map((turn) => (
-          <div key={turn.turnId} className="grid gap-2 rounded-md bg-slate-50 px-3 py-2 text-[13px] font-semibold leading-5 sm:grid-cols-[52px_minmax(0,1fr)]">
-            <span className="text-blue-700">{turn.speaker === 'client' ? '내담자' : '상담자'}</span>
-            <span className="text-slate-900">{turn.text}</span>
+        {block.speakerTurns.map((turn, index) => (
+          <div key={turn.turnId} className="grid gap-2 border-b border-slate-200 px-2 py-2 text-[13px] font-semibold leading-5 last:border-b-0 sm:grid-cols-[88px_minmax(0,1fr)]">
+            <span className="text-slate-800">{index + 1}. {turn.speaker === 'client' ? '내담자' : '상담자'}</span>
+            <span className="text-slate-900">{turn.text}{turn.silenceSeconds != null ? ` (침묵 ${turn.silenceSeconds}초)` : ''}</span>
           </div>
         ))}
       </div>
@@ -2345,15 +2330,15 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
 
   if (block.type === 'reflection_box') {
     return (
-      <div className="rounded-[8px] border border-blue-100 bg-blue-50/70 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
-        {block.text || PLACEHOLDER_TEXT}
+      <div className="border border-slate-500 bg-slate-50 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
+        {cleanSupervisionText(block.text)}
       </div>
     )
   }
 
   return (
-    <p className={`whitespace-pre-wrap text-[13px] font-semibold leading-6 ${block.type === 'placeholder' ? 'text-rose-700' : 'text-slate-900'}`}>
-      {block.text || PLACEHOLDER_TEXT}
+    <p className="min-h-6 whitespace-pre-wrap text-[13px] font-semibold leading-6 text-slate-900">
+      {cleanSupervisionText(block.text)}
     </p>
   )
 }
@@ -2386,13 +2371,7 @@ function SupervisionReviewPanel({
   return (
     <aside className="review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
       <div>
-        <div className="flex items-center gap-2">
-          <Workflow className="h-4 w-4 text-blue-700" />
-          <p className="text-lg font-extrabold text-slate-950">AI 검토</p>
-        </div>
-        <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
-          AI가 문서 검토 후 보완이 필요한 항목을 확인했습니다.
-        </p>
+        <p className="text-lg font-extrabold text-slate-950">문서 작업</p>
         <button
           type="button"
           onClick={onBack}
@@ -2402,29 +2381,6 @@ function SupervisionReviewPanel({
           이전 단계
         </button>
       </div>
-
-      <SupervisionReviewGroup
-        title="양식 충족도"
-        items={aiReview.completionChecklist.map((item) => `${reviewStatusSymbol[item.status]} ${item.label}${item.reason ? ` · ${item.reason}` : ''}`)}
-      />
-      <SupervisionReviewGroup title="상담사 확인 필요" items={aiReview.needsHumanReview.map((item) => item.message)} />
-      <SupervisionReviewGroup title="데모 입력값" items={aiReview.demoInputs} />
-      <SupervisionReviewGroup title="누락된 내용" items={aiReview.missingFields} />
-      <SupervisionReviewGroup
-        title="근거 부족 문장"
-        items={aiReview.unsupportedClaims.map((item) => `${item.claim} → ${item.reason}`)}
-        emptyLabel="근거 부족 문장 없음"
-      />
-      <SupervisionReviewGroup title="수퍼비전 질문 후보" items={aiReview.suggestedSupervisionQuestions} numbered />
-      <section className="mt-4">
-        <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
-          <Info className="h-3.5 w-3.5" />
-          주의 문구
-        </h3>
-        <p className="mt-2 rounded-[8px] border border-slate-200 bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-700">
-          {aiReview.caution}
-        </p>
-      </section>
 
       <div className="mt-auto space-y-3 pt-8">
         {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
@@ -3845,14 +3801,19 @@ function buildFinalDocumentSections(
 function supervisionBlockToEditableText(block: SupervisionContentBlock): string {
   if (block.type === 'table' && block.rows?.length) {
     const headers = Object.keys(block.rows[0])
-    return [headers.join('\t'), ...block.rows.map((row) => headers.map((header) => row[header] || '').join('\t'))].join('\n')
+    return [headers.join('\t'), ...block.rows.map((row) => headers.map((header) => cleanSupervisionText(row[header])).join('\t'))].join('\n')
   }
   if (block.type === 'transcript' && block.speakerTurns?.length) {
     return block.speakerTurns
       .map((turn) => `${turn.speaker === 'client' ? '내담자' : '상담자'}: ${turn.text}`)
       .join('\n')
   }
-  return block.text || ''
+  return cleanSupervisionText(block.text)
+}
+
+function cleanSupervisionText(value: string | null | undefined): string {
+  const text = value || ''
+  return text.trim() === PLACEHOLDER_TEXT ? '' : text
 }
 
 function updateSupervisionBlockFromText(block: SupervisionContentBlock, text: string): SupervisionContentBlock {
@@ -4029,6 +3990,7 @@ function buildSupervisionExportSections(report: SupervisionReportDraft): Documen
             silence_seconds: turn.silenceSeconds ?? null,
           })),
           warnings: block.warnings || [],
+          label: block.label || null,
         }))
 
       return {

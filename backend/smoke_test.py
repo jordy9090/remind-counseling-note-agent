@@ -1520,10 +1520,13 @@ def main() -> None:
         supervision_response = client.post("/api/notes/supervision-report", json=supervision_payload, headers=preview_headers)
         assert supervision_response.status_code == 200, supervision_response.text
         supervision = supervision_response.json()
-        assert supervision["title"] == "개인상담 사례 수퍼비전 보고서 초안"
+        assert supervision["title"] == "개인상담(공개상담) 사례 수퍼비전 보고서"
         assert supervision["reportType"] == "personal_counseling_supervision"
         assert supervision["sections"]
-        assert any(section["title"] == "C-1. 회기 진행 요약" for section in supervision["sections"])
+        assert [section["id"] for section in supervision["sections"]] == [
+            "A", "A-1", "A-2", "A-3", "A-4", "A-5", "A-6", "A-7", "A-8",
+            "B", "B-1", "B-2", "B-3", "C", "C-1", "C-2",
+        ]
         assert supervision["meta"]["institution"] == "[상담사 확인 필요]"
         assert supervision["meta"]["supervisor"] == "[상담사 확인 필요]"
         assert supervision["aiReview"]["completionChecklist"]

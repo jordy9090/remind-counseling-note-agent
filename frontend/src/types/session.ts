@@ -337,6 +337,10 @@ export interface SupervisionContentBlock {
   demoValue: boolean
   reviewStatus: SupervisionReviewStatus
   warnings?: string[]
+  label?: string | null
+  guidance?: string[]
+  evidenceStatus?: 'direct' | 'ai_organized' | 'clinical_review' | 'missing'
+  missingInputs?: string[]
 }
 
 export interface SupervisionReportSection {
@@ -345,6 +349,7 @@ export interface SupervisionReportSection {
   level: 1 | 2 | 3
   contentBlocks: SupervisionContentBlock[]
   status: SupervisionReportStatus
+  guidance?: string[]
 }
 
 export interface SupervisionAiReviewPanel {
@@ -385,7 +390,7 @@ export interface SupervisionReportDraft {
   }
   sections: SupervisionReportSection[]
   aiReview: SupervisionAiReviewPanel
-  evidenceIndex: Record<string, { label: string; text: string }>
+  evidenceIndex: Record<string, { label: string; text: string; sourceType?: string; sessionNumber?: string }>
 }
 
 export interface SupervisionReportRequest {
@@ -397,6 +402,21 @@ export interface SupervisionReportRequest {
   institution?: string
   supervisor?: string
   supervision_date_place?: string
+  maximum_sessions?: number | null
+  session_events?: Array<{
+    session_number?: number | null
+    session_date?: string
+    duration_minutes?: number | null
+    topic?: string
+    attendance_status?: 'completed' | 'cancelled' | 'late' | 'absent' | 'no_show'
+    attendance_reason?: string
+  }>
+  previous_supervisions?: Array<{ supervision_date?: string; feedback?: string }>
+  agreed_counseling_goal?: string
+  clinical_counseling_goal?: string
+  counseling_strategy?: string
+  supervision_request?: string
+  transcript_mode?: 'full' | 'summary'
 }
 
 export type DocumentExportFormat = 'docx' | 'pdf' | 'hwpx'
@@ -418,6 +438,7 @@ export interface DocumentExportContentBlock {
   speaker_turns?: DocumentExportTranscriptTurn[]
   speakerTurns?: DocumentExportTranscriptTurn[]
   warnings?: string[]
+  label?: string | null
 }
 
 export interface DocumentExportSection {
