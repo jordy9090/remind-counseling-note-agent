@@ -20,3 +20,26 @@ export async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession()
   return data.session?.access_token || null
 }
+
+export type AvailableOAuthProviders = {
+  google: boolean
+  kakao: boolean
+}
+
+export async function getAvailableOAuthProviders(): Promise<AvailableOAuthProviders> {
+  if (!isAuthConfigured) return { google: false, kakao: false }
+
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/settings`, {
+      headers: { apikey: supabasePublishableKey },
+    })
+    if (!response.ok) return { google: false, kakao: false }
+    const settings = await response.json() as { external?: Record<string, boolean> }
+    return {
+      google: settings.external?.google === true,
+      kakao: settings.external?.kakao === true,
+    }
+  } catch {
+    return { google: false, kakao: false }
+  }
+}
