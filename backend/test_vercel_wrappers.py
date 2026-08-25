@@ -24,6 +24,7 @@ from api.notes.generate import app as generate_app
 from api.notes.recompose import app as recompose_app
 supervision_app = importlib.import_module("api.notes.supervision-report").app
 from api.notes.drafts import app as drafts_app
+from api.notes.draft import app as draft_detail_app
 from api.notes.confirm import app as confirm_app
 from api.documents.export import app as export_app
 from api.documents.capabilities import app as capabilities_app
@@ -302,6 +303,38 @@ class TestVercelWrappers(unittest.TestCase):
 
         response = client.get("/", headers={"X-Remind-Preview-Token": "secret-test-token"})
         self.assertEqual(response.status_code, 200)
+
+    @unittest.mock.patch("api.notes.draft.get_temporary_draft")
+    def test_draft_detail_endpoint_preserves_actor_scope(self, mock_get_draft):
+        mock_get_draft.return_value = {
+            "draft_id": "draft_test1234",
+            "case_id": "CASE-SYNTHETIC-001",
+            "session_number": 1,
+            "saved_at": "2026-08-26T00:00:00+00:00",
+        }
+        client = TestClient(draft_detail_app)
+
+        self.assertEqual(client.get("/", params={"draft_id": "draft_test1234"}).status_code, 401)
+        response = client.get(
+            "/",
+            params={"draft_id": "draft_test1234"},
+            headers={"X-Remind-Preview-Token": "secret-test-token"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_get_draft.assert_called_once_with("draft_test1234", actor="preview_server_actor")
+
+    def test_vercel_rewrite_routes_draft_detail_to_function(self):
+        import json
+
+        config = json.loads((ROOT_DIR / "vercel.json").read_text(encoding="utf-8"))
+        self.assertIn(
+            {
+                "source": "/api/notes/drafts/:draft_id",
+                "destination": "/api/notes/draft?draft_id=:draft_id",
+            },
+            config["rewrites"],
+        )
 
     def test_draft_database_keys_are_scoped_per_user(self):
         from app.services.supabase_store import _scoped_draft_id
