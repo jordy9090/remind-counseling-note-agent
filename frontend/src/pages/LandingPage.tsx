@@ -19,7 +19,7 @@ function getViewportSize() {
 
 export default function LandingPage({ onLogin }: LandingPageProps) {
   const [viewport, setViewport] = useState(getViewportSize)
-  const scale = Math.min(viewport.width / BASE_WIDTH, viewport.height / BASE_HEIGHT)
+  const scale = Math.min(viewport.width / BASE_WIDTH, viewport.height / BASE_HEIGHT, 1)
   const headerHeight = BASE_HEADER_HEIGHT * scale
   const s = (value: number) => value * scale
 
@@ -44,7 +44,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           src="/remind-logo.png"
           alt="Re:mind"
           className="object-contain"
-          style={{ height: s(19), width: s(96) }}
+          style={{ width: s(96) }}
         />
         <div className="flex items-center" style={{ gap: s(22) }}>
           <button
@@ -54,6 +54,14 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             style={{ fontSize: s(10) }}
           >
             로그인
+          </button>
+          <button
+            type="button"
+            onClick={onLogin}
+            className="rounded-lg border border-slate-200 bg-white font-semibold text-slate-600 transition-colors hover:border-blue-200 hover:text-blue-600"
+            style={{ fontSize: s(10), padding: `${s(8)}px ${s(13)}px` }}
+          >
+            무료로 시작하기
           </button>
         </div>
       </header>
@@ -75,7 +83,10 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           style={{ bottom: s(-95), height: s(190), right: s(33), width: s(190) }}
         />
 
-        <div className="absolute" style={{ height: s(599), left: 0, top: 0, width: s(988) }}>
+        <div
+          className="absolute left-1/2 -translate-x-1/2"
+          style={{ height: s(599), top: 0, width: s(988) }}
+        >
           <div className="absolute" style={{ left: s(72), top: s(101) }}>
             <h1
               className="whitespace-pre-line font-extrabold tracking-[-0.02em] text-slate-950"
@@ -87,7 +98,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
               src="/remind-logo.png"
               alt="Re:mind"
               className="object-contain"
-              style={{ height: s(56), marginTop: s(20), width: s(282) }}
+              style={{ marginTop: s(14), width: s(282) }}
             />
             <p
               className="whitespace-pre-line font-medium text-slate-600"
@@ -95,6 +106,14 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             >
               {'상담사의 기록 시간을 줄이고 문서의 완성도는\n높여 상담에 더 집중할 수 있도록 돕습니다'}
             </p>
+            <button
+              type="button"
+              onClick={onLogin}
+              className="rounded-md bg-blue-600 font-extrabold text-white shadow-[0_8px_16px_rgba(37,99,235,0.22)] transition-colors hover:bg-blue-700"
+              style={{ fontSize: s(18), marginTop: s(32), padding: `${s(14)}px ${s(42)}px` }}
+            >
+              무료로 시작하기
+            </button>
           </div>
 
           <div
