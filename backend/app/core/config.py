@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     use_stub: bool = False
     runtime_environment: str = "production"
 
-    # Preview API guard. Until production Supabase Auth mapping exists, every
-    # /api/notes route must be protected by this backend-only token.
+    # API guard. Production uses Supabase Auth; the preview token is an
+    # explicitly enabled legacy path for synthetic-data demos only.
     remind_preview_api_token: Optional[str] = None
     remind_preview_actor: str = "preview_server_actor"
     remind_allow_local_bypass: bool = False

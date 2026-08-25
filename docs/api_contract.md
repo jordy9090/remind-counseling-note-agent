@@ -47,7 +47,7 @@ Accepted input aliases:
 - `document_type` is also accepted for `target_document_type`.
 - `persist=true` stores the generated note only when `ENABLE_PERSISTENCE=1` and Supabase credentials are configured.
 - `SAVE_RAW_INPUT=0` is the default; raw counselor memo/transcript payloads are not stored unless `SAVE_RAW_INPUT=1`.
-- `/api/notes/*` endpoints require `X-Remind-Preview-Token` until production Supabase Auth mapping exists.
+- With `ENABLE_REAL_USER_AUTH=1`, protected endpoints require `Authorization: Bearer <Supabase access token>`. The `X-Remind-Preview-Token` path is available only when `ALLOW_LEGACY_PREVIEW_TOKEN=1` is explicitly enabled for a synthetic-data demo.
 - `POST /api/notes/confirm` accepts only `note_id`, `confirmed_note`, `counselor_edited`, and `create_case_memory`; case/session/counselor identity is derived from stored rows and the server actor.
 - `ENABLE_CASE_MEMORY=0` is the default. Confirmed note memory chunks are written only when persistence and case-memory indexing are explicitly enabled.
 
@@ -165,6 +165,22 @@ If `draft_id` is included, the backend updates that temporary draft. If it is om
   "message": "임시저장되었습니다."
 }
 ```
+
+## Generate Supervision Report
+
+```text
+POST /api/notes/supervision-report
+```
+
+Generates the Korean Counseling Psychological Association personal-counseling supervision form
+(A-1 through C-2). The request accepts the current `session_input`, an optional generated session
+summary, session history, previous human-supervision feedback, goals, strategy, and the counselor's
+supervision question.
+
+The response contains structured sections and content blocks, an evidence index, missing inputs,
+review status, and an AI review panel. Theory-specific case formulation and autonomous supervision
+advice are outside the current contract. The frontend currently passes the current session and generated
+summary; the remaining request fields are supported by the backend but still need dedicated UI inputs.
 
 ## Export Final Document
 

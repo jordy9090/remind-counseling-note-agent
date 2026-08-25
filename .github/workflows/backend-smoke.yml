@@ -1,4 +1,4 @@
-name: Backend smoke test
+name: Product CI
 
 on:
   push:
@@ -33,6 +33,10 @@ jobs:
       - name: Run backend smoke test
         working-directory: backend
         run: uv run python smoke_test.py
+
+      - name: Run serverless wrapper regressions
+        working-directory: backend
+        run: uv run python test_vercel_wrappers.py
 
   backend-pdf-export:
     runs-on: ubuntu-latest
@@ -74,4 +78,38 @@ jobs:
 
       - name: Run PDF-required backend smoke test
         working-directory: backend
-        run: uv run python smoke_test.py
+        run: |
+          uv run python smoke_test.py
+          uv run python test_supervision_form.py
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify frontend workflows
+        working-directory: frontend
+        run: |
+          pnpm verify:material-workflow
+          pnpm verify:audio-transcript-workflow
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm build
