@@ -30,8 +30,8 @@ def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> T
     data["saved_at"] = saved_at
     record = TemporaryDraftRecord(**data)
 
-    if settings.supabase_enabled:
-        supabase_store.upsert_draft_row(record, user_id=actor)
+    if supabase_store.configured_for(actor):
+        supabase_store.upsert_draft_row(record, actor=actor)
     else:
         _write_to_disk(record, actor=actor)
 
@@ -47,8 +47,8 @@ def get_temporary_draft(draft_id: str, *, actor: str) -> TemporaryDraftRecord | 
     """Load a temporary draft by id."""
     if not _is_safe_draft_id(draft_id):
         return None
-    if settings.supabase_enabled:
-        return supabase_store.get_draft_row(draft_id, user_id=actor)
+    if supabase_store.configured_for(actor):
+        return supabase_store.get_draft_row(draft_id, actor=actor)
     path = _draft_path(draft_id, actor=actor)
     if not path.exists():
         return None
@@ -57,8 +57,8 @@ def get_temporary_draft(draft_id: str, *, actor: str) -> TemporaryDraftRecord | 
 
 def list_temporary_drafts(*, actor: str, case_id: str | None = None) -> list[TemporaryDraftRecord]:
     """List saved temporary drafts, newest first."""
-    if settings.supabase_enabled:
-        return supabase_store.list_draft_rows(user_id=actor, case_id=case_id)
+    if supabase_store.configured_for(actor):
+        return supabase_store.list_draft_rows(actor=actor, case_id=case_id)
     records: list[TemporaryDraftRecord] = []
     for path in _draft_dir(actor).glob("*.json"):
         try:

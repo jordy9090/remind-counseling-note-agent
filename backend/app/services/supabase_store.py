@@ -1,31 +1,87 @@
-"""Supabase(PostgREST) 기반 상담 내용(임시저장 초안) 영구 저장소.
+"""RLS-aware Supabase storage for temporary counseling drafts.
 
-`draft_store` 가 Supabase 설정이 켜져 있을 때 위임해서 사용한다.
-전체 초안 레코드는 `data` jsonb 컬럼에 그대로 저장하고, 조회/정렬용으로
-draft_id / case_id / session_number / saved_at 컬럼을 함께 둔다.
+Production requests use the authenticated user's verified JWT with the public
+Supabase key. A service-role key is only an optional server-side fallback for
+legacy/local workflows and is never required by the browser-facing deployment.
 """
 from __future__ import annotations
 
 import hashlib
-from functools import lru_cache
+import json
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from app.core.config import settings
 from app.schemas.note import TemporaryDraftRecord
 
 
-@lru_cache(maxsize=1)
-def _client():
-    """Supabase 클라이언트(서비스 키 사용). 최초 호출 시에만 생성한다."""
-    from supabase import create_client
-
-    return create_client(settings.supabase_url, settings.effective_supabase_key)
+class DraftStorageError(RuntimeError):
+    """Raised when the user-scoped Supabase draft request fails."""
 
 
-def _table():
-    return _client().table(settings.supabase_drafts_table)
+def configured_for(actor: str) -> bool:
+    """Return whether this request has credentials suitable for persistence."""
+    return bool(
+        settings.supabase_url
+        and (
+            (getattr(actor, "access_token", "") and _public_key())
+            or settings.effective_supabase_key
+        )
+    )
 
 
-def _to_row(record: TemporaryDraftRecord, *, user_id: str) -> dict:
+def _public_key() -> str | None:
+    return settings.supabase_publishable_key or settings.supabase_anon_key
+
+
+def _credentials(actor: str) -> tuple[str, str]:
+    user_token = str(getattr(actor, "access_token", "") or "").strip()
+    if user_token and _public_key():
+        return str(_public_key()), user_token
+    service_key = str(settings.effective_supabase_key or "").strip()
+    if service_key:
+        return service_key, service_key
+    raise DraftStorageError("Supabase draft storage credentials are not configured.")
+
+
+def _request(
+    method: str,
+    actor: str,
+    *,
+    query: dict[str, str] | None = None,
+    body: dict[str, Any] | None = None,
+    prefer: str | None = None,
+) -> Any:
+    api_key, bearer = _credentials(actor)
+    query_string = f"?{urlencode(query)}" if query else ""
+    url = f"{settings.normalized_supabase_url}/rest/v1/{settings.supabase_drafts_table}{query_string}"
+    headers = {
+        "apikey": api_key,
+        "Authorization": f"Bearer {bearer}",
+        "Accept": "application/json",
+    }
+    data: bytes | None = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    if prefer:
+        headers["Prefer"] = prefer
+
+    request = Request(url, data=data, method=method, headers=headers)
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310 - configured Supabase HTTPS origin
+            payload = response.read().decode("utf-8")
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise DraftStorageError(f"Supabase draft request failed with {error.code}: {detail}") from error
+    except (URLError, TimeoutError) as error:
+        raise DraftStorageError("Supabase draft storage is temporarily unavailable.") from error
+    return json.loads(payload) if payload else None
+
+
+def _to_row(record: TemporaryDraftRecord, *, user_id: str) -> dict[str, Any]:
     return {
         "draft_id": _scoped_draft_id(record.draft_id, user_id=user_id),
         "case_id": record.case_id,
@@ -36,37 +92,48 @@ def _to_row(record: TemporaryDraftRecord, *, user_id: str) -> dict:
     }
 
 
-def upsert_draft_row(record: TemporaryDraftRecord, *, user_id: str) -> None:
-    """draft_id 기준으로 상담 초안을 생성하거나 갱신한다."""
-    _table().upsert(_to_row(record, user_id=user_id), on_conflict="draft_id").execute()
-
-
-def get_draft_row(draft_id: str, *, user_id: str) -> TemporaryDraftRecord | None:
-    """draft_id 로 상담 초안 하나를 불러온다."""
-    response = (
-        _table()
-        .select("data")
-        .eq("draft_id", _scoped_draft_id(draft_id, user_id=user_id))
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
+def upsert_draft_row(record: TemporaryDraftRecord, *, actor: str) -> None:
+    """Create or update a draft through the authenticated user's RLS context."""
+    _request(
+        "POST",
+        actor,
+        query={"on_conflict": "draft_id"},
+        body=_to_row(record, user_id=str(actor)),
+        prefer="resolution=merge-duplicates,return=minimal",
     )
-    rows = response.data or []
+
+
+def get_draft_row(draft_id: str, *, actor: str) -> TemporaryDraftRecord | None:
+    """Load one draft using both its tenant-scoped key and RLS owner."""
+    rows = _request(
+        "GET",
+        actor,
+        query={
+            "select": "data",
+            "draft_id": f"eq.{_scoped_draft_id(draft_id, user_id=str(actor))}",
+            "user_id": f"eq.{str(actor)}",
+            "limit": "1",
+        },
+    ) or []
     if not rows:
         return None
     return TemporaryDraftRecord(**rows[0]["data"])
 
 
-def list_draft_rows(*, user_id: str, case_id: str | None = None) -> list[TemporaryDraftRecord]:
-    """저장된 상담 초안을 최신순으로 반환한다. case_id 로 필터링 가능."""
-    query = _table().select("data").eq("user_id", user_id).order("saved_at", desc=True)
+def list_draft_rows(*, actor: str, case_id: str | None = None) -> list[TemporaryDraftRecord]:
+    """List only drafts visible to the authenticated user's RLS context."""
+    query = {
+        "select": "data",
+        "user_id": f"eq.{str(actor)}",
+        "order": "saved_at.desc",
+    }
     if case_id:
-        query = query.eq("case_id", case_id)
-    response = query.execute()
-    return [TemporaryDraftRecord(**row["data"]) for row in (response.data or [])]
+        query["case_id"] = f"eq.{case_id}"
+    rows = _request("GET", actor, query=query) or []
+    return [TemporaryDraftRecord(**row["data"]) for row in rows]
 
 
 def _scoped_draft_id(draft_id: str, *, user_id: str) -> str:
-    """Keep the public draft id while making the database key tenant-specific."""
+    """Make a stable database key that cannot collide across users."""
     digest = hashlib.sha256(f"{user_id}:{draft_id}".encode("utf-8")).hexdigest()
     return f"draft_{digest}"

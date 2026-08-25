@@ -16,6 +16,17 @@ PreviewTokenHeader = Annotated[str | None, Header(alias="X-Remind-Preview-Token"
 AuthorizationHeader = Annotated[str | None, Header(alias="Authorization")]
 
 
+class AuthenticatedActor(str):
+    """User id that also carries the verified JWT for downstream RLS requests."""
+
+    access_token: str
+
+    def __new__(cls, user_id: str, access_token: str):
+        actor = super().__new__(cls, user_id)
+        actor.access_token = access_token
+        return actor
+
+
 def require_preview_access(
     x_remind_preview_token: PreviewTokenHeader = None,
     authorization: AuthorizationHeader = None,
@@ -68,4 +79,4 @@ def _require_supabase_user(authorization: str | None) -> str:
     user_id = str(payload.get("id") or "").strip()
     if not user_id:
         raise HTTPException(status_code=401, detail="유효한 사용자 정보를 확인하지 못했습니다.")
-    return user_id
+    return AuthenticatedActor(user_id, token)

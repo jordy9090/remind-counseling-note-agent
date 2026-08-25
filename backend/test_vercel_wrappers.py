@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import io
+import json
 from pathlib import Path
 import unittest
 import unittest.mock
@@ -44,6 +45,8 @@ class TestVercelWrappers(unittest.TestCase):
         self.orig_case_memory = settings.enable_case_memory
         self.orig_supabase_url = settings.supabase_url
         self.orig_supabase_role_key = settings.supabase_service_role_key
+        self.orig_supabase_service_key = settings.supabase_service_key
+        self.orig_supabase_anon_key = settings.supabase_anon_key
         self.orig_real_user_auth = settings.enable_real_user_auth
         self.orig_legacy_preview_token = settings.allow_legacy_preview_token
         self.orig_supabase_publishable_key = settings.supabase_publishable_key
@@ -57,6 +60,8 @@ class TestVercelWrappers(unittest.TestCase):
         settings.enable_case_memory = False
         settings.supabase_url = None
         settings.supabase_service_role_key = None
+        settings.supabase_service_key = None
+        settings.supabase_anon_key = None
         settings.enable_real_user_auth = False
         settings.allow_legacy_preview_token = True
 
@@ -70,6 +75,8 @@ class TestVercelWrappers(unittest.TestCase):
         settings.enable_case_memory = self.orig_case_memory
         settings.supabase_url = self.orig_supabase_url
         settings.supabase_service_role_key = self.orig_supabase_role_key
+        settings.supabase_service_key = self.orig_supabase_service_key
+        settings.supabase_anon_key = self.orig_supabase_anon_key
         settings.enable_real_user_auth = self.orig_real_user_auth
         settings.allow_legacy_preview_token = self.orig_legacy_preview_token
         settings.supabase_publishable_key = self.orig_supabase_publishable_key
@@ -351,6 +358,35 @@ class TestVercelWrappers(unittest.TestCase):
         second = _scoped_draft_id("draft_shared", user_id="user-b")
         self.assertNotEqual(first, second)
         self.assertEqual(first, _scoped_draft_id("draft_shared", user_id="user-a"))
+
+    @unittest.mock.patch("app.services.supabase_store.urlopen")
+    def test_draft_storage_uses_user_jwt_for_rls(self, mock_urlopen):
+        from app.api.security import AuthenticatedActor
+        from app.schemas.note import TemporaryDraftRecord
+        from app.services.supabase_store import configured_for, upsert_draft_row
+
+        settings.supabase_url = "https://mock.supabase.co"
+        settings.supabase_publishable_key = "public-test-key"
+        actor = AuthenticatedActor("user-a", "verified-user-jwt")
+        record = TemporaryDraftRecord(
+            draft_id="draft_test1234",
+            case_id="CASE-SYNTHETIC-001",
+            session_number=1,
+            saved_at="2026-08-26T00:00:00+00:00",
+        )
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b""
+        mock_urlopen.return_value = response
+
+        self.assertTrue(configured_for(actor))
+        upsert_draft_row(record, actor=actor)
+
+        request = mock_urlopen.call_args.args[0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(headers["apikey"], "public-test-key")
+        self.assertEqual(headers["authorization"], "Bearer verified-user-jwt")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["user_id"], "user-a")
 
     def test_capabilities_endpoint_requires_token(self):
         client = TestClient(capabilities_app)
