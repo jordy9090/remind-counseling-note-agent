@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { FileText, Quote, Star } from 'lucide-react'
 
 interface LandingPageProps {
+  onLogin: () => void
   onStart: () => void
 }
 
@@ -17,7 +18,7 @@ function getViewportSize() {
   return { height: window.innerHeight, width: window.innerWidth }
 }
 
-export default function LandingPage({ onStart }: LandingPageProps) {
+export default function LandingPage({ onLogin, onStart }: LandingPageProps) {
   const [viewport, setViewport] = useState(getViewportSize)
   const scale = Math.min(viewport.width / BASE_WIDTH, viewport.height / BASE_HEIGHT)
   const headerHeight = BASE_HEADER_HEIGHT * scale
@@ -49,6 +50,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
         <div className="flex items-center" style={{ gap: s(22) }}>
           <button
             type="button"
+            onClick={onLogin}
             className="font-semibold text-slate-500 hover:text-slate-900"
             style={{ fontSize: s(10) }}
           >
