@@ -70,6 +70,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     if (!authOpen) {
       return <LandingPage
         onLogin={() => { setMode('signin'); setMessage(''); setAuthOpen(true) }}
+        onStart={() => { setMode('signup'); setMessage(''); setAuthOpen(true) }}
       />
     }
 
