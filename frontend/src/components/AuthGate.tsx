@@ -1,8 +1,9 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import type { Provider, Session } from '@supabase/supabase-js'
-import { ChevronDown, Loader2, LogOut, Mail, Sparkles } from 'lucide-react'
+import { ArrowLeft, ChevronDown, Loader2, LogOut, Mail } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
+import LandingPage from '../pages/LandingPage'
 
 type AuthMode = 'signin' | 'signup' | 'reset' | 'recovery'
 const PRIVACY_NOTE = '상담 기록은 계정별로 분리하여 관리됩니다. 민감정보는 필요한 범위에서 비식별화해 입력해주세요.'
@@ -21,6 +22,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(isAuthConfigured)
   const [mode, setMode] = useState<AuthMode>('signin')
+  const [authOpen, setAuthOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
@@ -65,6 +67,13 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (!session) {
+    if (!authOpen) {
+      return <LandingPage
+        onLogin={() => { setMode('signin'); setMessage(''); setAuthOpen(true) }}
+        onStart={() => { setMode('signup'); setMessage(''); setAuthOpen(true) }}
+      />
+    }
+
     const oauthEnabled = providers.google || providers.kakao
     const startOAuth = async (provider: Provider) => {
       if (!supabase) return
@@ -90,8 +99,17 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       if (mode === 'signup' && !result.data.session) setMessage('인증 이메일을 보냈습니다. 메일의 확인 링크를 눌러주세요.')
     }
 
-    return <AuthShell><Brand />
-      <AuthHeading title={mode === 'reset' ? '비밀번호 찾기' : '상담 기록을 더 빠르고 정확하게'} description={mode === 'reset' ? '가입한 이메일로 비밀번호 재설정 링크를 보내드립니다.' : '회기 기록부터 수퍼비전 보고서까지, 상담사의 문서 업무를 한곳에서 관리하세요.'} />
+    const heading = mode === 'reset' ? '비밀번호 찾기' : mode === 'signup' ? '무료로 시작하기' : '로그인'
+    const description = mode === 'reset'
+      ? '가입한 이메일로 비밀번호 재설정 링크를 보내드립니다.'
+      : mode === 'signup'
+        ? 'Re:mind 계정을 만들고 상담 기록 워크스페이스를 시작하세요.'
+        : 'Re:mind 계정으로 상담 기록 워크스페이스에 들어가세요.'
+
+    return <AuthShell>
+      <button className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 transition hover:text-slate-900" type="button" onClick={() => { setAuthOpen(false); setMessage('') }}><ArrowLeft size={17} />처음으로</button>
+      <Brand />
+      <AuthHeading title={heading} description={description} />
       {mode !== 'reset' && oauthEnabled && <div className="mt-8 space-y-3">
         {providers.google && <button className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-3.5 font-bold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('google')}><GoogleMark /> Google로 계속하기</button>}
         {providers.kakao && <button className="w-full rounded-xl bg-[#FEE500] px-4 py-3.5 font-bold text-[#191919] transition hover:brightness-95 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('kakao')}>Kakao로 계속하기</button>}
@@ -120,12 +138,12 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   </div>
 }
 
-function Brand({ compact = false }: { compact?: boolean }) { return <div className="flex items-center gap-3"><span className={`${compact ? 'h-9 w-9' : 'h-11 w-11'} flex items-center justify-center rounded-xl bg-gradient-to-br from-blue-700 to-indigo-600 text-white shadow-sm`}><Sparkles size={compact ? 18 : 21} /></span><div><p className={`${compact ? 'text-lg' : 'text-xl'} font-black tracking-tight text-slate-950`}>Re:mind</p>{!compact && <p className="text-xs font-semibold text-slate-500">Counseling Workspace</p>}</div></div> }
-function AuthHeading({ title, description }: { title: string; description: string }) { return <div className="mt-9"><h1 className="text-3xl font-black leading-tight tracking-tight text-slate-950 sm:text-[2rem]">{title}</h1><p className="mt-3 text-sm leading-6 text-slate-600">{description}</p></div> }
+function Brand({ compact = false }: { compact?: boolean }) { return <img src="/remind-logo.png" alt="Re:mind" className="object-contain" style={{ height: compact ? 24 : 30, width: compact ? 120 : 150 }} /> }
+function AuthHeading({ title, description }: { title: string; description: string }) { return <div className="mt-10"><h1 className="text-[1.75rem] font-extrabold leading-tight tracking-[-0.025em] text-slate-950">{title}</h1><p className="mt-3 text-sm leading-6 text-slate-500">{description}</p></div> }
 function EmailField({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <label className="block text-sm font-bold text-slate-800">이메일<div className="relative mt-2"><Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-11 pr-3 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" type="email" autoComplete="email" value={value} onChange={(event) => onChange(event.target.value)} placeholder="name@example.com" required /></div></label> }
 function PasswordField({ value, onChange, autoComplete }: { value: string; onChange: (value: string) => void; autoComplete: string }) { return <label className="block text-sm font-bold text-slate-800">비밀번호<input className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" type="password" autoComplete={autoComplete} minLength={8} value={value} onChange={(event) => onChange(event.target.value)} placeholder="8자 이상 입력" required /></label> }
 function PrimaryButton({ children, loading }: { children: ReactNode; loading: boolean }) { return <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-3.5 font-bold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60" type="submit" disabled={loading}>{loading && <Loader2 className="animate-spin" size={18} />}{loading ? '처리하고 있습니다' : children}</button> }
 function Feedback({ message }: { message: string }) { return <p className="rounded-xl bg-slate-100 px-4 py-3 text-sm leading-5 text-slate-700" role="status">{message}</p> }
 function Status({ text }: { text: string }) { return <div className="mt-10 flex items-center gap-3 text-sm font-semibold text-slate-600"><Loader2 className="animate-spin text-blue-700" size={20} />{text}</div> }
 function GoogleMark() { return <span className="text-lg font-black text-[#4285F4]" aria-hidden="true">G</span> }
-function AuthShell({ children }: { children: ReactNode }) { return <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,_#dbeafe_0,_transparent_42%),linear-gradient(135deg,#f8fafc,#eef2ff)] px-4 py-10"><section className="w-full max-w-[480px] rounded-3xl border border-white/80 bg-white/95 p-7 shadow-2xl shadow-slate-300/40 backdrop-blur sm:p-10">{children}</section></main> }
+function AuthShell({ children }: { children: ReactNode }) { return <main className="flex min-h-screen items-center justify-center bg-[#f6f9ff] px-5 py-10"><section className="w-full max-w-[420px] rounded-2xl border border-slate-200 bg-white p-7 shadow-[0_18px_50px_rgba(45,75,130,0.10)] sm:p-9">{children}</section></main> }
