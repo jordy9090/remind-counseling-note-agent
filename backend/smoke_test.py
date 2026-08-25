@@ -1196,7 +1196,12 @@ def main() -> None:
         try:
             settings.enable_rag = True
 
-            def fake_case_context(case_id: str, current_session_id: str | None = None, max_sessions: int = 3):
+            def fake_case_context(
+                case_id: str,
+                current_session_id: str | None = None,
+                max_sessions: int = 3,
+                **_kwargs,
+            ):
                 return [
                     RetrievedCaseContextItem(
                         source_ref="stored_session_note:prior-session-1",
@@ -1216,7 +1221,7 @@ def main() -> None:
                     )
                 ]
 
-            def fake_template_context(target_document_type):
+            def fake_template_context(target_document_type, **_kwargs):
                 return RetrievedTemplateContext(
                     target_document_type=target_document_type,
                     required_fields=["주호소", "상담 내용", "다음 계획"],
@@ -1225,7 +1230,7 @@ def main() -> None:
                     source_refs=["kb_template:session-note-demo"],
                 )
 
-            def fake_privacy_rules():
+            def fake_privacy_rules(**_kwargs):
                 return [
                     RetrievedPrivacyRule(
                         source_ref="kb_privacy:demo-rule",

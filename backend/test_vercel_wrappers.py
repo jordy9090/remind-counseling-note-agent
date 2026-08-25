@@ -420,6 +420,108 @@ class TestVercelWrappers(unittest.TestCase):
         settings.supabase_anon_key = None
         self.assertFalse(_storage_for_actor(actor).configured)
 
+    def test_case_retrieval_rejects_a_guessed_foreign_case_id(self):
+        from app.services.retrieval import retrieve_case_context
+
+        class TenantStorage:
+            retrieval_enabled = True
+
+            def __init__(self):
+                self.queries: list[tuple[str, dict[str, str | int]]] = []
+                self.rows = {
+                    "sessions": [
+                        {
+                            "id": "session-b",
+                            "case_id": "CASE-SHARED",
+                            "user_id": "user-b",
+                            "session_number": 1,
+                            "session_date": "2026-08-20",
+                            "session_title": "foreign session",
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                    "generated_notes": [
+                        {
+                            "id": "note-b",
+                            "session_id": "session-b",
+                            "user_id": "user-b",
+                            "note_type": "session_note",
+                            "draft_json": {},
+                            "confirmed_json": {"sections": {"session_content": "user-b secret"}},
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                    "evidence_items": [
+                        {
+                            "id": "evidence-b",
+                            "session_id": "session-b",
+                            "user_id": "user-b",
+                            "source_type": "direct",
+                            "source_ref": "foreign",
+                            "source_text": "user-b evidence",
+                            "linked_field": "session_content",
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                }
+
+            def select(self, table: str, query: dict[str, str | int]):
+                self.queries.append((table, dict(query)))
+                rows = list(self.rows.get(table, []))
+                for field in ("case_id", "user_id"):
+                    condition = str(query.get(field) or "")
+                    if condition.startswith("eq."):
+                        rows = [row for row in rows if row.get(field) == condition[3:]]
+                session_condition = str(query.get("session_id") or "")
+                if session_condition.startswith("in.(") and session_condition.endswith(")"):
+                    allowed = set(session_condition[4:-1].split(","))
+                    rows = [row for row in rows if row.get("session_id") in allowed]
+                return rows
+
+        fake_storage = TenantStorage()
+        original_enable_rag = settings.enable_rag
+        try:
+            settings.enable_rag = True
+            leaked = retrieve_case_context(
+                "CASE-SHARED",
+                user_id="user-a",
+                storage_client=fake_storage,  # type: ignore[arg-type]
+            )
+            self.assertEqual(leaked, [])
+
+            owned = retrieve_case_context(
+                "CASE-SHARED",
+                user_id="user-b",
+                storage_client=fake_storage,  # type: ignore[arg-type]
+            )
+            self.assertEqual(len(owned), 1)
+            self.assertEqual(owned[0].summary, "user-b secret")
+            self.assertTrue(fake_storage.queries)
+            self.assertTrue(all("user_id" in query for _table, query in fake_storage.queries))
+        finally:
+            settings.enable_rag = original_enable_rag
+
+    def test_recompose_cache_is_scoped_by_actor(self):
+        from app.schemas.note import RecomposeNoteRequest, SessionInput
+        from app.services.recompose_cache import build_recompose_cache_key
+
+        request = RecomposeNoteRequest(
+            session_input=SessionInput(
+                case_id="CASE-SHARED",
+                session_number=1,
+                session_date="2026-08-20",
+                counselor_name="test counselor",
+                counselor_memo="synthetic memo",
+                transcript_text="synthetic transcript",
+                target_document_type="session_note",
+            ),
+            visible_section_ids=["session_content"],
+        )
+        self.assertNotEqual(
+            build_recompose_cache_key(request, actor="user-a"),
+            build_recompose_cache_key(request, actor="user-b"),
+        )
+
     def test_capabilities_endpoint_requires_token(self):
         client = TestClient(capabilities_app)
         response = client.get("/")
