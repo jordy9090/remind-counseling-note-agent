@@ -420,6 +420,39 @@ class TestVercelWrappers(unittest.TestCase):
         settings.supabase_anon_key = None
         self.assertFalse(_storage_for_actor(actor).configured)
 
+    def test_generation_preserves_the_authenticated_actor(self):
+        from app.api.routes.notes import _run_pipeline_with_stub_fallback
+        from app.api.security import AuthenticatedActor
+        from app.graph.graph import run_note_pipeline
+        from app.schemas.note import SessionInput
+
+        actor = AuthenticatedActor("user-a", "verified-user-jwt")
+        session_input = SessionInput(
+            case_id="CASE-ACTOR-PROPAGATION",
+            session_number=1,
+            session_date="2026-08-20",
+            counselor_name="test counselor",
+            counselor_memo="synthetic memo",
+            transcript_text="synthetic transcript",
+            target_document_type="session_note",
+        )
+        original_enable_rag = settings.enable_rag
+        original_use_stub = settings.use_stub
+        try:
+            settings.enable_rag = False
+            settings.use_stub = True
+            sample = run_note_pipeline(session_input, actor=actor)
+            with unittest.mock.patch(
+                "app.api.routes.notes.run_note_pipeline",
+                return_value=sample,
+            ) as mock_pipeline:
+                _run_pipeline_with_stub_fallback(session_input, actor=actor)
+            self.assertIs(mock_pipeline.call_args.kwargs["actor"], actor)
+            self.assertEqual(mock_pipeline.call_args.kwargs["actor"].access_token, "verified-user-jwt")
+        finally:
+            settings.enable_rag = original_enable_rag
+            settings.use_stub = original_use_stub
+
     def test_case_retrieval_rejects_a_guessed_foreign_case_id(self):
         from app.services.retrieval import retrieve_case_context
 
@@ -521,6 +554,17 @@ class TestVercelWrappers(unittest.TestCase):
             build_recompose_cache_key(request, actor="user-a"),
             build_recompose_cache_key(request, actor="user-b"),
         )
+
+    def test_dense_case_memory_rpc_requires_canonical_user_owner(self):
+        migration = (
+            ROOT_DIR
+            / "supabase"
+            / "migrations"
+            / "20260826000100_case_memory_rpc_user_scope.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("c.user_id = filter_counselor_id", migration)
+        self.assertIn("c.counselor_id = filter_counselor_id", migration)
+        self.assertIn("c.case_id = filter_case_id", migration)
 
     def test_capabilities_endpoint_requires_token(self):
         client = TestClient(capabilities_app)
