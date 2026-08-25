@@ -42,12 +42,19 @@ class ConfirmedNoteContext:
 class SupabaseStorage:
     """Minimal REST client that avoids making Supabase a hard dependency."""
 
-    def __init__(self, timeout_seconds: int = 10) -> None:
+    def __init__(self, timeout_seconds: int = 10, *, access_token: str | None = None) -> None:
         self.timeout_seconds = timeout_seconds
+        self.access_token = (access_token or "").strip()
 
     @property
     def configured(self) -> bool:
-        return settings.supabase_configured
+        return bool(
+            settings.supabase_url
+            and (
+                (self.access_token and (settings.supabase_publishable_key or settings.supabase_anon_key))
+                or settings.effective_supabase_key
+            )
+        )
 
     @property
     def persistence_enabled(self) -> bool:
@@ -122,10 +129,15 @@ class SupabaseStorage:
 
         query_string = f"?{urlencode(query)}" if query else ""
         url = f"{settings.normalized_supabase_url}/rest/v1/{path}{query_string}"
-        key = settings.effective_supabase_key or ""
+        if self.access_token:
+            key = settings.supabase_publishable_key or settings.supabase_anon_key or ""
+            bearer = self.access_token
+        else:
+            key = settings.effective_supabase_key or ""
+            bearer = key
         headers = {
             "apikey": key,
-            "Authorization": f"Bearer {key}",
+            "Authorization": f"Bearer {bearer}",
             "Accept": "application/json",
         }
         data: bytes | None = None
@@ -153,6 +165,13 @@ class SupabaseStorage:
 storage = SupabaseStorage()
 
 
+def _storage_for_actor(actor: str) -> SupabaseStorage:
+    access_token = str(getattr(actor, "access_token", "") or "").strip()
+    if not access_token:
+        return storage
+    return SupabaseStorage(timeout_seconds=storage.timeout_seconds, access_token=access_token)
+
+
 def persist_generated_note(session_input: SessionInput, result: GenerateNoteResponse, *, actor: str = "server_demo_actor") -> PersistenceReport:
     """Persist a generated note when explicitly requested by the API caller."""
     report = PersistenceReport(
@@ -166,12 +185,13 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
     if not settings.enable_persistence:
         report.message = "ENABLE_PERSISTENCE is false; generation returned without storage."
         return report
-    if not settings.supabase_configured:
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
         report.message = "Supabase credentials are missing; generation returned without storage."
         return report
 
     try:
-        existing_case = storage.maybe_single(
+        existing_case = actor_storage.maybe_single(
             "cases",
             {"id": f"eq.{session_input.case_id}", "select": "id,user_id,counselor_id"},
         )
@@ -179,7 +199,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
             owner = str(existing_case.get("user_id") or existing_case.get("counselor_id") or "").strip()
             if owner and owner != actor:
                 raise SupabaseStorageError("동일한 케이스 ID가 다른 사용자에게 이미 등록되어 있습니다.")
-        storage.upsert(
+        actor_storage.upsert(
             "cases",
             [
                 {
@@ -192,7 +212,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
             ],
             on_conflict="id",
         )
-        session_rows = storage.upsert(
+        session_rows = actor_storage.upsert(
             "sessions",
             [_build_session_row(session_input, result, user_id=actor)],
             on_conflict="case_id,session_number",
@@ -200,7 +220,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         session_id = str(session_rows[0]["id"]) if session_rows else None
         report.session_id = session_id
 
-        note_rows = storage.insert(
+        note_rows = actor_storage.insert(
             "generated_notes",
             [
                 {
@@ -230,9 +250,9 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
             for item in result.evidence_mapped_data.items
         ]
         if evidence_rows:
-            storage.insert("evidence_items", evidence_rows, return_representation=False)
+            actor_storage.insert("evidence_items", evidence_rows, return_representation=False)
 
-        storage.insert(
+        actor_storage.insert(
             "verification_reports",
             [
                 {
@@ -257,17 +277,18 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     """Validate and persist explicit counselor confirmation from stored rows."""
     if not settings.enable_persistence:
         raise NoteConfirmationError(409, "ENABLE_PERSISTENCE is false; note confirmation is disabled.")
-    if not settings.supabase_configured:
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
         raise NoteConfirmationError(503, "Supabase credentials are missing; note confirmation cannot be validated.")
 
-    note = _fetch_generated_note(request.note_id, actor=actor)
-    session = _fetch_session_for_note(note, actor=actor)
-    case = _fetch_case_for_session(session, actor=actor)
+    note = _fetch_generated_note(request.note_id, actor=actor, actor_storage=actor_storage)
+    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
+    case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
     _validate_confirmation_status(note, request.confirmed_note, counselor_edited=request.counselor_edited)
 
     confirmed_at = datetime.now(UTC).isoformat()
-    storage.update(
+    actor_storage.update(
         "generated_notes",
         {
             "confirmed_json": request.confirmed_note,
@@ -285,11 +306,15 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     embedding_count = 0
     if request.create_case_memory and settings.enable_case_memory:
         chunks = _case_memory_rows_from_confirmed_note(request, context)
-        existing_chunks = _existing_memory_chunks_by_field(context.note_id, user_id=actor)
+        existing_chunks = _existing_memory_chunks_by_field(
+            context.note_id,
+            user_id=actor,
+            actor_storage=actor_storage,
+        )
         embedding_count = _attach_embeddings(chunks, existing_chunks=existing_chunks)
         if chunks:
-            storage.upsert("case_memory_chunks", chunks, on_conflict="source_note_id,field_type")
-            storage.update(
+            actor_storage.upsert("case_memory_chunks", chunks, on_conflict="source_note_id,field_type")
+            actor_storage.update(
                 "generated_notes",
                 {"memory_indexed_at": datetime.now(UTC).isoformat()},
                 query={"id": f"eq.{request.note_id}"},
@@ -312,8 +337,13 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     )
 
 
-def _fetch_generated_note(note_id: str, *, actor: str) -> dict[str, Any]:
-    note = storage.maybe_single(
+def _fetch_generated_note(
+    note_id: str,
+    *,
+    actor: str,
+    actor_storage: SupabaseStorage,
+) -> dict[str, Any]:
+    note = actor_storage.maybe_single(
         "generated_notes",
         {
             "id": f"eq.{note_id}",
@@ -328,9 +358,14 @@ def _fetch_generated_note(note_id: str, *, actor: str) -> dict[str, Any]:
     return note
 
 
-def _fetch_session_for_note(note: dict[str, Any], *, actor: str) -> dict[str, Any]:
+def _fetch_session_for_note(
+    note: dict[str, Any],
+    *,
+    actor: str,
+    actor_storage: SupabaseStorage,
+) -> dict[str, Any]:
     session_id = str(note.get("session_id") or "")
-    session = storage.maybe_single(
+    session = actor_storage.maybe_single(
         "sessions",
         {
             "id": f"eq.{session_id}",
@@ -345,9 +380,14 @@ def _fetch_session_for_note(note: dict[str, Any], *, actor: str) -> dict[str, An
     return session
 
 
-def _fetch_case_for_session(session: dict[str, Any], *, actor: str) -> dict[str, Any]:
+def _fetch_case_for_session(
+    session: dict[str, Any],
+    *,
+    actor: str,
+    actor_storage: SupabaseStorage,
+) -> dict[str, Any]:
     case_id = str(session.get("case_id") or "")
-    case = storage.maybe_single(
+    case = actor_storage.maybe_single(
         "cases",
         {
             "id": f"eq.{case_id}",
@@ -501,8 +541,13 @@ def _case_memory_rows_from_confirmed_note(
     return rows
 
 
-def _existing_memory_chunks_by_field(note_id: str, *, user_id: str) -> dict[str, dict[str, Any]]:
-    rows = storage.select(
+def _existing_memory_chunks_by_field(
+    note_id: str,
+    *,
+    user_id: str,
+    actor_storage: SupabaseStorage,
+) -> dict[str, dict[str, Any]]:
+    rows = actor_storage.select(
         "case_memory_chunks",
         {
             "source_note_id": f"eq.{note_id}",
