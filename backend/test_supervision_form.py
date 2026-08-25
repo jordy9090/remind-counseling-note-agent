@@ -10,7 +10,7 @@ from docx import Document
 from app.graph.supervision_report import PLACEHOLDER, run_supervision_report_pipeline
 from app.schemas.document import DocumentExportRequest
 from app.schemas.note import SessionInput, SupervisionReportRequest
-from app.services.document_export import DocxDocumentExporter, render_pdf_html
+from app.services.document_export import DocxDocumentExporter, PdfDocumentExporter, render_pdf_html
 
 
 EXPECTED_SECTION_IDS = [
@@ -135,6 +135,10 @@ class SupervisionFormTests(unittest.TestCase):
         html = render_pdf_html(export_request)
         self.assertIn("개인상담(공개상담) 사례 수퍼비전 보고서", html)
         self.assertIn("<th>소속 상담기관</th>", html)
+
+        pdf = PdfDocumentExporter().export(export_request.model_copy(update={"format": "pdf"}))
+        self.assertTrue(pdf.startswith(b"%PDF-"))
+        self.assertGreater(len(pdf), 1_000)
 
 
 if __name__ == "__main__":

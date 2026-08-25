@@ -201,11 +201,16 @@ class PdfDocumentExporter(DocumentExporter):
             html_text = render_pdf_html(request)
             font_config = FontConfiguration()
             return HTML(string=html_text, url_fetcher=block_external_resource).write_pdf(font_config=font_config)
-        except (ImportError, OSError) as error:
-            raise DocumentExportRuntimeError(
-                "PDF 렌더링 런타임을 불러오지 못했습니다. WeasyPrint와 Pango/GObject 시스템 라이브러리 "
-                "설치를 확인해주세요."
-            ) from error
+        except (ImportError, OSError):
+            # Vercel's Python runtime does not provide WeasyPrint's native
+            # Pango/GObject libraries. ReportLab's CID font path is pure Python
+            # and keeps Korean PDF export available in that environment.
+            try:
+                return render_pdf_with_reportlab(request)
+            except Exception as error:
+                raise DocumentExportRuntimeError(
+                    "PDF 렌더링 런타임을 불러오지 못했습니다."
+                ) from error
 
 
 class HwpxDocumentExporter(DocumentExporter):
@@ -296,8 +301,121 @@ def check_pdf_runtime() -> tuple[bool, str | None]:
             font_config=FontConfiguration(),
         )
     except Exception:
-        return False, "WeasyPrint native runtime is unavailable."
+        try:
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+            pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
+        except Exception:
+            return False, "PDF rendering runtime is unavailable."
     return True, None
+
+
+def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
+    """Render a Korean-capable PDF without native system libraries."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    font_name = "HYSMyeongJo-Medium"
+    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title=request.title,
+    )
+    base = getSampleStyleSheet()
+    body = ParagraphStyle("KoreanBody", parent=base["BodyText"], fontName=font_name, fontSize=9, leading=14)
+    title_style = ParagraphStyle(
+        "KoreanTitle", parent=body, fontSize=17, leading=23, alignment=TA_CENTER, spaceAfter=9 * mm
+    )
+    section_style = ParagraphStyle("KoreanSection", parent=body, fontSize=12, leading=18, spaceBefore=5 * mm, spaceAfter=2 * mm)
+    label_style = ParagraphStyle("KoreanLabel", parent=body, fontSize=8, leading=11)
+    story = [Paragraph(html.escape(request.title), title_style)]
+
+    metadata_rows = (
+        build_supervision_metadata_grid(request)
+        if request.document_type == "supervision_report"
+        else [(label, value) for label, value in build_metadata_rows(request)]
+    )
+    metadata_table = Table(
+        [[Paragraph(html.escape(str(cell)), label_style) for cell in row] for row in metadata_rows],
+        colWidths=([27 * mm, 54 * mm, 34 * mm, 54 * mm] if request.document_type == "supervision_report" else [35 * mm, 134 * mm]),
+        repeatRows=0,
+    )
+    metadata_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e5e7eb")),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#e5e7eb")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.extend([metadata_table, Spacer(1, 4 * mm)])
+
+    for section in renderable_sections(request.sections):
+        story.append(Paragraph(html.escape(section.title), section_style))
+        if section.content_blocks:
+            for block in section.content_blocks:
+                story.extend(_reportlab_block(block, body, label_style))
+        elif isinstance(section.content, list):
+            for item in section.content:
+                story.append(Paragraph(f"• {html.escape(str(item))}", body))
+        elif section.content:
+            story.append(Paragraph(html.escape(str(section.content)).replace("\n", "<br/>"), body))
+
+    def add_footer(canvas, _document) -> None:
+        canvas.saveState()
+        canvas.setFont(font_name, 7)
+        canvas.setFillColor(colors.HexColor("#475569"))
+        canvas.drawCentredString(A4[0] / 2, 9 * mm, REVIEW_NOTICE)
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
+    return buffer.getvalue()
+
+
+def _reportlab_block(block: DocumentContentBlock, body, label_style) -> list[object]:
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    elements: list[object] = []
+    if block.label:
+        elements.append(Paragraph(f"<b>{html.escape(block.label)}</b>", label_style))
+    if block.rows:
+        keys = list(block.rows[0])
+        rows = [[Paragraph(html.escape(str(key)), label_style) for key in keys]]
+        rows.extend([
+            [Paragraph(html.escape(stringify_cell_value(row.get(key, ""))).replace("\n", "<br/>"), body) for key in keys]
+            for row in block.rows
+        ])
+        table = Table(rows, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elements.append(table)
+    for turn in block.speaker_turns:
+        speaker = {"client": "내담자", "counselor": "상담자", "other": "기타"}.get(turn.speaker, "기타")
+        silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds else ""
+        elements.append(Paragraph(f"<b>{speaker}:</b> {html.escape(turn.text)}{silence}", body))
+    if block.text and block.text.strip() != SUPERVISION_PLACEHOLDER:
+        elements.append(Paragraph(html.escape(block.text).replace("\n", "<br/>"), body))
+    elements.append(Spacer(1, 2))
+    return elements
 
 
 def humanize_metadata_key(key: str) -> str:
