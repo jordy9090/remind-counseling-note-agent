@@ -3,6 +3,7 @@ import { FileText, Quote, Star } from 'lucide-react'
 
 interface LandingPageProps {
   onLogin: () => void
+  onStart: () => void
 }
 
 const BASE_WIDTH = 988
@@ -17,7 +18,7 @@ function getViewportSize() {
   return { height: window.innerHeight, width: window.innerWidth }
 }
 
-export default function LandingPage({ onLogin }: LandingPageProps) {
+export default function LandingPage({ onLogin, onStart }: LandingPageProps) {
   const [viewport, setViewport] = useState(getViewportSize)
   const scale = Math.min(viewport.width / BASE_WIDTH, viewport.height / BASE_HEIGHT, 1)
   const headerHeight = BASE_HEADER_HEIGHT * scale
@@ -57,7 +58,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           </button>
           <button
             type="button"
-            onClick={onLogin}
+            onClick={onStart}
             className="rounded-lg border border-slate-200 bg-white font-semibold text-slate-600 transition-colors hover:border-blue-200 hover:text-blue-600"
             style={{ fontSize: s(10), padding: `${s(8)}px ${s(13)}px` }}
           >
@@ -108,7 +109,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             </p>
             <button
               type="button"
-              onClick={onLogin}
+              onClick={onStart}
               className="rounded-md bg-blue-600 font-extrabold text-white shadow-[0_8px_16px_rgba(37,99,235,0.22)] transition-colors hover:bg-blue-700"
               style={{ fontSize: s(18), marginTop: s(32), padding: `${s(14)}px ${s(42)}px` }}
             >
