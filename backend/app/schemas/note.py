@@ -1,4 +1,4 @@
-"""Schemas for the Re:mind MVP V0 note generation pipeline."""
+"""Schemas for the Re:mind MVP note-generation workflows."""
 from __future__ import annotations
 
 from typing import Any, Literal

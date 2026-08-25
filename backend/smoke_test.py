@@ -1,4 +1,4 @@
-"""Smoke test for the Re:mind MVP V0 FastAPI backend.
+"""Smoke test for the Re:mind MVP FastAPI backend.
 
 Run from the backend directory:
     uv run python smoke_test.py

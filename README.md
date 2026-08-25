@@ -1,137 +1,117 @@
 # Re:mind
 
-Re:mind는 심리상담사를 위한 AI 보조 상담 문서화 워크스페이스입니다.
+Re:mind는 수련상담사가 상담 후 자료를 정리하고, 다회기 근거를 확인하며, 회기 기록과
+수퍼비전 보고서 같은 공식 문서를 준비하는 AI 보조 workspace입니다.
 
-MVP V1의 주 경로는 **React + FastAPI + LangGraph 기반 lightweight retrieval-aware workflow**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
+현재 제품은 React + FastAPI/Vercel Python functions + LangGraph + optional Supabase로
+구성됩니다. 상담사 메모, 축어록/STT, 이전 회기 기록을 구조화하고 source reference가
+연결된 초안을 만든 뒤 상담사가 수정·확정하고 DOCX/PDF로 내보낼 수 있습니다.
 
-## 제품 원칙
+## Product boundary
 
-Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 판단을 대체하지 않습니다.
+- 입력에 없는 정보를 확정적으로 쓰지 않습니다.
+- `direct`, `ai_organized`, `clinical_review`, `missing` 상태를 구분합니다.
+- 사례개념화, 임상 가설, 목표·전략의 최종 판단은 상담사가 수행합니다.
+- 생성 초안은 상담사 검토 전 최종 기록으로 사용하지 않습니다.
+- 진단, 위험 점수화, 치료 권고, 심리검사 자동 해석, 상담사 평가는 제공하지 않습니다.
+- case memory와 KB는 문서화 근거, 양식, 개인정보·윤리 경고 범위에서 사용합니다.
 
-- 입력에 없는 정보는 확정적으로 쓰지 않습니다.
-- AI 추론, 근거 부족, 상담사 확인 필요 영역을 분리합니다.
-- `reflection`, `case_conceptualization`, `goal_attainment`는 상담사 확인 필요 영역으로 표시합니다.
-- 생성된 초안은 상담사 검토 전 최종 기록으로 사용하지 않습니다.
-- RAG는 상담 판단 보강이 아니라 `case memory`, `document template`, `privacy/ethics/security guardrail`에만 사용합니다.
-- 진단, 임상적 위험도 점수화, 치료 권고, 심리검사 자동 해석은 생성하지 않습니다.
-- 현재 구현은 production-ready RAG나 실서비스 상담 기록 저장소가 아닙니다. 실제 상담 데이터는 인증, RLS, 감사 로그, 보관기간 정책 전에는 저장하지 않습니다.
+Supabase authentication과 user-scoped RLS 경로가 구현되어 있어도 실제 상담자료 운영에
+필요한 감사 로그, 보관·삭제 정책, 동의 절차, 운영 보안 검토는 남아 있습니다. 공유 데모에는
+합성 데이터만 사용하세요.
 
-## MVP V1 기능 범위
+## Implemented workflow
 
-포함:
+### Note generation
 
-1. 회기 자료 입력
-2. 입력 정제와 민감정보 후보 탐지
-3. Supabase 기반 선택적 저장
-4. `case_id` 기반 이전 회기 retrieval
-5. 상담 문서 양식 KB retrieval
-6. 개인정보/윤리/보안 규칙 retrieval
-7. 상담 내용 구조화
-8. 근거 매핑
-9. 회기요약 초안 생성
-10. 검증 리포트 생성
-11. 문서 변환 preview
-12. 상담사 수정용 회기요약 textarea UI
-13. 최종 문서 DOCX 내보내기
-14. PDF 내보내기 서버 capability 확인과 지원 환경에서의 PDF 내보내기
-15. PDF/DOCX/TXT 문서 업로드 텍스트 추출
-16. 음성 업로드 UI와 자동 축어록 capability 확인
+```text
+sanitize_input
+  → formulate_retrieval_query
+  → retrieve_case_memory
+  → retrieve_authoritative_kb
+  → finalize_retrieval_report
+  → structure_session
+  → map_evidence
+  → generate_summary
+  → verify_output
+  → conditional_revision
+       ├─ reverify → verify_output
+       └─ preview  → transform_document_preview
+```
 
-제외:
+이것은 11-node LangGraph stateful workflow입니다. Retrieval service는 graph node에서 직접
+호출됩니다. LLM function calling, `ToolNode`, input-dependent retrieval routing, reranker model은
+현재 구현되어 있지 않습니다. 자세한 경계는 [architecture](docs/architecture.md)에 있습니다.
 
-- 인증/회원가입
-- 스캔 이미지 PDF OCR
-- 기본 활성화된 음성 STT, 실시간 녹음, 화자 분리
-- pgvector 기반 의미 검색
-- 검증된 HWPX 템플릿 기반 내보내기
-- 결제/예약/관리자 기능
-- AI 슈퍼비전 또는 자동 사례개념화
+### Current capabilities
 
-문서 업로드는 원본 파일을 저장하지 않고 임시 파일에서 텍스트만 추출한 뒤 정리합니다. TXT는 UTF-8/BOM, DOCX는 문단과 표, PDF는 텍스트 레이어만 지원합니다. 스캔 이미지 PDF는 OCR을 지원하지 않으며 경고를 반환합니다. 음성 원본은 브라우저 세션의 `File` 참조와 object URL로만 재생/재시도에 사용하며 서버나 Supabase에 영구 저장하지 않습니다. 음성 자동 축어록은 기본 비활성화이고, `AUDIO_TRANSCRIPTION_STUB=1`이면 업로드 음성을 분석하지 않는 시연용 예시 축어록을 반환합니다. 실제 STT는 `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, `AUDIO_TRANSCRIPTION_ENGINE=whisperx`, optional `audio-whisperx` 의존성이 준비된 로컬/서버에서만 동작합니다.
+- PDF 텍스트 레이어, DOCX, TXT 자료 추출
+- 선택적 WhisperX transcription과 speaker diarization
+- 동일 사용자·사례 범위의 이전 확정 기록 retrieval
+- 문서 양식과 개인정보·윤리 KB retrieval
+- 선택적 pgvector dense/hybrid retrieval
+- 회기요약 생성, 근거 매핑, verification, conditional revision
+- 상담사 편집, recompose, confirm, temporary draft persistence
+- 한국상담심리학회 개인상담 사례 수퍼비전 보고서 A-1~C-2 초안
+- 회기 기록·수퍼비전 보고서·종결 보고서 DOCX export
+- 지원 runtime의 PDF export
+- Supabase email/password/OAuth frontend auth와 access-token 검증
 
-현재 MVP에는 인증이 없습니다. 공개 배포나 공유 데모 환경에는 실제 내담자를 식별할 수 있는 상담 자료, 원본 음성, 심리검사 자료를 업로드하지 마세요.
+현재 제외 범위는 OCR, 실시간 STT, HWPX template export, 결제·예약·관리자 기능,
+자율형 AI 수퍼바이저입니다. 전체 범위와 알려진 공백은 [MVP scope](docs/mvp_scope.md)를
+참조하세요.
 
-## API 계약 요약
-
-Primary API:
+## API
 
 ```text
 GET  /api/health
 POST /api/notes/generate
-GET  /api/documents/capabilities
-POST /api/documents/export
+POST /api/notes/confirm
+POST /api/notes/recompose
+POST /api/notes/supervision-report
+POST /api/notes/drafts
+GET  /api/notes/drafts
+GET  /api/notes/drafts/{draft_id}
 POST /api/materials/documents/extract
 GET  /api/audio/capabilities
 POST /api/audio/transcribe
+GET  /api/documents/capabilities
+POST /api/documents/export
 ```
 
-`POST /api/notes/generate`는 Pydantic으로 검증된 full `GenerateNoteResponse`를 반환합니다. Frontend는 화면 표시를 위해 필요한 필드를 클라이언트에서 변환합니다.
+Audio endpoints are available on the FastAPI runtime. The current Vercel serverless wrapper set does
+not include WhisperX; see [Vercel deployment](docs/deployment_vercel.md).
 
-`GET /api/documents/capabilities`는 서버가 DOCX/PDF/HWPX 내보내기를 실제로 지원할 수 있는지 반환합니다. PDF는 WeasyPrint와 Pango/GObject 계열 시스템 라이브러리, 한국어 fallback 폰트가 준비된 환경에서만 활성화됩니다.
+`POST /api/notes/generate`는 Pydantic으로 검증된 `GenerateNoteResponse`를 반환합니다.
+`USE_STUB=1`에서는 OpenAI key 없이 결정론적 test output을 생성합니다.
 
-`POST /api/documents/export`는 최종문서 화면에서 수정된 최신 섹션을 DOCX 또는 PDF byte stream으로 반환합니다. HWPX는 스키마와 exporter 인터페이스만 준비되어 있으며, 검증된 HWPX 템플릿이 추가되기 전까지는 422를 반환합니다.
+문서 업로드는 원본을 영구 저장하지 않고 임시 파일에서 텍스트를 추출한 뒤 정리합니다.
+스캔 이미지 PDF OCR은 지원하지 않습니다. 음성 원본도 현재 backend/Supabase에 영구
+저장하지 않습니다.
 
-`POST /api/materials/documents/extract`는 multipart `file` 필드로 PDF/DOCX/TXT를 받아 텍스트를 추출합니다. 기본 문서 업로드 제한은 20MB이며 `DOCUMENT_UPLOAD_MAX_BYTES`로 조정할 수 있습니다. DOCX는 압축 member 수, 압축 해제 총량, 압축률 제한을 추가로 검사하며 `DOCX_MAX_ARCHIVE_MEMBERS`, `DOCX_MAX_UNCOMPRESSED_BYTES`, `DOCX_MAX_COMPRESSION_RATIO`로 조정할 수 있습니다.
-
-`GET /api/audio/capabilities`는 음성 업로드, 자동 축어록, 화자 분리 지원 상태와 `runtime_mode`(`disabled`, `stub`, `real`)를 반환합니다. `POST /api/audio/transcribe`는 multipart `file`, 선택 `language`, 선택 `task`, 선택 `expected_speakers`(기본 2, 범위 1~4)를 받으며 기본 음성 업로드 제한은 500MB입니다. 실제 엔진은 WhisperX 3.8.6의 ASR, 한국어 forced alignment, Community-1 diarization, speaker assignment 공개 API를 사용합니다. 설정은 `.env.example`의 `WHISPERX_*`, `ENABLE_AUDIO_DIARIZATION`, `HF_TOKEN`, `AUDIO_MAX_DURATION_SECONDS`, `AUDIO_MAX_CONCURRENT_JOBS`를 따릅니다.
-
-OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으로 동작합니다. Supabase 환경변수가 없거나 `ENABLE_RAG=0`, `ENABLE_PERSISTENCE=0`이면 기존처럼 요청 단위 처리만 수행합니다. 따라서 API key와 Supabase credentials 없이도 데모와 smoke test를 실행할 수 있습니다.
-
-## 프로젝트 구조
+## Repository layout
 
 ```text
-remind-counseling-note-agent/
-├── README.md
-├── docs/
-│   ├── product_spec.md
-│   ├── mvp_scope.md
-│   ├── architecture.md
-│   ├── schema.md
-│   ├── api_contract.md
-│   ├── security_checklist.md
-│   ├── supabase_schema.sql
-│   ├── kb_seed_examples.json
-│   └── development_plan.md
-├── scripts/
-│   └── seed_kb_examples.py
-├── sample_data/
-│   ├── session_input_001.json
-│   └── session_output_001.json
+.
+├── api/                         # Vercel Python wrappers
 ├── backend/
-│   ├── pyproject.toml
-│   ├── uv.lock
+│   ├── app/
+│   │   ├── api/                 # FastAPI routes and auth
+│   │   ├── graph/               # note and supervision LangGraph workflows
+│   │   ├── schemas/             # Pydantic contracts
+│   │   └── services/            # retrieval, persistence, export, STT
 │   ├── smoke_test.py
-│   └── app/
-│       ├── main.py
-│       ├── api/routes/
-│       │   ├── health.py
-│       │   └── notes.py
-│       ├── core/
-│       │   └── config.py
-│       ├── graph/
-│       │   ├── graph.py
-│       │   └── nodes.py
-│       ├── prompts/
-│       │   ├── structure_prompt.py
-│       │   ├── summary_prompt.py
-│       │   └── verification_prompt.py
-│       ├── schemas/
-│       │   └── note.py
-│       └── services/
-│           ├── llm.py
-│           ├── retrieval.py
-│           ├── supabase_store.py
-│           └── supabase_storage.py
-└── frontend/
-    ├── package.json
-    ├── vite.config.ts
-    └── src/
-        ├── api/client.ts
-        ├── pages/SessionDraftPage.tsx
-        └── types/session.ts
+│   ├── test_supervision_form.py
+│   └── test_vercel_wrappers.py
+├── frontend/
+│   ├── scripts/                 # static workflow verifiers
+│   └── src/                     # React counselor workspace
+├── supabase/migrations/         # schema, pgvector, user ownership, RLS
+├── docs/
+└── .github/workflows/
 ```
 
-## 실행 방법
+## Local development
 
 ### Backend
 
@@ -141,37 +121,55 @@ uv sync --link-mode=copy
 uv run uvicorn app.main:app --reload
 ```
 
-`--link-mode=copy` avoids hard-link issues that can occur on Windows or cloud-synced folders. If `uv` is not installed, run `pip install uv` first.
-
-API 문서:
-
-```text
-http://localhost:8000/docs
-```
-
-Stub mode로 실행하려면 `backend/.env`에 다음을 둘 수 있습니다.
+합성 데이터로 local bypass를 사용할 때 `backend/.env`:
 
 ```env
 USE_STUB=1
+RUNTIME_ENVIRONMENT=development
+REMIND_ALLOW_LOCAL_BYPASS=1
+ENABLE_PERSISTENCE=0
+ENABLE_RAG=0
+ENABLE_CASE_MEMORY=0
+SAVE_RAW_INPUT=0
 ```
 
-실제 OpenAI 호출을 사용하려면:
-
-```env
-OPENAI_API_KEY=sk-proj-your-openai-api-key
-OPENAI_MODEL=gpt-4o-mini
-USE_STUB=0
-```
-
-Supabase 저장과 lightweight RAG를 켜려면 Supabase SQL editor에서 [docs/supabase_schema.sql](docs/supabase_schema.sql)을 실행한 뒤 backend `.env`에 다음을 설정합니다.
+실제 Supabase user authentication 경로의 핵심 설정:
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-RUNTIME_ENVIRONMENT=production
-REMIND_PREVIEW_API_TOKEN=replace-with-preview-only-token
-REMIND_PREVIEW_ACTOR=preview_server_actor
+ENABLE_REAL_USER_AUTH=1
+ALLOW_LEGACY_PREVIEW_TOKEN=0
 REMIND_ALLOW_LOCAL_BYPASS=0
+SAVE_RAW_INPUT=0
+```
+
+Browser에는 publishable key만 제공하고 service-role key는 backend 환경에만 둡니다.
+
+### Frontend
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+```
+
+`VITE_API_BASE_URL`을 생략하면 same-origin `/api`를 사용합니다.
+
+## Optional retrieval
+
+Supabase migration은 `supabase/migrations`에서 관리합니다. 공유 project에 적용하기 전에
+pending migration과 RLS policy를 검토하세요. `supabase db reset`을 공유 project에 실행하지
+마세요.
+
+```env
 ENABLE_PERSISTENCE=1
 ENABLE_RAG=1
 ENABLE_CASE_MEMORY=1
@@ -179,114 +177,35 @@ ENABLE_DENSE_RETRIEVAL=1
 ENABLE_HYBRID_RETRIEVAL=1
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSION=1536
-EMBEDDING_CACHE_TTL_SECONDS=300
-EMBEDDING_CACHE_MAX_ENTRIES=256
-SAVE_RAW_INPUT=0
 ```
 
-`POST /api/notes/generate`에서 `persist=true`를 보낸 요청만 저장합니다. `SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 저장하지 않고 sanitized input과 metadata만 저장합니다. 실서비스 전에는 인증, Row Level Security, 접근권한, 감사 로그, 보관기간 정책을 먼저 확정해야 합니다.
+`ENABLE_CASE_MEMORY=0`과 `SAVE_RAW_INPUT=0`이 안전한 기본값입니다.
 
-배포된 상담 API는 Supabase 사용자 액세스 토큰을 검증합니다. `ENABLE_REAL_USER_AUTH=1`을 활성화하고 프런트엔드에는 publishable key만 제공해야 합니다. `ENABLE_CASE_MEMORY=0`은 안전한 기본값이며, 사용자별 RLS와 보관 정책을 확인한 환경에서만 활성화합니다.
-
-### Supabase pgvector workflow
-
-Shared project ref: `bgjapctiawosgpjcyfuq`
-
-This repo now keeps non-destructive Supabase migrations under
-`supabase/migrations`. The remote project is the source of truth, so pull before
-push whenever Supabase credentials are available.
-
-```bash
-npx supabase login
-npx supabase link --project-ref bgjapctiawosgpjcyfuq
-npx supabase db pull
-npx supabase db push
-```
-
-Do not run `supabase db reset` against the shared project. Review pending
-migrations before applying them, then verify RLS and user ownership with two
-separate test accounts.
-
-Dense retrieval is still opt-in:
-
-```env
-ENABLE_RAG=1
-ENABLE_DENSE_RETRIEVAL=1
-ENABLE_HYBRID_RETRIEVAL=1
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
-```
-
-보안 경계는 [docs/security_checklist.md](docs/security_checklist.md)를 기준으로 확인합니다.
-
-### Frontend
-
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
-
-`VITE_API_BASE_URL`을 생략하면 frontend는 same-origin `/api`를 호출합니다. Vite 개발 서버와 로컬 FastAPI를 따로 실행할 때는 아래처럼 backend 주소를 지정합니다.
-
-```env
-VITE_API_BASE_URL=http://localhost:8000
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=replace-with-publishable-key
-```
-
-배포 환경에서는 Supabase 이메일 인증을 사용하며, 브라우저에는 publishable key만 제공합니다. 서비스 역할 키는 서버 환경에만 두고 프런트엔드 번들에 포함하지 않습니다.
-
-`pnpm`이 설치되어 있지 않다면 `npm install`과 `npm run dev`를 사용할 수 있습니다. 빌드 검증은 `pnpm build` 또는 `npm run build`로 실행합니다.
-
-## 검증 명령
-
-Backend smoke test:
+## Validation
 
 ```bash
 cd backend
 uv sync --link-mode=copy
 uv run python smoke_test.py
-```
+uv run python test_vercel_wrappers.py
+uv run python test_supervision_form.py
 
-Smoke test에는 노트 생성, 임시저장, DOCX/PDF export 계약, 문서 업로드 추출, 음성 capability/비활성화 응답, 업로드 크기 제한, 임시파일 정리 검증이 포함됩니다.
-
-PDF export까지 강제 검증하려면 Linux/Ubuntu 환경에서 WeasyPrint 시스템 의존성과 한국어 폰트를 설치한 뒤 실행합니다. GitHub Actions의 `backend-pdf-export` job은 `fonts-noto-cjk`, Pango/GObject 관련 패키지를 설치하고 `REQUIRE_PDF_EXPORT=1 uv run python smoke_test.py`를 실행합니다.
-
-Frontend build:
-
-```bash
-cd frontend
+cd ../frontend
+pnpm install --frozen-lockfile
 pnpm verify:material-workflow
 pnpm verify:audio-transcript-workflow
 pnpm build
 ```
 
-`pnpm`이 없으면:
+`test_supervision_form.py`의 PDF regression은 WeasyPrint system dependencies와 한국어 font가
+필요합니다. GitHub Actions가 backend smoke, serverless wrappers, PDF/supervision, frontend
+build를 별도 job으로 검증합니다.
 
-```bash
-npm run build
-```
+## Product and security docs
 
-Sample data는 [sample_data/session_input_001.json](sample_data/session_input_001.json)과 [sample_data/session_output_001.json](sample_data/session_output_001.json)을 사용합니다.
-
-문서 업로드를 로컬에서 직접 확인하려면 backend 서버를 켠 뒤 실행합니다.
-
-```bash
-printf "상담 메모\n둘째 줄\n" > sample_data/upload_sample.txt
-curl -F "file=@sample_data/upload_sample.txt;type=text/plain" http://localhost:8000/api/materials/documents/extract
-curl http://localhost:8000/api/audio/capabilities
-```
-
-H100에서 실제 WhisperX 런타임을 켜는 방법은 [docs/h100_audio_runbook.md](docs/h100_audio_runbook.md)를 따릅니다. 연구용 GPU backend는 공개 인터넷에 노출하지 않고 SSH local port forwarding으로 검증합니다.
-
-## 문서
-
-- [제품 명세](docs/product_spec.md)
-- [MVP 범위](docs/mvp_scope.md)
-- [아키텍처](docs/architecture.md)
-- [스키마](docs/schema.md)
-- [API 계약](docs/api_contract.md)
-- [음성 구성요소 라이선스 및 attribution](docs/THIRD_PARTY_AUDIO_COMPONENTS.md)
-- [H100 음성 STT runbook](docs/h100_audio_runbook.md)
-- [보안 체크리스트](docs/security_checklist.md)
+- [Product spec](docs/product_spec.md)
+- [MVP scope](docs/mvp_scope.md)
+- [Architecture](docs/architecture.md)
+- [API contract](docs/api_contract.md)
+- [Security checklist](docs/security_checklist.md)
+- [Development plan](docs/development_plan.md)

@@ -33,7 +33,7 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 @router.post("/generate", response_model=GenerateNoteResponse)
 async def generate_note(session_input: SessionInput, actor: PreviewActor) -> GenerateNoteResponse:
-    """Run the full six-agent workflow and return Pydantic-validated JSON."""
+    """Run the note-generation workflow and return Pydantic-validated JSON."""
     return _run_pipeline_with_stub_fallback(session_input, actor=actor)
 
 

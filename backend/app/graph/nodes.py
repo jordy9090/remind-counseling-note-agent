@@ -88,62 +88,6 @@ def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     return {"sanitized_input": sanitized, "stub": settings.stub_mode}
 
 
-def retrieve_context(state: dict[str, Any]) -> dict[str, Any]:
-    """Collect optional case-memory, template, and privacy context for downstream nodes."""
-    sanitized: SanitizedInput = state["sanitized_input"]
-    session_input: SessionInput = state["session_input"]
-    report = RetrievalReport(enabled=settings.enable_rag)
-    if not settings.enable_rag:
-        report.notices.append("ENABLE_RAG is false; retrieval skipped.")
-        return _empty_retrieval_state(report)
-    if not settings.supabase_configured:
-        report.notices.append("Supabase credentials are missing; retrieval continued with empty context.")
-
-    case_context: list[RetrievedCaseContextItem] = []
-    template_context: RetrievedTemplateContext | None = None
-    privacy_context: list[RetrievedPrivacyRule] = []
-
-    try:
-        case_context = retrieve_case_context(sanitized.case_id, max_sessions=3)
-    except Exception as error:
-        report.failures.append(f"case_context: {error}")
-
-    try:
-        template_context = retrieve_document_template(session_input.target_document_type)
-    except Exception as error:
-        report.failures.append(f"document_template: {error}")
-
-    try:
-        privacy_context = retrieve_privacy_rules()
-    except Exception as error:
-        report.failures.append(f"privacy_rules: {error}")
-
-    report.case_context_count = len(case_context)
-    report.template_context_found = bool(
-        template_context
-        and (
-            template_context.required_fields
-            or template_context.optional_fields
-            or template_context.counselor_review_fields
-            or template_context.source_refs
-        )
-    )
-    report.privacy_rule_count = len(privacy_context)
-    if not case_context:
-        report.notices.append("No prior case-memory context was retrieved.")
-    if template_context is None or not report.template_context_found:
-        report.notices.append("No document-template KB context was retrieved.")
-    if not privacy_context:
-        report.notices.append("No privacy or ethics KB context was retrieved.")
-
-    return {
-        "retrieved_case_context": case_context,
-        "retrieved_template_context": template_context,
-        "retrieved_privacy_context": privacy_context,
-        "retrieval_report": report,
-    }
-
-
 def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
     """Build one retrieval query from sanitized session materials."""
     sanitized: SanitizedInput = state["sanitized_input"]
@@ -253,8 +197,8 @@ def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def fuse_and_rerank(state: dict[str, Any]) -> dict[str, Any]:
-    """Finalize retrieval report while preserving the existing API fields."""
+def finalize_retrieval_report(state: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate retrieval metrics while preserving the existing API fields."""
     report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
     case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []
     template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
@@ -510,15 +454,6 @@ def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
         "document_transform_preview": preview,
         "session_note_draft": session_note,
         "termination_report_draft": termination,
-    }
-
-
-def _empty_retrieval_state(report: RetrievalReport) -> dict[str, Any]:
-    return {
-        "retrieved_case_context": [],
-        "retrieved_template_context": None,
-        "retrieved_privacy_context": [],
-        "retrieval_report": report,
     }
 
 

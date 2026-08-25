@@ -8,7 +8,7 @@ from langgraph.graph import END, StateGraph
 from app.graph.nodes import (
     conditional_revision,
     formulate_retrieval_query,
-    fuse_and_rerank,
+    finalize_retrieval_report,
     generate_summary,
     map_evidence,
     retrieve_authoritative_kb,
@@ -72,7 +72,7 @@ def create_note_graph():
     workflow.add_node("formulate_retrieval_query", formulate_retrieval_query)
     workflow.add_node("retrieve_case_memory", retrieve_case_memory)
     workflow.add_node("retrieve_authoritative_kb", retrieve_authoritative_kb)
-    workflow.add_node("fuse_and_rerank", fuse_and_rerank)
+    workflow.add_node("finalize_retrieval_report", finalize_retrieval_report)
     workflow.add_node("structure_session", structure_session)
     workflow.add_node("map_evidence", map_evidence)
     workflow.add_node("generate_summary", generate_summary)
@@ -84,8 +84,8 @@ def create_note_graph():
     workflow.add_edge("sanitize_input", "formulate_retrieval_query")
     workflow.add_edge("formulate_retrieval_query", "retrieve_case_memory")
     workflow.add_edge("retrieve_case_memory", "retrieve_authoritative_kb")
-    workflow.add_edge("retrieve_authoritative_kb", "fuse_and_rerank")
-    workflow.add_edge("fuse_and_rerank", "structure_session")
+    workflow.add_edge("retrieve_authoritative_kb", "finalize_retrieval_report")
+    workflow.add_edge("finalize_retrieval_report", "structure_session")
     workflow.add_edge("structure_session", "map_evidence")
     workflow.add_edge("map_evidence", "generate_summary")
     workflow.add_edge("generate_summary", "verify_output")

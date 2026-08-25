@@ -1,4 +1,4 @@
-"""FastAPI application for the Re:mind MVP V0 backend."""
+"""FastAPI application for the Re:mind MVP backend."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,7 +6,7 @@ from app.api.routes import audio, documents, health, materials, notes
 from app.core.config import validate_runtime_security
 
 app = FastAPI(
-    title="Re:mind MVP V0 API",
+    title="Re:mind MVP API",
     description="Evidence-tracked counseling session summary API.",
     version="0.1.0",
 )
@@ -39,7 +39,7 @@ async def validate_startup_security() -> None:
 @app.get("/")
 async def root():
     return {
-        "message": "Re:mind MVP V0 API",
+        "message": "Re:mind MVP API",
         "docs": "/docs",
         "health": "/api/health",
         "generate": "/api/notes/generate",
