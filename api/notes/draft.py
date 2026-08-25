@@ -24,6 +24,7 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 @app.get("/", response_model=TemporaryDraftRecord)
 @app.get("/api/notes/draft", response_model=TemporaryDraftRecord)
+@app.get("/api/notes/drafts/{draft_id}", response_model=TemporaryDraftRecord)
 async def get_note_draft(draft_id: str, actor: PreviewActor) -> TemporaryDraftRecord:
     """Return a draft only when it belongs to the authenticated user."""
     draft = get_temporary_draft(draft_id, actor=actor)

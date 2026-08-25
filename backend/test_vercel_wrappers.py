@@ -324,6 +324,14 @@ class TestVercelWrappers(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         mock_get_draft.assert_called_once_with("draft_test1234", actor="preview_server_actor")
 
+        mock_get_draft.reset_mock()
+        response = client.get(
+            "/api/notes/drafts/draft_test1234",
+            headers={"X-Remind-Preview-Token": "secret-test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_get_draft.assert_called_once_with("draft_test1234", actor="preview_server_actor")
+
     def test_vercel_rewrite_routes_draft_detail_to_function(self):
         import json
 
