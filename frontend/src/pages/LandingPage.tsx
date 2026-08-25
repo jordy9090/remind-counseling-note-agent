@@ -3,7 +3,6 @@ import { FileText, Quote, Star } from 'lucide-react'
 
 interface LandingPageProps {
   onLogin: () => void
-  onStart: () => void
 }
 
 const BASE_WIDTH = 988
@@ -18,7 +17,7 @@ function getViewportSize() {
   return { height: window.innerHeight, width: window.innerWidth }
 }
 
-export default function LandingPage({ onLogin, onStart }: LandingPageProps) {
+export default function LandingPage({ onLogin }: LandingPageProps) {
   const [viewport, setViewport] = useState(getViewportSize)
   const scale = Math.min(viewport.width / BASE_WIDTH, viewport.height / BASE_HEIGHT)
   const headerHeight = BASE_HEADER_HEIGHT * scale
@@ -55,19 +54,6 @@ export default function LandingPage({ onLogin, onStart }: LandingPageProps) {
             style={{ fontSize: s(10) }}
           >
             로그인
-          </button>
-          <button
-            type="button"
-            onClick={onStart}
-            className="rounded-[5px] border border-slate-300 bg-white font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            style={{
-              fontSize: s(11),
-              height: s(30),
-              paddingLeft: s(14),
-              paddingRight: s(14),
-            }}
-          >
-            무료로 시작하기
           </button>
         </div>
       </header>
@@ -109,19 +95,6 @@ export default function LandingPage({ onLogin, onStart }: LandingPageProps) {
             >
               {'상담사의 기록 시간을 줄이고 문서의 완성도는\n높여 상담에 더 집중할 수 있도록 돕습니다'}
             </p>
-            <button
-              type="button"
-              onClick={onStart}
-              className="rounded-[5px] bg-blue-600 font-extrabold text-white shadow-[0_5px_9px_rgba(30,80,180,0.28)] hover:bg-blue-700"
-              style={{
-                fontSize: s(21),
-                height: s(49),
-                marginTop: s(34),
-                width: s(214),
-              }}
-            >
-              무료로 시작하기
-            </button>
           </div>
 
           <div

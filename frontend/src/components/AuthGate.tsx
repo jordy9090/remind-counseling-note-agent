@@ -70,7 +70,6 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     if (!authOpen) {
       return <LandingPage
         onLogin={() => { setMode('signin'); setMessage(''); setAuthOpen(true) }}
-        onStart={() => { setMode('signup'); setMessage(''); setAuthOpen(true) }}
       />
     }
 
@@ -123,7 +122,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       </form>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm">
         {mode === 'signin' && <button className="font-semibold text-slate-600 hover:text-blue-700" type="button" onClick={() => { setMode('reset'); setMessage('') }}>비밀번호를 잊으셨나요?</button>}
-        <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : mode === 'reset' ? 'signin' : 'signup'); setMessage('') }}>{mode === 'signup' || mode === 'reset' ? '로그인으로 돌아가기' : '이메일로 회원가입'}</button>
+        {mode !== 'signin' && <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>}
       </div>
       <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">{PRIVACY_NOTE}</p>
     </AuthShell>
