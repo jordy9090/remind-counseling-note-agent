@@ -1046,10 +1046,7 @@ def main() -> None:
     capabilities = capabilities_response.json()
     assert capabilities["docx"]["available"] is True
     assert capabilities["hwpx"]["available"] is False
-    if os.name == "nt" and not require_pdf_export:
-        assert capabilities["pdf"]["available"] is False, capabilities
-    if require_pdf_export:
-        assert capabilities["pdf"]["available"] is True, capabilities
+    assert capabilities["pdf"]["available"] is True, capabilities
 
     _run_material_upload_smoke_tests(authenticated_client)
 
