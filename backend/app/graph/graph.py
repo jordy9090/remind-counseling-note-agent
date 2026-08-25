@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from app.core.config import settings
 from app.graph.nodes import (
     conditional_revision,
     formulate_retrieval_query,
@@ -37,6 +38,7 @@ from app.schemas.note import (
 
 class NoteGraphState(TypedDict, total=False):
     session_input: SessionInput
+    actor: str
     requested_section_ids: list[str]
     session_topic: str
     sanitized_input: SanitizedInput
@@ -109,8 +111,13 @@ def run_note_pipeline(
     session_input: SessionInput,
     requested_section_ids: list[str] | None = None,
     session_topic: str = "",
+    *,
+    actor: str = "",
 ) -> GenerateNoteResponse:
-    initial_state: NoteGraphState = {"session_input": session_input}
+    initial_state: NoteGraphState = {
+        "session_input": session_input,
+        "actor": actor or settings.remind_preview_actor,
+    }
     if requested_section_ids is not None:
         initial_state["requested_section_ids"] = requested_section_ids
     if session_topic:

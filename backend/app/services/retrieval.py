@@ -16,7 +16,7 @@ from app.schemas.note import (
     TargetDocumentType,
 )
 from app.services.embeddings import embed_query
-from app.services.supabase_storage import storage
+from app.services.supabase_storage import SupabaseStorage, storage
 
 
 @dataclass
@@ -64,6 +64,9 @@ def retrieve_case_context(
     case_id: str,
     current_session_id: str | None = None,
     max_sessions: int = 3,
+    *,
+    user_id: str | None = None,
+    storage_client: SupabaseStorage | None = None,
 ) -> list[RetrievedCaseContextItem]:
     """Retrieve recent prior sessions for the same case id.
 
@@ -71,11 +74,13 @@ def retrieve_case_context(
     field-aware chunks once row-level isolation, audit logging, and retention rules
     are established.
     """
-    if not _can_retrieve() or not case_id:
+    client = storage_client or storage
+    if not _can_retrieve(client) or not case_id or not user_id:
         return []
 
     query: dict[str, str | int] = {
         "case_id": f"eq.{case_id}",
+        "user_id": f"eq.{user_id}",
         "select": "id,case_id,session_number,session_date,session_title,created_at",
         "order": "session_number.desc,created_at.desc",
         "limit": max_sessions,
@@ -83,13 +88,21 @@ def retrieve_case_context(
     if current_session_id:
         query["id"] = f"neq.{current_session_id}"
 
-    sessions = storage.select("sessions", query)
+    sessions = client.select("sessions", query)
     if not sessions:
         return []
 
     session_ids = [str(row["id"]) for row in sessions if row.get("id")]
-    notes_by_session = _latest_notes_by_session(session_ids)
-    evidence_by_session = _evidence_by_session(session_ids)
+    notes_by_session = _latest_notes_by_session(
+        session_ids,
+        user_id=user_id,
+        storage_client=client,
+    )
+    evidence_by_session = _evidence_by_session(
+        session_ids,
+        user_id=user_id,
+        storage_client=client,
+    )
 
     context: list[RetrievedCaseContextItem] = []
     for session in sessions:
@@ -118,16 +131,18 @@ def retrieve_case_memory_chunks(
     case_id: str,
     field_types: list[str] | None = None,
     max_chunks: int = 5,
+    storage_client: SupabaseStorage | None = None,
 ) -> list[RetrievalChunk]:
     """Retrieve dense prior-session memory with mandatory counselor/case filters."""
-    if not _can_dense_retrieve() or not query_text or not counselor_id or not case_id:
+    client = storage_client or storage
+    if not _can_dense_retrieve(client) or not query_text or not counselor_id or not case_id:
         return []
     total_started = time.perf_counter()
     embedding_started = time.perf_counter()
     vector = embed_query(query_text)
     embedding_latency_ms = _elapsed_ms(embedding_started)
     rpc_started = time.perf_counter()
-    rows = storage.rpc(
+    rows = client.rpc(
         "match_case_memory_chunks",
         {
             "query_embedding": vector,
@@ -142,6 +157,8 @@ def retrieve_case_memory_chunks(
     chunks = [_case_memory_row_to_chunk(row) for row in rows or []]
     _apply_timing(chunks, embedding_latency_ms, rpc_latency_ms, total_latency_ms)
     _log_retrieval(
+        storage_client=client,
+        user_id=counselor_id,
         counselor_id=counselor_id,
         case_id=case_id,
         retrieval_scope="case_memory",
@@ -161,9 +178,12 @@ def retrieve_authoritative_kb_chunks(
     target_document_type: TargetDocumentType,
     include_warning_rules: bool = True,
     max_chunks: int = 8,
+    storage_client: SupabaseStorage | None = None,
+    user_id: str | None = None,
 ) -> list[RetrievalChunk]:
     """Retrieve source-aware KB chunks using pgvector/full-text RPCs."""
-    if not _can_dense_retrieve() or not query_text:
+    client = storage_client or storage
+    if not _can_dense_retrieve(client) or not query_text:
         return []
 
     total_started = time.perf_counter()
@@ -186,12 +206,14 @@ def retrieve_authoritative_kb_chunks(
     if settings.enable_hybrid_retrieval:
         params["query_text"] = query_text
     rpc_started = time.perf_counter()
-    rows = storage.rpc(rpc_name, params)
+    rows = client.rpc(rpc_name, params)
     rpc_latency_ms = _elapsed_ms(rpc_started)
     total_latency_ms = _elapsed_ms(total_started)
     chunks = [_kb_row_to_chunk(row) for row in rows or []]
     _apply_timing(chunks, embedding_latency_ms, rpc_latency_ms, total_latency_ms)
     _log_retrieval(
+        storage_client=client,
+        user_id=user_id,
         counselor_id=None,
         case_id=None,
         retrieval_scope="authoritative_kb",
@@ -296,13 +318,18 @@ def chunks_to_privacy_rules(
     return list(by_ref.values())[:8]
 
 
-def retrieve_document_template(target_document_type: TargetDocumentType) -> RetrievedTemplateContext | None:
+def retrieve_document_template(
+    target_document_type: TargetDocumentType,
+    *,
+    storage_client: SupabaseStorage | None = None,
+) -> RetrievedTemplateContext | None:
     """Retrieve a document-template checklist from Supabase KB chunks."""
-    if not _can_retrieve():
+    client = storage_client or storage
+    if not _can_retrieve(client):
         return None
 
     target_category = TEMPLATE_CATEGORIES.get(target_document_type, "document_template")
-    documents = storage.select(
+    documents = client.select(
         "kb_documents",
         {
             "doc_category": f"in.({target_category},document_template)",
@@ -319,7 +346,10 @@ def retrieve_document_template(target_document_type: TargetDocumentType) -> Retr
     if not matching_docs:
         return RetrievedTemplateContext(target_document_type=target_document_type)
 
-    chunks = _chunks_for_documents([str(doc["id"]) for doc in matching_docs if doc.get("id")])
+    chunks = _chunks_for_documents(
+        [str(doc["id"]) for doc in matching_docs if doc.get("id")],
+        storage_client=client,
+    )
     context = RetrievedTemplateContext(target_document_type=target_document_type)
     for chunk in chunks:
         metadata = _metadata(chunk)
@@ -350,12 +380,13 @@ def retrieve_document_template(target_document_type: TargetDocumentType) -> Retr
     return context
 
 
-def retrieve_privacy_rules() -> list[RetrievedPrivacyRule]:
+def retrieve_privacy_rules(*, storage_client: SupabaseStorage | None = None) -> list[RetrievedPrivacyRule]:
     """Retrieve privacy, ethics, and security rules for verification warnings only."""
-    if not _can_retrieve():
+    client = storage_client or storage
+    if not _can_retrieve(client):
         return []
 
-    documents = storage.select(
+    documents = client.select(
         "kb_documents",
         {
             "doc_category": "in.(privacy_rule,ethics_rule,security_rule)",
@@ -368,7 +399,7 @@ def retrieve_privacy_rules() -> list[RetrievedPrivacyRule]:
 
     titles = {str(doc.get("id")): str(doc.get("title") or "KB rule") for doc in documents if doc.get("id")}
     categories = {str(doc.get("id")): str(doc.get("doc_category") or "privacy_rule") for doc in documents if doc.get("id")}
-    chunks = _chunks_for_documents(list(titles))
+    chunks = _chunks_for_documents(list(titles), storage_client=client)
     rules: list[RetrievedPrivacyRule] = []
     for chunk in chunks[:8]:
         metadata = _metadata(chunk)
@@ -388,12 +419,12 @@ def retrieve_privacy_rules() -> list[RetrievedPrivacyRule]:
     return rules
 
 
-def _can_retrieve() -> bool:
-    return settings.enable_rag and storage.retrieval_enabled
+def _can_retrieve(storage_client: SupabaseStorage = storage) -> bool:
+    return settings.enable_rag and storage_client.retrieval_enabled
 
 
-def _can_dense_retrieve() -> bool:
-    return settings.enable_rag and settings.enable_dense_retrieval and storage.retrieval_enabled
+def _can_dense_retrieve(storage_client: SupabaseStorage = storage) -> bool:
+    return settings.enable_rag and settings.enable_dense_retrieval and storage_client.retrieval_enabled
 
 
 def retrieval_query_from_input(target_document_type: TargetDocumentType, sources: Any) -> str:
@@ -444,13 +475,19 @@ def _case_memory_row_to_chunk(row: dict[str, Any]) -> RetrievalChunk:
     )
 
 
-def _latest_notes_by_session(session_ids: list[str]) -> dict[str, dict[str, Any]]:
+def _latest_notes_by_session(
+    session_ids: list[str],
+    *,
+    user_id: str,
+    storage_client: SupabaseStorage,
+) -> dict[str, dict[str, Any]]:
     if not session_ids:
         return {}
-    rows = storage.select(
+    rows = storage_client.select(
         "generated_notes",
         {
             "session_id": f"in.({','.join(session_ids)})",
+            "user_id": f"eq.{user_id}",
             "select": "id,session_id,note_type,draft_json,confirmed_json,created_at",
             "order": "created_at.desc",
             "limit": 50,
@@ -464,13 +501,19 @@ def _latest_notes_by_session(session_ids: list[str]) -> dict[str, dict[str, Any]
     return latest
 
 
-def _evidence_by_session(session_ids: list[str]) -> dict[str, list[RetrievedEvidenceItem]]:
+def _evidence_by_session(
+    session_ids: list[str],
+    *,
+    user_id: str,
+    storage_client: SupabaseStorage,
+) -> dict[str, list[RetrievedEvidenceItem]]:
     if not session_ids:
         return {}
-    rows = storage.select(
+    rows = storage_client.select(
         "evidence_items",
         {
             "session_id": f"in.({','.join(session_ids)})",
+            "user_id": f"eq.{user_id}",
             "select": "id,session_id,source_type,source_ref,source_text,linked_field,created_at",
             "order": "created_at.desc",
             "limit": 100,
@@ -493,10 +536,14 @@ def _evidence_by_session(session_ids: list[str]) -> dict[str, list[RetrievedEvid
     return grouped
 
 
-def _chunks_for_documents(document_ids: list[str]) -> list[dict[str, Any]]:
+def _chunks_for_documents(
+    document_ids: list[str],
+    *,
+    storage_client: SupabaseStorage,
+) -> list[dict[str, Any]]:
     if not document_ids:
         return []
-    return storage.select(
+    return storage_client.select(
         "kb_chunks",
         {
             "document_id": f"in.({','.join(document_ids)})",
@@ -566,6 +613,8 @@ def _as_float(value: Any) -> float:
 
 def _log_retrieval(
     *,
+    storage_client: SupabaseStorage = storage,
+    user_id: str | None = None,
     counselor_id: str | None,
     case_id: str | None,
     retrieval_scope: str,
@@ -576,13 +625,14 @@ def _log_retrieval(
     rpc_latency_ms: int,
     total_latency_ms: int,
 ) -> None:
-    if not storage.retrieval_enabled:
+    if not storage_client.retrieval_enabled:
         return
     try:
-        storage.insert(
+        storage_client.insert(
             "retrieval_logs",
             [
                 {
+                    "user_id": user_id,
                     "counselor_id": counselor_id,
                     "case_id": case_id,
                     "retrieval_scope": retrieval_scope,

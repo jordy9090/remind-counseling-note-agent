@@ -15,10 +15,11 @@ from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, Recompo
 CACHE_VERSION = "recompose-v2-retrieval"
 
 
-def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteResponse:
+def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "") -> RecomposeNoteResponse:
     """Return a checklist-specific generated note, using cache for repeated settings."""
+    actor_id = str(actor or settings.remind_preview_actor)
     visible_section_ids = _normalize_section_ids(request.visible_section_ids)
-    cache_key = build_recompose_cache_key(request, visible_section_ids)
+    cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor_id)
     cached = _read_cached_result(cache_key)
     if cached is not None:
         return RecomposeNoteResponse(
@@ -32,6 +33,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteRes
         request.session_input,
         requested_section_ids=visible_section_ids,
         session_topic=request.session_topic,
+        actor=actor,
     )
     _write_cached_result(cache_key, result)
     return RecomposeNoteResponse(
@@ -42,9 +44,15 @@ def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteRes
     )
 
 
-def build_recompose_cache_key(request: RecomposeNoteRequest, visible_section_ids: list[str] | None = None) -> str:
+def build_recompose_cache_key(
+    request: RecomposeNoteRequest,
+    visible_section_ids: list[str] | None = None,
+    *,
+    actor: str = "",
+) -> str:
     payload = {
         "version": CACHE_VERSION,
+        "actor": str(actor or settings.remind_preview_actor),
         "enable_rag": settings.enable_rag,
         "session_input": request.session_input.model_dump(mode="json"),
         "session_topic": request.session_topic,

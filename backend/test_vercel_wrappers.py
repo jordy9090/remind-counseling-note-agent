@@ -388,6 +388,184 @@ class TestVercelWrappers(unittest.TestCase):
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["user_id"], "user-a")
 
+    @unittest.mock.patch("app.services.supabase_storage.urlopen")
+    def test_generated_note_storage_uses_user_jwt_for_rls(self, mock_urlopen):
+        from app.api.security import AuthenticatedActor
+        from app.services.supabase_storage import _storage_for_actor
+
+        settings.supabase_url = "https://mock.supabase.co"
+        settings.supabase_publishable_key = "public-test-key"
+        settings.supabase_service_role_key = "service-role-test-key"
+        actor = AuthenticatedActor("user-a", "verified-user-jwt")
+        actor_storage = _storage_for_actor(actor)
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b""
+        mock_urlopen.return_value = response
+
+        self.assertTrue(actor_storage.configured)
+        actor_storage.insert(
+            "cases",
+            [{"id": "case-a", "user_id": str(actor)}],
+            return_representation=False,
+        )
+
+        request = mock_urlopen.call_args.args[0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(headers["apikey"], "public-test-key")
+        self.assertEqual(headers["authorization"], "Bearer verified-user-jwt")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body[0]["user_id"], "user-a")
+
+        settings.supabase_publishable_key = None
+        settings.supabase_anon_key = None
+        self.assertFalse(_storage_for_actor(actor).configured)
+
+    def test_generation_preserves_the_authenticated_actor(self):
+        from app.api.routes.notes import _run_pipeline_with_stub_fallback
+        from app.api.security import AuthenticatedActor
+        from app.graph.graph import run_note_pipeline
+        from app.schemas.note import SessionInput
+
+        actor = AuthenticatedActor("user-a", "verified-user-jwt")
+        session_input = SessionInput(
+            case_id="CASE-ACTOR-PROPAGATION",
+            session_number=1,
+            session_date="2026-08-20",
+            counselor_name="test counselor",
+            counselor_memo="synthetic memo",
+            transcript_text="synthetic transcript",
+            target_document_type="session_note",
+        )
+        original_enable_rag = settings.enable_rag
+        original_use_stub = settings.use_stub
+        try:
+            settings.enable_rag = False
+            settings.use_stub = True
+            sample = run_note_pipeline(session_input, actor=actor)
+            with unittest.mock.patch(
+                "app.api.routes.notes.run_note_pipeline",
+                return_value=sample,
+            ) as mock_pipeline:
+                _run_pipeline_with_stub_fallback(session_input, actor=actor)
+            self.assertIs(mock_pipeline.call_args.kwargs["actor"], actor)
+            self.assertEqual(mock_pipeline.call_args.kwargs["actor"].access_token, "verified-user-jwt")
+        finally:
+            settings.enable_rag = original_enable_rag
+            settings.use_stub = original_use_stub
+
+    def test_case_retrieval_rejects_a_guessed_foreign_case_id(self):
+        from app.services.retrieval import retrieve_case_context
+
+        class TenantStorage:
+            retrieval_enabled = True
+
+            def __init__(self):
+                self.queries: list[tuple[str, dict[str, str | int]]] = []
+                self.rows = {
+                    "sessions": [
+                        {
+                            "id": "session-b",
+                            "case_id": "CASE-SHARED",
+                            "user_id": "user-b",
+                            "session_number": 1,
+                            "session_date": "2026-08-20",
+                            "session_title": "foreign session",
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                    "generated_notes": [
+                        {
+                            "id": "note-b",
+                            "session_id": "session-b",
+                            "user_id": "user-b",
+                            "note_type": "session_note",
+                            "draft_json": {},
+                            "confirmed_json": {"sections": {"session_content": "user-b secret"}},
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                    "evidence_items": [
+                        {
+                            "id": "evidence-b",
+                            "session_id": "session-b",
+                            "user_id": "user-b",
+                            "source_type": "direct",
+                            "source_ref": "foreign",
+                            "source_text": "user-b evidence",
+                            "linked_field": "session_content",
+                            "created_at": "2026-08-20T00:00:00Z",
+                        }
+                    ],
+                }
+
+            def select(self, table: str, query: dict[str, str | int]):
+                self.queries.append((table, dict(query)))
+                rows = list(self.rows.get(table, []))
+                for field in ("case_id", "user_id"):
+                    condition = str(query.get(field) or "")
+                    if condition.startswith("eq."):
+                        rows = [row for row in rows if row.get(field) == condition[3:]]
+                session_condition = str(query.get("session_id") or "")
+                if session_condition.startswith("in.(") and session_condition.endswith(")"):
+                    allowed = set(session_condition[4:-1].split(","))
+                    rows = [row for row in rows if row.get("session_id") in allowed]
+                return rows
+
+        fake_storage = TenantStorage()
+        original_enable_rag = settings.enable_rag
+        try:
+            settings.enable_rag = True
+            leaked = retrieve_case_context(
+                "CASE-SHARED",
+                user_id="user-a",
+                storage_client=fake_storage,  # type: ignore[arg-type]
+            )
+            self.assertEqual(leaked, [])
+
+            owned = retrieve_case_context(
+                "CASE-SHARED",
+                user_id="user-b",
+                storage_client=fake_storage,  # type: ignore[arg-type]
+            )
+            self.assertEqual(len(owned), 1)
+            self.assertEqual(owned[0].summary, "user-b secret")
+            self.assertTrue(fake_storage.queries)
+            self.assertTrue(all("user_id" in query for _table, query in fake_storage.queries))
+        finally:
+            settings.enable_rag = original_enable_rag
+
+    def test_recompose_cache_is_scoped_by_actor(self):
+        from app.schemas.note import RecomposeNoteRequest, SessionInput
+        from app.services.recompose_cache import build_recompose_cache_key
+
+        request = RecomposeNoteRequest(
+            session_input=SessionInput(
+                case_id="CASE-SHARED",
+                session_number=1,
+                session_date="2026-08-20",
+                counselor_name="test counselor",
+                counselor_memo="synthetic memo",
+                transcript_text="synthetic transcript",
+                target_document_type="session_note",
+            ),
+            visible_section_ids=["session_content"],
+        )
+        self.assertNotEqual(
+            build_recompose_cache_key(request, actor="user-a"),
+            build_recompose_cache_key(request, actor="user-b"),
+        )
+
+    def test_dense_case_memory_rpc_requires_canonical_user_owner(self):
+        migration = (
+            ROOT_DIR
+            / "supabase"
+            / "migrations"
+            / "20260826000100_case_memory_rpc_user_scope.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("c.user_id = filter_counselor_id", migration)
+        self.assertIn("c.counselor_id = filter_counselor_id", migration)
+        self.assertIn("c.case_id = filter_case_id", migration)
+
     def test_capabilities_endpoint_requires_token(self):
         client = TestClient(capabilities_app)
         response = client.get("/")
