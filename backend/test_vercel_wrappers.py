@@ -388,6 +388,38 @@ class TestVercelWrappers(unittest.TestCase):
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["user_id"], "user-a")
 
+    @unittest.mock.patch("app.services.supabase_storage.urlopen")
+    def test_generated_note_storage_uses_user_jwt_for_rls(self, mock_urlopen):
+        from app.api.security import AuthenticatedActor
+        from app.services.supabase_storage import _storage_for_actor
+
+        settings.supabase_url = "https://mock.supabase.co"
+        settings.supabase_publishable_key = "public-test-key"
+        settings.supabase_service_role_key = "service-role-test-key"
+        actor = AuthenticatedActor("user-a", "verified-user-jwt")
+        actor_storage = _storage_for_actor(actor)
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b""
+        mock_urlopen.return_value = response
+
+        self.assertTrue(actor_storage.configured)
+        actor_storage.insert(
+            "cases",
+            [{"id": "case-a", "user_id": str(actor)}],
+            return_representation=False,
+        )
+
+        request = mock_urlopen.call_args.args[0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(headers["apikey"], "public-test-key")
+        self.assertEqual(headers["authorization"], "Bearer verified-user-jwt")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body[0]["user_id"], "user-a")
+
+        settings.supabase_publishable_key = None
+        settings.supabase_anon_key = None
+        self.assertFalse(_storage_for_actor(actor).configured)
+
     def test_capabilities_endpoint_requires_token(self):
         client = TestClient(capabilities_app)
         response = client.get("/")
