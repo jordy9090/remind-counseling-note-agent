@@ -29,7 +29,7 @@ async def recompose_note_draft(
     actor: PreviewActor,
 ) -> RecomposeNoteResponse:
     try:
-        return recompose_note_with_cache(request)
+        return recompose_note_with_cache(request, actor=actor)
     except Exception as error:
         raise HTTPException(
             status_code=500,

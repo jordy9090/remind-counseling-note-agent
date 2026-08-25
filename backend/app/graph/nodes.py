@@ -32,6 +32,7 @@ from app.schemas.note import (
 )
 from app.services.llm import get_structured_llm
 from app.services.deidentification import deidentify_sources, render_counselor_text
+from app.services.supabase_storage import _storage_for_actor
 from app.services.retrieval import (
     chunks_to_case_context,
     chunks_to_privacy_rules,
@@ -92,10 +93,11 @@ def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
     """Build one retrieval query from sanitized session materials."""
     sanitized: SanitizedInput = state["sanitized_input"]
     session_input: SessionInput = state["session_input"]
+    actor_storage = _storage_for_actor(state.get("actor") or settings.remind_preview_actor)
     report = RetrievalReport(enabled=settings.enable_rag)
     if not settings.enable_rag:
         report.notices.append("ENABLE_RAG is false; retrieval skipped.")
-    elif not settings.supabase_configured:
+    elif not actor_storage.configured:
         report.notices.append("Supabase credentials are missing; retrieval continued with empty context.")
     if settings.enable_rag and not settings.enable_dense_retrieval:
         report.notices.append("ENABLE_DENSE_RETRIEVAL is false; using lightweight retrieval only.")
@@ -118,20 +120,28 @@ def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
         return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
 
     try:
-        counselor_id = settings.remind_preview_actor
+        actor = state.get("actor") or settings.remind_preview_actor
+        counselor_id = str(actor)
+        actor_storage = _storage_for_actor(actor)
         if settings.enable_dense_retrieval and counselor_id:
             chunks = retrieve_case_memory_chunks(
                 query_text=query_text,
                 counselor_id=counselor_id,
                 case_id=sanitized.case_id,
                 max_chunks=5,
+                storage_client=actor_storage,
             )
             case_context = chunks_to_case_context(chunks)
         elif settings.enable_dense_retrieval:
             report.notices.append("Dense case-memory retrieval skipped because counselor_id is missing.")
 
         if not case_context:
-            case_context = retrieve_case_context(sanitized.case_id, max_sessions=3)
+            case_context = retrieve_case_context(
+                sanitized.case_id,
+                max_sessions=3,
+                user_id=counselor_id,
+                storage_client=actor_storage,
+            )
     except Exception as error:
         report.failures.append(f"case_memory: {error}")
 
@@ -150,6 +160,8 @@ def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
     template_context: RetrievedTemplateContext | None = None
     privacy_context: list[RetrievedPrivacyRule] = []
     chunks: list[Any] = []
+    actor = state.get("actor") or settings.remind_preview_actor
+    actor_storage = _storage_for_actor(actor)
 
     if not settings.enable_rag:
         return {
@@ -160,13 +172,16 @@ def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
         }
 
     try:
-        fallback_template = retrieve_document_template(session_input.target_document_type)
+        fallback_template = retrieve_document_template(
+            session_input.target_document_type,
+            storage_client=actor_storage,
+        )
     except Exception as error:
         report.failures.append(f"document_template: {error}")
         fallback_template = None
 
     try:
-        fallback_privacy = retrieve_privacy_rules()
+        fallback_privacy = retrieve_privacy_rules(storage_client=actor_storage)
     except Exception as error:
         report.failures.append(f"privacy_rules: {error}")
         fallback_privacy = []
@@ -178,6 +193,8 @@ def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
                 target_document_type=session_input.target_document_type,
                 include_warning_rules=True,
                 max_chunks=8,
+                storage_client=actor_storage,
+                user_id=str(actor),
             )
     except Exception as error:
         report.failures.append(f"authoritative_kb: {error}")

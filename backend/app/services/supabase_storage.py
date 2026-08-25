@@ -48,13 +48,11 @@ class SupabaseStorage:
 
     @property
     def configured(self) -> bool:
-        return bool(
-            settings.supabase_url
-            and (
-                (self.access_token and (settings.supabase_publishable_key or settings.supabase_anon_key))
-                or settings.effective_supabase_key
-            )
-        )
+        if not settings.supabase_url:
+            return False
+        if self.access_token:
+            return bool(settings.supabase_publishable_key or settings.supabase_anon_key)
+        return bool(settings.effective_supabase_key)
 
     @property
     def persistence_enabled(self) -> bool:
