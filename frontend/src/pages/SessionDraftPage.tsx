@@ -33,18 +33,29 @@ import {
 import BasicInfoCard from '../components/session-input/BasicInfoCard'
 import MaterialRow from '../components/session-input/MaterialRow'
 import ProcessStatusCard from '../components/session-input/ProcessStatusCard'
+import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
 import {
   downloadDocumentExport,
   extractDocumentMaterial,
   generateNoteDraft,
   generateSupervisionReport,
   getAudioCapabilities,
+  getDocumentCapabilities,
   transcribeAudio,
 } from '../api/client'
+import {
+  buildNonverbalNotes,
+  buildTranscriptText,
+  getSegmentSpeakerKey,
+  replaceAppliedAudioBlock,
+  type SpeakerRole,
+  type SpeakerRoleMap,
+} from '../lib/audioTranscriptWorkflow'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
+  AudioTranscriptionResponse,
   DocumentCapabilitiesResponse,
   DocumentExportFormat,
   DocumentExportRequest,
@@ -126,10 +137,12 @@ type UploadedMaterialStatus =
   | 'failed'
 type MaterialApplyTarget =
   | 'transcript_text'
+  | 'nonverbal_notes'
   | 'counselor_memo'
   | 'previous_session_summary'
   | 'psychological_test_summary'
 type MaterialApplyMode = 'append' | 'replace'
+const AUDIO_APPLY_TARGETS: MaterialApplyTarget[] = ['transcript_text', 'nonverbal_notes']
 
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(import.meta.env.VITE_DOCUMENT_UPLOAD_MAX_BYTES)
   || (import.meta.env.PROD ? 4 * 1024 * 1024 : 20 * 1024 * 1024)
@@ -155,6 +168,16 @@ interface UploadedMaterial {
   segments?: AudioSegment[]
   durationSeconds?: number | null
   language?: string | null
+  speakerRoleMap?: SpeakerRoleMap
+  runtimeMode?: 'real' | 'stub'
+  diarizationStatus?: 'completed' | 'fallback' | 'disabled'
+  languageProbability?: number | null
+  nonverbalNotes?: string
+  dirtySinceApply?: boolean
+  expectedSpeakers?: number
+  lastAppliedTranscriptText?: string
+  lastAppliedNonverbalNotes?: string
+  lastAppliedMode?: MaterialApplyMode
   appliedTargets: MaterialApplyTarget[]
 }
 
@@ -253,12 +276,6 @@ const initialForm: SessionInput = {
   persist: false,
 }
 
-const STATIC_DOCUMENT_CAPABILITIES: DocumentCapabilitiesResponse = {
-  docx: { available: true },
-  pdf: { available: false, reason: '현재 실행 환경에서 PDF 내보내기를 사용할 수 없습니다.' },
-  hwpx: { available: false, reason: 'HWPX 내보내기는 아직 지원하지 않습니다.' },
-}
-
 export default function SessionDraftPage() {
   const [currentScreen, setCurrentScreen] = useState<AppScreen>('session_input')
   const [form, setForm] = useState<SessionInput>(initialForm)
@@ -293,8 +310,8 @@ export default function SessionDraftPage() {
   const [isExportingDocument, setIsExportingDocument] = useState(false)
   const [documentExportError, setDocumentExportError] = useState<string | null>(null)
   const [documentExportStatus, setDocumentExportStatus] = useState<string | null>(null)
-  const documentCapabilities = STATIC_DOCUMENT_CAPABILITIES
-  const documentCapabilitiesError = null
+  const [documentCapabilities, setDocumentCapabilities] = useState<DocumentCapabilitiesResponse | null>(null)
+  const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
   const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
 
@@ -436,6 +453,7 @@ export default function SessionDraftPage() {
         warnings: [],
         file,
         objectUrl,
+        expectedSpeakers: 2,
         appliedTargets: [],
       }
     })
@@ -477,25 +495,24 @@ export default function SessionDraftPage() {
     const target = materials.find((material) => material.id === materialId)
     if (!target?.file) return
     setMaterials((prev) =>
-      prev.map((material) => (material.id === materialId ? { ...material, status: 'transcribing', error: undefined } : material)),
+      prev.map((material) =>
+        material.id === materialId
+          ? {
+              ...material,
+              status: 'transcribing',
+              error: undefined,
+              dirtySinceApply: material.status === 'transcribed' ? true : material.dirtySinceApply,
+              appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
+            }
+          : material,
+      ),
     )
     try {
-      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe')
+      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe', target.expectedSpeakers || 2)
       setMaterials((prev) =>
         prev.map((material) =>
           material.id === materialId
-            ? {
-                ...material,
-                status: 'transcribed',
-                transcriptText: transcription.transcript_text,
-                segments: transcription.segments,
-                durationSeconds: transcription.duration_seconds,
-                language: transcription.language,
-                warnings: transcription.warnings,
-                error: undefined,
-                file: undefined,
-                appliedTargets: material.appliedTargets,
-              }
+            ? buildTranscribedAudioMaterial(material, transcription)
             : material,
         ),
       )
@@ -511,25 +528,46 @@ export default function SessionDraftPage() {
     }
   }
 
-  const updateAudioTranscript = (materialId: string, text: string) => {
-    setMaterials((prev) =>
-      prev.map((material) => (material.id === materialId ? { ...material, transcriptText: text } : material)),
-    )
-  }
-
   const updateAudioSegmentText = (materialId: string, segmentId: number, text: string) => {
     setMaterials((prev) =>
       prev.map((material) =>
         material.id === materialId
-          ? {
+          ? markAudioMaterialDirty({
               ...material,
               segments: (material.segments || []).map((segment) =>
                 segment.id === segmentId ? { ...segment, text } : segment,
               ),
-              transcriptText: (material.segments || [])
-                .map((segment) => (segment.id === segmentId ? text : segment.text))
-                .join('\n'),
-            }
+            })
+          : material,
+      ),
+    )
+  }
+
+  const updateAudioSpeakerRole = (materialId: string, speakerKey: string, role: SpeakerRole) => {
+    setMaterials((prev) =>
+      prev.map((material) =>
+        material.id === materialId
+          ? markAudioMaterialDirty({
+              ...material,
+              speakerRoleMap: {
+                ...(material.speakerRoleMap || {}),
+                [speakerKey]: role,
+              },
+            })
+          : material,
+      ),
+    )
+  }
+
+  const updateAudioExpectedSpeakers = (materialId: string, value: number) => {
+    const safeValue = Math.min(4, Math.max(1, value))
+    setMaterials((prev) =>
+      prev.map((material) =>
+        material.id === materialId
+          ? markAudioMaterialDirty({
+              ...material,
+              expectedSpeakers: safeValue,
+            })
           : material,
       ),
     )
@@ -567,6 +605,67 @@ export default function SessionDraftPage() {
           ? {
               ...item,
               appliedTargets: Array.from(new Set([...item.appliedTargets, target])),
+              error: undefined,
+            }
+          : item,
+      ),
+    )
+    setMaterialModal(null)
+  }
+
+  const applyAudioTranscriptToForm = (materialId: string, mode: MaterialApplyMode) => {
+    const material = materials.find((item) => item.id === materialId)
+    if (!material || material.kind !== 'audio') return
+    const speakerRoleMap = material.speakerRoleMap || {}
+    const transcriptText = buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText || ''
+    const nonverbalNotes = buildNonverbalNotes(material.segments || [], speakerRoleMap) || material.nonverbalNotes || ''
+    if (!transcriptText.trim()) return
+
+    const isReapply =
+      Boolean(material.dirtySinceApply) &&
+      (material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined)
+    const nextTranscriptText = isReapply
+      ? replaceAppliedAudioBlock(form.transcript_text, material.lastAppliedTranscriptText || '', transcriptText)
+      : mergeMaterialText(form.transcript_text, transcriptText, mode)
+    const nextNonverbalNotes = isReapply
+      ? replaceAppliedAudioBlock(
+          form.nonverbal_notes || '',
+          material.lastAppliedNonverbalNotes || '',
+          nonverbalNotes,
+        )
+      : mergeMaterialText(form.nonverbal_notes || '', nonverbalNotes, mode)
+
+    if (nextTranscriptText === null || nextNonverbalNotes === null) {
+      setMaterials((prev) =>
+        prev.map((item) =>
+          item.id === materialId
+            ? {
+                ...item,
+                error: '이전에 반영한 오디오 블록이 회기 입력에서 수정되어 자동으로 교체할 수 없습니다. 현재 입력을 확인한 뒤 다시 반영해주세요.',
+              }
+            : item,
+        ),
+      )
+      return
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      transcript_text: nextTranscriptText,
+      nonverbal_notes: nextNonverbalNotes,
+    }))
+    setMaterials((prev) =>
+      prev.map((item) =>
+        item.id === materialId
+          ? {
+              ...item,
+              transcriptText,
+              nonverbalNotes,
+              appliedTargets: Array.from(new Set([...item.appliedTargets, ...AUDIO_APPLY_TARGETS])),
+              dirtySinceApply: false,
+              lastAppliedTranscriptText: transcriptText,
+              lastAppliedNonverbalNotes: nonverbalNotes,
+              lastAppliedMode: isReapply ? item.lastAppliedMode || mode : mode,
               error: undefined,
             }
           : item,
@@ -691,12 +790,32 @@ export default function SessionDraftPage() {
     setCurrentScreen('document_transform')
   }
 
+  const refreshDocumentCapabilities = async () => {
+    setDocumentCapabilitiesError(null)
+    try {
+      const capabilities = await getDocumentCapabilities()
+      setDocumentCapabilities(capabilities)
+      return capabilities
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '문서 내보내기 지원 상태를 확인하지 못했습니다.'
+      setDocumentCapabilitiesError(message)
+      const fallback: DocumentCapabilitiesResponse = {
+        docx: { available: true },
+        pdf: { available: false, reason: '문서 내보내기 지원 상태를 확인하지 못했습니다.' },
+        hwpx: { available: false, reason: '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.' },
+      }
+      setDocumentCapabilities(fallback)
+      return fallback
+    }
+  }
+
   const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
     setFinalDocumentType(documentType)
     setFinalDocumentError(null)
     setDocumentExportError(null)
     setDocumentExportStatus(null)
+    await refreshDocumentCapabilities()
     if (documentType === 'supervision_report') {
       setFinalDocumentSections([])
       setSupervisionReportDraft(null)
@@ -1015,11 +1134,13 @@ export default function SessionDraftPage() {
           audioCapabilities={audioCapabilities}
           audioCapabilitiesError={audioCapabilitiesError}
           onAddAudioFiles={addAudioFiles}
+          onApplyAudioTranscript={applyAudioTranscriptToForm}
           onApplyMaterial={applyMaterialToForm}
           onRefreshAudioCapabilities={refreshAudioCapabilities}
           onTranscribeAudio={transcribeAudioMaterial}
+          onUpdateAudioExpectedSpeakers={updateAudioExpectedSpeakers}
           onUpdateAudioSegmentText={updateAudioSegmentText}
-          onUpdateAudioTranscript={updateAudioTranscript}
+          onUpdateAudioSpeakerRole={updateAudioSpeakerRole}
           onUploadDocumentFiles={uploadDocumentFiles}
         />
       )}
@@ -2973,13 +3094,15 @@ function MaterialModal({
   materials,
   mode,
   onAddAudioFiles,
+  onApplyAudioTranscript,
   onApplyMaterial,
   onClose,
   onModeChange,
   onRefreshAudioCapabilities,
   onTranscribeAudio,
+  onUpdateAudioExpectedSpeakers,
   onUpdateAudioSegmentText,
-  onUpdateAudioTranscript,
+  onUpdateAudioSpeakerRole,
   onUpdateField,
   onUpdateSessionTopic,
   onUploadDocumentFiles,
@@ -2992,13 +3115,15 @@ function MaterialModal({
   materials: UploadedMaterial[]
   mode: MaterialModalMode
   onAddAudioFiles: (files: FileList | null) => void
+  onApplyAudioTranscript: (materialId: string, mode: MaterialApplyMode) => void
   onApplyMaterial: (materialId: string, target: MaterialApplyTarget, mode: MaterialApplyMode) => void
   onClose: () => void
   onModeChange: (mode: MaterialModalMode) => void
   onRefreshAudioCapabilities: () => Promise<AudioCapabilitiesResponse>
   onTranscribeAudio: (materialId: string) => void
+  onUpdateAudioExpectedSpeakers: (materialId: string, value: number) => void
   onUpdateAudioSegmentText: (materialId: string, segmentId: number, text: string) => void
-  onUpdateAudioTranscript: (materialId: string, text: string) => void
+  onUpdateAudioSpeakerRole: (materialId: string, speakerKey: string, role: SpeakerRole) => void
   onUpdateField: (field: keyof SessionInput, value: string | number) => void
   onUpdateSessionTopic: (value: string) => void
   onUploadDocumentFiles: (files: FileList | null) => Promise<void>
@@ -3273,54 +3398,18 @@ function MaterialModal({
           {mode === 'audio_review' && selectedMaterial && (
             <div className="space-y-4">
               <MaterialSummary material={selectedMaterial} />
-              {selectedMaterial.objectUrl && <audio controls src={selectedMaterial.objectUrl} className="w-full" />}
-              {selectedMaterial.status !== 'transcribed' && (
-                <button
-                  type="button"
-                  disabled={!transcriptionAvailable || selectedMaterial.status === 'transcribing'}
-                  onClick={() => onTranscribeAudio(selectedMaterial.id)}
-                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {selectedMaterial.status === 'transcribing' ? '축어록 생성 중' : '축어록 생성'}
-                </button>
-              )}
-              {(selectedMaterial.segments || []).length > 0 && (
-                <div className="space-y-2">
-                  {(selectedMaterial.segments || []).map((segment) => (
-                    <label key={segment.id} className="block rounded-md border border-slate-200 p-3">
-                      <span className="text-xs font-semibold text-slate-500">
-                        {formatSeconds(segment.start)} - {formatSeconds(segment.end)}
-                      </span>
-                      <input
-                        value={segment.text}
-                        onChange={(event) => onUpdateAudioSegmentText(selectedMaterial.id, segment.id, event.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-              <Field label="전체 축어록" htmlFor="audio_transcript_text">
-                <textarea
-                  id="audio_transcript_text"
-                  value={selectedMaterial.transcriptText || ''}
-                  onChange={(event) => onUpdateAudioTranscript(selectedMaterial.id, event.target.value)}
-                  className={`${textareaClass} min-h-[220px]`}
-                />
-              </Field>
-              {selectedMaterial.status === 'transcribed' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setApplyTarget('transcript_text')
-                    setApplyMode(form.transcript_text.trim() ? 'append' : 'replace')
-                    onModeChange('material_apply')
-                  }}
-                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800"
-                >
-                  축어록에 반영
-                </button>
-              )}
+              <AudioTranscriptEditor
+                material={selectedMaterial}
+                applyMode={applyMode}
+                transcriptionAvailable={transcriptionAvailable}
+                transcriptionReason={audioCapabilities?.transcription.reason || null}
+                onApply={() => onApplyAudioTranscript(selectedMaterial.id, applyMode)}
+                onApplyModeChange={setApplyMode}
+                onExpectedSpeakersChange={(value) => onUpdateAudioExpectedSpeakers(selectedMaterial.id, value)}
+                onTranscribe={() => onTranscribeAudio(selectedMaterial.id)}
+                onUpdateSegmentText={(segmentId, text) => onUpdateAudioSegmentText(selectedMaterial.id, segmentId, text)}
+                onUpdateSpeakerRole={(speakerKey, role) => onUpdateAudioSpeakerRole(selectedMaterial.id, speakerKey, role)}
+              />
             </div>
           )}
         </div>
@@ -3953,11 +4042,62 @@ function getFileExtension(filename: string): string {
 
 function mergeMaterialText(current: string, incoming: string, mode: MaterialApplyMode): string {
   const cleanIncoming = incoming.trim()
+  if (!cleanIncoming) return mode === 'replace' ? '' : current.trim()
   if (mode === 'replace' || !current.trim()) return cleanIncoming
   return `${current.trim()}\n\n${cleanIncoming}`
 }
 
+function buildTranscribedAudioMaterial(
+  material: UploadedMaterial,
+  transcription: AudioTranscriptionResponse,
+): UploadedMaterial {
+  const speakerRoleMap = buildInitialSpeakerRoleMap(transcription.segments, material.speakerRoleMap)
+  const transcriptText = buildTranscriptText(transcription.segments, speakerRoleMap) || transcription.transcript_text
+  const nonverbalNotes = buildNonverbalNotes(transcription.segments, speakerRoleMap) || transcription.nonverbal_notes
+  return {
+    ...material,
+    status: 'transcribed',
+    transcriptText,
+    segments: transcription.segments,
+    durationSeconds: transcription.duration_seconds,
+    language: transcription.language,
+    runtimeMode: transcription.runtime_mode,
+    diarizationStatus: transcription.diarization_status,
+    languageProbability: transcription.language_probability,
+    nonverbalNotes,
+    speakerRoleMap,
+    warnings: transcription.warnings,
+    error: undefined,
+    dirtySinceApply: true,
+    appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
+  }
+}
+
+function buildInitialSpeakerRoleMap(segments: AudioSegment[], previous: SpeakerRoleMap = {}): SpeakerRoleMap {
+  return segments.reduce<SpeakerRoleMap>((map, segment) => {
+    const speakerKey = getSegmentSpeakerKey(segment)
+    map[speakerKey] = previous[speakerKey] || 'unassigned'
+    return map
+  }, {})
+}
+
+function markAudioMaterialDirty(material: UploadedMaterial): UploadedMaterial {
+  if (material.kind !== 'audio') return material
+  const speakerRoleMap = buildInitialSpeakerRoleMap(material.segments || [], material.speakerRoleMap)
+  return {
+    ...material,
+    speakerRoleMap,
+    transcriptText: buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText,
+    nonverbalNotes: buildNonverbalNotes(material.segments || [], speakerRoleMap),
+    dirtySinceApply: true,
+    appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
+  }
+}
+
 function materialMetaText(material: UploadedMaterial): string {
+  if (material.kind === 'audio' && material.dirtySinceApply && getMaterialText(material).trim()) {
+    return '축어록 수정사항이 회기 입력에 아직 다시 반영되지 않았습니다.'
+  }
   if (material.appliedTargets.length) {
     return `${material.appliedTargets.map((target) => materialApplyTargetLabel[target]).join(', ')}에 반영 완료`
   }
@@ -4000,12 +4140,23 @@ function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
     error: material.error,
     durationSeconds: material.durationSeconds,
     language: material.language,
+    runtimeMode: material.runtimeMode,
+    diarizationStatus: material.diarizationStatus,
+    languageProbability: material.languageProbability,
+    speakerRoleMap: material.speakerRoleMap,
+    nonverbalNotes: material.nonverbalNotes,
+    dirtySinceApply: material.dirtySinceApply,
+    expectedSpeakers: material.expectedSpeakers,
+    lastAppliedTranscriptText: material.lastAppliedTranscriptText,
+    lastAppliedNonverbalNotes: material.lastAppliedNonverbalNotes,
+    lastAppliedMode: material.lastAppliedMode,
     appliedTargets: material.appliedTargets,
   }))
 }
 
 const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
   transcript_text: '축어록',
+  nonverbal_notes: '비언어 관찰 메모',
   counselor_memo: '상담사 메모',
   previous_session_summary: '이전 회기 요약',
   psychological_test_summary: '심리검사 요약',
