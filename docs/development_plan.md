@@ -1,83 +1,93 @@
-# 개발 계획
+# Development Plan
 
-이 문서는 현재 구현 상태와 다음 작업을 맞추기 위한 MVP V1 개발 체크리스트입니다.
+## Current baseline
 
-## 현재 완료된 checkpoint
+현재 기준선은 다음 흐름을 end-to-end로 제공합니다.
 
-### 1. 문서/제품 방향 정리
+- Supabase authentication과 user-scoped draft persistence
+- PDF/DOCX/TXT material extraction
+- optional WhisperX transcription
+- 11-node LangGraph note-generation workflow
+- optional pgvector dense/hybrid retrieval
+- evidence mapping, verification, conditional revision
+- 상담사 편집·재구성·확정
+- 한국상담심리학회 수퍼비전 보고서 초안
+- DOCX 및 capability 기반 PDF export
 
-- README와 핵심 docs를 MVP V1 방향으로 정리
-- Re:mind의 주 경로를 React + FastAPI + LangGraph 기반 lightweight retrieval-aware workflow로 정의
-- `docs/security_checklist.md`에 실제 상담 데이터 저장 전 보안 요구사항 정리
+`main`의 CI는 backend smoke, Vercel wrapper regression, PDF/supervision regression,
+frontend workflow verification과 production build를 모두 실행해야 합니다.
 
-### 2. Backend MVP V1 pipeline
+## P0: expose the supervision data already supported
 
-- `backend/app/schemas/note.py`에 MVP V1 Pydantic schema 정의
-- `backend/app/graph/graph.py`에 LangGraph workflow 구현
-- `backend/app/graph/nodes.py`에 retrieval-aware node 구현
-- `POST /api/notes/generate` 구현
-- `GET /api/health` 구현
-- OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic stub output으로 동작
-- `ENABLE_RAG=1`일 때 case memory, document template, privacy/ethics/security retrieval 시도
-- `ENABLE_PERSISTENCE=1`과 `persist=true`일 때 Supabase 저장 시도
-- `SAVE_RAW_INPUT=0` 기본값으로 raw counselor memo/transcript 저장 방지
-- `backend/smoke_test.py` 추가
-- `.github/workflows/backend-smoke.yml`로 backend smoke test 자동화
+새 임상 추론을 추가하기 전에 backend schema에 이미 있는 다음 필드를 frontend에 연결합니다.
 
-### 3. Frontend MVP V1 demo
+- 총 예정 회기와 회기별 날짜·주제·진행 상태
+- 내담자와 합의한 목표
+- 상담자의 임상 목표
+- 상담전략
+- 수퍼비전에서 도움받고 싶은 점
+- 이전 인간 수퍼비전 피드백
 
-- `frontend/src/pages/SessionDraftPage.tsx`에 한 페이지 데모 구현
-- 회기 자료 입력
-- 처리 단계 표시
-- 구조화 결과 탭
-- 회기요약 초안 textarea 편집
-- 검증 리포트 탭
-- retrieval 요약 패널
-- 문서 변환 preview 탭
-- Raw JSON 확인
+완료 기준:
 
-### 4. Sample data
+- 요청 payload와 저장 draft에 필드가 유지됨
+- 보고서에서 `direct`, `ai_organized`, `clinical_review`, `missing`이 보임
+- 누락 정보가 section 안의 수정 가능한 입력으로 이어짐
+- 이전 피드백이 다음 보고서에서 인간이 작성한 정보로 구분됨
+- DOCX/PDF export가 화면의 최신 수정 내용을 사용함
 
-- `sample_data/session_input_001.json`을 `SessionInput` schema에 맞춤
-- `sample_data/session_output_001.json`을 `/api/notes/generate`의 full API response에 맞춤
-- `docs/kb_seed_examples.json`과 `scripts/seed_kb_examples.py`로 demo KB seed 경로 제공
+## P0: reduce first-use migration cost
 
-## 현재 검증 명령
+- 기존 PDF/DOCX/TXT 여러 개를 한 사례로 가져오는 flow
+- 파일별 추출 성공·경고·실패 상태
+- 중복 회기와 날짜 충돌 확인
+- 실제 저장 전에 상담사가 사례와 회기를 확정
 
-Backend:
+송은영 인터뷰에서 기존 사례를 다시 입력하는 비용이 명시적인 이탈 이유로 제시되었습니다.
 
-```bash
-cd backend
-uv run python smoke_test.py
+## P1: adaptive retrieval experiment
+
+고정 workflow 전체를 자율화하지 않고 다음 최소 실험을 별도 feature branch에서 검증합니다.
+
+```text
+section requirements
+  ↓
+skip / case_memory / both
+  ↓
+field-level evidence sufficiency
+  ├─ generate
+  ├─ one retrieval retry
+  ├─ generate partial
+  └─ request section input
 ```
 
-Frontend:
+구현 전 필요한 평가자료:
 
-```bash
-cd frontend
-pnpm build
-```
+- 실제 사례에서 section별 필요한 source와 query 정답
+- 필수 evidence slot과 허용 가능한 누락
+- route accuracy, latency, token, coverage, unsupported claim 지표
 
-`pnpm`이 없는 환경에서는 다음으로 같은 build script를 검증할 수 있습니다.
+LLM confidence 숫자만으로 sufficiency를 결정하지 않습니다. 개인정보 scope, retry 횟수,
+human-review 대상은 코드 규칙으로 제한합니다.
 
-```bash
-npm run build
-```
+## P2: one-theory vertical slice
 
-## 다음 작업 후보
+최한나 교수와 첫 이론의 개념 체계와 최소 근거 조건을 합의한 뒤 한 section에서만 실험합니다.
 
-1. frontend에서 확정된 회기 기록 영역을 실제 interaction으로 정리
-2. 검증 리포트 표시 문구와 badge taxonomy 개선
-3. Document Transform preview의 부족 필드 구조 정교화
-4. 사용자 인터뷰 기반 회기요약 section label 조정
+- theory definition, observable indicators, required evidence
+- alternative explanation과 반례 질문
+- 적용 한계와 검수자·버전
+- 이론 문서와 case evidence의 명시적 분리
 
-## MVP V1에서 계속 제외할 것
+CBT, 정서중심, Bowen을 한 번에 추가하지 않습니다. Theory 수는 경쟁력 지표로 사용하지
+않고, GPT 대비 반복 사용 가치가 확인된 lens만 확장합니다.
 
-- 인증/회원가입
-- 파일 업로드
-- 음성 업로드 또는 실시간 STT
-- pgvector 기반 의미 검색
-- AI 슈퍼비전
-- 자동 사례개념화
-- 정식 Word/HWP export
-- 결제/예약/관리자 기능
+## Deferred
+
+- 센터 관리자 dashboard와 다계정 운영
+- 수퍼바이저 전용 계정
+- 자격 수련 횟수 자동 인정·증빙
+- 결제와 예약
+- HWPX template export
+- 실시간 상담 또는 내담자 monitoring
+- 자동 사례개념화와 AI 임상 조언

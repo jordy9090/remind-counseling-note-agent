@@ -1,4 +1,6 @@
 -- Re:mind V1 Supabase schema
+-- Reference snapshot only. Versioned non-destructive migrations live in
+-- supabase/migrations and should be used for shared remote DB changes.
 -- Intended for synthetic/demo counseling documentation data until auth, RLS,
 -- retention, and audit policies are finalized.
 
@@ -88,9 +90,10 @@ create table if not exists kb_chunks (
   chunk_text text not null,
   chunk_type text not null default 'guideline',
   metadata_json jsonb not null default '{}'::jsonb
-  -- V2 TODO: enable pgvector after access isolation and retention policy.
-  -- embedding vector(1536)
 );
+
+-- pgvector/hybrid RAG additions, case_memory_chunks, and RPC functions are in:
+-- supabase/migrations/20260717000200_pgvector_hybrid_rag.sql
 
 create index if not exists idx_sessions_case_recent
   on sessions(case_id, session_number desc, created_at desc);

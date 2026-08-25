@@ -27,9 +27,10 @@ DOCUMENT_TYPE_LABELS = {
 }
 
 REVIEW_NOTICE = (
-    "이 문서는 Re:mind AI가 생성한 초안을 바탕으로 작성되었습니다. "
-    "상담사가 원자료, 윤리 기준, 개인정보 보호 기준을 검토한 뒤 최종 문서로 사용하세요."
+    "윤리·개인정보 보호 기준을 준수하여 작성합니다."
 )
+
+SUPERVISION_PLACEHOLDER = "[상담사 확인 필요]"
 
 BLOCKED_METADATA_KEYS = {
     "missing_items",
@@ -103,34 +104,48 @@ class DocxDocumentExporter(DocumentExporter):
         section.page_width = Mm(210)
         section.page_height = Mm(297)
         section.top_margin = Mm(20)
-        section.bottom_margin = Mm(18)
+        section.bottom_margin = Mm(14)
         section.left_margin = Mm(20)
         section.right_margin = Mm(20)
 
         font_name = os.getenv("REMIND_DOCX_FONT_FAMILY", "Malgun Gothic")
         configure_docx_styles(document, font_name)
+        footer = section.footer
+        footer_paragraph = footer.paragraphs[0]
+        footer_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        footer_run = footer_paragraph.add_run(REVIEW_NOTICE)
+        footer_run.font.size = Pt(7.5)
+        footer_run.font.color.rgb = RGBColor(71, 85, 105)
+        set_run_font(footer_run, font_name)
 
         title = document.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title.paragraph_format.space_before = Pt(4)
+        title.paragraph_format.space_after = Pt(10)
+        add_paragraph_border(title, "111827", 14)
         title_run = title.add_run(request.title)
         title_run.bold = True
         title_run.font.size = Pt(18)
-        title_run.font.color.rgb = RGBColor(30, 64, 175)
+        title_run.font.color.rgb = RGBColor(15, 23, 42)
         set_run_font(title_run, font_name)
 
-        info_rows = build_metadata_rows(request)
-        table = document.add_table(rows=len(info_rows), cols=2)
+        supervision_grid = request.document_type == "supervision_report"
+        info_rows = build_supervision_metadata_grid(request) if supervision_grid else build_metadata_rows(request)
+        table = document.add_table(rows=len(info_rows), cols=4 if supervision_grid else 2)
         table.style = "Table Grid"
-        for index, (label, value) in enumerate(info_rows):
+        if supervision_grid:
+            set_table_column_widths(table, [25, 55, 35, 55])
+        for index, info_row in enumerate(info_rows):
             cells = table.rows[index].cells
-            cells[0].text = label
-            cells[1].text = value
-            for paragraph in cells[0].paragraphs:
-                for run in paragraph.runs:
-                    run.bold = True
-                    set_run_font(run, font_name)
+            for column_index, value in enumerate(info_row):
+                cells[column_index].text = value
+                if column_index % 2 == 0:
+                    shade_cell(cells[column_index], "E5E7EB")
+                    for paragraph in cells[column_index].paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+                            set_run_font(run, font_name)
             for cell in cells:
-                shade_cell(cell, "F8FAFC")
                 for paragraph in cell.paragraphs:
                     for run in paragraph.runs:
                         run.font.size = Pt(9)
@@ -141,12 +156,14 @@ class DocxDocumentExporter(DocumentExporter):
         for doc_section in renderable_sections(request.sections):
             if doc_section.level <= 1:
                 paragraph = document.add_paragraph()
+                paragraph.paragraph_format.keep_with_next = True
                 run = paragraph.add_run(doc_section.title)
                 run.bold = True
                 run.font.size = Pt(14)
                 set_run_font(run, font_name)
             else:
                 heading = document.add_heading(doc_section.title, level=min(max(doc_section.level, 2), 3))
+                heading.paragraph_format.keep_with_next = True
                 for run in heading.runs:
                     set_run_font(run, font_name)
 
@@ -156,13 +173,16 @@ class DocxDocumentExporter(DocumentExporter):
             else:
                 add_content_to_docx(document, doc_section.content, font_name)
 
-        notice = document.add_paragraph()
-        notice.paragraph_format.space_before = Pt(14)
-        notice_run = notice.add_run(REVIEW_NOTICE)
-        notice_run.italic = True
-        notice_run.font.size = Pt(9)
-        notice_run.font.color.rgb = RGBColor(71, 85, 105)
-        set_run_font(notice_run, font_name)
+        # Word requires a paragraph after a trailing table. Keep that structural
+        # paragraph tiny so a final reflection box cannot create a blank page.
+        end_marker = document.add_paragraph()
+        end_marker.paragraph_format.space_before = Pt(0)
+        end_marker.paragraph_format.space_after = Pt(0)
+        end_marker.paragraph_format.line_spacing = Pt(1)
+        marker_run = end_marker.add_run(" ")
+        marker_run.font.size = Pt(1)
+        marker_run.font.hidden = True
+        set_run_font(marker_run, font_name)
 
         buffer = BytesIO()
         document.save(buffer)
@@ -181,11 +201,16 @@ class PdfDocumentExporter(DocumentExporter):
             html_text = render_pdf_html(request)
             font_config = FontConfiguration()
             return HTML(string=html_text, url_fetcher=block_external_resource).write_pdf(font_config=font_config)
-        except (ImportError, OSError) as error:
-            raise DocumentExportRuntimeError(
-                "PDF 렌더링 런타임을 불러오지 못했습니다. WeasyPrint와 Pango/GObject 시스템 라이브러리 "
-                "설치를 확인해주세요."
-            ) from error
+        except (ImportError, OSError):
+            # Vercel's Python runtime does not provide WeasyPrint's native
+            # Pango/GObject libraries. ReportLab's CID font path is pure Python
+            # and keeps Korean PDF export available in that environment.
+            try:
+                return render_pdf_with_reportlab(request)
+            except Exception as error:
+                raise DocumentExportRuntimeError(
+                    "PDF 렌더링 런타임을 불러오지 못했습니다."
+                ) from error
 
 
 class HwpxDocumentExporter(DocumentExporter):
@@ -248,6 +273,24 @@ def build_metadata_rows(request: DocumentExportRequest) -> list[tuple[str, str]]
     return rows
 
 
+def build_supervision_metadata_grid(request: DocumentExportRequest) -> list[tuple[str, str, str, str]]:
+    metadata = request.metadata
+    return [
+        (
+            "상담자",
+            stringify_cell_value(metadata.get("counselor_name") or ""),
+            "소속 상담기관",
+            stringify_cell_value(metadata.get("institution") or ""),
+        ),
+        (
+            "수퍼바이저",
+            stringify_cell_value(metadata.get("supervisor") or ""),
+            "수퍼비전 일시 및 장소",
+            stringify_cell_value(metadata.get("supervision_date_place") or ""),
+        ),
+    ]
+
+
 @lru_cache(maxsize=1)
 def check_pdf_runtime() -> tuple[bool, str | None]:
     try:
@@ -258,8 +301,121 @@ def check_pdf_runtime() -> tuple[bool, str | None]:
             font_config=FontConfiguration(),
         )
     except Exception:
-        return False, "WeasyPrint native runtime is unavailable."
+        try:
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+            pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
+        except Exception:
+            return False, "PDF rendering runtime is unavailable."
     return True, None
+
+
+def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
+    """Render a Korean-capable PDF without native system libraries."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    font_name = "HYSMyeongJo-Medium"
+    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title=request.title,
+    )
+    base = getSampleStyleSheet()
+    body = ParagraphStyle("KoreanBody", parent=base["BodyText"], fontName=font_name, fontSize=9, leading=14)
+    title_style = ParagraphStyle(
+        "KoreanTitle", parent=body, fontSize=17, leading=23, alignment=TA_CENTER, spaceAfter=9 * mm
+    )
+    section_style = ParagraphStyle("KoreanSection", parent=body, fontSize=12, leading=18, spaceBefore=5 * mm, spaceAfter=2 * mm)
+    label_style = ParagraphStyle("KoreanLabel", parent=body, fontSize=8, leading=11)
+    story = [Paragraph(html.escape(request.title), title_style)]
+
+    metadata_rows = (
+        build_supervision_metadata_grid(request)
+        if request.document_type == "supervision_report"
+        else [(label, value) for label, value in build_metadata_rows(request)]
+    )
+    metadata_table = Table(
+        [[Paragraph(html.escape(str(cell)), label_style) for cell in row] for row in metadata_rows],
+        colWidths=([27 * mm, 54 * mm, 34 * mm, 54 * mm] if request.document_type == "supervision_report" else [35 * mm, 134 * mm]),
+        repeatRows=0,
+    )
+    metadata_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e5e7eb")),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#e5e7eb")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.extend([metadata_table, Spacer(1, 4 * mm)])
+
+    for section in renderable_sections(request.sections):
+        story.append(Paragraph(html.escape(section.title), section_style))
+        if section.content_blocks:
+            for block in section.content_blocks:
+                story.extend(_reportlab_block(block, body, label_style))
+        elif isinstance(section.content, list):
+            for item in section.content:
+                story.append(Paragraph(f"• {html.escape(str(item))}", body))
+        elif section.content:
+            story.append(Paragraph(html.escape(str(section.content)).replace("\n", "<br/>"), body))
+
+    def add_footer(canvas, _document) -> None:
+        canvas.saveState()
+        canvas.setFont(font_name, 7)
+        canvas.setFillColor(colors.HexColor("#475569"))
+        canvas.drawCentredString(A4[0] / 2, 9 * mm, REVIEW_NOTICE)
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
+    return buffer.getvalue()
+
+
+def _reportlab_block(block: DocumentContentBlock, body, label_style) -> list[object]:
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    elements: list[object] = []
+    if block.label:
+        elements.append(Paragraph(f"<b>{html.escape(block.label)}</b>", label_style))
+    if block.rows:
+        keys = list(block.rows[0])
+        rows = [[Paragraph(html.escape(str(key)), label_style) for key in keys]]
+        rows.extend([
+            [Paragraph(html.escape(stringify_cell_value(row.get(key, ""))).replace("\n", "<br/>"), body) for key in keys]
+            for row in block.rows
+        ])
+        table = Table(rows, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elements.append(table)
+    for turn in block.speaker_turns:
+        speaker = {"client": "내담자", "counselor": "상담자", "other": "기타"}.get(turn.speaker, "기타")
+        silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds else ""
+        elements.append(Paragraph(f"<b>{speaker}:</b> {html.escape(turn.text)}{silence}", body))
+    if block.text and block.text.strip() != SUPERVISION_PLACEHOLDER:
+        elements.append(Paragraph(html.escape(block.text).replace("\n", "<br/>"), body))
+    elements.append(Spacer(1, 2))
+    return elements
 
 
 def humanize_metadata_key(key: str) -> str:
@@ -279,7 +435,8 @@ def stringify_cell_value(value: object) -> str:
         return ", ".join(stringify_cell_value(item) for item in value)
     if isinstance(value, dict):
         return ", ".join(f"{key}: {stringify_cell_value(item)}" for key, item in value.items())
-    return str(value)
+    text = str(value)
+    return "" if text.strip() == SUPERVISION_PLACEHOLDER else text
 
 
 def renderable_sections(sections: Iterable[DocumentSection]) -> Iterable[DocumentSection]:
@@ -312,7 +469,7 @@ def add_content_to_docx(document, content: str | list[str] | None, font_name: st
             add_docx_text_line(document, str(item), font_name, force_bullet=True)
         return
 
-    for line in split_preserving_blank_lines(content or ""):
+    for line in split_preserving_blank_lines(clean_export_text(content or "")):
         add_docx_text_line(document, line, font_name)
 
 
@@ -336,19 +493,26 @@ def add_docx_text_line(document, line: str, font_name: str, force_bullet: bool =
 
 
 def add_block_to_docx(document, block: DocumentContentBlock, font_name: str) -> None:
+    if block.label:
+        label_paragraph = document.add_paragraph()
+        label_paragraph.paragraph_format.keep_with_next = True
+        label_run = label_paragraph.add_run(block.label)
+        label_run.bold = True
+        set_run_font(label_run, font_name)
     if block.type == "table" and block.rows:
         add_table_block_to_docx(document, block.rows, font_name)
         return
     if block.type == "transcript" and block.speaker_turns:
-        for turn in block.speaker_turns:
+        for index, turn in enumerate(block.speaker_turns, 1):
             label = "내담자" if turn.speaker == "client" else "상담자" if turn.speaker == "counselor" else "화자"
-            add_docx_text_line(document, f"{label}: {turn.text}", font_name)
+            silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds is not None else ""
+            add_docx_text_line(document, f"{index}. {label}: {turn.text}{silence}", font_name)
         return
     if block.type == "reflection_box":
         table = document.add_table(rows=1, cols=1)
         table.style = "Table Grid"
-        shade_cell(table.cell(0, 0), "EFF6FF")
-        table.cell(0, 0).text = block.text or ""
+        shade_cell(table.cell(0, 0), "F3F4F6")
+        table.cell(0, 0).text = clean_export_text(block.text or "")
         for paragraph in table.cell(0, 0).paragraphs:
             for run in paragraph.runs:
                 set_run_font(run, font_name)
@@ -360,6 +524,9 @@ def add_table_block_to_docx(document, rows: list[dict[str, object]], font_name: 
     headers = ordered_table_headers(rows)
     table = document.add_table(rows=len(rows) + 1, cols=len(headers))
     table.style = "Table Grid"
+    if len(headers) == 6:
+        set_table_column_widths(table, [15, 22, 20, 43, 38, 32])
+    mark_table_header_repeat(table.rows[0])
     for index, header in enumerate(headers):
         cell = table.cell(0, index)
         cell.text = str(header)
@@ -388,7 +555,7 @@ def ordered_table_headers(rows: list[dict[str, object]]) -> list[str]:
 
 
 def configure_docx_styles(document, font_name: str) -> None:
-    from docx.shared import Pt
+    from docx.shared import Pt, RGBColor
 
     for style_name in ("Normal", "Body Text"):
         if style_name in document.styles:
@@ -398,7 +565,46 @@ def configure_docx_styles(document, font_name: str) -> None:
             set_style_font(style, font_name)
     for style_name in ("Heading 1", "Heading 2", "Heading 3", "List Bullet", "List Number"):
         if style_name in document.styles:
-            set_style_font(document.styles[style_name], font_name)
+            style = document.styles[style_name]
+            set_style_font(style, font_name)
+            if style_name.startswith("Heading"):
+                style.font.color.rgb = RGBColor(15, 23, 42)
+                style.font.bold = True
+                style.paragraph_format.space_before = Pt(10 if style_name == "Heading 2" else 7)
+                style.paragraph_format.space_after = Pt(5)
+
+
+def set_table_column_widths(table, widths_mm: list[int]) -> None:
+    from docx.shared import Mm
+
+    table.autofit = False
+    for row in table.rows:
+        for index, width in enumerate(widths_mm):
+            if index < len(row.cells):
+                row.cells[index].width = Mm(width)
+
+
+def mark_table_header_repeat(row) -> None:
+    from docx.oxml import OxmlElement
+
+    tr_pr = row._tr.get_or_add_trPr()
+    tr_pr.append(OxmlElement("w:tblHeader"))
+
+
+def add_paragraph_border(paragraph, color: str, size: int) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    borders = OxmlElement("w:pBdr")
+    for edge in ("top", "left", "bottom", "right"):
+        border = OxmlElement(f"w:{edge}")
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), str(size))
+        border.set(qn("w:space"), "5")
+        border.set(qn("w:color"), color)
+        borders.append(border)
+    p_pr.append(borders)
 
 
 def set_style_font(style, font_name: str) -> None:
@@ -454,6 +660,14 @@ def render_pdf_html(request: DocumentExportRequest) -> str:
 
 
 def render_metadata_rows_html(request: DocumentExportRequest) -> str:
+    if request.document_type == "supervision_report":
+        return "\n".join(
+            "<tr>" + "".join(
+                f"<{('th' if index % 2 == 0 else 'td')}>{escape_text(value)}</{('th' if index % 2 == 0 else 'td')}>"
+                for index, value in enumerate(row)
+            ) + "</tr>"
+            for row in build_supervision_metadata_grid(request)
+        )
     rows = []
     for label, value in build_metadata_rows(request):
         rows.append(
@@ -489,7 +703,7 @@ def render_content_html(content: str | list[str] | None) -> str:
         return f"<ul>{items}</ul>" if items else ""
 
     parts: list[str] = []
-    for line in split_preserving_blank_lines(content or ""):
+    for line in split_preserving_blank_lines(clean_export_text(content or "")):
         if not line.strip():
             parts.append("<div class=\"blank-line\"></div>")
             continue
@@ -505,6 +719,7 @@ def render_content_html(content: str | list[str] | None) -> str:
 
 
 def render_block_html(block: DocumentContentBlock) -> str:
+    label_html = f'<p class="block-label">{escape_text(block.label)}</p>' if block.label else ""
     if block.type == "table" and block.rows:
         headers = ordered_table_headers(block.rows)
         header_html = "".join(f"<th>{escape_text(header)}</th>" for header in headers)
@@ -512,25 +727,31 @@ def render_block_html(block: DocumentContentBlock) -> str:
         for row in block.rows:
             cells = "".join(f"<td>{escape_text(stringify_cell_value(row.get(header, '')))}</td>" for header in headers)
             rows_html.append(f"<tr>{cells}</tr>")
-        return f"<table class=\"content-table\"><thead><tr>{header_html}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
+        return f"{label_html}<table class=\"content-table\"><thead><tr>{header_html}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
     if block.type == "transcript" and block.speaker_turns:
         turns = []
-        for turn in block.speaker_turns:
+        for index, turn in enumerate(block.speaker_turns, 1):
             label = "내담자" if turn.speaker == "client" else "상담자" if turn.speaker == "counselor" else "화자"
+            silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds is not None else ""
             turns.append(
                 "<div class=\"transcript-turn\">"
-                f"<strong>{escape_text(label)}</strong>"
-                f"<span>{escape_text(turn.text)}</span>"
+                f"<strong>{index}. {escape_text(label)}</strong>"
+                f"<span>{escape_text(turn.text + silence)}</span>"
                 "</div>"
             )
-        return f"<div class=\"transcript\">{''.join(turns)}</div>"
+        return f"{label_html}<div class=\"transcript\">{''.join(turns)}</div>"
     if block.type == "reflection_box":
-        return f"<div class=\"reflection-box\">{render_content_html(block.text or '')}</div>"
-    return render_content_html(block.text or "")
+        return f"{label_html}<div class=\"reflection-box\">{render_content_html(block.text or '')}</div>"
+    return label_html + render_content_html(block.text or "")
 
 
 def escape_text(value: object) -> str:
     return html.escape(str(value), quote=True)
+
+
+def clean_export_text(value: object) -> str:
+    text = str(value)
+    return "" if text.strip() == SUPERVISION_PLACEHOLDER else text
 
 
 def sanitize_css_font_family(value: str) -> str:

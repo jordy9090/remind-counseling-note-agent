@@ -7,11 +7,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "verify:material-workflow": "node scripts/verify-material-workflow.mjs",
+    "verify:audio-transcript-workflow": "node scripts/verify-audio-transcript-workflow.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "axios": "^1.6.0",
     "clsx": "^2.0.0",
+    "docx": "^9.7.1",
     "lucide-react": "^0.292.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

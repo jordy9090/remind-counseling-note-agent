@@ -1,4 +1,4 @@
-"""Schemas for the Re:mind MVP V0 note generation pipeline."""
+"""Schemas for the Re:mind MVP note-generation workflows."""
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -163,6 +163,17 @@ class DocumentTransformPreview(BaseModel):
     notice: str
 
 
+class GeneratedDocumentDraft(BaseModel):
+    """Counselor-facing document assembled from grounded pipeline fields."""
+
+    document_type: TargetDocumentType
+    status: Literal["draft_requires_counselor_confirmation"] = "draft_requires_counselor_confirmation"
+    sections: dict[str, str] = Field(default_factory=dict)
+    source_refs: dict[str, list[str]] = Field(default_factory=dict)
+    missing_or_review_fields: list[str] = Field(default_factory=list)
+    notice: str = "AI 초안입니다. 상담사가 근거와 임상 판단을 확인해야 합니다."
+
+
 class RetrievedEvidenceItem(BaseModel):
     id: str | None = None
     source_type: str = ""
@@ -203,6 +214,10 @@ class RetrievalReport(BaseModel):
     case_context_count: int = 0
     template_context_found: bool = False
     privacy_rule_count: int = 0
+    embedding_latency_ms: int = 0
+    rpc_latency_ms: int = 0
+    retrieval_latency_ms: int = 0
+    generation_latency_ms: int = 0
     failures: list[str] = Field(default_factory=list)
     notices: list[str] = Field(default_factory=list)
 
@@ -217,12 +232,32 @@ class PersistenceReport(BaseModel):
     message: str = ""
 
 
+class ConfirmGeneratedNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note_id: str
+    confirmed_note: dict[str, Any] = Field(default_factory=dict)
+    counselor_edited: bool = True
+    create_case_memory: bool = True
+
+
+class ConfirmGeneratedNoteResponse(BaseModel):
+    note_id: str
+    confirmation_status: Literal["confirmed", "demo_confirmed"]
+    confirmed_at: str
+    memory_chunk_count: int = 0
+    memory_embedding_count: int = 0
+    message: str = ""
+
+
 class GenerateNoteResponse(BaseModel):
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
     verification_report: VerificationReport
     document_transform_preview: DocumentTransformPreview
+    session_note_draft: GeneratedDocumentDraft | None = None
+    termination_report_draft: GeneratedDocumentDraft | None = None
     confirmed_session_note: dict[str, Any] = Field(default_factory=dict)
     sanitized_input: SanitizedInput
     retrieved_case_context: list[RetrievedCaseContextItem] = Field(default_factory=list)
@@ -282,6 +317,22 @@ class RecomposeNoteResponse(BaseModel):
     cache_hit: bool = False
 
 
+class SupervisionSessionEvent(BaseModel):
+    """A counseling appointment or exception shown in the progress table."""
+
+    session_number: int | None = None
+    session_date: str = ""
+    duration_minutes: int | None = None
+    topic: str = ""
+    attendance_status: Literal["completed", "cancelled", "late", "absent", "no_show"] = "completed"
+    attendance_reason: str = ""
+
+
+class PreviousSupervisionEntry(BaseModel):
+    supervision_date: str = ""
+    feedback: str = ""
+
+
 class SupervisionReportRequest(BaseModel):
     """Request a personal counseling case supervision report draft."""
 
@@ -293,6 +344,14 @@ class SupervisionReportRequest(BaseModel):
     institution: str = ""
     supervisor: str = ""
     supervision_date_place: str = ""
+    maximum_sessions: int | None = Field(default=None, ge=1)
+    session_events: list[SupervisionSessionEvent] = Field(default_factory=list)
+    previous_supervisions: list[PreviousSupervisionEntry] = Field(default_factory=list)
+    agreed_counseling_goal: str = ""
+    clinical_counseling_goal: str = ""
+    counseling_strategy: str = ""
+    supervision_request: str = ""
+    transcript_mode: Literal["full", "summary"] = "summary"
 
 
 class SupervisionSpeakerTurn(BaseModel):
@@ -313,6 +372,10 @@ class SupervisionContentBlock(BaseModel):
     demoValue: bool = False
     reviewStatus: Literal["unchecked", "confirmed", "edited", "needs_human_input"] = "unchecked"
     warnings: list[str] = Field(default_factory=list)
+    label: str | None = None
+    guidance: list[str] = Field(default_factory=list)
+    evidenceStatus: Literal["direct", "ai_organized", "clinical_review", "missing"] = "ai_organized"
+    missingInputs: list[str] = Field(default_factory=list)
 
 
 class SupervisionReportSection(BaseModel):
@@ -321,6 +384,7 @@ class SupervisionReportSection(BaseModel):
     level: Literal[1, 2, 3]
     contentBlocks: list[SupervisionContentBlock] = Field(default_factory=list)
     status: Literal["complete", "partial", "missing", "needs_review"] = "partial"
+    guidance: list[str] = Field(default_factory=list)
 
 
 class SupervisionCompletionChecklistItem(BaseModel):
@@ -368,7 +432,7 @@ class SupervisionReportDraft(BaseModel):
     reportId: str
     caseId: str
     reportType: Literal["personal_counseling_supervision"] = "personal_counseling_supervision"
-    title: str = "개인상담 사례 수퍼비전 보고서 초안"
+    title: str = "개인상담(공개상담) 사례 수퍼비전 보고서"
     meta: SupervisionReportMeta
     sections: list[SupervisionReportSection]
     aiReview: SupervisionAiReviewPanel

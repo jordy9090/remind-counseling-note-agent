@@ -4,7 +4,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from typing import Annotated
+from fastapi import Depends, FastAPI, HTTPException
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -13,15 +14,20 @@ BACKEND_DIR = ROOT_DIR / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.note import RecomposeNoteRequest, RecomposeNoteResponse  # noqa: E402
 from app.services.recompose_cache import recompose_note_with_cache  # noqa: E402
 
 app = FastAPI(title="Re:mind Note Recompose API")
+PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 
 @app.post("/", response_model=RecomposeNoteResponse)
 @app.post("/api/notes/recompose", response_model=RecomposeNoteResponse)
-async def recompose_note_draft(request: RecomposeNoteRequest) -> RecomposeNoteResponse:
+async def recompose_note_draft(
+    request: RecomposeNoteRequest,
+    actor: PreviewActor,
+) -> RecomposeNoteResponse:
     try:
         return recompose_note_with_cache(request)
     except Exception as error:

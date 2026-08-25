@@ -1,0 +1,131 @@
+import { FormEvent, ReactNode, useEffect, useState } from 'react'
+import type { Provider, Session } from '@supabase/supabase-js'
+import { ChevronDown, Loader2, LogOut, Mail, Sparkles } from 'lucide-react'
+
+import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
+
+type AuthMode = 'signin' | 'signup' | 'reset' | 'recovery'
+const PRIVACY_NOTE = '상담 기록은 계정별로 분리하여 관리됩니다. 민감정보는 필요한 범위에서 비식별화해 입력해주세요.'
+
+function authErrorMessage(message: string) {
+  const normalized = message.toLowerCase()
+  if (normalized.includes('invalid login credentials')) return '이메일 또는 비밀번호를 확인해주세요.'
+  if (normalized.includes('email not confirmed')) return '이메일 인증을 먼저 완료해주세요.'
+  if (normalized.includes('user already registered')) return '이미 가입된 이메일입니다.'
+  if (normalized.includes('password should be')) return '비밀번호는 8자 이상으로 입력해주세요.'
+  if (normalized.includes('rate limit')) return '요청이 많습니다. 잠시 후 다시 시도해주세요.'
+  return '인증 요청을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.'
+}
+
+export default function AuthGate({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(isAuthConfigured)
+  const [mode, setMode] = useState<AuthMode>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [message, setMessage] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [providers, setProviders] = useState<AvailableOAuthProviders>({ google: false, kakao: false })
+  const [profileOpen, setProfileOpen] = useState(false)
+
+  useEffect(() => {
+    if (!supabase) return
+    void Promise.all([supabase.auth.getSession(), getAvailableOAuthProviders()]).then(([auth, available]) => {
+      setSession(auth.data.session)
+      setProviders(available)
+      setLoading(false)
+    })
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      setSession(nextSession)
+      if (event === 'PASSWORD_RECOVERY') setMode('recovery')
+      setLoading(false)
+    })
+    return () => data.subscription.unsubscribe()
+  }, [])
+
+  if (!isAuthConfigured) return <AuthShell><Brand /><AuthHeading title="서비스 연결을 준비하고 있습니다" description="인증 설정을 확인한 뒤 다시 시도해주세요." /></AuthShell>
+  if (loading) return <AuthShell><Brand /><Status text="로그인 상태를 확인하고 있습니다" /></AuthShell>
+
+  if (session && mode === 'recovery') {
+    return <AuthShell><Brand /><AuthHeading title="새 비밀번호 설정" description="앞으로 사용할 비밀번호를 입력해주세요." />
+      <form className="mt-8 space-y-5" onSubmit={async (event) => {
+        event.preventDefault()
+        if (!supabase) return
+        setSubmitting(true); setMessage('')
+        const { error } = await supabase.auth.updateUser({ password })
+        setSubmitting(false)
+        if (error) return setMessage(authErrorMessage(error.message))
+        setPassword(''); setMessage('비밀번호가 변경되었습니다.'); setMode('signin')
+      }}>
+        <PasswordField value={password} onChange={setPassword} autoComplete="new-password" />
+        <PrimaryButton loading={submitting}>비밀번호 변경</PrimaryButton>
+        {message && <Feedback message={message} />}
+      </form>
+    </AuthShell>
+  }
+
+  if (!session) {
+    const oauthEnabled = providers.google || providers.kakao
+    const startOAuth = async (provider: Provider) => {
+      if (!supabase) return
+      setSubmitting(true); setMessage('')
+      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.origin } })
+      if (error) { setSubmitting(false); setMessage(authErrorMessage(error.message)) }
+    }
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      if (!supabase) return
+      setSubmitting(true); setMessage('')
+      if (mode === 'reset') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin })
+        setSubmitting(false)
+        setMessage(error ? authErrorMessage(error.message) : '비밀번호 재설정 이메일을 보냈습니다.')
+        return
+      }
+      const result = mode === 'signup'
+        ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
+        : await supabase.auth.signInWithPassword({ email, password })
+      setSubmitting(false)
+      if (result.error) return setMessage(authErrorMessage(result.error.message))
+      if (mode === 'signup' && !result.data.session) setMessage('인증 이메일을 보냈습니다. 메일의 확인 링크를 눌러주세요.')
+    }
+
+    return <AuthShell><Brand />
+      <AuthHeading title={mode === 'reset' ? '비밀번호 찾기' : '상담 기록을 더 빠르고 정확하게'} description={mode === 'reset' ? '가입한 이메일로 비밀번호 재설정 링크를 보내드립니다.' : '회기 기록부터 수퍼비전 보고서까지, 상담사의 문서 업무를 한곳에서 관리하세요.'} />
+      {mode !== 'reset' && oauthEnabled && <div className="mt-8 space-y-3">
+        {providers.google && <button className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-3.5 font-bold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('google')}><GoogleMark /> Google로 계속하기</button>}
+        {providers.kakao && <button className="w-full rounded-xl bg-[#FEE500] px-4 py-3.5 font-bold text-[#191919] transition hover:brightness-95 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('kakao')}>Kakao로 계속하기</button>}
+      </div>}
+      {mode !== 'reset' && oauthEnabled && <div className="my-7 flex items-center gap-4 text-xs font-semibold text-slate-400"><span className="h-px flex-1 bg-slate-200" />이메일로 계속<span className="h-px flex-1 bg-slate-200" /></div>}
+      <form className={`${oauthEnabled && mode !== 'reset' ? '' : 'mt-8'} space-y-5`} onSubmit={submit}>
+        <EmailField value={email} onChange={setEmail} />
+        {mode !== 'reset' && <PasswordField value={password} onChange={setPassword} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />}
+        {message && <Feedback message={message} />}
+        <PrimaryButton loading={submitting}>{mode === 'signup' ? '계정 만들기' : mode === 'reset' ? '재설정 이메일 받기' : '이메일로 로그인'}</PrimaryButton>
+      </form>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm">
+        {mode === 'signin' && <button className="font-semibold text-slate-600 hover:text-blue-700" type="button" onClick={() => { setMode('reset'); setMessage('') }}>비밀번호를 잊으셨나요?</button>}
+        <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : mode === 'reset' ? 'signin' : 'signup'); setMessage('') }}>{mode === 'signup' || mode === 'reset' ? '로그인으로 돌아가기' : '이메일로 회원가입'}</button>
+      </div>
+      <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">{PRIVACY_NOTE}</p>
+    </AuthShell>
+  }
+
+  return <div className="min-h-screen bg-slate-50">
+    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8"><Brand compact />
+      <div className="relative"><button className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100" type="button" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}><span className="hidden max-w-64 truncate sm:inline">{session.user.email}</span><ChevronDown size={16} /></button>
+        {profileOpen && <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><p className="truncate px-3 py-2 text-xs text-slate-500 sm:hidden">{session.user.email}</p><button className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100" type="button" onClick={() => void supabase?.auth.signOut()}><LogOut size={16} />로그아웃</button></div>}
+      </div>
+    </div></header>{children}
+  </div>
+}
+
+function Brand({ compact = false }: { compact?: boolean }) { return <div className="flex items-center gap-3"><span className={`${compact ? 'h-9 w-9' : 'h-11 w-11'} flex items-center justify-center rounded-xl bg-gradient-to-br from-blue-700 to-indigo-600 text-white shadow-sm`}><Sparkles size={compact ? 18 : 21} /></span><div><p className={`${compact ? 'text-lg' : 'text-xl'} font-black tracking-tight text-slate-950`}>Re:mind</p>{!compact && <p className="text-xs font-semibold text-slate-500">Counseling Workspace</p>}</div></div> }
+function AuthHeading({ title, description }: { title: string; description: string }) { return <div className="mt-9"><h1 className="text-3xl font-black leading-tight tracking-tight text-slate-950 sm:text-[2rem]">{title}</h1><p className="mt-3 text-sm leading-6 text-slate-600">{description}</p></div> }
+function EmailField({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <label className="block text-sm font-bold text-slate-800">이메일<div className="relative mt-2"><Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-11 pr-3 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" type="email" autoComplete="email" value={value} onChange={(event) => onChange(event.target.value)} placeholder="name@example.com" required /></div></label> }
+function PasswordField({ value, onChange, autoComplete }: { value: string; onChange: (value: string) => void; autoComplete: string }) { return <label className="block text-sm font-bold text-slate-800">비밀번호<input className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" type="password" autoComplete={autoComplete} minLength={8} value={value} onChange={(event) => onChange(event.target.value)} placeholder="8자 이상 입력" required /></label> }
+function PrimaryButton({ children, loading }: { children: ReactNode; loading: boolean }) { return <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-3.5 font-bold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60" type="submit" disabled={loading}>{loading && <Loader2 className="animate-spin" size={18} />}{loading ? '처리하고 있습니다' : children}</button> }
+function Feedback({ message }: { message: string }) { return <p className="rounded-xl bg-slate-100 px-4 py-3 text-sm leading-5 text-slate-700" role="status">{message}</p> }
+function Status({ text }: { text: string }) { return <div className="mt-10 flex items-center gap-3 text-sm font-semibold text-slate-600"><Loader2 className="animate-spin text-blue-700" size={20} />{text}</div> }
+function GoogleMark() { return <span className="text-lg font-black text-[#4285F4]" aria-hidden="true">G</span> }
+function AuthShell({ children }: { children: ReactNode }) { return <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,_#dbeafe_0,_transparent_42%),linear-gradient(135deg,#f8fafc,#eef2ff)] px-4 py-10"><section className="w-full max-w-[480px] rounded-3xl border border-white/80 bg-white/95 p-7 shadow-2xl shadow-slate-300/40 backdrop-blur sm:p-10">{children}</section></main> }

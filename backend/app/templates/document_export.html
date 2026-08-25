@@ -27,25 +27,27 @@
       }
 
       h1 {
-        color: #1d4ed8;
+        border: 2px solid #111827;
+        color: #111827;
         font-size: 19pt;
         line-height: 1.3;
         margin: 0 0 9mm;
+        padding: 4mm;
         text-align: center;
       }
 
       h2 {
-        border-bottom: 1px solid #cbd5e1;
-        color: #1d4ed8;
+        color: #111827;
         font-size: 13pt;
         margin: 9mm 0 3mm;
-        padding-bottom: 1.8mm;
+        break-after: avoid;
       }
 
       h3 {
-        color: #1e40af;
+        color: #111827;
         font-size: 11pt;
         margin: 6mm 0 2mm;
+        break-after: avoid;
       }
 
       p {
@@ -80,16 +82,21 @@
       }
 
       .metadata th {
-        background: #f8fafc;
-        color: #475569;
-        width: 31mm;
+        background: #e5e7eb;
+        color: #111827;
+        width: 25mm;
       }
+
+      .metadata td { width: 55mm; }
 
       .content-table {
         border-collapse: collapse;
         margin: 2mm 0 4mm;
         width: 100%;
+        break-inside: auto;
       }
+
+      .content-table tr { break-inside: avoid; }
 
       .content-table th {
         background: #e2e8f0;
@@ -112,16 +119,24 @@
       }
 
       .transcript-turn strong {
-        color: #1d4ed8;
+        color: #111827;
       }
 
       .reflection-box {
-        background: #eff6ff;
-        border: 1px solid #bfdbfe;
+        background: #f3f4f6;
+        border: 1px solid #374151;
         border-radius: 2.5mm;
         margin: 2mm 0 4mm;
         padding: 3mm;
       }
+
+      .block-label {
+        font-weight: 700;
+        margin: 2.5mm 0 1.5mm;
+        break-after: avoid;
+      }
+
+      .document-section { break-inside: auto; }
 
       .blank-line {
         height: 3mm;

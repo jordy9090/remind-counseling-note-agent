@@ -16,35 +16,46 @@ import {
   Info,
   List,
   Loader2,
+  Mic,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
   Plus,
-  RefreshCcw,
   Save,
   Search,
   Send,
   ShieldCheck,
-  User,
+  Upload,
   Workflow,
   X,
   type LucideIcon,
 } from 'lucide-react'
+import BasicInfoCard from '../components/session-input/BasicInfoCard'
+import MaterialRow from '../components/session-input/MaterialRow'
+import ProcessStatusCard from '../components/session-input/ProcessStatusCard'
+import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
 import {
   downloadDocumentExport,
   extractDocumentMaterial,
-  getAudioCapabilities,
-  getDocumentCapabilities,
   generateNoteDraft,
   generateSupervisionReport,
-  recomposeNoteDraft,
-  saveTemporaryDraft,
+  getAudioCapabilities,
+  getDocumentCapabilities,
   transcribeAudio,
 } from '../api/client'
+import {
+  buildNonverbalNotes,
+  buildTranscriptText,
+  getSegmentSpeakerKey,
+  replaceAppliedAudioBlock,
+  type SpeakerRole,
+  type SpeakerRoleMap,
+} from '../lib/audioTranscriptWorkflow'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
+  AudioTranscriptionResponse,
   DocumentCapabilitiesResponse,
   DocumentExportFormat,
   DocumentExportRequest,
@@ -126,12 +137,16 @@ type UploadedMaterialStatus =
   | 'failed'
 type MaterialApplyTarget =
   | 'transcript_text'
+  | 'nonverbal_notes'
   | 'counselor_memo'
   | 'previous_session_summary'
   | 'psychological_test_summary'
 type MaterialApplyMode = 'append' | 'replace'
+const AUDIO_APPLY_TARGETS: MaterialApplyTarget[] = ['transcript_text', 'nonverbal_notes']
 
-const DOCUMENT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+const DOCUMENT_UPLOAD_MAX_BYTES = Number(import.meta.env.VITE_DOCUMENT_UPLOAD_MAX_BYTES)
+  || (import.meta.env.PROD ? 4 * 1024 * 1024 : 20 * 1024 * 1024)
+const DOCUMENT_UPLOAD_LIMIT_LABEL = `${Math.floor(DOCUMENT_UPLOAD_MAX_BYTES / 1024 / 1024)}MB`
 const AUDIO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
 const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['.pdf', '.docx', '.txt'])
 const AUDIO_UPLOAD_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav'])
@@ -153,6 +168,16 @@ interface UploadedMaterial {
   segments?: AudioSegment[]
   durationSeconds?: number | null
   language?: string | null
+  speakerRoleMap?: SpeakerRoleMap
+  runtimeMode?: 'real' | 'stub'
+  diarizationStatus?: 'completed' | 'fallback' | 'disabled'
+  languageProbability?: number | null
+  nonverbalNotes?: string
+  dirtySinceApply?: boolean
+  expectedSpeakers?: number
+  lastAppliedTranscriptText?: string
+  lastAppliedNonverbalNotes?: string
+  lastAppliedMode?: MaterialApplyMode
   appliedTargets: MaterialApplyTarget[]
 }
 
@@ -222,120 +247,31 @@ const defaultChecklistItems: ChecklistItem[] = [
 
 const defaultVisibleSectionIds = new Set<DraftSectionId>(defaultChecklistItems.map((item) => item.id))
 
-const previousSessionOptions: PreviousSessionOption[] = [
-  {
-    id: 'session-1',
-    label: '1회기',
-    date: '2026. 04. 26',
-    summary: "진로 결정과 졸업 준비 불안을 주호소로 보고. '남들보다 늦은 것 같다'는 걱정 확인.",
-    detail:
-      "내담자는 대학 4학년으로 진로 결정과 졸업 준비 과정에서 불안이 높아졌다고 보고함. 주호소는 '남들보다 늦은 것 같다', '결정을 잘못하면 끝날 것 같다'는 걱정이었음. 상담 목표는 진로 선택 과정에서 자기비난을 줄이고 실행 가능한 준비 행동을 세우는 것으로 잠정 합의함.",
-  },
-  {
-    id: 'session-2',
-    label: '2회기',
-    date: '2026. 05. 03',
-    summary: "채용 공고를 볼 때 떠오르는 '자격이 부족하다'는 자동사고와 회피 행동 탐색.",
-    detail:
-      "취업 준비 상황에서 반복되는 자동사고를 탐색함. 내담자는 채용 공고를 볼 때 '나는 자격이 부족하다', '지원해도 떨어질 것이다'라는 생각이 빠르게 떠오른다고 말함. 상담자는 생각기록지 형식으로 상황, 자동사고, 감정 강도, 행동을 구분하도록 안내함.",
-  },
-  {
-    id: 'session-3',
-    label: '3회기',
-    date: '2026. 05. 10',
-    summary: "가족 기대와 비교 경험을 다룸. '잘해야 사랑받는다'는 기준과 불안의 연결 확인.",
-    detail:
-      "가족의 기대와 비교 경험을 다룸. 내담자는 부모가 직접 압박하지 않아도 가족 모임에서 친척의 취업 이야기가 나오면 위축된다고 표현함. 어린 시절부터 '잘해야 사랑받는다'는 기준이 강했다고 말함. 상담자는 완벽주의적 기준과 현재 진로 불안의 연결 가능성을 조심스럽게 확인함.",
-  },
-  {
-    id: 'session-4',
-    label: '4회기',
-    date: '2026. 05. 17',
-    summary: '회피 행동과 수면 리듬 점검. 작은 과제 실행 전후 불안 점수를 기록하기로 함.',
-    detail:
-      '회피 행동과 수면 리듬을 다룸. 내담자는 불안이 높을 때 채용 사이트와 팀 프로젝트 단톡을 피하고, 밤늦게 유튜브를 보다가 잠드는 일이 늘었다고 보고함. 상담자는 회피가 단기적으로 불안을 낮추지만 다음 날 부담을 키울 수 있음을 함께 정리함. 다음 회기까지 작은 과제 하나를 정해 실행 전후 불안 점수를 기록해보기로 함.',
-  },
-]
-
-const defaultPreviousSessionIds = ['session-1', 'session-2', 'session-3', 'session-4']
-const demoClientName = '가명 은하'
+const previousSessionOptions: PreviousSessionOption[] = []
+const defaultPreviousSessionIds: string[] = []
 
 function buildPreviousSessionSummary(selectedIds: string[]): string {
   return previousSessionOptions
     .filter((session) => selectedIds.includes(session.id))
-    .map((session) => `${session.label} (${session.date}): ${session.detail}`)
-    .join('\n')
+    .map((session) => `${session.label}: ${session.summary}`)
+    .join('\n\n')
 }
 
-const caseSummaries: CaseSummary[] = [
-  {
-    id: 'CASE-DEMO-001',
-    name: '가명 은하',
-    type: '대학생 상담',
-    lastDate: '2026. 05. 24',
-    counselor: '박상담사',
-    mainIssue: '진로불안, 자기비난, 회피행동',
-    status: '진행중',
-    sessionCount: 5,
-    progressLabel: '8회 목표',
-    progress: 62,
-  },
-  {
-    id: 'C-2024-002',
-    name: '신데렐라',
-    type: '직장인 상담',
-    lastDate: '2026. 04. 21',
-    counselor: '박상담사',
-    mainIssue: '직무 스트레스, 번아웃',
-    status: '진행중',
-    sessionCount: 3,
-    progressLabel: '12회 목표',
-    progress: 25,
-  },
-  {
-    id: 'C-2023-018',
-    name: '흥부',
-    type: '성인 개인상담',
-    lastDate: '2026. 03. 10',
-    counselor: '박상담사',
-    mainIssue: '우울, 자존감 하락',
-    status: '종결',
-    sessionCount: 12,
-    progressLabel: '종결 완료',
-    progress: 100,
-  },
-  {
-    id: 'C-2024-009',
-    name: '팥쥐',
-    type: '성인 개인 상담',
-    lastDate: '2026. 04. 15',
-    counselor: '미배정',
-    mainIssue: '초기 면접 진행 중',
-    status: '대기중',
-    sessionCount: 1,
-    progressLabel: '진행 예정',
-    progress: 18,
-  },
-]
+const caseSummaries: CaseSummary[] = []
 
 const initialForm: SessionInput = {
-  case_id: 'CASE-DEMO-001',
-  client_alias: demoClientName,
-  session_number: 5,
-  session_date: '2026-05-24',
-  counselor_name: '박상담사',
-  counselor_memo:
-    "5회기는 지난주 팀 프로젝트 발표 이후 악화된 비교 사고와 회피 행동을 중심으로 진행함. 내담자는 발표에서 말을 더듬은 장면을 반복적으로 떠올리며 '나는 항상 중요한 순간에 망친다'고 표현함. 상담자는 사건-생각-감정-행동을 분리해서 확인하고, 자동사고의 근거와 반대 근거를 함께 탐색함. 내담자는 초반에는 눈물이 있었고 시선 회피가 많았으나, 후반에는 이번 주에 교수님께 질문 하나를 이메일로 보내고 팀원 한 명에게 역할 조율 메시지를 보내보겠다고 말함. 다음 회기에는 실제 실행 여부와 실행 전후 불안 강도 변화를 확인하기로 함.",
-  transcript_text:
-    "C: 지난 회기 이후 가장 많이 마음에 남았던 장면이 있었나요?\nCl: 팀 프로젝트 발표요. 제가 중간에 말을 버벅였는데 그 장면이 계속 떠올라요. 다른 사람들은 그냥 넘어갔을 수도 있는데 저는 계속 망했다는 생각이 들어요.\nC: 그때 머릿속에 가장 먼저 떠오른 문장은 뭐였나요?\nCl: '나는 항상 중요한 순간에 망친다'였어요. 그리고 교수님도 제가 준비 안 된 사람이라고 생각했을 것 같았어요.\nC: 그 생각이 들었을 때 감정은 어느 정도였나요?\nCl: 불안이 80 정도였고 창피함도 컸어요. 집에 와서는 팀원 단톡도 안 봤어요.\nC: 단톡을 안 봤을 때 잠깐은 불안이 줄었나요?\nCl: 네. 근데 다음 날 더 커졌어요. 제가 또 피하고 있다는 생각이 들었어요.\nC: 오늘은 그 장면을 사건, 생각, 감정, 행동으로 나눠서 보겠습니다. 실제로 확인된 사실과 추측이 섞인 부분을 구분해볼게요.\nCl: 사실은 제가 한 문장을 다시 말한 거고, 사람들이 뭐라고 한 건 없었어요. 추측은 교수님이 실망했을 거라는 거네요.\nC: 그렇게 구분해보니 문장이 조금 달라지나요?\nCl: '완전히 망했다'까지는 아닐 수도 있겠어요. 그냥 긴장해서 잠깐 멈춘 정도였을 수도요.\nC: 이번 주에는 회피를 조금 줄이는 작은 행동을 정해볼까요?\nCl: 교수님께 질문 하나 이메일로 보내보고, 팀원 한 명에게 제가 맡은 부분 다시 확인하겠다고 말해볼게요.\nC: 실행 전후 불안 점수를 적어오면 다음 회기에서 같이 확인해볼 수 있겠습니다.",
-  previous_session_summary: buildPreviousSessionSummary(defaultPreviousSessionIds),
-  counseling_goal:
-    '진로 선택과 수행평가 상황에서 나타나는 자기비난적 자동사고를 알아차리고, 회피를 줄이는 작은 실행 행동을 늘린다.',
-  psychological_test_summary:
-    '초기 면담 단계에서 실시한 간이 진로흥미검사 메모상 사회형/탐구형 흥미가 상대적으로 높았고, 자기보고식 불안 체크에서는 수행평가 상황과 비교 상황에서 불안이 높게 보고됨. 정식 진단 목적의 검사는 아니며 상담 목표 설정을 위한 참고 자료로 기록함.',
-  key_issue_tags: ['진로불안', '자기비난', '비교사고', '회피행동', '수행불안'],
-  nonverbal_notes:
-    "발표 장면을 말할 때 눈물이 고였고 시선을 아래로 둠. '완전히 망했다'고 말할 때 목소리가 작아졌음. 후반부에 실행 과제를 정할 때는 고개를 끄덕이고 말의 속도가 안정됨.",
+  case_id: '',
+  client_alias: '',
+  session_number: 1,
+  session_date: '',
+  counselor_name: '',
+  counselor_memo: '',
+  transcript_text: '',
+  previous_session_summary: '',
+  counseling_goal: '',
+  psychological_test_summary: '',
+  key_issue_tags: [],
+  nonverbal_notes: '',
   target_document_type: 'session_note',
   persist: false,
 }
@@ -343,7 +279,7 @@ const initialForm: SessionInput = {
 export default function SessionDraftPage() {
   const [currentScreen, setCurrentScreen] = useState<AppScreen>('session_input')
   const [form, setForm] = useState<SessionInput>(initialForm)
-  const [sessionTopic, setSessionTopic] = useState('발표 이후 비교사고와 회피 행동 점검')
+  const [sessionTopic, setSessionTopic] = useState('')
   const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>('session_note')
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
@@ -360,10 +296,9 @@ export default function SessionDraftPage() {
   const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(defaultVisibleSectionIds)
   const [editingSectionId, setEditingSectionId] = useState<DraftSectionId | null>(null)
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<DraftSectionId | null>(null)
-  const [temporaryDraftId, setTemporaryDraftId] = useState<string | null>(null)
-  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const isSavingDraft = false
   const [draftSaveMessage, setDraftSaveMessage] = useState<string | null>(null)
-  const [isRecomposingDraft, setIsRecomposingDraft] = useState(false)
+  const isRecomposingDraft = false
   const [draftRecomposeMessage, setDraftRecomposeMessage] = useState<string | null>(null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
@@ -518,6 +453,7 @@ export default function SessionDraftPage() {
         warnings: [],
         file,
         objectUrl,
+        expectedSpeakers: 2,
         appliedTargets: [],
       }
     })
@@ -548,6 +484,7 @@ export default function SessionDraftPage() {
         upload: { available: true },
         transcription: { available: false, reason: message },
         speaker_diarization: { available: false, reason: '화자 분리는 현재 지원하지 않습니다.' },
+        runtime_mode: 'disabled',
       }
       setAudioCapabilities(fallback)
       return fallback
@@ -558,25 +495,24 @@ export default function SessionDraftPage() {
     const target = materials.find((material) => material.id === materialId)
     if (!target?.file) return
     setMaterials((prev) =>
-      prev.map((material) => (material.id === materialId ? { ...material, status: 'transcribing', error: undefined } : material)),
+      prev.map((material) =>
+        material.id === materialId
+          ? {
+              ...material,
+              status: 'transcribing',
+              error: undefined,
+              dirtySinceApply: material.status === 'transcribed' ? true : material.dirtySinceApply,
+              appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
+            }
+          : material,
+      ),
     )
     try {
-      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe')
+      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe', target.expectedSpeakers || 2)
       setMaterials((prev) =>
         prev.map((material) =>
           material.id === materialId
-            ? {
-                ...material,
-                status: 'transcribed',
-                transcriptText: transcription.transcript_text,
-                segments: transcription.segments,
-                durationSeconds: transcription.duration_seconds,
-                language: transcription.language,
-                warnings: transcription.warnings,
-                error: undefined,
-                file: undefined,
-                appliedTargets: material.appliedTargets,
-              }
+            ? buildTranscribedAudioMaterial(material, transcription)
             : material,
         ),
       )
@@ -592,25 +528,46 @@ export default function SessionDraftPage() {
     }
   }
 
-  const updateAudioTranscript = (materialId: string, text: string) => {
-    setMaterials((prev) =>
-      prev.map((material) => (material.id === materialId ? { ...material, transcriptText: text } : material)),
-    )
-  }
-
   const updateAudioSegmentText = (materialId: string, segmentId: number, text: string) => {
     setMaterials((prev) =>
       prev.map((material) =>
         material.id === materialId
-          ? {
+          ? markAudioMaterialDirty({
               ...material,
               segments: (material.segments || []).map((segment) =>
                 segment.id === segmentId ? { ...segment, text } : segment,
               ),
-              transcriptText: (material.segments || [])
-                .map((segment) => (segment.id === segmentId ? text : segment.text))
-                .join('\n'),
-            }
+            })
+          : material,
+      ),
+    )
+  }
+
+  const updateAudioSpeakerRole = (materialId: string, speakerKey: string, role: SpeakerRole) => {
+    setMaterials((prev) =>
+      prev.map((material) =>
+        material.id === materialId
+          ? markAudioMaterialDirty({
+              ...material,
+              speakerRoleMap: {
+                ...(material.speakerRoleMap || {}),
+                [speakerKey]: role,
+              },
+            })
+          : material,
+      ),
+    )
+  }
+
+  const updateAudioExpectedSpeakers = (materialId: string, value: number) => {
+    const safeValue = Math.min(4, Math.max(1, value))
+    setMaterials((prev) =>
+      prev.map((material) =>
+        material.id === materialId
+          ? markAudioMaterialDirty({
+              ...material,
+              expectedSpeakers: safeValue,
+            })
           : material,
       ),
     )
@@ -656,6 +613,67 @@ export default function SessionDraftPage() {
     setMaterialModal(null)
   }
 
+  const applyAudioTranscriptToForm = (materialId: string, mode: MaterialApplyMode) => {
+    const material = materials.find((item) => item.id === materialId)
+    if (!material || material.kind !== 'audio') return
+    const speakerRoleMap = material.speakerRoleMap || {}
+    const transcriptText = buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText || ''
+    const nonverbalNotes = buildNonverbalNotes(material.segments || [], speakerRoleMap) || material.nonverbalNotes || ''
+    if (!transcriptText.trim()) return
+
+    const isReapply =
+      Boolean(material.dirtySinceApply) &&
+      (material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined)
+    const nextTranscriptText = isReapply
+      ? replaceAppliedAudioBlock(form.transcript_text, material.lastAppliedTranscriptText || '', transcriptText)
+      : mergeMaterialText(form.transcript_text, transcriptText, mode)
+    const nextNonverbalNotes = isReapply
+      ? replaceAppliedAudioBlock(
+          form.nonverbal_notes || '',
+          material.lastAppliedNonverbalNotes || '',
+          nonverbalNotes,
+        )
+      : mergeMaterialText(form.nonverbal_notes || '', nonverbalNotes, mode)
+
+    if (nextTranscriptText === null || nextNonverbalNotes === null) {
+      setMaterials((prev) =>
+        prev.map((item) =>
+          item.id === materialId
+            ? {
+                ...item,
+                error: '이전에 반영한 오디오 블록이 회기 입력에서 수정되어 자동으로 교체할 수 없습니다. 현재 입력을 확인한 뒤 다시 반영해주세요.',
+              }
+            : item,
+        ),
+      )
+      return
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      transcript_text: nextTranscriptText,
+      nonverbal_notes: nextNonverbalNotes,
+    }))
+    setMaterials((prev) =>
+      prev.map((item) =>
+        item.id === materialId
+          ? {
+              ...item,
+              transcriptText,
+              nonverbalNotes,
+              appliedTargets: Array.from(new Set([...item.appliedTargets, ...AUDIO_APPLY_TARGETS])),
+              dirtySinceApply: false,
+              lastAppliedTranscriptText: transcriptText,
+              lastAppliedNonverbalNotes: nonverbalNotes,
+              lastAppliedMode: isReapply ? item.lastAppliedMode || mode : mode,
+              error: undefined,
+            }
+          : item,
+      ),
+    )
+    setMaterialModal(null)
+  }
+
   const revokeObjectUrl = (objectUrl?: string) => {
     if (!objectUrl) return
     URL.revokeObjectURL(objectUrl)
@@ -664,6 +682,16 @@ export default function SessionDraftPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!form.case_id.trim()) {
+      setHasSubmitted(true)
+      setError('기본 정보에서 내담자/케이스를 입력해주세요.')
+      return
+    }
+    if (!hasUsableNoteInput) {
+      setHasSubmitted(true)
+      setError('상담사 메모, 축어록, 이전 회기 요약 중 하나 이상을 입력해주세요.')
+      return
+    }
     if (unappliedReadyMaterials.length > 0) {
       setHasSubmitted(true)
       setError('아직 회기 입력에 반영되지 않은 업로드 자료가 있습니다. 자료에 반영하거나 삭제한 뒤 요약초안을 생성해주세요.')
@@ -683,58 +711,36 @@ export default function SessionDraftPage() {
     setEditingSectionId(null)
 
     try {
-      const data = await generateNoteDraft(form)
+      const data = await generateNoteDraft({ ...form, persist: false })
+      const sections = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
       setResult(data)
-      setDraftSections(buildDocumentSections(data, form, sessionTopic, visibleSectionIds))
+      setDraftSections(sections)
+      setVisibleSectionIds(new Set(sections.map((section) => section.id)))
       setCurrentScreen('summary_draft')
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : '회기요약 생성 중 오류가 발생했습니다. 백엔드 서버가 실행 중인지 확인해주세요.'
-      setError(message)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const toggleSectionVisibility = async (sectionId: DraftSectionId) => {
-    const previousVisibleSectionIds = new Set(visibleSectionIds)
-    const nextVisibleSectionIds = new Set(previousVisibleSectionIds)
+  const toggleSectionVisibility = (sectionId: DraftSectionId) => {
+    const nextVisibleSectionIds = new Set(visibleSectionIds)
     if (nextVisibleSectionIds.has(sectionId)) {
       nextVisibleSectionIds.delete(sectionId)
     } else {
       nextVisibleSectionIds.add(sectionId)
     }
 
-    if (!result) {
-      setVisibleSectionIds(nextVisibleSectionIds)
-      return
-    }
-
-    setIsRecomposingDraft(true)
-    setDraftRecomposeMessage('선택 항목 기준으로 AI 초안을 재구성 중입니다.')
-
-    try {
-      const recomposed = await recomposeNoteDraft({
-        session_input: form,
-        session_topic: sessionTopic,
-        visible_section_ids: Array.from(nextVisibleSectionIds),
-      })
-      const nextVisibleSet = new Set<DraftSectionId>(recomposed.visibleSectionIds)
-      setResult(recomposed.note)
-      setVisibleSectionIds(nextVisibleSet)
-      setDraftSections(buildDocumentSections(recomposed.note, form, sessionTopic, nextVisibleSet))
-      setExpandedEvidenceId(null)
-      setEditingSectionId(null)
-      setDraftRecomposeMessage(recomposed.cacheHit ? '저장된 재구성 초안을 사용했습니다.' : 'AI 초안을 다시 재구성했습니다.')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '요약초안 재구성 중 오류가 발생했습니다.'
-      setVisibleSectionIds(previousVisibleSectionIds)
-      setDraftRecomposeMessage(`재구성 실패 · ${message}`)
-    } finally {
-      setIsRecomposingDraft(false)
-    }
+    setVisibleSectionIds(nextVisibleSectionIds)
+    setDraftSections((current) =>
+      current.map((section) =>
+        section.id === sectionId ? { ...section, visible: nextVisibleSectionIds.has(sectionId) } : section,
+      ),
+    )
+    setExpandedEvidenceId(null)
+    setEditingSectionId(null)
+    setDraftRecomposeMessage('사전 생성된 초안의 표시 항목을 변경했습니다.')
   }
 
   const updateDraftSectionContent = (sectionId: DraftSectionId, content: string) => {
@@ -810,37 +816,50 @@ export default function SessionDraftPage() {
     setDocumentExportError(null)
     setDocumentExportStatus(null)
     await refreshDocumentCapabilities()
-
     if (documentType === 'supervision_report') {
       setFinalDocumentSections([])
+      setSupervisionReportDraft(null)
       setIsGeneratingFinalDocument(true)
+      setCurrentScreen('final_document')
       try {
+        const summarySection = (text: string, sourceRefs: string[] = []) => ({
+          text: text || PLACEHOLDER_TEXT,
+          evidence_type: sourceRefs.length ? ('mixed' as const) : ('needs_review' as const),
+          source_refs: sourceRefs,
+          requires_review: !sourceRefs.length,
+        })
         const report = await generateSupervisionReport({
-          session_input: form,
-          session_summary_draft: result.full_response?.session_summary_draft,
-          demo_mode: form.case_id === 'CASE-DEMO-001',
-          report_date: form.session_date,
+          session_input: { ...form, target_document_type: 'supervision_report', persist: false },
+          session_summary_draft: {
+            session_info: {
+              case_id: form.case_id,
+              client_alias: getClientAlias(form),
+              session_number: form.session_number,
+              session_date: form.session_date,
+              counselor_name: form.counselor_name,
+            },
+            session_theme: summarySection(sessionTopic || result.session_summary, ['counselor_memo']),
+            presenting_problem: summarySection(result.main_issue, ['transcript_text', 'counselor_memo']),
+            session_content: summarySection(result.session_summary, ['transcript_text', 'counselor_memo']),
+            counselor_intervention: summarySection(result.counselor_intervention, ['counselor_memo']),
+            client_response: summarySection(result.client_response, ['transcript_text']),
+            reflection: summarySection(PLACEHOLDER_TEXT),
+            next_plan: summarySection(result.next_plan, ['counselor_memo']),
+          },
           client_alias: getClientAlias(form),
+          transcript_mode: form.transcript_text.trim() ? 'full' : 'summary',
         })
         setSupervisionReportDraft(report)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : '수퍼비전 보고서 초안 생성 중 오류가 발생했습니다.'
-        setFinalDocumentError(message)
+      } catch (requestError) {
+        setFinalDocumentError(requestError instanceof Error ? requestError.message : '수퍼비전 보고서 생성에 실패했습니다.')
       } finally {
         setIsGeneratingFinalDocument(false)
       }
     } else {
       setSupervisionReportDraft(null)
-      setFinalDocumentSections(
-        buildFinalDocumentSections(
-          documentType,
-          draftSections.filter((section) => section.visible),
-          result.missing_items,
-        ),
-      )
+      setFinalDocumentSections(buildFinalDocumentSections(documentType, draftSections, result.missing_items))
+      setCurrentScreen('final_document')
     }
-
-    setCurrentScreen('final_document')
   }
 
   const beginEditSupervisionBlock = (block: SupervisionContentBlock) => {
@@ -868,38 +887,8 @@ export default function SessionDraftPage() {
     setEditingSupervisionText('')
   }
 
-  const handleTemporarySave = async () => {
-    setIsSavingDraft(true)
-    setDraftSaveMessage(null)
-
-    try {
-      const response = await saveTemporaryDraft({
-        draft_id: temporaryDraftId || undefined,
-        case_id: form.case_id,
-        session_number: form.session_number,
-        session_date: form.session_date,
-        counselor_name: form.counselor_name,
-        screen: currentScreen,
-        form,
-        session_topic: sessionTopic,
-        is_deidentified: isDeidentified,
-        selected_previous_session_ids: selectedPreviousSessionIds,
-        attachments: serializeMaterialsForDraft(materials),
-        visible_section_ids: Array.from(visibleSectionIds),
-        draft_sections: draftSections,
-        final_document_sections: finalDocumentSections,
-        result,
-        final_document_type: finalDocumentType,
-        supervision_report_draft: supervisionReportDraft,
-      })
-      setTemporaryDraftId(response.draft_id)
-      setDraftSaveMessage(`임시저장 완료 · ${formatSavedTime(response.saved_at)}`)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '임시저장 중 오류가 발생했습니다.'
-      setDraftSaveMessage(`임시저장 실패 · ${message}`)
-    } finally {
-      setIsSavingDraft(false)
-    }
+  const handleTemporarySave = () => {
+    setDraftSaveMessage('현재 작성 내용은 이 브라우저 세션에 유지됩니다.')
   }
 
   const handleDownloadDocument = async (format: DocumentExportFormat) => {
@@ -974,7 +963,7 @@ export default function SessionDraftPage() {
             cases={caseSummaries}
             onCreateSession={openSessionInput}
             onOpenCase={() => {
-              setForm((prev) => ({ ...prev, case_id: 'CASE-DEMO-001', session_number: 5 }))
+              setForm(initialForm)
               setCurrentScreen(result ? 'summary_draft' : 'session_input')
             }}
           />
@@ -1145,11 +1134,13 @@ export default function SessionDraftPage() {
           audioCapabilities={audioCapabilities}
           audioCapabilitiesError={audioCapabilitiesError}
           onAddAudioFiles={addAudioFiles}
+          onApplyAudioTranscript={applyAudioTranscriptToForm}
           onApplyMaterial={applyMaterialToForm}
           onRefreshAudioCapabilities={refreshAudioCapabilities}
           onTranscribeAudio={transcribeAudioMaterial}
+          onUpdateAudioExpectedSpeakers={updateAudioExpectedSpeakers}
           onUpdateAudioSegmentText={updateAudioSegmentText}
-          onUpdateAudioTranscript={updateAudioTranscript}
+          onUpdateAudioSpeakerRole={updateAudioSpeakerRole}
           onUploadDocumentFiles={uploadDocumentFiles}
         />
       )}
@@ -1229,23 +1220,19 @@ function AppSidebar({
             </SidebarButton>
           </nav>
 
-          <div className="space-y-2 border-t border-slate-200 pt-4">
-            <p className="px-1 text-[10px] font-medium text-slate-400">최근 케이스</p>
-            <CaseListItem name="가명 은하" status="진행중" meta="대학생 · 5회기" active />
-            <CaseListItem name="신데렐라" status="진행중" meta="직장인 · 3회기" />
-            <CaseListItem name="흥부" status="종결" meta="직장인 · 12회기" tone="green" />
-            <CaseListItem name="팥쥐" status="대기중" meta="성인 · 1회기" tone="orange" />
+          <div className="border-t border-slate-200 px-1 pt-4 text-[10px] font-medium text-slate-400">
+            최근 케이스가 없습니다.
           </div>
         </div>
 
         <div className={`${collapsed ? 'hidden' : 'mt-auto border-t border-slate-200 px-3 py-3'}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 font-semibold text-white">
-              박
+              상
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-900">박상담사</p>
-              <p className="text-[11px] text-slate-500">2급 심리상담사</p>
+              <p className="text-xs font-semibold text-slate-900">상담사</p>
+              <p className="text-[11px] text-slate-500">로컬 작업</p>
             </div>
           </div>
         </div>
@@ -1469,6 +1456,14 @@ function CaseListWorkspace({
           <CaseCard key={caseItem.id} caseItem={caseItem} onOpen={() => onOpenCase(caseItem)} />
         ))}
       </div>
+      {!cases.length && (
+        <div className="max-w-[790px] rounded-[10px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+          <p className="text-sm font-semibold text-slate-600">아직 등록된 케이스가 없습니다.</p>
+          <button type="button" onClick={onCreateSession} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+            첫 회기 입력하기
+          </button>
+        </div>
+      )}
     </section>
   )
 }
@@ -1565,52 +1560,87 @@ function SessionInputWorkspace({
   materials: UploadedMaterial[]
   sessionTopic: string
 }) {
+  // UI-only fields; not persisted or submitted.
+  // SessionInput 타입과 백엔드에 상담 시작/종료 시간 필드가 없어 화면 표시 용도로만 관리한다.
+  // 저장이 필요해지면 별도 작업으로 타입/스키마 확장과 함께 진행한다.
+  const [sessionStartTime, setSessionStartTime] = useState('10:00')
+  const [sessionEndTime, setSessionEndTime] = useState('10:50')
+
   return (
     <form id="session-input-form" onSubmit={onSubmit} className="session-input-form">
-      <section className="session-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <User className="h-4 w-4 text-blue-700" />
-              <p className="text-base font-bold tracking-normal text-slate-950">내담자 / 회기 기본 정보</p>
-            </div>
-            <h1 className="mt-3 text-xl font-bold tracking-normal text-slate-950">{getClientDisplayName(form)}</h1>
-          </div>
-          <button
-            type="button"
-            onClick={onEditBasicInfo}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
-          >
-            <Edit3 className="h-3.5 w-3.5" />
-            수정하기
-          </button>
-        </div>
-        <dl className="mt-3 grid gap-4 sm:grid-cols-[120px_minmax(0,1fr)_120px]">
-          <InfoRow label="회기" value={`${form.session_number}회기`} />
-          <InfoRow label="회기 주제" value={sessionTopic || '미정'} />
-          <InfoRow label="날짜" value={form.session_date || '미정'} />
-        </dl>
-      </section>
+      {/* TODO(design-token): 화면 배경 #F5F5F5, 배지 #6494FF는 전역 토큰 확정 후 tailwind.config로 이동 */}
+      <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4 py-2">
+        <BasicInfoCard
+          clientDisplayName={getClientDisplayName(form)}
+          onEditBasicInfo={onEditBasicInfo}
+          sessionDate={form.session_date}
+          sessionNumber={form.session_number}
+          sessionTopic={sessionTopic}
+        />
 
-      <section className="session-card session-material-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <FolderOpen className="h-4 w-4 text-blue-700" />
-              <h2 className="text-lg font-bold tracking-normal">상담 자료</h2>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">이번 회기 요약에 사용할 자료를 한 곳에서 관리합니다.</p>
-          </div>
-        </div>
+        <section className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold tracking-normal text-slate-900">새 회기 시작</h2>
 
-        {!hasMaterialRows ? (
-          <div className="session-material-content mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
-            <FileText className="mx-auto h-7 w-7 text-slate-400" aria-hidden="true" />
-            <p className="mt-3 text-sm font-medium text-slate-700">이번 회기요약에 사용할 자료를 추가해주세요.</p>
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">상담 일시</p>
+            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_110px_14px_110px] items-center gap-2">
+              <button
+                type="button"
+                onClick={onEditBasicInfo}
+                className="flex h-11 items-center rounded-[10px] border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-700 hover:bg-slate-100"
+                title="날짜는 기본 정보에서 수정합니다"
+              >
+                {form.session_date || '날짜 미정'}
+              </button>
+              {/* UI-only field; not persisted or submitted */}
+              <input
+                type="time"
+                value={sessionStartTime}
+                onChange={(event) => setSessionStartTime(event.target.value)}
+                aria-label="상담 시작 시간 (화면 표시용)"
+                className="h-11 rounded-[10px] border border-slate-200 bg-slate-50 px-2 text-center text-sm text-slate-700"
+              />
+              <span className="text-center text-sm text-slate-400">~</span>
+              {/* UI-only field; not persisted or submitted */}
+              <input
+                type="time"
+                value={sessionEndTime}
+                onChange={(event) => setSessionEndTime(event.target.value)}
+                aria-label="상담 종료 시간 (화면 표시용)"
+                className="h-11 rounded-[10px] border border-slate-200 bg-slate-50 px-2 text-center text-sm text-slate-700"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-slate-400">시간은 화면 표시용이며 저장·요약 생성에는 사용되지 않습니다.</p>
           </div>
-        ) : (
-          <div className="session-material-content mt-3 divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white">
-            {form.transcript_text.trim() && (
+
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">음성 자료</p>
+            <button
+              type="button"
+              onClick={() => onEditMaterial('audio_upload')}
+              className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Mic className="h-4 w-4 text-blue-600" />
+              음성 파일 추가
+            </button>
+            <p className="mt-1.5 text-xs text-slate-400">현재는 음성 파일 업로드 후 자동 축어록(지원 환경)만 제공합니다.</p>
+          </div>
+
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">자료 업로드</p>
+            <button
+              type="button"
+              onClick={onAddMaterial}
+              className="mt-2 flex w-full flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-7 text-center hover:bg-slate-50"
+            >
+              <Upload className="h-6 w-6 text-slate-500" aria-hidden="true" />
+              <span className="text-sm font-medium text-slate-700">클릭하여 파일을 선택하거나 직접 입력해주세요.</span>
+              <span className="text-xs text-slate-400">TXT, PDF, DOCX · 최대 {DOCUMENT_UPLOAD_LIMIT_LABEL}</span>
+            </button>
+
+            {hasMaterialRows && (
+              <div className="mt-3 divide-y divide-slate-200 rounded-[10px] border border-slate-200 bg-white">
+                {form.transcript_text.trim() && (
               <MaterialRow
                 label="축어록/STT"
                 meta={`${countCharacters(form.transcript_text)}자 입력됨`}
@@ -1646,20 +1676,28 @@ function SessionInputWorkspace({
                 onTranscribe={() => onTranscribeAudio(material.id)}
               />
             ))}
+              </div>
+            )}
           </div>
-        )}
 
-        <div className="session-material-actions grid gap-3 sm:grid-cols-[minmax(0,1fr)_210px]">
-          <button
-            type="button"
-            onClick={onAddMaterial}
-            className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            상담 자료 업로드
-          </button>
+          <div className="mt-5">
+            <p className="text-sm font-semibold text-slate-700">메모</p>
+            {/* 인라인 편집은 props 계약(외부 시그니처 유지) 때문에 보류 — 기존 edit_memo 모달 흐름 사용.
+                다음 커밋에서 계약 변경 승인 시 인라인 textarea로 전환 가능 */}
+            <button
+              type="button"
+              onClick={() => onEditMaterial('edit_memo')}
+              className="mt-2 block min-h-[96px] w-full whitespace-pre-line rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100"
+            >
+              {form.counselor_memo.trim() ? (
+                form.counselor_memo
+              ) : (
+                <span className="text-slate-400">회기 중 특이사항, 상담사 소견 등을 입력하세요 (클릭하여 편집)</span>
+              )}
+            </button>
+          </div>
 
-          <label className="inline-flex h-8 items-center justify-between gap-3 rounded-md bg-blue-50 px-3 text-blue-700">
+          <label className="mt-5 flex items-center justify-between gap-3 rounded-[10px] bg-blue-50 px-3 py-2.5 text-blue-700">
             <span className="flex items-center gap-2 text-xs font-semibold text-blue-700">
               <ShieldCheck className="h-3.5 w-3.5 text-blue-700" />
               개인정보 비식별화
@@ -1671,58 +1709,29 @@ function SessionInputWorkspace({
               className="h-3.5 w-3.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
             />
           </label>
-        </div>
-      </section>
+        </section>
 
-      <section className="session-card session-process-card rounded-[12px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center gap-2">
-          <RefreshCcw className="h-4 w-4 text-blue-700" />
-          <h2 className="text-lg font-bold">처리 상태</h2>
-        </div>
-        {isLoading && <p className="mt-2 text-xs font-medium text-blue-700">구조화 → 회기요약 → 검증 진행 중...</p>}
-        <div className="mt-3 grid gap-2 md:grid-cols-5">
-          {processSteps.map((step, index) => {
-            const isDone = index < completedSteps
-            const isActive = isLoading && index === completedSteps
-            return (
-              <div
-                key={step}
-                className={`process-step flex items-center gap-1.5 rounded-md border px-2 text-xs font-semibold ${
-                  isDone || isActive ? 'border-blue-600 bg-blue-50 text-blue-800' : 'border-slate-200 bg-slate-50 text-slate-500'
-                }`}
-              >
-                <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-                    isDone
-                      ? 'border-blue-200 bg-blue-600 text-white'
-                      : isActive
-                        ? 'border-blue-200 bg-blue-50 text-blue-700'
-                        : 'border-slate-200 bg-white text-slate-400'
-                  }`}
-                >
-                  {isDone ? (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  ) : isActive ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-                <span className="truncate">{step}</span>
-              </div>
-            )
-          })}
-        </div>
-      </section>
+        {/* 확정 hex #2563EB == tailwind blue-600 (동일값 확인됨) */}
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+        >
+          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
+          요약 초안 생성
+        </button>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4" />
-            <p>{error}</p>
+        <ProcessStatusCard completedSteps={completedSteps} isLoading={isLoading} steps={processSteps} />
+
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4" />
+              <p>{error}</p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </form>
   )
 }
@@ -2058,7 +2067,7 @@ function SupervisionReportWorkspace({
         <div className="text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-700" />
           <p className="mt-4 text-sm font-bold text-slate-900">개인상담 사례 수퍼비전 보고서 초안을 생성 중입니다.</p>
-          <p className="mt-2 text-xs font-semibold text-slate-500">회기요약, 축어록, 상담자 메모의 근거를 연결하고 있습니다.</p>
+          <p className="mt-2 text-xs font-semibold text-slate-500">회기요약, 축어록, 상담자 메모를 정리하고 있습니다.</p>
         </div>
       </div>
     )
@@ -2084,57 +2093,43 @@ function SupervisionReportWorkspace({
   const editableSections = report.sections.filter((section) => section.level !== 1)
 
   return (
-    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
-      <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-normal">{report.title}</h1>
-            <p className="mt-1.5 text-xs font-bold text-blue-50">
-              내담자: {report.meta.clientAlias || PLACEHOLDER_TEXT} / 회기:{report.meta.sessionNumber}회기 / 기준일:{formatCompactDate(report.meta.reportDate)}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="inline-flex h-8 items-center gap-2 rounded-[5px] bg-white px-5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
-          >
-            <Edit3 className="h-4 w-4" />
-            수정하기
-          </button>
+    <div className="overflow-x-auto rounded-[8px] bg-slate-200/70 px-3 py-6 sm:px-6">
+      <section className="mx-auto min-h-[1120px] w-full max-w-[794px] bg-white px-5 py-7 text-slate-950 shadow-[0_10px_35px_rgba(15,23,42,0.16)] sm:px-10 sm:py-10">
+        <div className="mb-3 text-[11px] font-semibold text-slate-500">
+          <span>내담자: {cleanSupervisionText(report.meta.clientAlias)} · {report.meta.sessionNumber}회기 · {formatCompactDate(report.meta.reportDate)}</span>
         </div>
-      </div>
+        <h1 className="border-2 border-slate-900 px-3 py-4 text-center text-xl font-extrabold tracking-tight sm:text-2xl">{report.title}</h1>
 
-      <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
-        {[
-          ['상담자', report.meta.counselorName],
-          ['소속 상담기관', report.meta.institution],
-          ['수퍼바이저', report.meta.supervisor],
-          ['수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-[8px] bg-slate-50 px-3 py-2">
-            <p className="text-xs font-bold text-slate-500">{label}</p>
-            <p className="mt-1 text-sm font-bold text-slate-950">{value || PLACEHOLDER_TEXT}</p>
-          </div>
-        ))}
-      </div>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[620px] border-collapse text-[12px] sm:text-[13px]">
+            <tbody>
+              {[
+                ['상담자', report.meta.counselorName, '소속 상담기관', report.meta.institution],
+                ['수퍼바이저', report.meta.supervisor, '수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
+              ].map((row) => (
+                <tr key={row[0]}>
+                  {row.map((value, index) => index % 2 === 0 ? (
+                    <th key={`${row[0]}-${index}`} className="w-[18%] border border-slate-500 bg-slate-100 px-2 py-2 text-left font-bold">{value}</th>
+                  ) : (
+                    <td key={`${row[0]}-${index}`} className="w-[32%] border border-slate-500 px-2 py-2 font-semibold">{cleanSupervisionText(value)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      <div className="px-4 pb-3">
-        <p className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-slate-600">
-          <Info className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-          하이라이트된 문장은 AI가 생성한 문장입니다.
-        </p>
-      </div>
-
-      <div className="border-y border-slate-100 bg-slate-50/70 px-4 py-3">
+      <div className="mt-4 border-y border-slate-200 py-2">
         <div className="flex flex-wrap gap-2">
           {tocSections.map((section) => (
-            <span key={section.id} className="rounded-full border border-blue-100 bg-white px-3 py-1 text-xs font-bold text-blue-700">
+            <span key={section.id} className="text-[11px] font-bold text-slate-600">
               {section.title}
             </span>
           ))}
         </div>
       </div>
 
-      <div className="px-4 pb-5">
+      <div className="pb-5">
         {report.sections.map((section) => (
           <SupervisionReportSectionView
             key={section.id}
@@ -2153,7 +2148,8 @@ function SupervisionReportWorkspace({
           <p className="py-10 text-center text-sm font-semibold text-slate-500">표시할 보고서 섹션이 없습니다.</p>
         )}
       </div>
-    </section>
+      </section>
+    </div>
   )
 }
 
@@ -2180,23 +2176,24 @@ function SupervisionReportSectionView({
 }) {
   if (section.level === 1) {
     return (
-      <section className="border-b border-[#c7d0df] py-5">
-        <h2 className="text-lg font-extrabold text-slate-950">{section.title}</h2>
+      <section className="pb-2 pt-8 first:pt-6">
+        <h2 className="border-b-2 border-slate-900 pb-2 text-lg font-extrabold text-slate-950">{section.title}</h2>
       </section>
     )
   }
 
-  const SectionIcon = getFinalDocumentSectionIcon(section.title)
-
   return (
-    <section className="border-b border-[#c7d0df] py-5 last:border-b-0">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-1.5 text-base font-bold text-blue-700">
-          <SectionIcon className="h-4 w-4 shrink-0" />
-          {section.title}
-        </h2>
-        <SupervisionStatusBadge status={section.status} />
-      </div>
+    <section className="py-4">
+      <h3 className="text-[15px] font-extrabold text-slate-950">{section.title}</h3>
+
+      {Boolean(section.guidance?.length) && (
+        <details className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+          <summary className="cursor-pointer font-bold">원본 양식 작성 가이드</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            {section.guidance?.map((guide) => <li key={guide}>{guide}</li>)}
+          </ul>
+        </details>
+      )}
 
       <div className="mt-3 space-y-3">
         {section.contentBlocks.map((block) => (
@@ -2240,21 +2237,10 @@ function SupervisionContentBlockView({
   onToggleEvidence: () => void
 }) {
   return (
-    <div className="relative rounded-[8px] border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        <SupervisionBlockChip label="초안" tone="slate" />
-        {block.aiGenerated && <SupervisionBlockChip label="AI 생성" tone="blue" />}
-        {(block.reviewStatus === 'needs_human_input' || Boolean(block.warnings?.length)) && (
-          <SupervisionBlockChip label="확인 필요" tone="rose" />
-        )}
-        {block.reviewStatus === 'edited' && <SupervisionBlockChip label="수정됨" tone="amber" />}
-        {block.demoValue && <SupervisionBlockChip label="데모값" tone="amber" />}
-        {Boolean(block.evidenceIds.length) && (
-          <button type="button" onClick={onToggleEvidence} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-            근거 확인
-          </button>
-        )}
-      </div>
+    <div className="relative border-l-2 border-slate-200 py-2 pl-3">
+      {block.label && <div className="mb-2 flex flex-wrap gap-1.5">
+        {block.label && <span className="mr-1 text-[12px] font-extrabold text-slate-800">{block.label}</span>}
+      </div>}
 
       {editing ? (
         <textarea
@@ -2279,34 +2265,6 @@ function SupervisionContentBlockView({
         </button>
       )}
 
-      {Boolean(block.warnings?.length) && (
-        <ul className="mt-2 space-y-1 text-[11px] font-semibold leading-4 text-amber-700">
-          {block.warnings?.map((warning) => <li key={warning}>· {warning}</li>)}
-        </ul>
-      )}
-
-      {evidenceOpen && (
-        <div className="absolute right-3 top-9 z-20 max-h-[240px] w-[260px] overflow-auto rounded-[8px] border border-slate-100 bg-white p-3 text-left shadow-[0_14px_32px_rgba(15,23,42,0.18)]">
-          <p className="text-xs font-extrabold text-slate-950">연결 근거</p>
-          {block.evidenceIds.length ? (
-            <div className="mt-2 space-y-2">
-              {block.evidenceIds.map((evidenceId) => {
-                const evidence = evidenceIndex[evidenceId]
-                return (
-                  <div key={evidenceId} className="rounded-md bg-slate-50 p-2">
-                    <p className="text-[10px] font-bold text-blue-700">{evidence?.label || evidenceId}</p>
-                    <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-700">
-                      {evidence?.text || evidenceId}
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="mt-2 text-[11px] font-semibold text-slate-500">연결된 근거가 없어 상담사 확인이 필요합니다.</p>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -2315,12 +2273,12 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   if (block.type === 'table' && block.rows?.length) {
     const headers = Object.keys(block.rows[0])
     return (
-      <div className="overflow-hidden rounded-[7px] border border-slate-200">
-        <table className="w-full border-collapse text-left text-[12px] font-semibold">
-          <thead className="bg-slate-50 text-slate-500">
+      <div className="overflow-x-auto border border-slate-400">
+        <table className="w-full min-w-[680px] border-collapse text-left text-[12px] font-semibold">
+          <thead className="bg-slate-100 text-slate-800">
             <tr>
               {headers.map((header) => (
-                <th key={header} className="border-b border-slate-200 px-2 py-2">
+                <th key={header} className="border border-slate-400 px-2 py-2">
                   {header}
                 </th>
               ))}
@@ -2328,10 +2286,10 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
           </thead>
           <tbody className="text-slate-900">
             {block.rows.map((row, index) => (
-              <tr key={`${block.id}-${index}`} className="border-b border-slate-100 last:border-b-0">
+              <tr key={`${block.id}-${index}`}>
                 {headers.map((header) => (
-                  <td key={header} className="px-2 py-2 align-top">
-                    {row[header]}
+                  <td key={header} className="border border-slate-300 px-2 py-2 align-top">
+                    {cleanSupervisionText(row[header])}
                   </td>
                 ))}
               </tr>
@@ -2345,10 +2303,10 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   if (block.type === 'transcript' && block.speakerTurns?.length) {
     return (
       <div className="space-y-2">
-        {block.speakerTurns.map((turn) => (
-          <div key={turn.turnId} className="grid gap-2 rounded-md bg-slate-50 px-3 py-2 text-[13px] font-semibold leading-5 sm:grid-cols-[52px_minmax(0,1fr)]">
-            <span className="text-blue-700">{turn.speaker === 'client' ? '내담자' : '상담자'}</span>
-            <span className="text-slate-900">{turn.text}</span>
+        {block.speakerTurns.map((turn, index) => (
+          <div key={turn.turnId} className="grid gap-2 border-b border-slate-200 px-2 py-2 text-[13px] font-semibold leading-5 last:border-b-0 sm:grid-cols-[88px_minmax(0,1fr)]">
+            <span className="text-slate-800">{index + 1}. {turn.speaker === 'client' ? '내담자' : '상담자'}</span>
+            <span className="text-slate-900">{turn.text}{turn.silenceSeconds != null ? ` (침묵 ${turn.silenceSeconds}초)` : ''}</span>
           </div>
         ))}
       </div>
@@ -2357,15 +2315,15 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
 
   if (block.type === 'reflection_box') {
     return (
-      <div className="rounded-[8px] border border-blue-100 bg-blue-50/70 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
-        {block.text || PLACEHOLDER_TEXT}
+      <div className="border border-slate-500 bg-slate-50 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
+        {cleanSupervisionText(block.text)}
       </div>
     )
   }
 
   return (
-    <p className={`whitespace-pre-wrap text-[13px] font-semibold leading-6 ${block.type === 'placeholder' ? 'text-rose-700' : 'text-slate-900'}`}>
-      {block.text || PLACEHOLDER_TEXT}
+    <p className="min-h-6 whitespace-pre-wrap text-[13px] font-semibold leading-6 text-slate-900">
+      {cleanSupervisionText(block.text)}
     </p>
   )
 }
@@ -2398,13 +2356,7 @@ function SupervisionReviewPanel({
   return (
     <aside className="review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
       <div>
-        <div className="flex items-center gap-2">
-          <Workflow className="h-4 w-4 text-blue-700" />
-          <p className="text-lg font-extrabold text-slate-950">AI 검토</p>
-        </div>
-        <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
-          AI가 문서 검토 후 보완이 필요한 항목을 확인했습니다.
-        </p>
+        <p className="text-lg font-extrabold text-slate-950">문서 작업</p>
         <button
           type="button"
           onClick={onBack}
@@ -2414,29 +2366,6 @@ function SupervisionReviewPanel({
           이전 단계
         </button>
       </div>
-
-      <SupervisionReviewGroup
-        title="양식 충족도"
-        items={aiReview.completionChecklist.map((item) => `${reviewStatusSymbol[item.status]} ${item.label}${item.reason ? ` · ${item.reason}` : ''}`)}
-      />
-      <SupervisionReviewGroup title="상담사 확인 필요" items={aiReview.needsHumanReview.map((item) => item.message)} />
-      <SupervisionReviewGroup title="데모 입력값" items={aiReview.demoInputs} />
-      <SupervisionReviewGroup title="누락된 내용" items={aiReview.missingFields} />
-      <SupervisionReviewGroup
-        title="근거 부족 문장"
-        items={aiReview.unsupportedClaims.map((item) => `${item.claim} → ${item.reason}`)}
-        emptyLabel="근거 부족 문장 없음"
-      />
-      <SupervisionReviewGroup title="수퍼비전 질문 후보" items={aiReview.suggestedSupervisionQuestions} numbered />
-      <section className="mt-4">
-        <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
-          <Info className="h-3.5 w-3.5" />
-          주의 문구
-        </h3>
-        <p className="mt-2 rounded-[8px] border border-slate-200 bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-700">
-          {aiReview.caution}
-        </p>
-      </section>
 
       <div className="mt-auto space-y-3 pt-8">
         {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
@@ -2747,6 +2676,9 @@ function PreviousSessionLinkPanel({
   onToggle: (sessionId: string) => void
   selectedIds: string[]
 }) {
+  const [activeSessionId, setActiveSessionId] = useState(previousSessionOptions[0]?.id || '')
+  const activeSession = previousSessionOptions.find((session) => session.id === activeSessionId)
+
   return (
     <section>
       <div className="flex items-start gap-2.5">
@@ -2765,7 +2697,10 @@ function PreviousSessionLinkPanel({
               key={session.id}
               type="button"
               aria-pressed={selected}
-              onClick={() => onToggle(session.id)}
+              onClick={() => {
+                setActiveSessionId(session.id)
+                onToggle(session.id)
+              }}
               className={`min-h-[110px] w-full rounded-[9px] border p-3.5 text-left transition ${
                 selected
                   ? 'border-blue-600 bg-blue-50 shadow-sm'
@@ -2786,6 +2721,20 @@ function PreviousSessionLinkPanel({
           )
         })}
       </div>
+
+      {activeSession && (
+        <div className="mt-4 border-t border-slate-200 pt-4">
+          <p className="text-sm font-bold text-slate-950">{activeSession.label} 자료</p>
+          <p className="mt-3 text-xs font-bold text-blue-700">[회기 요약]</p>
+          <p className="mt-1.5 whitespace-pre-wrap text-[11px] font-semibold leading-5 text-slate-700">
+            {activeSession.summary}
+          </p>
+          <p className="mt-4 text-xs font-bold text-blue-700">[상담 원문]</p>
+          <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-slate-700">
+            {activeSession.detail}
+          </pre>
+        </div>
+      )}
 
     </section>
   )
@@ -2961,9 +2910,9 @@ function FinalReviewCard({ items, title }: { items: string[]; title: string }) {
 }
 
 const highlightPhrases = [
-  '진로 및 취업 준비 과정',
-  '진로 및 취업 준비 과정에서 지속적인 불안과 압박감을 경험함',
-  '또래와의 비교',
+  '사회적 상황 불안',
+  '타인의 평가에 대한 추측',
+  '사회적 회피',
   '자기비난',
   '자동사고와 감정 반응',
   '자신의 가치를 평가하는 경향이 확인되었다',
@@ -2998,43 +2947,6 @@ function HighlightedText({ text }: { text: string }) {
 
   if (cursor < text.length) parts.push(text.slice(cursor))
   return <>{parts}</>
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[8px] bg-slate-50 px-3 py-2">
-      <dt className="text-xs font-bold text-slate-950">{label}</dt>
-      <dd className="mt-1 truncate text-xs font-semibold text-blue-700">{value}</dd>
-    </div>
-  )
-}
-
-function MaterialRow({
-  actionLabel,
-  label,
-  meta,
-  onAction,
-}: {
-  actionLabel: string
-  label: string
-  meta: string
-  onAction: () => void
-}) {
-  return (
-    <div className="material-row flex items-center justify-between gap-3 px-3 py-1">
-      <div className="min-w-0">
-        <p className="text-sm font-bold text-slate-950">{label}</p>
-        <p className="mt-0.5 truncate text-xs text-slate-500">{meta}</p>
-      </div>
-      <button
-        type="button"
-        onClick={onAction}
-        className="h-7 shrink-0 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
-      >
-        {actionLabel}
-      </button>
-    </div>
-  )
 }
 
 function UploadedMaterialRow({
@@ -3182,13 +3094,15 @@ function MaterialModal({
   materials,
   mode,
   onAddAudioFiles,
+  onApplyAudioTranscript,
   onApplyMaterial,
   onClose,
   onModeChange,
   onRefreshAudioCapabilities,
   onTranscribeAudio,
+  onUpdateAudioExpectedSpeakers,
   onUpdateAudioSegmentText,
-  onUpdateAudioTranscript,
+  onUpdateAudioSpeakerRole,
   onUpdateField,
   onUpdateSessionTopic,
   onUploadDocumentFiles,
@@ -3201,13 +3115,15 @@ function MaterialModal({
   materials: UploadedMaterial[]
   mode: MaterialModalMode
   onAddAudioFiles: (files: FileList | null) => void
+  onApplyAudioTranscript: (materialId: string, mode: MaterialApplyMode) => void
   onApplyMaterial: (materialId: string, target: MaterialApplyTarget, mode: MaterialApplyMode) => void
   onClose: () => void
   onModeChange: (mode: MaterialModalMode) => void
   onRefreshAudioCapabilities: () => Promise<AudioCapabilitiesResponse>
   onTranscribeAudio: (materialId: string) => void
+  onUpdateAudioExpectedSpeakers: (materialId: string, value: number) => void
   onUpdateAudioSegmentText: (materialId: string, segmentId: number, text: string) => void
-  onUpdateAudioTranscript: (materialId: string, text: string) => void
+  onUpdateAudioSpeakerRole: (materialId: string, speakerKey: string, role: SpeakerRole) => void
   onUpdateField: (field: keyof SessionInput, value: string | number) => void
   onUpdateSessionTopic: (value: string) => void
   onUploadDocumentFiles: (files: FileList | null) => Promise<void>
@@ -3279,6 +3195,15 @@ function MaterialModal({
                   onChange={(event) => onUpdateField('client_alias', event.target.value)}
                   className={inputClass}
                   placeholder="비워두면 케이스 ID로 표시됩니다."
+                />
+              </Field>
+              <Field label="상담자" htmlFor="modal_counselor_name">
+                <input
+                  id="modal_counselor_name"
+                  value={form.counselor_name}
+                  onChange={(event) => onUpdateField('counselor_name', event.target.value)}
+                  className={inputClass}
+                  placeholder="상담자 이름을 입력하세요."
                 />
               </Field>
               <Field label="회기 번호" htmlFor="modal_session_number">
@@ -3473,54 +3398,18 @@ function MaterialModal({
           {mode === 'audio_review' && selectedMaterial && (
             <div className="space-y-4">
               <MaterialSummary material={selectedMaterial} />
-              {selectedMaterial.objectUrl && <audio controls src={selectedMaterial.objectUrl} className="w-full" />}
-              {selectedMaterial.status !== 'transcribed' && (
-                <button
-                  type="button"
-                  disabled={!transcriptionAvailable || selectedMaterial.status === 'transcribing'}
-                  onClick={() => onTranscribeAudio(selectedMaterial.id)}
-                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {selectedMaterial.status === 'transcribing' ? '축어록 생성 중' : '축어록 생성'}
-                </button>
-              )}
-              {(selectedMaterial.segments || []).length > 0 && (
-                <div className="space-y-2">
-                  {(selectedMaterial.segments || []).map((segment) => (
-                    <label key={segment.id} className="block rounded-md border border-slate-200 p-3">
-                      <span className="text-xs font-semibold text-slate-500">
-                        {formatSeconds(segment.start)} - {formatSeconds(segment.end)}
-                      </span>
-                      <input
-                        value={segment.text}
-                        onChange={(event) => onUpdateAudioSegmentText(selectedMaterial.id, segment.id, event.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-              <Field label="전체 축어록" htmlFor="audio_transcript_text">
-                <textarea
-                  id="audio_transcript_text"
-                  value={selectedMaterial.transcriptText || ''}
-                  onChange={(event) => onUpdateAudioTranscript(selectedMaterial.id, event.target.value)}
-                  className={`${textareaClass} min-h-[220px]`}
-                />
-              </Field>
-              {selectedMaterial.status === 'transcribed' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setApplyTarget('transcript_text')
-                    setApplyMode(form.transcript_text.trim() ? 'append' : 'replace')
-                    onModeChange('material_apply')
-                  }}
-                  className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800"
-                >
-                  축어록에 반영
-                </button>
-              )}
+              <AudioTranscriptEditor
+                material={selectedMaterial}
+                applyMode={applyMode}
+                transcriptionAvailable={transcriptionAvailable}
+                transcriptionReason={audioCapabilities?.transcription.reason || null}
+                onApply={() => onApplyAudioTranscript(selectedMaterial.id, applyMode)}
+                onApplyModeChange={setApplyMode}
+                onExpectedSpeakersChange={(value) => onUpdateAudioExpectedSpeakers(selectedMaterial.id, value)}
+                onTranscribe={() => onTranscribeAudio(selectedMaterial.id)}
+                onUpdateSegmentText={(segmentId, text) => onUpdateAudioSegmentText(selectedMaterial.id, segmentId, text)}
+                onUpdateSpeakerRole={(speakerKey, role) => onUpdateAudioSpeakerRole(selectedMaterial.id, speakerKey, role)}
+              />
             </div>
           )}
         </div>
@@ -3834,7 +3723,7 @@ function buildFinalDocumentSections(
         '주요 호소',
         [
           getSection('main_issue', '주요 호소 내용을 상담사가 확인해야 합니다.'),
-          '진로 및 취업 준비 과정에서의 불안과 자기비난 사고를 중심으로 보고함.',
+          '제공된 현재 회기 자료에 근거한 주호소를 중심으로 보고함.',
         ],
       ),
       makeSection('session_content', '상담 내용', getSection('session_content', '상담 내용을 확인해야 합니다.')),
@@ -3874,14 +3763,19 @@ function buildFinalDocumentSections(
 function supervisionBlockToEditableText(block: SupervisionContentBlock): string {
   if (block.type === 'table' && block.rows?.length) {
     const headers = Object.keys(block.rows[0])
-    return [headers.join('\t'), ...block.rows.map((row) => headers.map((header) => row[header] || '').join('\t'))].join('\n')
+    return [headers.join('\t'), ...block.rows.map((row) => headers.map((header) => cleanSupervisionText(row[header])).join('\t'))].join('\n')
   }
   if (block.type === 'transcript' && block.speakerTurns?.length) {
     return block.speakerTurns
       .map((turn) => `${turn.speaker === 'client' ? '내담자' : '상담자'}: ${turn.text}`)
       .join('\n')
   }
-  return block.text || ''
+  return cleanSupervisionText(block.text)
+}
+
+function cleanSupervisionText(value: string | null | undefined): string {
+  const text = value || ''
+  return text.trim() === PLACEHOLDER_TEXT ? '' : text
 }
 
 function updateSupervisionBlockFromText(block: SupervisionContentBlock, text: string): SupervisionContentBlock {
@@ -4058,6 +3952,7 @@ function buildSupervisionExportSections(report: SupervisionReportDraft): Documen
             silence_seconds: turn.silenceSeconds ?? null,
           })),
           warnings: block.warnings || [],
+          label: block.label || null,
         }))
 
       return {
@@ -4113,13 +4008,13 @@ function validateSelectedFile(file: File, kind: UploadedMaterialKind): UploadedM
   const extension = getFileExtension(file.name)
   const allowed = kind === 'document' ? DOCUMENT_UPLOAD_EXTENSIONS : AUDIO_UPLOAD_EXTENSIONS
   const maxBytes = kind === 'document' ? DOCUMENT_UPLOAD_MAX_BYTES : AUDIO_UPLOAD_MAX_BYTES
-  const defaultLimitLabel = kind === 'document' ? '20MB' : '500MB'
+  const defaultLimitLabel = kind === 'document' ? DOCUMENT_UPLOAD_LIMIT_LABEL : '500MB'
 
   if (!allowed.has(extension)) {
     return buildFailedMaterial(file, kind, `지원하지 않는 파일 형식입니다. ${Array.from(allowed).join(', ')} 파일을 선택해주세요.`)
   }
   if (file.size > maxBytes) {
-    return buildFailedMaterial(file, kind, `기본 업로드 제한(${defaultLimitLabel})을 초과했습니다.`)
+    return buildFailedMaterial(file, kind, `파일 용량이 업로드 제한(${defaultLimitLabel})을 초과했습니다.`)
   }
   if (file.size === 0) {
     return buildFailedMaterial(file, kind, '빈 파일은 업로드할 수 없습니다.')
@@ -4147,11 +4042,62 @@ function getFileExtension(filename: string): string {
 
 function mergeMaterialText(current: string, incoming: string, mode: MaterialApplyMode): string {
   const cleanIncoming = incoming.trim()
+  if (!cleanIncoming) return mode === 'replace' ? '' : current.trim()
   if (mode === 'replace' || !current.trim()) return cleanIncoming
   return `${current.trim()}\n\n${cleanIncoming}`
 }
 
+function buildTranscribedAudioMaterial(
+  material: UploadedMaterial,
+  transcription: AudioTranscriptionResponse,
+): UploadedMaterial {
+  const speakerRoleMap = buildInitialSpeakerRoleMap(transcription.segments, material.speakerRoleMap)
+  const transcriptText = buildTranscriptText(transcription.segments, speakerRoleMap) || transcription.transcript_text
+  const nonverbalNotes = buildNonverbalNotes(transcription.segments, speakerRoleMap) || transcription.nonverbal_notes
+  return {
+    ...material,
+    status: 'transcribed',
+    transcriptText,
+    segments: transcription.segments,
+    durationSeconds: transcription.duration_seconds,
+    language: transcription.language,
+    runtimeMode: transcription.runtime_mode,
+    diarizationStatus: transcription.diarization_status,
+    languageProbability: transcription.language_probability,
+    nonverbalNotes,
+    speakerRoleMap,
+    warnings: transcription.warnings,
+    error: undefined,
+    dirtySinceApply: true,
+    appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
+  }
+}
+
+function buildInitialSpeakerRoleMap(segments: AudioSegment[], previous: SpeakerRoleMap = {}): SpeakerRoleMap {
+  return segments.reduce<SpeakerRoleMap>((map, segment) => {
+    const speakerKey = getSegmentSpeakerKey(segment)
+    map[speakerKey] = previous[speakerKey] || 'unassigned'
+    return map
+  }, {})
+}
+
+function markAudioMaterialDirty(material: UploadedMaterial): UploadedMaterial {
+  if (material.kind !== 'audio') return material
+  const speakerRoleMap = buildInitialSpeakerRoleMap(material.segments || [], material.speakerRoleMap)
+  return {
+    ...material,
+    speakerRoleMap,
+    transcriptText: buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText,
+    nonverbalNotes: buildNonverbalNotes(material.segments || [], speakerRoleMap),
+    dirtySinceApply: true,
+    appliedTargets: material.appliedTargets.filter((target) => !AUDIO_APPLY_TARGETS.includes(target)),
+  }
+}
+
 function materialMetaText(material: UploadedMaterial): string {
+  if (material.kind === 'audio' && material.dirtySinceApply && getMaterialText(material).trim()) {
+    return '축어록 수정사항이 회기 입력에 아직 다시 반영되지 않았습니다.'
+  }
   if (material.appliedTargets.length) {
     return `${material.appliedTargets.map((target) => materialApplyTargetLabel[target]).join(', ')}에 반영 완료`
   }
@@ -4194,12 +4140,23 @@ function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
     error: material.error,
     durationSeconds: material.durationSeconds,
     language: material.language,
+    runtimeMode: material.runtimeMode,
+    diarizationStatus: material.diarizationStatus,
+    languageProbability: material.languageProbability,
+    speakerRoleMap: material.speakerRoleMap,
+    nonverbalNotes: material.nonverbalNotes,
+    dirtySinceApply: material.dirtySinceApply,
+    expectedSpeakers: material.expectedSpeakers,
+    lastAppliedTranscriptText: material.lastAppliedTranscriptText,
+    lastAppliedNonverbalNotes: material.lastAppliedNonverbalNotes,
+    lastAppliedMode: material.lastAppliedMode,
     appliedTargets: material.appliedTargets,
   }))
 }
 
 const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
   transcript_text: '축어록',
+  nonverbal_notes: '비언어 관찰 메모',
   counselor_memo: '상담사 메모',
   previous_session_summary: '이전 회기 요약',
   psychological_test_summary: '심리검사 요약',
@@ -4249,12 +4206,6 @@ const transformOptions: Array<{
     title: '슈퍼비전 보고서',
     description: '회기요약을 바탕으로 슈퍼비전 보고서 초안을 구성합니다.',
     requiredFields: ['내담자 기본 정보', '상담신청경위', '가족관계', '사례개념화', '슈퍼비전 요청사항'],
-  },
-  {
-    id: 'termination_report',
-    title: '종결 보고서',
-    description: '여러 회기 요약을 종결 보고서 형식으로 정리하는 화면입니다.',
-    requiredFields: ['전체 회기 목록', '종결 사유', '목표 달성 정도', '향후 권고'],
   },
 ]
 

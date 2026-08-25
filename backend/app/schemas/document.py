@@ -50,6 +50,7 @@ class DocumentContentBlock(BaseModel):
         validation_alias=AliasChoices("speaker_turns", "speakerTurns"),
     )
     warnings: list[str] = Field(default_factory=list)
+    label: str | None = None
 
 
 class DocumentSection(BaseModel):

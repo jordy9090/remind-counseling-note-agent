@@ -47,6 +47,13 @@ const selectedAudio = {
   transcriptText: '',
   appliedTargets: [],
 }
+const staleAudio = {
+  kind: 'audio',
+  status: 'transcribed',
+  transcriptText: '수정된 축어록',
+  appliedTargets: ['transcript_text', 'nonverbal_notes'],
+  dirtySinceApply: true,
+}
 
 assert(
   getUnappliedReadyMaterials([readyPdf]).length === 1,
@@ -56,6 +63,7 @@ assert(getUnappliedReadyMaterials([appliedPdf]).length === 0, 'applied PDF must 
 assert(getUnappliedReadyMaterials([]).length === 0, 'deleted PDF must allow submit')
 assert(getUnappliedReadyMaterials([scanPdf]).length === 0, 'scan PDF without text must not block as ready')
 assert(getUnappliedReadyMaterials([selectedAudio]).length === 0, 'audio without transcript must not block as ready')
+assert(getUnappliedReadyMaterials([staleAudio]).length === 1, 'edited audio after apply must block until re-applied')
 
 fs.rmSync(outputDir, { recursive: true, force: true })
 console.log('material workflow verification passed')

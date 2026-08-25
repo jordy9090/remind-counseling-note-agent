@@ -9,6 +9,7 @@ export type MaterialWorkflowStatus =
   | 'failed'
 export type MaterialWorkflowApplyTarget =
   | 'transcript_text'
+  | 'nonverbal_notes'
   | 'counselor_memo'
   | 'previous_session_summary'
   | 'psychological_test_summary'
@@ -24,6 +25,7 @@ export interface MaterialWorkflowItem {
   transcriptText?: string
   segments?: MaterialWorkflowSegment[]
   appliedTargets: MaterialWorkflowApplyTarget[]
+  dirtySinceApply?: boolean
 }
 
 export function getMaterialText(material: MaterialWorkflowItem | null | undefined): string {
@@ -48,5 +50,7 @@ export function isReadyMaterial(material: MaterialWorkflowItem): boolean {
 }
 
 export function getUnappliedReadyMaterials<T extends MaterialWorkflowItem>(materials: T[]): T[] {
-  return materials.filter((material) => isReadyMaterial(material) && material.appliedTargets.length === 0)
+  return materials.filter(
+    (material) => isReadyMaterial(material) && (material.appliedTargets.length === 0 || material.dirtySinceApply),
+  )
 }

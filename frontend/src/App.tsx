@@ -1,16 +1,8 @@
-import { useState } from 'react'
-
-import LandingPage from './pages/LandingPage'
+import AuthGate from './components/AuthGate'
 import SessionDraftPage from './pages/SessionDraftPage'
 
 function App() {
-  const [hasStarted, setHasStarted] = useState(false)
-
-  if (!hasStarted) {
-    return <LandingPage onStart={() => setHasStarted(true)} />
-  }
-
-  return <SessionDraftPage />
+  return <AuthGate><SessionDraftPage /></AuthGate>
 }
 
 export default App

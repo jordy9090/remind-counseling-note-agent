@@ -4,7 +4,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from typing import Annotated
+from fastapi import Depends, FastAPI, HTTPException
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -13,15 +14,20 @@ BACKEND_DIR = ROOT_DIR / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.api.security import require_preview_access  # noqa: E402
 from app.graph.supervision_report import run_supervision_report_pipeline  # noqa: E402
 from app.schemas.note import SupervisionReportDraft, SupervisionReportRequest  # noqa: E402
 
 app = FastAPI(title="Re:mind Supervision Report API")
+PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 
 @app.post("/", response_model=SupervisionReportDraft)
 @app.post("/api/notes/supervision-report", response_model=SupervisionReportDraft)
-async def generate_supervision_report(request: SupervisionReportRequest) -> SupervisionReportDraft:
+async def generate_supervision_report(
+    request: SupervisionReportRequest,
+    actor: PreviewActor,
+) -> SupervisionReportDraft:
     try:
         return run_supervision_report_pipeline(request)
     except Exception as error:

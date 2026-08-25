@@ -47,6 +47,9 @@ Accepted input aliases:
 - `document_type` is also accepted for `target_document_type`.
 - `persist=true` stores the generated note only when `ENABLE_PERSISTENCE=1` and Supabase credentials are configured.
 - `SAVE_RAW_INPUT=0` is the default; raw counselor memo/transcript payloads are not stored unless `SAVE_RAW_INPUT=1`.
+- With `ENABLE_REAL_USER_AUTH=1`, protected endpoints require `Authorization: Bearer <Supabase access token>`. The `X-Remind-Preview-Token` path is available only when `ALLOW_LEGACY_PREVIEW_TOKEN=1` is explicitly enabled for a synthetic-data demo.
+- `POST /api/notes/confirm` accepts only `note_id`, `confirmed_note`, `counselor_edited`, and `create_case_memory`; case/session/counselor identity is derived from stored rows and the server actor.
+- `ENABLE_CASE_MEMORY=0` is the default. Confirmed note memory chunks are written only when persistence and case-memory indexing are explicitly enabled.
 
 ### Frontend Display Projection
 
@@ -163,6 +166,22 @@ If `draft_id` is included, the backend updates that temporary draft. If it is om
 }
 ```
 
+## Generate Supervision Report
+
+```text
+POST /api/notes/supervision-report
+```
+
+Generates the Korean Counseling Psychological Association personal-counseling supervision form
+(A-1 through C-2). The request accepts the current `session_input`, an optional generated session
+summary, session history, previous human-supervision feedback, goals, strategy, and the counselor's
+supervision question.
+
+The response contains structured sections and content blocks, an evidence index, missing inputs,
+review status, and an AI review panel. Theory-specific case formulation and autonomous supervision
+advice are outside the current contract. The frontend currently passes the current session and generated
+summary; the remaining request fields are supported by the backend but still need dedicated UI inputs.
+
 ## Export Final Document
 
 ```text
@@ -273,7 +292,7 @@ Scanned/image-only PDFs return 200 with `status: "warning"` and a warning that O
 GET /api/audio/capabilities
 ```
 
-Returns whether this runtime can accept audio uploads and whether automatic transcription is configured. Upload is available by default, but transcription is disabled unless `ENABLE_AUDIO_TRANSCRIPTION=1` and `faster-whisper` are available. Speaker diarization is not included in this MVP.
+Returns whether this runtime can accept audio uploads, whether automatic transcription is configured, and which runtime mode is active. Upload is available by default. `AUDIO_TRANSCRIPTION_STUB=1` enables a demo transcript that does not analyze uploaded audio. Real transcription requires `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, `AUDIO_TRANSCRIPTION_ENGINE=whisperx`, and the optional `audio-whisperx` dependency group. Speaker diarization is opt-in with `ENABLE_AUDIO_DIARIZATION=1` and `HF_TOKEN`.
 
 ```json
 {
@@ -286,8 +305,9 @@ Returns whether this runtime can accept audio uploads and whether automatic tran
   },
   "speaker_diarization": {
     "available": false,
-    "reason": "화자 분리 기능은 이번 MVP 범위에 포함되어 있지 않습니다."
-  }
+    "reason": "실제 화자 분리는 WhisperX 런타임에서 별도 설정 후 활성화됩니다."
+  },
+  "runtime_mode": "disabled"
 }
 ```
 
@@ -295,9 +315,13 @@ Returns whether this runtime can accept audio uploads and whether automatic tran
 POST /api/audio/transcribe
 ```
 
-Accepts multipart `file`, optional `language`, and optional `task`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`.
+Accepts multipart `file`, optional `language`, optional `task`, and optional `expected_speakers`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`. Runtime duration and process-level concurrency default to 7200 seconds and one job, controlled by `AUDIO_MAX_DURATION_SECONDS` and `AUDIO_MAX_CONCURRENT_JOBS`.
 
-When transcription is unavailable, the endpoint returns 503 instead of a fake transcript.
+`expected_speakers` defaults to 2 and must be between 1 and 4. When transcription is unavailable, the endpoint returns 503. In stub mode, the endpoint returns a clearly marked demo transcript with warning text: `시연용 예시 축어록이며 업로드 음성을 분석한 결과가 아닙니다.`
+
+Real mode uses WhisperX 3.8.6 for ASR, the explicit `kresnik/wav2vec2-large-xlsr-korean` forced-alignment model, Community-1 diarization, and WhisperX speaker assignment. Alignment failure retains ASR segment timestamps. Diarization failure retains transcription as one `SPEAKER_00` speaker.
+
+`pause_before_seconds` is based on the previous chronological transcript turn end time. `speech_rate_wps` is turn words per second, and `speech_rate_level` is speaker-relative when enough samples exist. `volume_level` is computed from the already-decoded waveform and compared within the same speaker when enough turns exist. The API does not infer emotion, depression, anxiety, risk, diagnosis, tremor, or treatment effect from audio.
 
 ### Response
 
@@ -306,14 +330,29 @@ When transcription is unavailable, the endpoint returns 503 instead of a fake tr
   "transcription_id": "transcription_abc123",
   "filename": "session.wav",
   "status": "completed",
+  "runtime_mode": "real",
+  "transcription_engine": "whisperx",
+  "alignment_model": "kresnik/wav2vec2-large-xlsr-korean",
+  "diarization_model": "pyannote/speaker-diarization-community-1",
+  "alignment_status": "completed",
+  "diarization_status": "disabled",
   "duration_seconds": 142.3,
   "language": "ko",
+  "language_probability": 0.98,
   "segments": [
     {
       "id": 1,
       "start": 0.0,
       "end": 4.2,
-      "text": "상담자 발화..."
+      "text": "상담자 발화...",
+      "speaker": "SPEAKER_00",
+      "pause_before_seconds": 0.8,
+      "duration_seconds": 4.2,
+      "speech_rate_wps": 1.7,
+      "speech_rate_level": "typical",
+      "volume_level": "low",
+      "confidence": 0.91,
+      "words": []
     }
   ],
   "transcript_text": "상담자 발화...",
