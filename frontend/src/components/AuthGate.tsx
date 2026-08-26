@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import type { Provider, Session } from '@supabase/supabase-js'
-import { ArrowLeft, ChevronDown, Loader2, LogOut, Mail } from 'lucide-react'
+import { ArrowLeft, Loader2, Mail } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
 import LandingPage from '../pages/LandingPage'
@@ -28,7 +28,6 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [providers, setProviders] = useState<AvailableOAuthProviders>({ google: false, kakao: false })
-  const [profileOpen, setProfileOpen] = useState(false)
 
   useEffect(() => {
     if (!supabase) return
@@ -44,6 +43,17 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     })
     return () => data.subscription.unsubscribe()
   }, [])
+
+  const startAnonymousWorkspace = async () => {
+    if (!supabase || submitting) return
+    setSubmitting(true)
+    setMessage('')
+    const { error } = await supabase.auth.signInAnonymously()
+    if (error) {
+      setSubmitting(false)
+      setMessage('워크스페이스를 열지 못했습니다. 잠시 후 다시 시도해주세요.')
+    }
+  }
 
   if (!isAuthConfigured) return <AuthShell><Brand /><AuthHeading title="서비스 연결을 준비하고 있습니다" description="인증 설정을 확인한 뒤 다시 시도해주세요." /></AuthShell>
   if (loading) return <AuthShell><Brand /><Status text="로그인 상태를 확인하고 있습니다" /></AuthShell>
@@ -69,8 +79,9 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   if (!session) {
     if (!authOpen) {
       return <LandingPage
-        onLogin={() => { setMode('signin'); setMessage(''); setAuthOpen(true) }}
-        onStart={() => { setMode('signup'); setMessage(''); setAuthOpen(true) }}
+        onStart={() => void startAnonymousWorkspace()}
+        startError={message}
+        starting={submitting}
       />
     }
 
@@ -130,11 +141,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return <div className="min-h-screen bg-slate-50">
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8"><Brand compact />
-      <div className="relative"><button className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100" type="button" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}><span className="hidden max-w-64 truncate sm:inline">{session.user.email}</span><ChevronDown size={16} /></button>
-        {profileOpen && <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><p className="truncate px-3 py-2 text-xs text-slate-500 sm:hidden">{session.user.email}</p><button className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100" type="button" onClick={() => void supabase?.auth.signOut()}><LogOut size={16} />로그아웃</button></div>}
-      </div>
-    </div></header>{children}
+    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center px-4 py-3 sm:px-6 lg:px-8"><Brand compact /></div></header>{children}
   </div>
 }
 
