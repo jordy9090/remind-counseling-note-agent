@@ -6,6 +6,14 @@
     {
       "source": "/api/notes/drafts/:draft_id",
       "destination": "/api/notes/draft?draft_id=:draft_id"
+    },
+    {
+      "source": "/api/cases/:case_id/dashboard",
+      "destination": "/api/cases/dashboard?case_id=:case_id"
+    },
+    {
+      "source": "/api/cases/:case_id/schedule",
+      "destination": "/api/cases/dashboard?case_id=:case_id"
     }
   ],
   "functions": {
