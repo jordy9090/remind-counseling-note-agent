@@ -17,12 +17,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import run_evaluation_harness_v3 as v3  # noqa: E402
 from app.core.config import settings  # noqa: E402
-from app.evaluation.provenance import (  # noqa: E402
+from research.legacy_muspsy_evaluation.provenance import (  # noqa: E402
     CASE_ID,
     PROVENANCE_CLASSES,
     map_source_refs,

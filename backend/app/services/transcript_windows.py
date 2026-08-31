@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from app.core.config import settings
 from app.schemas.evidence import StoredTranscriptTurn, TranscriptWindow
 from app.services.embeddings import content_hash, get_embedding_provider
-from app.services.evidence_storage import build_episode_text, get_transcript_turns
+from app.services.transcript_storage import build_transcript_span_text, get_transcript_turns
 from app.services.supabase_storage import storage
 
 
@@ -50,7 +50,7 @@ def build_transcript_windows(
     for position in starts:
         selected = ordered[position:min(position + window_size, count)]
         start, end = selected[0].turn_index, selected[-1].turn_index
-        text = build_episode_text(ordered, start, end)
+        text = build_transcript_span_text(ordered, start, end)
         windows.append(TranscriptWindow(
             user_id=scope[0], counselor_id=scope[1], case_id=scope[2], session_id=scope[3],
             start_turn_index=start, end_turn_index=end, window_text=text,

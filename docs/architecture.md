@@ -77,7 +77,15 @@ POST /api/notes/generate
 ```text
 sanitize_input
   ↓
-retrieve_context
+formulate_evidence_needs
+  ↓
+formulate_retrieval_query
+  ↓
+retrieve_raw_evidence_regions
+  ↓
+retrieve_case_memory / retrieve_authoritative_kb
+  ↓
+assemble_generation_grounding
   ↓
 structure_session
   ↓
@@ -85,10 +93,16 @@ map_evidence
   ↓
 generate_summary
   ↓
+generate_grounded_document
+  ↓
+validate_claim_sources
+  ↓
 verify_output
   ↓
 transform_document_preview
 ```
+
+Raw-region grounding nodes stay in the graph but return empty/no-op state when `ENABLE_RAW_REGION_GROUNDING=false`, which is the default. The established non-grounding generation behavior is preserved in that mode.
 
 ## 5. Agent 책임
 
@@ -98,12 +112,14 @@ transform_document_preview
 - 상담사 메모, 축어록/STT, 이전 회기 요약 분리
 - 전화번호, 이메일, 학교명, 실명 후보 탐지
 
-### retrieve_context
+### retrieve_context and raw regions
 
 - `case_id` 기준 최근 이전 회기 기록 retrieval
 - 문서 목적별 양식 KB retrieval
 - 개인정보/윤리/보안 규칙 KB retrieval
 - Supabase 또는 RAG가 꺼져 있으면 빈 context로 계속 진행
+- Grounding flag가 켜진 경우 `transcript_windows` dense retrieval 결과를 scoped `transcript_turns`로 다시 조립해 raw candidate region을 생성
+- Query text나 검색 window text 자체를 최종 evidence로 사용하지 않음
 
 ### structure_session
 
@@ -119,6 +135,12 @@ transform_document_preview
 
 - 구조화 결과와 근거 매핑 결과를 바탕으로 회기요약 초안 생성
 - frontend에서 섹션별 textarea로 수정 가능한 형태 반환
+
+### generate_grounded_document / validate_claim_sources
+
+- request-local evidence ID를 사용해 factual claim과 raw/counselor source를 연결
+- 존재하지 않는 source ID와 source hierarchy 위반을 거부
+- semantic support를 별도 검증하고 partial/unsupported claim을 counselor review 대상으로 표시
 
 ### verify_output
 
@@ -139,6 +161,14 @@ MVP V1에서는 `ENABLE_PERSISTENCE=1`, Supabase credentials, 요청의 `persist
 `SAVE_RAW_INPUT=0`이 기본값이며, 이 경우 `sessions.raw_input_text`는 `NULL`로 저장됩니다. `SAVE_RAW_INPUT=1`은 synthetic/demo data 또는 명시적으로 승인된 테스트에서만 사용합니다.
 
 인증, 사용자별 Row Level Security, 감사 로그, 보관기간 정책은 아직 production 범위가 아닙니다. Supabase가 설정되지 않으면 모든 데이터는 기존처럼 요청 단위로 처리됩니다. 자세한 운영 전 체크리스트는 `docs/security_checklist.md`를 따릅니다.
+
+Grounding product schema에는 `transcript_turns`와 `transcript_windows`가 필요합니다. `evidence_episodes`와 `match_evidence_episodes`는 현재 runtime prerequisite가 아니며, 원격에 적용되지 않은 실험 SQL은 `research/raw_evidence_experiments/supabase`로 분리되어 있습니다.
+
+## 8. Production and research boundary
+
+Production uses raw regions as evidence. Episode extraction, turn-function labeling, evidence-episode retrieval, and query-conditioned exact-span selection are controlled research paths under `research/`. No module under `backend/app`, `api`, or `frontend/src` imports `research`.
+
+The full file-by-file path, data tables, and regression mapping is maintained in `docs/product_runtime_map.md`.
 
 ## 7. 출력 검증 원칙
 

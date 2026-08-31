@@ -121,7 +121,7 @@ assert(componentSource.includes('EvidenceControl'), 'clearly mapped factual clai
 assert(!componentSource.includes('similarity_score'), 'UI must not display retrieval score as confidence')
 assert(!componentSource.includes('R404'), 'missing source internal ID must never be hard-coded into counselor UI')
 
-const fixtureSource = fs.readFileSync(path.resolve('src/fixtures/groundingDemo.ts'), 'utf8')
+const fixtureSource = fs.readFileSync(path.resolve('src/fixtures/dev/groundingDemo.ts'), 'utf8')
 assert(fixtureSource.includes("evidence_id: 'R9'"), 'demo fixture must retain an intentionally uncited retrieval candidate')
 assert(fixtureSource.includes("evidence_ids: ['R404']"), 'demo fixture must include a missing-source fail-safe scenario')
 assert(fixtureSource.includes("support_type: 'clinical_inference'"), 'demo fixture must include clinical inference')

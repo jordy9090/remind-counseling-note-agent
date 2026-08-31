@@ -1,16 +1,20 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 
 import AuthGate from './components/AuthGate'
 import LandingPage from './pages/LandingPage'
 import SessionDraftPage from './pages/SessionDraftPage'
+
+const GroundingDemoPage = import.meta.env.DEV
+  ? lazy(() => import('./fixtures/dev/GroundingDemoPage'))
+  : null
 
 function App() {
   const [hasStarted, setHasStarted] = useState(false)
   const isLocalGroundingDemo = import.meta.env.DEV
     && new URLSearchParams(window.location.search).get('grounding-demo') === '1'
 
-  if (isLocalGroundingDemo) {
-    return <SessionDraftPage />
+  if (isLocalGroundingDemo && GroundingDemoPage) {
+    return <Suspense fallback={null}><GroundingDemoPage /></Suspense>
   }
 
   if (!hasStarted) {

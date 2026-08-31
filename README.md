@@ -4,6 +4,38 @@ Re:mind는 심리상담사를 위한 AI 보조 상담 문서화 워크스페이�
 
 MVP V1의 주 경로는 **React + FastAPI + LangGraph 기반 lightweight retrieval-aware workflow**입니다. 상담사가 상담 이후에 가진 상담사 메모, 축어록/STT 텍스트, 이전 회기 요약을 입력하면 backend가 note generation workflow를 실행하고, frontend가 회기요약 초안과 근거 확인 결과를 카드 형태로 보여줍니다.
 
+## Current Product Architecture
+
+```text
+Transcript
+→ Raw Window Retrieval
+→ Grounded Generation
+→ Semantic Source Validation
+→ Counselor Evidence Review
+```
+
+Production evidence unit은 sanitized transcript의 `raw region`입니다. `transcript_turns`와 deterministic `transcript_windows`에서 후보를 찾고, 실제 원문 turn으로 region을 다시 조립한 뒤 생성 claim의 source support를 별도로 검증합니다. 실제 파일별 호출 경로와 저장소·테스트 매핑은 [Product Runtime Map](docs/product_runtime_map.md)에 있습니다.
+
+중요한 구분:
+
+```text
+Production:
+raw region as evidence
+
+Experimental:
+episode extraction
+turn-function labeling
+exact-span selector
+```
+
+실험 코드는 `research/` 아래에 보존하며 production runtime이 import하지 않습니다. Grounding은 현재 opt-in이고 기본값은 다음과 같습니다.
+
+```env
+ENABLE_RAW_REGION_GROUNDING=false
+```
+
+DEV evidence demo는 `frontend/src/fixtures/dev/groundingDemo.ts`의 synthetic fixture만 사용합니다. DEV-only lazy module로 분리되어 production bundle에 포함되지 않으며, `import.meta.env.DEV`이면서 URL에 `?grounding-demo=1`이 있을 때만 활성화됩니다.
+
 ## 제품 원칙
 
 Re:mind는 상담을 수행하거나, 상담사를 평가하거나, 임상적 판단을 대체하지 않습니다.
@@ -82,54 +114,25 @@ OpenAI API key가 없거나 `USE_STUB=1`이면 deterministic mock/stub output으
 ```text
 remind-counseling-note-agent/
 ├── README.md
-├── docs/
-│   ├── product_spec.md
-│   ├── mvp_scope.md
-│   ├── architecture.md
-│   ├── schema.md
-│   ├── api_contract.md
-│   ├── demo_scenario.md
-│   ├── security_checklist.md
-│   ├── supabase_schema.sql
-│   ├── kb_seed_examples.json
-│   └── development_plan.md
-├── scripts/
-│   └── seed_kb_examples.py
-├── sample_data/
-│   ├── session_input_001.json
-│   └── session_output_001.json
+├── api/                         # Vercel serverless API wrappers
 ├── backend/
-│   ├── pyproject.toml
-│   ├── uv.lock
+│   ├── app/                    # Production FastAPI, LangGraph, schemas, services
 │   ├── smoke_test.py
-│   └── app/
-│       ├── main.py
-│       ├── api/routes/
-│       │   ├── health.py
-│       │   └── notes.py
-│       ├── core/
-│       │   └── config.py
-│       ├── graph/
-│       │   ├── graph.py
-│       │   └── nodes.py
-│       ├── prompts/
-│       │   ├── structure_prompt.py
-│       │   ├── summary_prompt.py
-│       │   └── verification_prompt.py
-│       ├── schemas/
-│       │   └── note.py
-│       └── services/
-│           ├── llm.py
-│           ├── retrieval.py
-│           ├── supabase_store.py
-│           └── supabase_storage.py
-└── frontend/
-    ├── package.json
-    ├── vite.config.ts
-    └── src/
-        ├── api/client.ts
-        ├── pages/SessionDraftPage.tsx
-        └── types/session.ts
+│   └── test_*.py               # Product regression tests only
+├── frontend/
+│   ├── scripts/                # Product/UI verification
+│   └── src/
+├── research/
+│   ├── raw_evidence_experiments/
+│   ├── case_retrieval_experiments/
+│   └── legacy_muspsy_evaluation/
+├── docs/
+│   ├── product_runtime_map.md
+│   ├── architecture.md
+│   └── raw_evidence_grounding_checkpoint.md
+├── supabase/
+│   └── migrations/             # Production migration chain only
+└── results/debug/              # Generated locally; ignored
 ```
 
 ## 실행 방법
@@ -282,6 +285,8 @@ Frontend build:
 
 ```bash
 cd frontend
+pnpm verify:grounding-review
+pnpm verify:grounding-demo-browser
 pnpm verify:material-workflow
 pnpm verify:audio-transcript-workflow
 pnpm build
@@ -310,6 +315,7 @@ H100에서 실제 WhisperX 런타임을 켜는 방법은 [docs/h100_audio_runboo
 - [제품 명세](docs/product_spec.md)
 - [MVP 범위](docs/mvp_scope.md)
 - [아키텍처](docs/architecture.md)
+- [제품 runtime map과 파일 분류](docs/product_runtime_map.md)
 - [스키마](docs/schema.md)
 - [API 계약](docs/api_contract.md)
 - [음성 구성요소 라이선스 및 attribution](docs/THIRD_PARTY_AUDIO_COMPONENTS.md)

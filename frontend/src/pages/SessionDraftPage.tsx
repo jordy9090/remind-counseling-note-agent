@@ -53,11 +53,6 @@ import {
   type GroundingReviewItem,
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
-import {
-  groundingDemoForm,
-  groundingDemoNote,
-  groundingDemoSupervisionReport,
-} from '../fixtures/groundingDemo'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -89,6 +84,11 @@ const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
 type WorkflowStep = (typeof workflowSteps)[number]
 type AppScreen = 'case_list' | 'session_input' | 'summary_draft' | 'document_transform' | 'final_document'
 type FinalDocumentType = 'session_note' | 'supervision_report' | 'termination_report'
+export type DevGroundingDemoData = {
+  form: SessionInput
+  note: NoteDraftResponse
+  supervisionReport: SupervisionReportDraft
+}
 type MaterialModalMode =
   | 'add'
   | 'basic_info'
@@ -277,23 +277,31 @@ const STATIC_DOCUMENT_CAPABILITIES: DocumentCapabilitiesResponse = {
   hwpx: { available: false, reason: 'HWPX 내보내기는 아직 지원하지 않습니다.' },
 }
 
-const isLocalGroundingDemo = import.meta.env.DEV
+const localGroundingDemoRequested = import.meta.env.DEV
   && typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('grounding-demo') === '1'
-const localGroundingDemoView = isLocalGroundingDemo
+const localGroundingDemoView = localGroundingDemoRequested
   ? new URLSearchParams(window.location.search).get('screen')
   : null
-const localGroundingDemoScreen: AppScreen = isLocalGroundingDemo
-  && (localGroundingDemoView === 'final' || localGroundingDemoView === 'supervision')
-  ? 'final_document'
-  : isLocalGroundingDemo ? 'summary_draft' : 'session_input'
-const localGroundingDemoClaimId = isLocalGroundingDemo
+const localGroundingDemoClaimId = localGroundingDemoRequested
   ? new URLSearchParams(window.location.search).get('evidence')
   : null
-const localGroundingDemoStale = isLocalGroundingDemo
+const localGroundingDemoStale = localGroundingDemoRequested
   && new URLSearchParams(window.location.search).get('stale') === '1'
 
-export default function SessionDraftPage() {
+export default function SessionDraftPage({
+  devGroundingDemo,
+}: {
+  devGroundingDemo?: DevGroundingDemoData
+} = {}) {
+  const isLocalGroundingDemo = localGroundingDemoRequested && Boolean(devGroundingDemo)
+  const localGroundingDemoScreen: AppScreen = isLocalGroundingDemo
+    && (localGroundingDemoView === 'final' || localGroundingDemoView === 'supervision')
+    ? 'final_document'
+    : isLocalGroundingDemo ? 'summary_draft' : 'session_input'
+  const groundingDemoForm = devGroundingDemo?.form ?? initialForm
+  const groundingDemoNote = devGroundingDemo?.note ?? null
+  const groundingDemoSupervisionReport = devGroundingDemo?.supervisionReport ?? null
   const [currentScreen, setCurrentScreen] = useState<AppScreen>(localGroundingDemoScreen)
   const [form, setForm] = useState<SessionInput>(isLocalGroundingDemo ? groundingDemoForm : initialForm)
   const [sessionTopic, setSessionTopic] = useState(isLocalGroundingDemo ? '부모 갈등 상황에서 자기표현 연습' : '')
@@ -311,7 +319,7 @@ export default function SessionDraftPage() {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<NoteDraftResponse | null>(isLocalGroundingDemo ? groundingDemoNote : null)
   const [draftSections, setDraftSections] = useState<DraftSection[]>(() => (
-    isLocalGroundingDemo
+    isLocalGroundingDemo && groundingDemoNote
       ? buildDocumentSections(groundingDemoNote, groundingDemoForm, '부모 갈등 상황에서 자기표현 연습', defaultVisibleSectionIds)
         .map((section) => localGroundingDemoStale
           ? { ...section, groundingItems: markGroundingItemsStale(section.groundingItems) }
@@ -319,7 +327,7 @@ export default function SessionDraftPage() {
       : []
   ))
   const [finalDocumentSections, setFinalDocumentSections] = useState<FinalDocumentSection[]>(() => (
-    localGroundingDemoScreen === 'final_document'
+    localGroundingDemoScreen === 'final_document' && groundingDemoNote
       ? buildFinalDocumentSections(
           'session_note',
           buildDocumentSections(groundingDemoNote, groundingDemoForm, '부모 갈등 상황에서 자기표현 연습', defaultVisibleSectionIds),
@@ -685,7 +693,7 @@ export default function SessionDraftPage() {
 
     await runDraftGeneration({
       setLoading: setIsLoading,
-      generate: () => isLocalGroundingDemo
+      generate: () => isLocalGroundingDemo && groundingDemoNote
         ? Promise.resolve(groundingDemoNote)
         : generateNoteDraft({ ...form, persist: false }),
       onSuccess: showGeneratedDraft,

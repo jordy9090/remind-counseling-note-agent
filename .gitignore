@@ -38,6 +38,14 @@ eval_outputs_v4/
 eval_outputs*.zip
 counselor_demo_ready/
 counselor_demo_ready.zip
+results/debug/
+results/**/evaluation.json
+results/**/evaluation.md
+results/**/*.png
+screenshots/
+**/screenshots/
+tmp_ab/
+*.zip
 
 # OS
 .DS_Store
