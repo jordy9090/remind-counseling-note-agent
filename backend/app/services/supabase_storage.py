@@ -231,6 +231,12 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         session_id = str(session_rows[0]["id"]) if session_rows else None
         report.session_id = session_id
 
+        draft_json = result.session_summary_draft.model_dump(mode="json")
+        if result.grounding is not None:
+            # Claim-to-evidence mapping is additive JSON metadata; canonical source
+            # snapshots remain separate evidence_items rows.
+            draft_json["grounding"] = result.grounding.model_dump(mode="json")
+
         note_rows = actor_storage.insert(
             "generated_notes",
             [
@@ -238,7 +244,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
                     "case_id": session_input.case_id,
                     "session_id": session_id,
                     "note_type": session_input.target_document_type,
-                    "draft_json": result.session_summary_draft.model_dump(mode="json"),
+                    "draft_json": draft_json,
                     "confirmed_json": {},
                     "counselor_edited": False,
                     "confirmation_status": "draft",
@@ -248,18 +254,27 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
         report.note_id = str(note_rows[0]["id"]) if note_rows else None
 
-        evidence_rows = [
-            {
-                "case_id": session_input.case_id,
-                "session_id": session_id,
-                "source_type": item.evidence_type,
-                "source_ref": ",".join(item.source_refs),
-                "source_text": item.content,
-                "linked_field": item.field,
-                "user_id": actor,
-            }
-            for item in result.evidence_mapped_data.items
-        ]
+        if result.grounding is not None:
+            evidence_rows = _grounding_evidence_rows(
+                result.grounding,
+                case_id=session_input.case_id,
+                session_id=session_id,
+                user_id=actor,
+            )
+        else:
+            # Legacy false-flag behavior is intentionally preserved.
+            evidence_rows = [
+                {
+                    "case_id": session_input.case_id,
+                    "session_id": session_id,
+                    "source_type": item.evidence_type,
+                    "source_ref": ",".join(item.source_refs),
+                    "source_text": item.content,
+                    "linked_field": item.field,
+                    "user_id": actor,
+                }
+                for item in result.evidence_mapped_data.items
+            ]
         if evidence_rows:
             actor_storage.insert("evidence_items", evidence_rows, return_representation=False)
 
@@ -526,6 +541,33 @@ def _stored_message() -> str:
 
 def _masked(text: str) -> str:
     return deidentify_text(text)[0]
+
+
+def _grounding_evidence_rows(
+    grounding: Any,
+    *,
+    case_id: str,
+    session_id: str | None,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    """Persist exact sanitized source snapshots, never generated claim paraphrases."""
+    fields_by_id: dict[str, set[str]] = {}
+    for claim in grounding.claims:
+        for evidence_id in claim.evidence_ids:
+            fields_by_id.setdefault(evidence_id, set()).add(claim.target_field)
+    return [
+        {
+            "case_id": case_id,
+            "session_id": session_id,
+            "source_type": source.source_type,
+            "source_ref": source.source_ref,
+            "source_text": source.source_text,
+            "linked_field": ",".join(sorted(fields_by_id[source.evidence_id])),
+            "user_id": user_id,
+        }
+        for source in grounding.context.sources
+        if source.evidence_id in fields_by_id
+    ]
 
 
 def _case_memory_rows_from_confirmed_note(

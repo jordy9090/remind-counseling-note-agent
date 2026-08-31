@@ -12,7 +12,7 @@ from app.graph.graph import run_note_pipeline
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
 
 
-CACHE_VERSION = "recompose-v2-retrieval"
+CACHE_VERSION = "recompose-v3-grounding"
 
 
 def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "") -> RecomposeNoteResponse:
@@ -54,6 +54,8 @@ def build_recompose_cache_key(
         "version": CACHE_VERSION,
         "actor": str(actor or settings.remind_preview_actor),
         "enable_rag": settings.enable_rag,
+        "enable_raw_region_grounding": settings.enable_raw_region_grounding,
+        "actor_scope": actor or settings.remind_preview_actor,
         "session_input": request.session_input.model_dump(mode="json"),
         "session_topic": request.session_topic,
         "visible_section_ids": visible_section_ids or _normalize_section_ids(request.visible_section_ids),
