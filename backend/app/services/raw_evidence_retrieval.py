@@ -6,7 +6,11 @@ from collections.abc import Callable
 
 from app.schemas.evidence import CandidateTranscriptRegion, RetrievedTranscriptWindow, StoredTranscriptTurn
 from app.services.embeddings import embed_query
-from app.services.evidence_storage import build_episode_source_ref, build_episode_text, get_transcript_turns
+from app.services.transcript_storage import (
+    build_transcript_source_ref,
+    build_transcript_span_text,
+    get_transcript_turns,
+)
 from app.services.supabase_storage import storage
 
 
@@ -65,11 +69,11 @@ def build_candidate_regions(
         for item in merged:
             start = max(lower, item["start"] - context_expansion)
             end = min(upper, item["end"] + context_expansion)
-            text = build_episode_text(ordered, start, end)
+            text = build_transcript_span_text(ordered, start, end)
             regions.append(CandidateTranscriptRegion(
                 session_id=session_id, session_number=item["session_number"],
                 start_turn_index=start, end_turn_index=end, region_text=text,
-                source_ref=build_episode_source_ref(session_id, start, end),
+                source_ref=build_transcript_source_ref(session_id, start, end),
                 retrieval_score=item["score"], retrieval_rank=item["rank"], window_ids=item["ids"],
             ))
     return sorted(regions, key=lambda item: (item.retrieval_rank, -item.retrieval_score, item.session_id))

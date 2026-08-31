@@ -32,6 +32,8 @@ raw transcript
 
 Controlled synthetic evaluation에서 extraction/selection instability 또는 false-positive가 관찰되어 제품 경로에서 채택하지 않았다. 관련 코드는 연구·평가 이력을 재현하기 위한 experimental 코드이며 production graph에 연결하지 않는다.
 
+보존 위치: `research/raw_evidence_experiments/`
+
 ## 4. 현재 evidence unit
 
 현재 evidence unit은 `raw region`이다.
