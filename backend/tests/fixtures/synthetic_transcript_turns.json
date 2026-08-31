@@ -1,0 +1,49 @@
+{
+  "description": "Fully synthetic transcript; no real counseling data.",
+  "user_id": "synthetic-user-001",
+  "counselor_id": "synthetic-user-001",
+  "case_id": "SYNTH-RAW-EVIDENCE-001",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "turns": [
+    {
+      "turn_index": 0,
+      "speaker_role": "client",
+      "sanitized_text": "엄마가 반대할까 봐 말을 못 하겠어요."
+    },
+    {
+      "turn_index": 1,
+      "speaker_role": "counselor",
+      "sanitized_text": "실제 상황처럼 한번 말해볼까요?"
+    },
+    {
+      "turn_index": 2,
+      "speaker_role": "client",
+      "sanitized_text": "지금요?"
+    },
+    {
+      "turn_index": 3,
+      "speaker_role": "counselor",
+      "sanitized_text": "네. 제가 어머니 역할을 해볼게요."
+    },
+    {
+      "turn_index": 4,
+      "speaker_role": "client",
+      "sanitized_text": "걱정하는 건 알지만 진로는 제가 알아보고 결정하고 싶어요."
+    },
+    {
+      "turn_index": 5,
+      "speaker_role": "counselor",
+      "sanitized_text": "말해보니까 어때요?"
+    },
+    {
+      "turn_index": 6,
+      "speaker_role": "client",
+      "sanitized_text": "떨리긴 했는데 생각보다 할 수 있겠어요."
+    }
+  ],
+  "episode": {
+    "episode_type": "intervention_response",
+    "start_turn_index": 1,
+    "end_turn_index": 6
+  }
+}

@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from app.schemas.grounding import GroundedGenerationResult
+
 
 EvidenceType = Literal[
     "direct",
@@ -264,6 +266,11 @@ class GenerateNoteResponse(BaseModel):
     retrieved_template_context: RetrievedTemplateContext | None = None
     retrieved_privacy_context: list[RetrievedPrivacyRule] = Field(default_factory=list)
     retrieval_report: RetrievalReport = Field(default_factory=RetrievalReport)
+    # Additive provenance metadata. None while ENABLE_RAW_REGION_GROUNDING is false.
+    grounding: GroundedGenerationResult | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     persistence_report: PersistenceReport = Field(default_factory=PersistenceReport)
     stub: bool = False
 

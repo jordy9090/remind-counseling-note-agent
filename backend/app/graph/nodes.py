@@ -7,6 +7,12 @@ import time
 from typing import Any
 
 from app.core.config import settings
+from app.schemas.grounding import (
+    EvidenceNeed,
+    GroundedGenerationDraft,
+    GroundedGenerationResult,
+    GroundingContext,
+)
 from app.schemas.note import (
     CounselorReviewField,
     DocumentTransformPreview,
@@ -32,6 +38,13 @@ from app.schemas.note import (
 )
 from app.services.llm import get_structured_llm
 from app.services.deidentification import deidentify_sources, render_counselor_text
+from app.services.grounded_generation import (
+    assemble_grounding_context,
+    formulate_evidence_needs,
+    generate_grounded_claims,
+    retrieve_raw_regions_for_needs,
+    validate_evidence_ids,
+)
 from app.services.retrieval import (
     chunks_to_case_context,
     chunks_to_privacy_rules,
@@ -161,6 +174,43 @@ def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def formulate_grounding_needs(state: dict[str, Any]) -> dict[str, Any]:
+    """Create small document-field retrieval intents only for the opt-in PR4 path."""
+    if not settings.enable_raw_region_grounding:
+        return {"evidence_needs": []}
+    sanitized: SanitizedInput = state["sanitized_input"]
+    session_input: SessionInput = state["session_input"]
+    needs = formulate_evidence_needs(sanitized, session_input.target_document_type)
+    return {"evidence_needs": needs}
+
+
+def retrieve_raw_evidence_regions(state: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve existing PR3 raw regions for raw-factual EvidenceNeeds."""
+    if not settings.enable_raw_region_grounding:
+        return {"raw_regions_by_need": {}}
+    report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
+    if not settings.enable_rag or not settings.enable_dense_retrieval:
+        report.notices.append("Raw-region grounding requires ENABLE_RAG and ENABLE_DENSE_RETRIEVAL.")
+        return {"raw_regions_by_need": {}, "retrieval_report": report}
+    if not settings.supabase_configured:
+        report.notices.append("Raw-region grounding skipped because Supabase credentials are missing.")
+        return {"raw_regions_by_need": {}, "retrieval_report": report}
+    sanitized: SanitizedInput = state["sanitized_input"]
+    actor = str(state.get("actor") or settings.remind_preview_actor or "")
+    try:
+        regions = retrieve_raw_regions_for_needs(
+            needs=state.get("evidence_needs") or [],
+            user_id=actor,
+            case_id=sanitized.case_id,
+            current_session_number=sanitized.session_number,
+            top_k=settings.raw_region_top_k,
+        )
+        return {"raw_regions_by_need": regions, "retrieval_report": report}
+    except Exception as error:
+        report.failures.append(f"raw_regions: {error}")
+        return {"raw_regions_by_need": {}, "retrieval_report": report}
+
+
 def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
     """Retrieve prior-session context without crossing counselor/case boundaries."""
     sanitized: SanitizedInput = state["sanitized_input"]
@@ -174,7 +224,7 @@ def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
         return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
 
     try:
-        counselor_id = settings.remind_preview_actor
+        counselor_id = str(state.get("actor") or settings.remind_preview_actor or "")
         if settings.enable_dense_retrieval and counselor_id:
             chunks = retrieve_case_memory_chunks(
                 query_text=query_text,
@@ -288,6 +338,19 @@ def fuse_and_rerank(state: dict[str, Any]) -> dict[str, Any]:
     return {"retrieval_report": report}
 
 
+def assemble_generation_grounding(state: dict[str, Any]) -> dict[str, Any]:
+    """Deduplicate retrieved regions and assign request-local evidence IDs."""
+    if not settings.enable_raw_region_grounding:
+        return {"grounding_context": None}
+    context = assemble_grounding_context(
+        needs=state.get("evidence_needs") or [],
+        raw_regions_by_need=state.get("raw_regions_by_need") or {},
+        counselor_memory_chunks=state.get("retrieved_case_memory_chunks") or [],
+        authoritative_kb_chunks=state.get("retrieved_authoritative_kb_chunks") or [],
+    )
+    return {"grounding_context": context}
+
+
 def structure_session(state: dict[str, Any]) -> dict[str, Any]:
     """Convert sanitized materials into counseling documentation fields."""
     sanitized: SanitizedInput = state["sanitized_input"]
@@ -363,6 +426,28 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     return {"session_summary_draft": summary, "retrieval_report": report}
 
 
+def generate_grounded_document(state: dict[str, Any]) -> dict[str, Any]:
+    """Generate claim-level provenance using the existing structured LLM service."""
+    if not settings.enable_raw_region_grounding:
+        return {"grounded_generation_draft": None}
+    context: GroundingContext | None = state.get("grounding_context")
+    if context is None:
+        return {"grounded_generation_draft": GroundedGenerationDraft()}
+    draft = generate_grounded_claims(state["sanitized_input"], context)
+    return {"grounded_generation_draft": draft}
+
+
+def validate_claim_sources(state: dict[str, Any]) -> dict[str, Any]:
+    """Reject invented or source-hierarchy-incompatible evidence IDs."""
+    if not settings.enable_raw_region_grounding:
+        return {"grounding": None}
+    context: GroundingContext | None = state.get("grounding_context")
+    draft: GroundedGenerationDraft | None = state.get("grounded_generation_draft")
+    if context is None:
+        return {"grounding": None}
+    return {"grounding": validate_evidence_ids(draft or GroundedGenerationDraft(), context)}
+
+
 def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     """Verify support, sensitivity, and counselor-review boundaries."""
     sanitized: SanitizedInput = state["sanitized_input"]
@@ -372,6 +457,7 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     privacy_context: list[RetrievedPrivacyRule] = state.get("retrieved_privacy_context") or []
     fallback = _mock_verification(sanitized, evidence_mapped, privacy_context)
     if settings.stub_mode:
+        _merge_grounding_verification(fallback, state.get("grounding"))
         return {"verification_report": fallback}
 
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context)
@@ -385,6 +471,7 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
             [*initial.weakly_grounded_items, *verification.weakly_grounded_items]
         )
     _reconcile_verification_claims(verification, sanitized, state.get("retrieved_case_context") or [])
+    _merge_grounding_verification(verification, state.get("grounding"))
     _apply_verification_consistency(summary, verification)
     return {"verification_report": verification}
 
@@ -1110,6 +1197,35 @@ Summary draft:
 Retrieved privacy/ethics/security context:
 {_json(privacy_context)}
 """
+
+
+def _merge_grounding_verification(
+    verification: VerificationReport,
+    grounding: GroundedGenerationResult | None,
+) -> None:
+    if grounding is None:
+        return
+    for diagnostic in grounding.citation_diagnostics:
+        verification.unsupported_or_risky_claims.append(
+            ReviewableClaim(
+                claim=diagnostic.claim_id,
+                reason=f"Invalid grounded citation: {diagnostic.reason}",
+                recommendation="상담사가 claim과 실제 raw/counselor-confirmed source를 다시 확인",
+            )
+        )
+    for claim in grounding.claims:
+        if claim.support_type != "unsupported":
+            continue
+        verification.unsupported_or_risky_claims.append(
+            ReviewableClaim(
+                claim=claim.text,
+                reason="제공된 source로 지지되지 않는 factual claim",
+                recommendation="근거를 추가하거나 문장을 삭제하고 상담사 검토 상태로 유지",
+            )
+        )
+    verification.unsupported_or_risky_claims = _unique_review_claims(
+        verification.unsupported_or_risky_claims
+    )
 
 
 def _unique_strings(values: list[str]) -> list[str]:

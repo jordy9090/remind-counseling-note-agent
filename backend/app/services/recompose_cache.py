@@ -12,13 +12,13 @@ from app.graph.graph import run_note_pipeline
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
 
 
-CACHE_VERSION = "recompose-v2-retrieval"
+CACHE_VERSION = "recompose-v3-grounding"
 
 
-def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteResponse:
+def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str | None = None) -> RecomposeNoteResponse:
     """Return a checklist-specific generated note, using cache for repeated settings."""
     visible_section_ids = _normalize_section_ids(request.visible_section_ids)
-    cache_key = build_recompose_cache_key(request, visible_section_ids)
+    cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor)
     cached = _read_cached_result(cache_key)
     if cached is not None:
         return RecomposeNoteResponse(
@@ -32,6 +32,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteRes
         request.session_input,
         requested_section_ids=visible_section_ids,
         session_topic=request.session_topic,
+        actor=actor,
     )
     _write_cached_result(cache_key, result)
     return RecomposeNoteResponse(
@@ -42,10 +43,17 @@ def recompose_note_with_cache(request: RecomposeNoteRequest) -> RecomposeNoteRes
     )
 
 
-def build_recompose_cache_key(request: RecomposeNoteRequest, visible_section_ids: list[str] | None = None) -> str:
+def build_recompose_cache_key(
+    request: RecomposeNoteRequest,
+    visible_section_ids: list[str] | None = None,
+    *,
+    actor: str | None = None,
+) -> str:
     payload = {
         "version": CACHE_VERSION,
         "enable_rag": settings.enable_rag,
+        "enable_raw_region_grounding": settings.enable_raw_region_grounding,
+        "actor_scope": actor or settings.remind_preview_actor,
         "session_input": request.session_input.model_dump(mode="json"),
         "session_topic": request.session_topic,
         "visible_section_ids": visible_section_ids or _normalize_section_ids(request.visible_section_ids),

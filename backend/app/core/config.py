@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     enable_case_memory: bool = False
     save_raw_input: bool = False
     enable_dense_retrieval: bool = False
+    # PR4 is opt-in. False preserves the existing production generation path.
+    enable_raw_region_grounding: bool = False
+    raw_region_top_k: int = 5
     enable_hybrid_retrieval: bool = True
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536

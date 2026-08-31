@@ -33,6 +33,10 @@ import {
 import BasicInfoCard from '../components/session-input/BasicInfoCard'
 import MaterialRow from '../components/session-input/MaterialRow'
 import ProcessStatusCard from '../components/session-input/ProcessStatusCard'
+import GroundingEvidenceReview, {
+  EvidenceDrawer,
+  EvidenceSourcePanel,
+} from '../components/note/GroundingEvidenceReview'
 import {
   downloadDocumentExport,
   extractDocumentMaterial,
@@ -42,6 +46,18 @@ import {
   transcribeAudio,
 } from '../api/client'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
+import {
+  buildGroundingReviewItems,
+  isInlineGroundingItem,
+  markGroundingItemsStale,
+  type GroundingReviewItem,
+} from '../lib/groundingReview'
+import { runDraftGeneration } from '../lib/draftGeneration'
+import {
+  groundingDemoForm,
+  groundingDemoNote,
+  groundingDemoSupervisionReport,
+} from '../fixtures/groundingDemo'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -172,6 +188,7 @@ interface DraftSection {
   sourceBadges: SourceBadgeKind[]
   confidence: EvidenceConfidence
   evidence: CompactEvidence[]
+  groundingItems: GroundingReviewItem[]
   visible: boolean
   editable: boolean
   toggleable: boolean
@@ -182,6 +199,7 @@ interface FinalDocumentSection {
   title: string
   content: string
   contentKind: 'paragraph' | 'list'
+  groundingItems: GroundingReviewItem[]
 }
 
 interface ChecklistItem {
@@ -259,11 +277,29 @@ const STATIC_DOCUMENT_CAPABILITIES: DocumentCapabilitiesResponse = {
   hwpx: { available: false, reason: 'HWPX 내보내기는 아직 지원하지 않습니다.' },
 }
 
+const isLocalGroundingDemo = import.meta.env.DEV
+  && typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('grounding-demo') === '1'
+const localGroundingDemoView = isLocalGroundingDemo
+  ? new URLSearchParams(window.location.search).get('screen')
+  : null
+const localGroundingDemoScreen: AppScreen = isLocalGroundingDemo
+  && (localGroundingDemoView === 'final' || localGroundingDemoView === 'supervision')
+  ? 'final_document'
+  : isLocalGroundingDemo ? 'summary_draft' : 'session_input'
+const localGroundingDemoClaimId = isLocalGroundingDemo
+  ? new URLSearchParams(window.location.search).get('evidence')
+  : null
+const localGroundingDemoStale = isLocalGroundingDemo
+  && new URLSearchParams(window.location.search).get('stale') === '1'
+
 export default function SessionDraftPage() {
-  const [currentScreen, setCurrentScreen] = useState<AppScreen>('session_input')
-  const [form, setForm] = useState<SessionInput>(initialForm)
-  const [sessionTopic, setSessionTopic] = useState('')
-  const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>('session_note')
+  const [currentScreen, setCurrentScreen] = useState<AppScreen>(localGroundingDemoScreen)
+  const [form, setForm] = useState<SessionInput>(isLocalGroundingDemo ? groundingDemoForm : initialForm)
+  const [sessionTopic, setSessionTopic] = useState(isLocalGroundingDemo ? '부모 갈등 상황에서 자기표현 연습' : '')
+  const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>(
+    localGroundingDemoView === 'supervision' ? 'supervision_report' : 'session_note',
+  )
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
   const objectUrlsRef = useRef<Set<string>>(new Set())
@@ -273,12 +309,32 @@ export default function SessionDraftPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<NoteDraftResponse | null>(null)
-  const [draftSections, setDraftSections] = useState<DraftSection[]>([])
-  const [finalDocumentSections, setFinalDocumentSections] = useState<FinalDocumentSection[]>([])
+  const [result, setResult] = useState<NoteDraftResponse | null>(isLocalGroundingDemo ? groundingDemoNote : null)
+  const [draftSections, setDraftSections] = useState<DraftSection[]>(() => (
+    isLocalGroundingDemo
+      ? buildDocumentSections(groundingDemoNote, groundingDemoForm, '부모 갈등 상황에서 자기표현 연습', defaultVisibleSectionIds)
+        .map((section) => localGroundingDemoStale
+          ? { ...section, groundingItems: markGroundingItemsStale(section.groundingItems) }
+          : section)
+      : []
+  ))
+  const [finalDocumentSections, setFinalDocumentSections] = useState<FinalDocumentSection[]>(() => (
+    localGroundingDemoScreen === 'final_document'
+      ? buildFinalDocumentSections(
+          'session_note',
+          buildDocumentSections(groundingDemoNote, groundingDemoForm, '부모 갈등 상황에서 자기표현 연습', defaultVisibleSectionIds),
+          [],
+        ).map((section) => localGroundingDemoStale
+          ? { ...section, groundingItems: markGroundingItemsStale(section.groundingItems) }
+          : section)
+      : []
+  ))
   const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(defaultVisibleSectionIds)
   const [editingSectionId, setEditingSectionId] = useState<DraftSectionId | null>(null)
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<DraftSectionId | null>(null)
+  const [selectedGroundingClaimId, setSelectedGroundingClaimId] = useState<string | null>(
+    localGroundingDemoClaimId,
+  )
   const isSavingDraft = false
   const [draftSaveMessage, setDraftSaveMessage] = useState<string | null>(null)
   const isRecomposingDraft = false
@@ -286,7 +342,9 @@ export default function SessionDraftPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
   const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null)
-  const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(null)
+  const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(
+    localGroundingDemoView === 'supervision' ? groundingDemoSupervisionReport : null,
+  )
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
   const [expandedSupervisionEvidenceId, setExpandedSupervisionEvidenceId] = useState<string | null>(null)
@@ -312,6 +370,12 @@ export default function SessionDraftPage() {
       materials.length,
   )
   const unappliedReadyMaterials = useMemo(() => getUnappliedReadyMaterials(materials), [materials])
+  const selectedDraftGroundingItem = draftSections
+    .flatMap((section) => section.groundingItems)
+    .find((item) => item.claim.claim_id === selectedGroundingClaimId) || null
+  const selectedFinalGroundingItem = finalDocumentSections
+    .flatMap((section) => section.groundingItems)
+    .find((item) => item.claim.claim_id === selectedGroundingClaimId) || null
 
   useEffect(() => {
     return () => {
@@ -581,6 +645,14 @@ export default function SessionDraftPage() {
     objectUrlsRef.current.delete(objectUrl)
   }
 
+  const showGeneratedDraft = (data: NoteDraftResponse) => {
+    const sections = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
+    setResult(data)
+    setDraftSections(sections)
+    setVisibleSectionIds(new Set(sections.map((section) => section.id)))
+    setCurrentScreen('summary_draft')
+  }
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!form.case_id.trim()) {
@@ -603,26 +675,24 @@ export default function SessionDraftPage() {
       setError('업로드한 자료가 아직 회기 입력에 반영되지 않았습니다. 자료에 반영할 항목을 선택해주세요.')
       return
     }
-    setIsLoading(true)
     setHasSubmitted(true)
     setError(null)
     setResult(null)
     setSupervisionReportDraft(null)
     setExpandedEvidenceId(null)
+    setSelectedGroundingClaimId(null)
     setEditingSectionId(null)
 
-    try {
-      const data = await generateNoteDraft({ ...form, persist: false })
-      const sections = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
-      setResult(data)
-      setDraftSections(sections)
-      setVisibleSectionIds(new Set(sections.map((section) => section.id)))
-      setCurrentScreen('summary_draft')
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
-    } finally {
-      setIsLoading(false)
-    }
+    await runDraftGeneration({
+      setLoading: setIsLoading,
+      generate: () => isLocalGroundingDemo
+        ? Promise.resolve(groundingDemoNote)
+        : generateNoteDraft({ ...form, persist: false }),
+      onSuccess: showGeneratedDraft,
+      onError: (requestError) => {
+        setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
+      },
+    })
   }
 
   const toggleSectionVisibility = (sectionId: DraftSectionId) => {
@@ -640,13 +710,18 @@ export default function SessionDraftPage() {
       ),
     )
     setExpandedEvidenceId(null)
+    setSelectedGroundingClaimId(null)
     setEditingSectionId(null)
     setDraftRecomposeMessage('사전 생성된 초안의 표시 항목을 변경했습니다.')
   }
 
   const updateDraftSectionContent = (sectionId: DraftSectionId, content: string) => {
     setDraftSections((prev) =>
-      prev.map((section) => (section.id === sectionId ? { ...section, content } : section)),
+      prev.map((section) => (
+        section.id === sectionId
+          ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
+          : section
+      )),
     )
   }
 
@@ -660,6 +735,7 @@ export default function SessionDraftPage() {
       sourceBadges: ['editable', 'needs_review'],
       confidence: 'low',
       evidence: [],
+      groundingItems: [],
       visible: true,
       editable: true,
       toggleable: true,
@@ -675,6 +751,7 @@ export default function SessionDraftPage() {
     setDraftSections([])
     setFinalDocumentSections([])
     setExpandedEvidenceId(null)
+    setSelectedGroundingClaimId(null)
     setEditingSectionId(null)
   }
 
@@ -688,12 +765,14 @@ export default function SessionDraftPage() {
 
   const openDocumentTransform = () => {
     if (!result) return
+    setSelectedGroundingClaimId(null)
     setCurrentScreen('document_transform')
   }
 
   const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
     setFinalDocumentType(documentType)
+    setSelectedGroundingClaimId(null)
     setFinalDocumentError(null)
     setDocumentExportError(null)
     setDocumentExportStatus(null)
@@ -901,6 +980,8 @@ export default function SessionDraftPage() {
                   onToggleEvidence={(sectionId) =>
                     setExpandedEvidenceId((current) => (current === sectionId ? null : sectionId))
                   }
+                  onSelectGrounding={setSelectedGroundingClaimId}
+                  selectedGroundingClaimId={selectedGroundingClaimId}
                 />
               )}
 
@@ -934,9 +1015,17 @@ export default function SessionDraftPage() {
                     documentType={finalDocumentType}
                     form={form}
                     sections={finalDocumentSections}
+                    selectedGroundingClaimId={selectedGroundingClaimId}
+                    selectedGroundingItem={selectedFinalGroundingItem}
+                    onCloseGrounding={() => setSelectedGroundingClaimId(null)}
+                    onSelectGrounding={setSelectedGroundingClaimId}
                     onChangeSectionContent={(sectionId, content) =>
                       setFinalDocumentSections((current) =>
-                        current.map((section) => (section.id === sectionId ? { ...section, content } : section)),
+                        current.map((section) => (
+                          section.id === sectionId
+                            ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
+                            : section
+                        )),
                       )
                     }
                   />
@@ -976,6 +1065,11 @@ export default function SessionDraftPage() {
                   onTemporarySave={handleTemporarySave}
                 />
               )
+            ) : currentScreen === 'summary_draft' && selectedDraftGroundingItem ? (
+              <EvidenceSourcePanel
+                item={selectedDraftGroundingItem}
+                onClose={() => setSelectedGroundingClaimId(null)}
+              />
             ) : (
               <ReviewPanel
                 activeStep={activeStep}
@@ -1622,6 +1716,8 @@ function SummaryDraftWorkspace({
   onChangeContent,
   onEditSection,
   onToggleEvidence,
+  onSelectGrounding,
+  selectedGroundingClaimId,
   sections,
 }: {
   editingSectionId: DraftSectionId | null
@@ -1630,6 +1726,8 @@ function SummaryDraftWorkspace({
   onChangeContent: (sectionId: DraftSectionId, content: string) => void
   onEditSection: (sectionId: DraftSectionId | null) => void
   onToggleEvidence: (sectionId: DraftSectionId) => void
+  onSelectGrounding: (claimId: string) => void
+  selectedGroundingClaimId: string | null
   sections: DraftSection[]
 }) {
   return (
@@ -1679,6 +1777,8 @@ function SummaryDraftWorkspace({
               onChangeContent={onChangeContent}
               onEditSection={onEditSection}
               onToggleEvidence={onToggleEvidence}
+              onSelectGrounding={onSelectGrounding}
+              selectedGroundingClaimId={selectedGroundingClaimId}
             />
           ))
         ) : (
@@ -1696,6 +1796,8 @@ function DraftSectionBlock({
   onChangeContent,
   onEditSection,
   onToggleEvidence,
+  onSelectGrounding,
+  selectedGroundingClaimId,
   section,
 }: {
   isEditing: boolean
@@ -1703,8 +1805,15 @@ function DraftSectionBlock({
   onChangeContent: (sectionId: DraftSectionId, content: string) => void
   onEditSection: (sectionId: DraftSectionId | null) => void
   onToggleEvidence: (sectionId: DraftSectionId) => void
+  onSelectGrounding: (claimId: string) => void
+  selectedGroundingClaimId: string | null
   section: DraftSection
 }) {
+  const hasSelectedInlineGrounding = section.groundingItems.some((item) => (
+    item.claim.claim_id === selectedGroundingClaimId
+    && isInlineGroundingItem(item, section.groundingItems, section.content)
+  ))
+
   return (
     <section className="relative border-b border-[#c7d0df] py-5 last:border-b-0">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -1744,11 +1853,19 @@ function DraftSectionBlock({
         <button
           type="button"
           onClick={() => section.editable && onEditSection(section.id)}
-          className="mt-4 block w-full rounded-[4px] px-2 py-1 text-left text-[13px] font-semibold leading-6 text-slate-900 hover:bg-slate-50"
+          className={`mt-4 block w-full rounded-[4px] px-2 py-1 text-left text-[13px] font-semibold leading-6 text-slate-900 ${
+            hasSelectedInlineGrounding ? 'bg-amber-50 ring-1 ring-amber-200' : 'hover:bg-slate-50'
+          }`}
         >
           <span className="whitespace-pre-wrap">{section.content || '내용을 입력해주세요.'}</span>
         </button>
       )}
+      <GroundingEvidenceReview
+        items={section.groundingItems}
+        onSelect={onSelectGrounding}
+        renderedText={section.content}
+        selectedClaimId={selectedGroundingClaimId}
+      />
     </section>
   )
 }
@@ -1853,11 +1970,19 @@ function FinalDocumentWorkspace({
   documentType,
   form,
   onChangeSectionContent,
+  onCloseGrounding,
+  onSelectGrounding,
+  selectedGroundingClaimId,
+  selectedGroundingItem,
   sections,
 }: {
   documentType: FinalDocumentType
   form: SessionInput
   onChangeSectionContent: (sectionId: string, content: string) => void
+  onCloseGrounding: () => void
+  onSelectGrounding: (claimId: string) => void
+  selectedGroundingClaimId: string | null
+  selectedGroundingItem: GroundingReviewItem | null
   sections: FinalDocumentSection[]
 }) {
   const documentMeta = finalDocumentMeta[documentType]
@@ -1898,6 +2023,12 @@ function FinalDocumentWorkspace({
                 onChange={(event) => onChangeSectionContent(section.id, event.target.value)}
                 className="mt-3 min-h-[110px] w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
+              <GroundingEvidenceReview
+                items={section.groundingItems}
+                onSelect={onSelectGrounding}
+                renderedText={section.content}
+                selectedClaimId={selectedGroundingClaimId}
+              />
             </section>
           )
         })}
@@ -1905,6 +2036,7 @@ function FinalDocumentWorkspace({
           <p className="py-10 text-center text-sm font-semibold text-slate-500">표시할 최종문서 섹션이 없습니다.</p>
         )}
       </div>
+      {selectedGroundingItem ? <EvidenceDrawer item={selectedGroundingItem} onClose={onCloseGrounding} /> : null}
     </section>
   )
 }
@@ -3449,6 +3581,7 @@ function buildDocumentSections(
       sourceBadges,
       confidence,
       evidence: compactEvidence,
+      groundingItems: buildGroundingReviewItems(result.grounding, id),
       visible: !toggleable || visibleSectionIds.has(id),
       editable: true,
       toggleable,
@@ -3616,6 +3749,8 @@ function buildFinalDocumentSections(
 ): FinalDocumentSection[] {
   const getSection = (id: DraftSectionId, fallback: string) =>
     sections.find((section) => section.id === id)?.content || fallback
+  const getGroundingItems = (id: DraftSectionId) =>
+    sections.find((section) => section.id === id)?.groundingItems || []
   const makeSection = (
     id: string,
     title: string,
@@ -3625,6 +3760,7 @@ function buildFinalDocumentSections(
     title,
     content: Array.isArray(content) ? content.join('\n') : content,
     contentKind: Array.isArray(content) ? 'list' : 'paragraph',
+    groundingItems: getGroundingItems(id),
   })
 
   if (documentType === 'supervision_report') {

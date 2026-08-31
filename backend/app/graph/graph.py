@@ -6,17 +6,29 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.graph.nodes import (
+    assemble_generation_grounding,
     conditional_revision,
+    formulate_grounding_needs,
     formulate_retrieval_query,
     fuse_and_rerank,
+    generate_grounded_document,
     generate_summary,
     map_evidence,
     retrieve_authoritative_kb,
     retrieve_case_memory,
+    retrieve_raw_evidence_regions,
     sanitize_input,
     structure_session,
     transform_document_preview,
+    validate_claim_sources,
     verify_output,
+)
+from app.schemas.evidence import CandidateTranscriptRegion
+from app.schemas.grounding import (
+    EvidenceNeed,
+    GroundedGenerationDraft,
+    GroundedGenerationResult,
+    GroundingContext,
 )
 from app.schemas.note import (
     DocumentTransformPreview,
@@ -36,17 +48,23 @@ from app.schemas.note import (
 
 
 class NoteGraphState(TypedDict, total=False):
+    actor: str
     session_input: SessionInput
     requested_section_ids: list[str]
     session_topic: str
     sanitized_input: SanitizedInput
     retrieval_query: str
+    evidence_needs: list[EvidenceNeed]
+    raw_regions_by_need: dict[str, list[CandidateTranscriptRegion]]
     retrieved_case_context: list[RetrievedCaseContextItem]
     retrieved_case_memory_chunks: list[Any]
     retrieved_authoritative_kb_chunks: list[Any]
     retrieved_template_context: RetrievedTemplateContext | None
     retrieved_privacy_context: list[RetrievedPrivacyRule]
     retrieval_report: RetrievalReport
+    grounding_context: GroundingContext | None
+    grounded_generation_draft: GroundedGenerationDraft | None
+    grounding: GroundedGenerationResult | None
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
@@ -69,26 +87,36 @@ def _route_after_revision(state: NoteGraphState) -> str:
 def create_note_graph():
     workflow = StateGraph(NoteGraphState)
     workflow.add_node("sanitize_input", sanitize_input)
+    workflow.add_node("formulate_evidence_needs", formulate_grounding_needs)
     workflow.add_node("formulate_retrieval_query", formulate_retrieval_query)
+    workflow.add_node("retrieve_raw_evidence_regions", retrieve_raw_evidence_regions)
     workflow.add_node("retrieve_case_memory", retrieve_case_memory)
     workflow.add_node("retrieve_authoritative_kb", retrieve_authoritative_kb)
     workflow.add_node("fuse_and_rerank", fuse_and_rerank)
+    workflow.add_node("assemble_generation_grounding", assemble_generation_grounding)
     workflow.add_node("structure_session", structure_session)
     workflow.add_node("map_evidence", map_evidence)
     workflow.add_node("generate_summary", generate_summary)
+    workflow.add_node("generate_grounded_document", generate_grounded_document)
+    workflow.add_node("validate_claim_sources", validate_claim_sources)
     workflow.add_node("verify_output", verify_output)
     workflow.add_node("conditional_revision", conditional_revision)
     workflow.add_node("transform_document_preview", transform_document_preview)
 
     workflow.set_entry_point("sanitize_input")
-    workflow.add_edge("sanitize_input", "formulate_retrieval_query")
-    workflow.add_edge("formulate_retrieval_query", "retrieve_case_memory")
+    workflow.add_edge("sanitize_input", "formulate_evidence_needs")
+    workflow.add_edge("formulate_evidence_needs", "formulate_retrieval_query")
+    workflow.add_edge("formulate_retrieval_query", "retrieve_raw_evidence_regions")
+    workflow.add_edge("retrieve_raw_evidence_regions", "retrieve_case_memory")
     workflow.add_edge("retrieve_case_memory", "retrieve_authoritative_kb")
-    workflow.add_edge("retrieve_authoritative_kb", "fuse_and_rerank")
+    workflow.add_edge("retrieve_authoritative_kb", "assemble_generation_grounding")
+    workflow.add_edge("assemble_generation_grounding", "fuse_and_rerank")
     workflow.add_edge("fuse_and_rerank", "structure_session")
     workflow.add_edge("structure_session", "map_evidence")
     workflow.add_edge("map_evidence", "generate_summary")
-    workflow.add_edge("generate_summary", "verify_output")
+    workflow.add_edge("generate_summary", "generate_grounded_document")
+    workflow.add_edge("generate_grounded_document", "validate_claim_sources")
+    workflow.add_edge("validate_claim_sources", "verify_output")
     workflow.add_edge("verify_output", "conditional_revision")
     workflow.add_conditional_edges(
         "conditional_revision",
@@ -109,8 +137,11 @@ def run_note_pipeline(
     session_input: SessionInput,
     requested_section_ids: list[str] | None = None,
     session_topic: str = "",
+    actor: str | None = None,
 ) -> GenerateNoteResponse:
     initial_state: NoteGraphState = {"session_input": session_input}
+    if actor:
+        initial_state["actor"] = actor
     if requested_section_ids is not None:
         initial_state["requested_section_ids"] = requested_section_ids
     if session_topic:
@@ -131,6 +162,7 @@ def run_note_pipeline(
         retrieved_template_context=state.get("retrieved_template_context"),
         retrieved_privacy_context=state.get("retrieved_privacy_context") or [],
         retrieval_report=state.get("retrieval_report") or RetrievalReport(),
+        grounding=state.get("grounding"),
         stub=bool(state.get("stub", False)),
     )
 

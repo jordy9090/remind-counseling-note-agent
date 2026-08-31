@@ -55,7 +55,7 @@ async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor
 async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActor) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
     try:
-        return recompose_note_with_cache(request)
+        return recompose_note_with_cache(request, actor=actor)
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(
@@ -100,7 +100,7 @@ async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> l
 
 def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:
     try:
-        result = run_note_pipeline(session_input)
+        result = run_note_pipeline(session_input, actor=actor)
         result.persistence_report = persist_generated_note(session_input, result, actor=actor)
         return result
     except Exception as error:
@@ -108,7 +108,7 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
         original_use_stub = settings.use_stub
         try:
             settings.use_stub = True
-            result = run_note_pipeline(session_input)
+            result = run_note_pipeline(session_input, actor=actor)
             result.persistence_report = persist_generated_note(session_input, result, actor=actor)
             return result
         except Exception:

@@ -238,6 +238,7 @@ function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftRespo
         ? [fullResponse.persistence_report.message]
         : []),
     ]),
+    grounding: fullResponse.grounding,
     full_response: fullResponse,
   }
 }
