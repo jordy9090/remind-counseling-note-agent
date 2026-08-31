@@ -72,7 +72,11 @@ export function EvidenceSourcePanel({ item, onClose }: { item: GroundingReviewIt
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
         <div>
           <p className="text-sm font-extrabold text-slate-900">근거 원문</p>
-          <p className="mt-0.5 text-[11px] font-semibold text-slate-500">선택한 AI 문장과 과거 회기 원문을 대조합니다.</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
+            {item.stale
+              ? '수정된 AI 문장과 기존 근거를 다시 확인해주세요.'
+              : '이 AI 문장을 뒷받침하는 과거 상담 원문입니다.'}
+          </p>
         </div>
         <button type="button" aria-label="근거 원문 닫기" onClick={onClose}
           className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200">
@@ -89,9 +93,17 @@ export function EvidenceSourcePanel({ item, onClose }: { item: GroundingReviewIt
           </div>
           <p className="mt-1 text-xs font-semibold leading-5 text-slate-800">{item.claim.text}</p>
         </div>
+        {item.stale ? (
+          <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] font-bold text-amber-900">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>수정 후 근거 재확인 필요</span>
+          </div>
+        ) : null}
         <div className="mt-4 space-y-3">
           {item.missingSource ? <MissingEvidence /> : null}
-          {item.sources.map((source) => <EvidenceSourceItem key={source.evidence_id} source={source} />)}
+          {item.sources.map((source) => (
+            <EvidenceSourceItem key={source.evidence_id} source={source} stale={item.stale} />
+          ))}
         </div>
       </div>
     </aside>
@@ -119,7 +131,7 @@ function GroundingClaimIndicator({ item, onSelect, selected }: {
       : sources.length > 1 ? `근거 ${sources.length}개` : '근거 1'
 
   return (
-    <article id={`grounding-claim-${claim.claim_id}`} className={`rounded-md border p-2.5 transition ${selected ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50/70'}`}>
+    <article id={`grounding-claim-${claim.claim_id}`} className={`rounded-md border p-2.5 transition ${selected ? 'border-amber-300 bg-amber-100 ring-2 ring-amber-300/70' : 'border-slate-200 bg-slate-50/70'}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         {claim.support_type === 'clinical_inference' ? null : (
           <span className="text-[10px] font-bold text-slate-500">근거 검토</span>
@@ -135,7 +147,7 @@ function GroundingClaimIndicator({ item, onSelect, selected }: {
         ) : null}
         <button type="button" aria-pressed={selected} onClick={() => onSelect(claim.claim_id)}
           data-claim-id={claim.claim_id}
-          className="ml-auto inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-300">
+          className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold focus:outline-none focus:ring-2 focus:ring-blue-300 ${evidenceControlStyle(selected, stale)}`}>
           {missingSource && !sources.length ? '근거' : controlLabel}
           <ChevronRight className="h-3 w-3" />
         </button>
@@ -167,9 +179,7 @@ function EvidenceControl({ item, onSelect, selected }: {
         aria-pressed={selected}
         data-claim-id={claim.claim_id}
         onClick={() => onSelect(claim.claim_id)}
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 focus:outline-none focus:ring-2 focus:ring-blue-300 ${
-          selected ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-blue-50 text-blue-700 ring-blue-200 hover:bg-blue-100'
-        }`}
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold focus:outline-none focus:ring-2 focus:ring-blue-300 ${evidenceControlStyle(selected, stale)}`}
       >
         {missingSource && !sources.length ? '근거' : label}
         <ChevronRight className="h-3 w-3" />
@@ -185,10 +195,18 @@ function SupportIcon({ supportType }: { supportType: GroundingSupportType }) {
   return <Info className="h-3.5 w-3.5 text-amber-700" />
 }
 
-function EvidenceSourceItem({ source }: { source: GroundingSource }) {
+function EvidenceSourceItem({ source, stale }: { source: GroundingSource; stale: boolean }) {
   const sessionLabel = source.session_number == null ? '이전 기록' : `${source.session_number}회기`
   return (
-    <section className="rounded-md border border-amber-200 bg-amber-50/70 p-3" data-source-ref={source.source_ref}>
+    <section
+      className={`rounded-md border p-3 transition ${
+        stale
+          ? 'border-slate-300 bg-slate-50'
+          : 'border-amber-300 bg-amber-50 ring-1 ring-amber-200 shadow-sm'
+      }`}
+      data-evidence-state={stale ? 'stale' : 'selected'}
+      data-source-ref={source.source_ref}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-extrabold text-slate-900">
           {sessionLabel} · {source.source_type === 'raw_transcript' ? '상담 원문' : '상담사 확정 기록'}
@@ -213,6 +231,12 @@ function EvidenceSourceItem({ source }: { source: GroundingSource }) {
       )}
     </section>
   )
+}
+
+function evidenceControlStyle(selected: boolean, stale: boolean): string {
+  if (!selected) return 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100'
+  if (stale) return 'bg-amber-50 text-amber-900 ring-2 ring-dashed ring-amber-400'
+  return 'bg-amber-100 text-amber-950 ring-2 ring-amber-400 shadow-sm'
 }
 
 function counselorFieldLabel(field: string | null): string {

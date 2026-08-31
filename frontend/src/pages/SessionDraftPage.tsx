@@ -1980,7 +1980,9 @@ function DraftSectionBlock({
           type="button"
           onClick={() => section.editable && onEditSection(section.id)}
           className={`mt-4 block w-full rounded-[4px] px-2 py-1 text-left text-[13px] font-semibold leading-6 text-slate-900 ${
-            hasSelectedInlineGrounding ? 'bg-amber-50 ring-1 ring-amber-200' : 'hover:bg-slate-50'
+            hasSelectedInlineGrounding
+              ? 'bg-amber-100 ring-2 ring-amber-300 shadow-[0_0_0_2px_rgba(252,211,77,0.18)]'
+              : 'hover:bg-slate-50'
           }`}
         >
           <span className="whitespace-pre-wrap">{section.content || '내용을 입력해주세요.'}</span>

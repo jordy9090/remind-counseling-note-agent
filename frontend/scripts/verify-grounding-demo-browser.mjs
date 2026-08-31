@@ -38,7 +38,7 @@ try {
   await cdp.send('Page.enable')
   await cdp.send('Runtime.enable')
 
-  await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('요약 초안'))
+  await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('요약 초안'), 30000)
   const navigation = await cdp.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')]
       .find((item) => item.textContent?.replace(/\\s/g, '') === '회기입력')
@@ -80,16 +80,31 @@ try {
     throw new Error(`Mapped grounding claim was repeated below the rendered summary (${duplicatedClaimCount})`)
   }
 
+  const screenshotDir = path.resolve('../results/debug/pr5_evidence_ui')
+  const beforeScreenshotPath = path.join(screenshotDir, 'evidence-before-selection.png')
+  const afterScreenshotPath = path.join(screenshotDir, 'evidence-after-selection.png')
+  fs.mkdirSync(screenshotDir, { recursive: true })
+  await captureScreenshot(cdp, beforeScreenshotPath)
+
   await clickClaim(cdp, 'C1')
   await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('토요일 모임 대신 집에서 쉬고'))
   const directState = await cdp.evaluate(`(() => ({
     selected: document.querySelector('[data-claim-id="C1"]')?.getAttribute('aria-pressed'),
-    paragraphHighlighted: Boolean(document.querySelector('[data-claim-id="C1"]')?.closest('section')?.querySelector('button.bg-amber-50')),
+    selectedButtonStrong: document.querySelector('[data-claim-id="C1"]')?.classList.contains('bg-amber-100')
+      && document.querySelector('[data-claim-id="C1"]')?.classList.contains('ring-2'),
+    paragraphHighlighted: Boolean(document.querySelector('[data-claim-id="C1"]')?.closest('section')?.querySelector('button.bg-amber-100.ring-2')),
     sourceRefs: [...document.querySelectorAll('[aria-label="근거 원문"] [data-source-ref]')].map((node) => node.dataset.sourceRef),
+    sourceStates: [...document.querySelectorAll('[aria-label="근거 원문"] [data-evidence-state]')].map((node) => ({
+      state: node.dataset.evidenceState,
+      selectedCardStrong: node.classList.contains('border-amber-300') && node.classList.contains('bg-amber-50'),
+    })),
     text: document.querySelector('[aria-label="근거 원문"]')?.innerText || '',
   }))()`)
-  if (directState.selected !== 'true' || !directState.paragraphHighlighted) {
+  if (directState.selected !== 'true' || !directState.selectedButtonStrong || !directState.paragraphHighlighted) {
     throw new Error('Direct evidence selection did not highlight the mapped summary paragraph')
+  }
+  if (!directState.sourceStates.length || directState.sourceStates.some((source) => source.state !== 'selected' || !source.selectedCardStrong)) {
+    throw new Error(`Cited source cards did not use the selected evidence state: ${JSON.stringify(directState.sourceStates)}`)
   }
   if (JSON.stringify(directState.sourceRefs) !== JSON.stringify([
     'transcript:synthetic-session-5:0-3',
@@ -98,14 +113,22 @@ try {
   if (!directState.text.includes('5회기 · 상담 원문') || !directState.text.includes('3회기 · 상담 원문')) {
     throw new Error('Direct evidence panel did not show both historical session numbers')
   }
+  if (!directState.text.includes('이 AI 문장을 뒷받침하는 과거 상담 원문입니다.')) {
+    throw new Error('Evidence panel did not explain the selected claim-source relationship')
+  }
+  await captureScreenshot(cdp, afterScreenshotPath)
 
-  await closeEvidence(cdp)
   await clickClaim(cdp, 'C2')
   await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('확정 기록 필드 · 상담자 개입'))
   const counselorState = await cdp.evaluate(`(() => ({
+    previousSelected: document.querySelector('[data-claim-id="C1"]')?.getAttribute('aria-pressed'),
+    currentSelected: document.querySelector('[data-claim-id="C2"]')?.getAttribute('aria-pressed'),
     sourceRef: document.querySelector('[aria-label="근거 원문"] [data-source-ref]')?.dataset.sourceRef,
     text: document.querySelector('[aria-label="근거 원문"]')?.innerText || '',
   }))()`)
+  if (counselorState.previousSelected !== 'false' || counselorState.currentSelected !== 'true') {
+    throw new Error(`Claim selection did not move from C1 to C2: ${JSON.stringify(counselorState)}`)
+  }
   if (counselorState.sourceRef !== 'confirmed_note:synthetic-session-3:counselor_intervention') {
     throw new Error(`Counselor judgment source was not distinct: ${counselorState.sourceRef}`)
   }
@@ -150,6 +173,21 @@ try {
     textarea.blur()
   })()`)
   await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('수정 후 근거 재확인 필요'))
+  await clickClaim(cdp, 'C1')
+  await waitFor(async () => await cdp.evaluate(`Boolean(document.querySelector('[aria-label="근거 원문"] [data-evidence-state="stale"]'))`))
+  const staleState = await cdp.evaluate(`(() => ({
+    warning: document.querySelector('[aria-label="근거 원문"]')?.innerText.includes('수정 후 근거 재확인 필요'),
+    sourceCards: [...document.querySelectorAll('[aria-label="근거 원문"] [data-evidence-state]')].map((node) => ({
+      state: node.dataset.evidenceState,
+      neutral: node.classList.contains('border-slate-300') && node.classList.contains('bg-slate-50'),
+      verifiedAmber: node.classList.contains('bg-amber-50') || node.classList.contains('ring-amber-200'),
+    })),
+  }))()`)
+  if (!staleState.warning || !staleState.sourceCards.length
+    || staleState.sourceCards.some((source) => source.state !== 'stale' || !source.neutral || source.verifiedAmber)) {
+    throw new Error(`Stale evidence retained verified emphasis: ${JSON.stringify(staleState)}`)
+  }
+  await closeEvidence(cdp)
 
   await navigate(cdp, `${new URL(pageUrl).origin}/?grounding-demo=1&screen=final`, '상담일지')
   const unsupportedInExport = await cdp.evaluate(`(() => [...document.querySelectorAll('textarea[id^="final-section-"]')]
@@ -184,17 +222,13 @@ try {
   }
   if (exceptions.length) throw new Error(`Browser runtime exception: ${exceptions.join(' | ')}`)
 
-  await navigate(cdp, `${new URL(pageUrl).origin}/?grounding-demo=1`, '근거 2개')
-  const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' })
-  const screenshotPath = path.resolve('../results/debug/pr5_evidence_ui/session-detail-inline-evidence.png')
-  fs.mkdirSync(path.dirname(screenshotPath), { recursive: true })
-  fs.writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'))
-
   console.log('grounding demo browser verification passed')
   console.log('notes/generate requests: 0')
+  console.log('selected claim switch and stale evidence priority: passed')
   console.log('direct/multiple/counselor/clinical/unsupported/missing/stale: passed')
   console.log('document drawer/supervision layout/flag off: passed')
-  console.log(`screenshot: ${screenshotPath}`)
+  console.log(`before screenshot: ${beforeScreenshotPath}`)
+  console.log(`after screenshot: ${afterScreenshotPath}`)
 } finally {
   try {
     await cdp?.send('Browser.close')
@@ -229,6 +263,11 @@ async function closeEvidence(cdp) {
   })()`)
   if (!closed) throw new Error('Evidence close button was not found')
   await waitFor(async () => !(await cdp.evaluate(`Boolean(document.querySelector('[aria-label="근거 원문"]'))`)))
+}
+
+async function captureScreenshot(cdp, screenshotPath) {
+  const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+  fs.writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'))
 }
 
 async function navigate(cdp, url, expectedText) {
