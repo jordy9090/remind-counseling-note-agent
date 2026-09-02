@@ -904,11 +904,13 @@ export default function SessionDraftPage({
     setDocumentExportError(null)
     setDocumentExportStatus(null)
     await refreshDocumentCapabilities()
+
     if (documentType === 'supervision_report') {
       setFinalDocumentSections([])
       setSupervisionReportDraft(null)
       setIsGeneratingFinalDocument(true)
       setCurrentScreen('final_document')
+
       try {
         const summarySection = (text: string, sourceRefs: string[] = []) => ({
           text: text || PLACEHOLDER_TEXT,
@@ -916,27 +918,67 @@ export default function SessionDraftPage({
           source_refs: sourceRefs,
           requires_review: !sourceRefs.length,
         })
+
+        const originalSummary = result.full_response?.session_summary_draft ?? {
+          session_info: {
+            case_id: form.case_id,
+            client_alias: getClientAlias(form),
+            session_number: form.session_number,
+            session_date: form.session_date,
+            counselor_name: form.counselor_name,
+          },
+          session_theme: summarySection(sessionTopic || result.session_summary, ['counselor_memo']),
+          presenting_problem: summarySection(result.main_issue, ['transcript_text', 'counselor_memo']),
+          session_content: summarySection(result.session_summary, ['transcript_text', 'counselor_memo']),
+          counselor_intervention: summarySection(result.counselor_intervention, ['counselor_memo']),
+          client_response: summarySection(result.client_response, ['transcript_text']),
+          reflection: summarySection(PLACEHOLDER_TEXT),
+          next_plan: summarySection(result.next_plan, ['counselor_memo']),
+        }
+
+        const editedTextBySection = Object.fromEntries(
+          draftSections.map((section) => [section.id, section.content]),
+        )
+
+        const latestSummary = {
+          ...originalSummary,
+          session_theme: {
+            ...originalSummary.session_theme,
+            text: editedTextBySection.session_theme ?? originalSummary.session_theme.text,
+          },
+          presenting_problem: {
+            ...originalSummary.presenting_problem,
+            text: editedTextBySection.main_issue ?? originalSummary.presenting_problem.text,
+          },
+          session_content: {
+            ...originalSummary.session_content,
+            text: editedTextBySection.session_content ?? originalSummary.session_content.text,
+          },
+          counselor_intervention: {
+            ...originalSummary.counselor_intervention,
+            text: editedTextBySection.counselor_intervention ?? originalSummary.counselor_intervention.text,
+          },
+          client_response: {
+            ...originalSummary.client_response,
+            text: editedTextBySection.client_response ?? originalSummary.client_response.text,
+          },
+          reflection: {
+            ...originalSummary.reflection,
+            text: editedTextBySection.supervision_memo ?? originalSummary.reflection.text,
+          },
+          next_plan: {
+            ...originalSummary.next_plan,
+            text: editedTextBySection.next_plan ?? originalSummary.next_plan.text,
+          },
+        }
+
         const report = await generateSupervisionReport({
           session_input: { ...form, target_document_type: 'supervision_report', persist: false },
-          session_summary_draft: {
-            session_info: {
-              case_id: form.case_id,
-              client_alias: getClientAlias(form),
-              session_number: form.session_number,
-              session_date: form.session_date,
-              counselor_name: form.counselor_name,
-            },
-            session_theme: summarySection(sessionTopic || result.session_summary, ['counselor_memo']),
-            presenting_problem: summarySection(result.main_issue, ['transcript_text', 'counselor_memo']),
-            session_content: summarySection(result.session_summary, ['transcript_text', 'counselor_memo']),
-            counselor_intervention: summarySection(result.counselor_intervention, ['counselor_memo']),
-            client_response: summarySection(result.client_response, ['transcript_text']),
-            reflection: summarySection(PLACEHOLDER_TEXT),
-            next_plan: summarySection(result.next_plan, ['counselor_memo']),
-          },
+          session_summary_draft: latestSummary,
           client_alias: getClientAlias(form),
           transcript_mode: form.transcript_text.trim() ? 'full' : 'summary',
         })
+
         setSupervisionReportDraft(report)
       } catch (requestError) {
         setFinalDocumentError(requestError instanceof Error ? requestError.message : '수퍼비전 보고서 생성에 실패했습니다.')
