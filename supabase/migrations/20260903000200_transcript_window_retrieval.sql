@@ -29,8 +29,34 @@ alter table public.transcript_windows enable row level security;
 drop policy if exists user_owns_rows on public.transcript_windows;
 create policy user_owns_rows on public.transcript_windows
   for all to authenticated
-  using ((select auth.uid())::text = user_id)
-  with check ((select auth.uid())::text = user_id);
+  using (
+    (select auth.uid())::text = user_id
+    and counselor_id = user_id
+    and exists (
+      select 1 from public.cases c
+      where c.id = transcript_windows.case_id and c.user_id = transcript_windows.user_id
+    )
+    and exists (
+      select 1 from public.sessions s
+      where s.id = transcript_windows.session_id
+        and s.case_id = transcript_windows.case_id
+        and s.user_id = transcript_windows.user_id
+    )
+  )
+  with check (
+    (select auth.uid())::text = user_id
+    and counselor_id = user_id
+    and exists (
+      select 1 from public.cases c
+      where c.id = transcript_windows.case_id and c.user_id = transcript_windows.user_id
+    )
+    and exists (
+      select 1 from public.sessions s
+      where s.id = transcript_windows.session_id
+        and s.case_id = transcript_windows.case_id
+        and s.user_id = transcript_windows.user_id
+    )
+  );
 
 revoke all on table public.transcript_windows from anon;
 grant select, insert, update, delete on table public.transcript_windows to authenticated;
@@ -70,6 +96,7 @@ as $$
   join public.sessions s on s.id = w.session_id
   where filter_user_id is not null
     and filter_case_id is not null
+    and (auth.role() = 'service_role' or filter_user_id = (select auth.uid())::text)
     and w.user_id = filter_user_id
     and w.case_id = filter_case_id
     and s.user_id = filter_user_id

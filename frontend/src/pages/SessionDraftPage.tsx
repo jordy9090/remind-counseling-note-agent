@@ -64,6 +64,7 @@ import {
   type GroundingReviewItem,
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
+import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -936,41 +937,7 @@ export default function SessionDraftPage({
           next_plan: summarySection(result.next_plan, ['counselor_memo']),
         }
 
-        const editedTextBySection = Object.fromEntries(
-          draftSections.map((section) => [section.id, section.content]),
-        )
-
-        const latestSummary = {
-          ...originalSummary,
-          session_theme: {
-            ...originalSummary.session_theme,
-            text: editedTextBySection.session_theme ?? originalSummary.session_theme.text,
-          },
-          presenting_problem: {
-            ...originalSummary.presenting_problem,
-            text: editedTextBySection.main_issue ?? originalSummary.presenting_problem.text,
-          },
-          session_content: {
-            ...originalSummary.session_content,
-            text: editedTextBySection.session_content ?? originalSummary.session_content.text,
-          },
-          counselor_intervention: {
-            ...originalSummary.counselor_intervention,
-            text: editedTextBySection.counselor_intervention ?? originalSummary.counselor_intervention.text,
-          },
-          client_response: {
-            ...originalSummary.client_response,
-            text: editedTextBySection.client_response ?? originalSummary.client_response.text,
-          },
-          reflection: {
-            ...originalSummary.reflection,
-            text: editedTextBySection.supervision_memo ?? originalSummary.reflection.text,
-          },
-          next_plan: {
-            ...originalSummary.next_plan,
-            text: editedTextBySection.next_plan ?? originalSummary.next_plan.text,
-          },
-        }
+        const latestSummary = applyCounselorEditsToSummary(originalSummary, draftSections)
 
         const report = await generateSupervisionReport({
           session_input: { ...form, target_document_type: 'supervision_report', persist: false },

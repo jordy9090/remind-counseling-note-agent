@@ -155,8 +155,12 @@ class DashboardRouteTests(unittest.TestCase):
 
     def test_unauthenticated_request_is_rejected_by_security_layer(self) -> None:
         app.dependency_overrides.clear()
-        response = TestClient(app).get("/api/cases/CASE-001/dashboard")
-        self.assertIn(response.status_code, (401, 403, 503))
+        with patch("app.api.security.settings") as mock_settings:
+            mock_settings.enable_real_user_auth = False
+            mock_settings.local_preview_bypass_enabled = False
+            mock_settings.allow_legacy_preview_token = False
+            response = TestClient(app).get("/api/cases/CASE-001/dashboard")
+        self.assertEqual(response.status_code, 503)
 
     def test_dashboard_returns_503_without_supabase(self) -> None:
         with patch("app.api.routes.cases.settings") as mock_settings:

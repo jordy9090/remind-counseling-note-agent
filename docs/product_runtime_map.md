@@ -63,7 +63,7 @@ api/notes/generate.py
 
 ## Database decision
 
-The shared remote project reported migrations only through `20260718000100_case_memory_unique_confirmed_fields` on 2026-08-31. The local `20260823` and `20260828` migrations were not applied remotely, and remote table names confirmed that `transcript_turns`, `transcript_windows`, and `evidence_episodes` were absent.
+The release baseline treats `20260901000100_case_schedule_and_transcript_status` and `20260902000100_document_exports` as already applied remotely. The raw-evidence schema is therefore ordered afterward as `20260903000100_raw_evidence_layer` and `20260903000200_transcript_window_retrieval`; these two migrations must remain unapplied until release review. `evidence_episodes` and `match_evidence_episodes` remain research-only.
 
 The final product architecture requires `transcript_turns` and `transcript_windows`. It does not call `evidence_episodes` or `match_evidence_episodes`. Therefore the unapplied production migration chain now excludes the episode table/function; their SQL is retained only in `research/raw_evidence_experiments/supabase`. Nothing was applied to the remote project.
 

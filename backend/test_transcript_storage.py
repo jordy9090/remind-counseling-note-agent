@@ -93,10 +93,13 @@ class TranscriptStorageTests(unittest.TestCase):
             Path(__file__).parents[1]
             / "supabase"
             / "migrations"
-            / "20260828000100_raw_evidence_layer.sql"
+            / "20260903000100_raw_evidence_layer.sql"
         ).read_text(encoding="utf-8")
         self.assertIn("create table if not exists public.transcript_turns", sql)
         self.assertNotIn("public.evidence_episodes", sql)
+        self.assertIn("counselor_id = user_id", sql)
+        self.assertIn("s.case_id = transcript_turns.case_id", sql)
+        self.assertIn("s.user_id = transcript_turns.user_id", sql)
 
     def test_ownership_and_case_scope_excludes_other_turns(self):
         self.store_fixture()

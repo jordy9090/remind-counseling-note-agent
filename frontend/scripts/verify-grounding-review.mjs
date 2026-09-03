@@ -114,7 +114,7 @@ assert(componentSource.includes('EvidenceSourcePanel'), 'claim click must use th
 assert(componentSource.includes('bg-amber-100 text-amber-950 ring-2 ring-amber-400'), 'selected evidence control must use a clear amber state')
 assert(componentSource.includes("data-evidence-state={stale ? 'stale' : 'selected'}"), 'source cards must distinguish selected and stale evidence states')
 assert(componentSource.includes('이 AI 문장을 뒷받침하는 과거 상담 원문입니다.'), 'source panel must explain the selected evidence relationship')
-assert(componentSource.includes("stale\n          ? 'border-slate-300 bg-slate-50'"), 'stale source cards must not retain verified amber emphasis')
+assert(/stale\s*\?\s*'border-slate-300 bg-slate-50'/.test(componentSource), 'stale source cards must not retain verified amber emphasis')
 assert(componentSource.includes('EvidenceDrawer'), 'generated document must use a closable evidence drawer')
 assert(componentSource.includes('`근거 ${sources.length}개`'), 'multiple evidence indicator must report its source count')
 assert(componentSource.includes('EvidenceControl'), 'clearly mapped factual claims must render control-only evidence UI')

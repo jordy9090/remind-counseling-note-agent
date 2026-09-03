@@ -38,7 +38,7 @@ try {
   await cdp.send('Page.enable')
   await cdp.send('Runtime.enable')
 
-  await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('요약 초안'), 30000)
+  await waitFor(async () => (await cdp.evaluate("document.body?.innerText || ''")).includes('요약 초안'), 30000)
   const navigation = await cdp.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')]
       .find((item) => item.textContent?.replace(/\\s/g, '') === '회기입력')

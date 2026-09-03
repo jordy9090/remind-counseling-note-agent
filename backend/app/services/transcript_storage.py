@@ -5,7 +5,7 @@ from typing import Any, Iterable
 
 from app.schemas.evidence import StoredTranscriptTurn, TranscriptTurn
 from app.services.deidentification import deidentify_text
-from app.services.supabase_storage import storage
+from app.services.supabase_storage import SupabaseStorage, storage
 
 
 class TranscriptStorageError(RuntimeError):
@@ -39,9 +39,18 @@ def build_transcript_span_text(
     return "\n".join(f"[{by_index[index].speaker_role}] {by_index[index].sanitized_text}" for index in expected)
 
 
-def store_transcript_turns(*, user_id: str, counselor_id: str, case_id: str, session_id: str, turns: list[TranscriptTurn]) -> list[StoredTranscriptTurn]:
+def store_transcript_turns(
+    *,
+    user_id: str,
+    counselor_id: str,
+    case_id: str,
+    session_id: str,
+    turns: list[TranscriptTurn],
+    storage_client: SupabaseStorage | None = None,
+) -> list[StoredTranscriptTurn]:
+    client = storage_client or storage
     _require_scope(user_id=user_id, counselor_id=counselor_id, case_id=case_id, session_id=session_id)
-    _assert_scoped_session(user_id=user_id, case_id=case_id, session_id=session_id)
+    _assert_scoped_session(user_id=user_id, case_id=case_id, session_id=session_id, storage_client=client)
     if len({turn.turn_index for turn in turns}) != len(turns):
         raise ValueError("Transcript turns must have unique turn_index values")
     rows = []
@@ -53,13 +62,20 @@ def store_transcript_turns(*, user_id: str, counselor_id: str, case_id: str, ses
             "user_id": user_id, "counselor_id": counselor_id, "case_id": case_id, "session_id": session_id,
             **turn.model_dump(mode="json"), "sanitized_text": sanitized_text,
         })
-    stored = storage.upsert("transcript_turns", rows, on_conflict="session_id,turn_index") if rows else []
+    stored = client.upsert("transcript_turns", rows, on_conflict="session_id,turn_index") if rows else []
     return [StoredTranscriptTurn.model_validate(row) for row in stored]
 
 
-def get_transcript_turns(*, user_id: str, case_id: str, session_id: str) -> list[StoredTranscriptTurn]:
+def get_transcript_turns(
+    *,
+    user_id: str,
+    case_id: str,
+    session_id: str,
+    storage_client: SupabaseStorage | None = None,
+) -> list[StoredTranscriptTurn]:
+    client = storage_client or storage
     _require_scope(user_id=user_id, counselor_id=user_id, case_id=case_id, session_id=session_id)
-    rows = storage.select("transcript_turns", {
+    rows = client.select("transcript_turns", {
         "user_id": f"eq.{user_id}", "case_id": f"eq.{case_id}", "session_id": f"eq.{session_id}",
         "select": "id,user_id,counselor_id,case_id,session_id,turn_index,speaker_role,start_ms,end_ms,sanitized_text,source_type,metadata_json",
         "order": "turn_index.asc", "limit": 10000,
@@ -67,8 +83,14 @@ def get_transcript_turns(*, user_id: str, case_id: str, session_id: str) -> list
     return sorted((StoredTranscriptTurn.model_validate(row) for row in rows), key=lambda turn: turn.turn_index)
 
 
-def _assert_scoped_session(*, user_id: str, case_id: str, session_id: str) -> None:
-    session = storage.maybe_single("sessions", {
+def _assert_scoped_session(
+    *,
+    user_id: str,
+    case_id: str,
+    session_id: str,
+    storage_client: SupabaseStorage,
+) -> None:
+    session = storage_client.maybe_single("sessions", {
         "id": f"eq.{session_id}", "user_id": f"eq.{user_id}", "case_id": f"eq.{case_id}",
         "select": "id,user_id,case_id", "limit": 1,
     })

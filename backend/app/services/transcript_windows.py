@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.schemas.evidence import StoredTranscriptTurn, TranscriptWindow
 from app.services.embeddings import content_hash, get_embedding_provider
 from app.services.transcript_storage import build_transcript_span_text, get_transcript_turns
-from app.services.supabase_storage import storage
+from app.services.supabase_storage import SupabaseStorage, storage
 
 
 WINDOW_SIZE_TURNS = 6
@@ -63,28 +63,40 @@ def build_transcript_windows(
 def index_transcript_windows(
     *, user_id: str, counselor_id: str, case_id: str, session_id: str,
     window_size: int = WINDOW_SIZE_TURNS, stride: int = WINDOW_STRIDE_TURNS,
+    storage_client: SupabaseStorage | None = None,
 ) -> tuple[list[TranscriptWindow], int]:
-    turns = get_transcript_turns(user_id=user_id, case_id=case_id, session_id=session_id)
+    client = storage_client or storage
+    turns = get_transcript_turns(
+        user_id=user_id,
+        case_id=case_id,
+        session_id=session_id,
+        storage_client=client,
+    )
     windows = build_transcript_windows(turns, window_size=window_size, stride=stride)
     stored_windows: list[TranscriptWindow] = []
     embedded = 0
     for window in windows:
         row = window.model_dump(mode="json", exclude={"id", "embedding_model"})
-        stored = storage.upsert(
+        stored = client.upsert(
             "transcript_windows", [row], on_conflict="session_id,start_turn_index,end_turn_index",
         )
         if not stored:
             raise RuntimeError("Transcript window storage returned no row")
         stored_window = TranscriptWindow.model_validate(stored[0])
-        if ensure_transcript_window_embedding(stored[0]):
+        if ensure_transcript_window_embedding(stored[0], storage_client=client):
             embedded += 1
             stored_window = stored_window.model_copy(update={"embedding_model": settings.embedding_model})
         stored_windows.append(stored_window)
     return stored_windows, embedded
 
 
-def ensure_transcript_window_embedding(window: dict) -> bool:
-    existing = storage.maybe_single("transcript_windows", {
+def ensure_transcript_window_embedding(
+    window: dict,
+    *,
+    storage_client: SupabaseStorage | None = None,
+) -> bool:
+    client = storage_client or storage
+    existing = client.maybe_single("transcript_windows", {
         "user_id": f'eq.{window["user_id"]}', "case_id": f'eq.{window["case_id"]}',
         "session_id": f'eq.{window["session_id"]}', "source_ref": f'eq.{window["source_ref"]}',
         "select": "id,content_hash,embedding_model,embedding", "limit": 1,
@@ -95,7 +107,7 @@ def ensure_transcript_window_embedding(window: dict) -> bool:
     ):
         return False
     vector = get_embedding_provider().embed([window["window_text"]])[0]
-    storage.update("transcript_windows", {
+    client.update("transcript_windows", {
         "embedding": vector, "embedding_model": settings.embedding_model,
         "embedding_updated_at": datetime.now(UTC).isoformat(),
     }, query={

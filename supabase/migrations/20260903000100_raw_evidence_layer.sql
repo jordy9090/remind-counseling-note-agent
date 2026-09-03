@@ -26,8 +26,34 @@ alter table public.transcript_turns enable row level security;
 drop policy if exists user_owns_rows on public.transcript_turns;
 create policy user_owns_rows on public.transcript_turns
   for all to authenticated
-  using ((select auth.uid())::text = user_id)
-  with check ((select auth.uid())::text = user_id);
+  using (
+    (select auth.uid())::text = user_id
+    and counselor_id = user_id
+    and exists (
+      select 1 from public.cases c
+      where c.id = transcript_turns.case_id and c.user_id = transcript_turns.user_id
+    )
+    and exists (
+      select 1 from public.sessions s
+      where s.id = transcript_turns.session_id
+        and s.case_id = transcript_turns.case_id
+        and s.user_id = transcript_turns.user_id
+    )
+  )
+  with check (
+    (select auth.uid())::text = user_id
+    and counselor_id = user_id
+    and exists (
+      select 1 from public.cases c
+      where c.id = transcript_turns.case_id and c.user_id = transcript_turns.user_id
+    )
+    and exists (
+      select 1 from public.sessions s
+      where s.id = transcript_turns.session_id
+        and s.case_id = transcript_turns.case_id
+        and s.user_id = transcript_turns.user_id
+    )
+  );
 
 revoke all on table public.transcript_turns from anon;
 grant select, insert, update, delete on table public.transcript_turns to authenticated;

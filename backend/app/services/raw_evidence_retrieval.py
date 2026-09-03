@@ -11,7 +11,7 @@ from app.services.transcript_storage import (
     build_transcript_span_text,
     get_transcript_turns,
 )
-from app.services.supabase_storage import storage
+from app.services.supabase_storage import SupabaseStorage, storage
 
 
 DEFAULT_WINDOW_CANDIDATE_K = 12
@@ -21,10 +21,12 @@ TurnLoader = Callable[..., list[StoredTranscriptTurn]]
 
 def retrieve_transcript_window_candidates(
     *, query_text: str, user_id: str, case_id: str, candidate_k: int = DEFAULT_WINDOW_CANDIDATE_K,
+    storage_client: SupabaseStorage | None = None,
 ) -> list[RetrievedTranscriptWindow]:
     if not query_text.strip() or not user_id.strip() or not case_id.strip() or candidate_k <= 0:
         return []
-    rows = storage.rpc("match_transcript_windows", {
+    client = storage_client or storage
+    rows = client.rpc("match_transcript_windows", {
         "query_embedding": embed_query(query_text), "filter_user_id": user_id,
         "filter_case_id": case_id, "match_count": candidate_k,
     })
@@ -35,6 +37,7 @@ def build_candidate_regions(
     *, windows: list[RetrievedTranscriptWindow], user_id: str, case_id: str,
     context_expansion: int = CONTEXT_EXPANSION_TURNS,
     turn_loader: TurnLoader = get_transcript_turns,
+    storage_client: SupabaseStorage | None = None,
 ) -> list[CandidateTranscriptRegion]:
     if context_expansion < 0:
         raise ValueError("context_expansion must be non-negative")
@@ -61,7 +64,10 @@ def build_candidate_regions(
                 current["score"] = max(current["score"], window.similarity_score)
                 current["ids"].append(window.window_id)
 
-        turns = turn_loader(user_id=user_id, case_id=case_id, session_id=session_id)
+        turn_kwargs = {"user_id": user_id, "case_id": case_id, "session_id": session_id}
+        if storage_client is not None and turn_loader is get_transcript_turns:
+            turn_kwargs["storage_client"] = storage_client
+        turns = turn_loader(**turn_kwargs)
         if not turns:
             continue
         ordered = sorted(turns, key=lambda item: item.turn_index)

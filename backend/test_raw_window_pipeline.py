@@ -124,12 +124,15 @@ class RawWindowPipelineTests(unittest.TestCase):
         self.assertEqual([(item.start_turn_index, item.end_turn_index) for item in regions], [(0, 5)])
 
     def test_migration_has_rls_scope_cosine_and_no_security_definer(self):
-        sql = (Path(__file__).parents[1] / "supabase" / "migrations" / "20260828000300_transcript_window_retrieval.sql").read_text(encoding="utf-8")
+        sql = (Path(__file__).parents[1] / "supabase" / "migrations" / "20260903000200_transcript_window_retrieval.sql").read_text(encoding="utf-8")
         self.assertIn("alter table public.transcript_windows enable row level security", sql)
         self.assertIn("(select auth.uid())::text = user_id", sql)
         self.assertIn("revoke all on table public.transcript_windows from anon", sql)
         self.assertIn("w.user_id = filter_user_id", sql)
         self.assertIn("w.case_id = filter_case_id", sql)
+        self.assertIn("filter_user_id = (select auth.uid())::text", sql)
+        self.assertIn("s.case_id = transcript_windows.case_id", sql)
+        self.assertIn("s.user_id = transcript_windows.user_id", sql)
         self.assertIn("operator(extensions.<=>) query_embedding", sql)
         self.assertIn("security invoker", sql)
         self.assertNotIn("security definer", sql)

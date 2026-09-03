@@ -138,18 +138,21 @@ def retrieve_raw_evidence_regions(state: dict[str, Any]) -> dict[str, Any]:
     if not settings.enable_rag or not settings.enable_dense_retrieval:
         report.notices.append("Raw-region grounding requires ENABLE_RAG and ENABLE_DENSE_RETRIEVAL.")
         return {"raw_regions_by_need": {}, "retrieval_report": report}
-    if not settings.supabase_configured:
+    actor = state.get("actor") or settings.remind_preview_actor
+    actor_storage = _storage_for_actor(actor)
+    if not actor_storage.configured:
         report.notices.append("Raw-region grounding skipped because Supabase credentials are missing.")
         return {"raw_regions_by_need": {}, "retrieval_report": report}
     sanitized: SanitizedInput = state["sanitized_input"]
-    actor = str(state.get("actor") or settings.remind_preview_actor or "")
+    user_id = str(actor or "")
     try:
         regions = retrieve_raw_regions_for_needs(
             needs=state.get("evidence_needs") or [],
-            user_id=actor,
+            user_id=user_id,
             case_id=sanitized.case_id,
             current_session_number=sanitized.session_number,
             top_k=settings.raw_region_top_k,
+            storage_client=actor_storage,
         )
         return {"raw_regions_by_need": regions, "retrieval_report": report}
     except Exception as error:
@@ -264,7 +267,7 @@ def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def finalize_retrieval_report(state: dict[str, Any]) -> dict[str, Any]:
+def fuse_and_rerank(state: dict[str, Any]) -> dict[str, Any]:
     """Aggregate retrieval metrics while preserving the existing API fields."""
     report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
     case_context: list[RetrievedCaseContextItem] = state.get("retrieved_case_context") or []

@@ -29,6 +29,7 @@ from app.services.raw_evidence_retrieval import (
     build_candidate_regions,
     retrieve_transcript_window_candidates,
 )
+from app.services.supabase_storage import SupabaseStorage
 
 
 DEFAULT_RAW_REGION_TOP_K = 5
@@ -99,6 +100,7 @@ def retrieve_raw_regions_for_needs(
     current_session_number: int | None = None,
     top_k: int = DEFAULT_RAW_REGION_TOP_K,
     region_retriever: RegionRetriever | None = None,
+    storage_client: SupabaseStorage | None = None,
 ) -> dict[str, list[CandidateTranscriptRegion]]:
     """Reuse PR3 window retrieval and region construction for raw-factual needs."""
     if top_k <= 0 or not user_id.strip() or not case_id.strip():
@@ -108,7 +110,15 @@ def retrieve_raw_regions_for_needs(
     for need in needs:
         if need.source_requirement != "raw_factual":
             continue
-        regions = retrieve(query_text=need.query_text, user_id=user_id, case_id=case_id)
+        if region_retriever is None:
+            regions = retrieve(
+                query_text=need.query_text,
+                user_id=user_id,
+                case_id=case_id,
+                storage_client=storage_client,
+            )
+        else:
+            regions = retrieve(query_text=need.query_text, user_id=user_id, case_id=case_id)
         if current_session_number is not None:
             regions = [
                 region
@@ -119,14 +129,26 @@ def retrieve_raw_regions_for_needs(
     return results
 
 
-def _retrieve_regions(*, query_text: str, user_id: str, case_id: str) -> list[CandidateTranscriptRegion]:
+def _retrieve_regions(
+    *,
+    query_text: str,
+    user_id: str,
+    case_id: str,
+    storage_client: SupabaseStorage | None = None,
+) -> list[CandidateTranscriptRegion]:
     windows = retrieve_transcript_window_candidates(
         query_text=query_text,
         user_id=user_id,
         case_id=case_id,
         candidate_k=DEFAULT_WINDOW_CANDIDATE_K,
+        storage_client=storage_client,
     )
-    return build_candidate_regions(windows=windows, user_id=user_id, case_id=case_id)
+    return build_candidate_regions(
+        windows=windows,
+        user_id=user_id,
+        case_id=case_id,
+        storage_client=storage_client,
+    )
 
 
 def assemble_grounding_context(
