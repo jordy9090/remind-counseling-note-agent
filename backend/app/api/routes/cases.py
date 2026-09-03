@@ -33,7 +33,7 @@ def _storage_error_status(error: SupabaseStorageError) -> int:
 @router.get("/{case_id}/dashboard", response_model=CaseDashboardResponse)
 async def get_case_dashboard(case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
     """사례별 총 회기 수, 최초/최근 상담일, 회기 요약, 생성 문서 목록을 반환한다."""
-    if not settings.supabase_configured:
+    if not settings.supabase_configured and not getattr(actor, "access_token", ""):
         raise HTTPException(status_code=503, detail="Supabase가 설정되지 않아 사례 대시보드를 사용할 수 없습니다.")
     try:
         return fetch_case_dashboard(case_id, actor=actor)
@@ -49,7 +49,7 @@ async def patch_case_schedule(
     case_id: str, request: CaseScheduleUpdateRequest, actor: PreviewActor
 ) -> CaseDashboardResponse:
     """전체 예정 회기 수와 다음 상담 예정일을 수정하고 갱신된 대시보드를 반환한다."""
-    if not settings.supabase_configured:
+    if not settings.supabase_configured and not getattr(actor, "access_token", ""):
         raise HTTPException(status_code=503, detail="Supabase가 설정되지 않아 일정 수정을 사용할 수 없습니다.")
     try:
         return update_case_schedule(case_id, request, actor=actor)
