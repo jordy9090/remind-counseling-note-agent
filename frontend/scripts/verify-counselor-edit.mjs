@@ -55,5 +55,6 @@ assert(original.session_content.text === 'AI 회기 요약', 'original AI respon
 const pageSource = fs.readFileSync(path.resolve('src/pages/SessionDraftPage.tsx'), 'utf8')
 assert(pageSource.includes('applyCounselorEditsToSummary(originalSummary, draftSections)'), 'supervision request must use current draftSections')
 assert(pageSource.includes('markGroundingItemsStale(section.groundingItems)'), 'counselor edits must still mark grounding stale')
+assert(pageSource.includes('rows: block.rows || []'), 'supervision export must normalize nullable rows')
 
 console.log('Counselor edit -> supervision request regression verification passed.')

@@ -4104,7 +4104,7 @@ function buildSupervisionExportSections(report: SupervisionReportDraft): Documen
           id: block.id,
           type: block.type,
           text: block.text || null,
-          rows: block.rows,
+          rows: block.rows || [],
           speaker_turns: block.speakerTurns?.map((turn) => ({
             turn_id: turn.turnId,
             speaker: turn.speaker,
