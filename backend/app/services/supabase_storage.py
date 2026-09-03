@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from app.core.config import settings
 from app.schemas.note import (
     CaseDashboardDocument,
+    CaseDashboardExport,
     CaseDashboardResponse,
     CaseDashboardSession,
     CaseScheduleUpdateRequest,
@@ -746,6 +747,29 @@ def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> C
             )
         )
 
+    export_rows = actor_storage.select(
+        "document_exports",
+        {
+            "case_id": f"eq.{case_id}",
+            "select": "id,session_number,document_type,format,title,status,error,created_at",
+            "order": "created_at.desc",
+            "limit": 20,
+        },
+    )
+    exports = [
+        CaseDashboardExport(
+            export_id=str(row.get("id")),
+            document_type=str(row.get("document_type") or ""),
+            format=str(row.get("format") or ""),
+            title=str(row.get("title") or ""),
+            status=str(row.get("status") or "completed"),
+            error=row.get("error") or None,
+            session_number=_as_int(row.get("session_number")),
+            created_at=row.get("created_at") or None,
+        )
+        for row in export_rows
+    ]
+
     session_dates = sorted(str(row.get("session_date")) for row in session_rows if row.get("session_date"))
     return CaseDashboardResponse(
         case_id=case_id,
@@ -758,7 +782,73 @@ def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> C
         next_scheduled_date=case_row.get("next_scheduled_date") or None,
         sessions=sessions,
         documents=documents,
+        exports=exports,
     )
+
+
+def _build_document_export_row(
+    *,
+    case_id: str,
+    session_number: int | None,
+    document_type: str,
+    export_format: str,
+    title: str,
+    status: str,
+    error: str | None,
+    user_id: str,
+) -> dict[str, Any]:
+    return {
+        "case_id": case_id,
+        "session_number": session_number,
+        "document_type": document_type,
+        "format": export_format,
+        "title": title,
+        "status": status,
+        "error": (error or None) and str(error)[:500],
+        "user_id": user_id,
+    }
+
+
+def record_document_export(
+    *,
+    case_id: str,
+    session_number: int | None,
+    document_type: str,
+    export_format: str,
+    title: str,
+    status: str,
+    error: str | None = None,
+    actor: str = "server_demo_actor",
+) -> bool:
+    """Best-effort export-history logging for the case dashboard.
+
+    Export 자체를 막지 않도록 어떤 실패도 삼킨다 (반환값으로만 성공 여부 보고).
+    동기 export라 terminal 상태(completed/failed)만 기록한다.
+    """
+    if not settings.enable_persistence:
+        return False
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        return False
+    try:
+        actor_storage.insert(
+            "document_exports",
+            [
+                _build_document_export_row(
+                    case_id=case_id,
+                    session_number=session_number,
+                    document_type=document_type,
+                    export_format=export_format,
+                    title=title,
+                    status=status,
+                    error=error,
+                    user_id=actor,
+                )
+            ],
+        )
+        return True
+    except Exception:
+        return False
 
 
 def update_case_schedule(

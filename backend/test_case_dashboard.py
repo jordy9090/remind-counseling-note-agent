@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.schemas.note import CaseScheduleUpdateRequest, SessionInput
 from app.services.supabase_storage import (
+    _build_document_export_row,
     _note_summary_text,
     _resolve_case_alias,
     _transcript_status,
+    record_document_export,
 )
 
 
@@ -92,6 +94,46 @@ class ScheduleValidationTests(unittest.TestCase):
 
     def test_empty_date_normalizes_to_none(self) -> None:
         self.assertIsNone(CaseScheduleUpdateRequest(next_scheduled_date="").next_scheduled_date)
+
+
+class DocumentExportRecordTests(unittest.TestCase):
+    def test_export_row_shape(self) -> None:
+        row = _build_document_export_row(
+            case_id="CASE-001",
+            session_number=3,
+            document_type="supervision_report",
+            export_format="pdf",
+            title="8회기 수퍼비전 보고서",
+            status="failed",
+            error="PDF runtime missing",
+            user_id="user-1",
+        )
+        self.assertEqual(row["case_id"], "CASE-001")
+        self.assertEqual(row["format"], "pdf")
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["user_id"], "user-1")
+        self.assertEqual(row["error"], "PDF runtime missing")
+
+    def test_error_is_truncated_and_normalized(self) -> None:
+        row = _build_document_export_row(
+            case_id="c", session_number=None, document_type="t", export_format="docx",
+            title="x", status="failed", error="e" * 900, user_id="u",
+        )
+        self.assertEqual(len(row["error"]), 500)
+        row2 = _build_document_export_row(
+            case_id="c", session_number=None, document_type="t", export_format="docx",
+            title="x", status="completed", error="", user_id="u",
+        )
+        self.assertIsNone(row2["error"])
+
+    def test_recording_is_noop_without_persistence(self) -> None:
+        """ENABLE_PERSISTENCE=0에서는 조용히 False를 반환하고 export를 막지 않는다."""
+        self.assertFalse(
+            record_document_export(
+                case_id="CASE-001", session_number=1, document_type="session_note",
+                export_format="docx", title="t", status="completed", actor="u",
+            )
+        )
 
 
 class DashboardRouteTests(unittest.TestCase):

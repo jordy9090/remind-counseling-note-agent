@@ -381,6 +381,19 @@ class CaseDashboardDocument(BaseModel):
     created_at: str | None = None
 
 
+class CaseDashboardExport(BaseModel):
+    """One document-export attempt (문서 변환 이력)."""
+
+    export_id: str
+    document_type: str
+    format: str
+    title: str = ""
+    status: str = "completed"
+    error: str | None = None
+    session_number: int | None = None
+    created_at: str | None = None
+
+
 class CaseDashboardResponse(BaseModel):
     """Aggregated per-case view: sessions, dates, and generated documents."""
 
@@ -394,6 +407,7 @@ class CaseDashboardResponse(BaseModel):
     next_scheduled_date: str | None = None
     sessions: list[CaseDashboardSession] = Field(default_factory=list)
     documents: list[CaseDashboardDocument] = Field(default_factory=list)
+    exports: list[CaseDashboardExport] = Field(default_factory=list)
 
 
 class CaseScheduleUpdateRequest(BaseModel):
