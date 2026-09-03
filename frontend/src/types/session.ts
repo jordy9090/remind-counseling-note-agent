@@ -536,3 +536,52 @@ export interface AudioTranscriptionResponse {
   nonverbal_notes: string
   warnings: string[]
 }
+
+export interface CaseDashboardSession {
+  session_id: string
+  session_number: number
+  session_date: string | null
+  session_title: string
+  summary: string | null
+  transcript_status: string
+  note_confirmation_status: string | null
+}
+
+export interface CaseDashboardDocument {
+  document_id: string
+  document_type: string
+  title: string
+  status: string
+  session_number: number | null
+  created_at: string | null
+}
+
+export interface CaseDashboardExport {
+  export_id: string
+  document_type: string
+  format: string
+  title: string
+  status: string
+  error: string | null
+  session_number: number | null
+  created_at: string | null
+}
+
+export interface CaseDashboardResponse {
+  case_id: string
+  case_alias: string | null
+  status: string
+  total_session_count: number
+  first_consultation_date: string | null
+  latest_consultation_date: string | null
+  total_scheduled_session_count: number | null
+  next_scheduled_date: string | null
+  sessions: CaseDashboardSession[]
+  documents: CaseDashboardDocument[]
+  exports: CaseDashboardExport[]
+}
+
+export interface CaseScheduleUpdateRequest {
+  total_scheduled_session_count?: number | null
+  next_scheduled_date?: string | null
+}

@@ -18,6 +18,8 @@ import type {
   SessionInput,
   SupervisionReportDraft,
   SupervisionReportRequest,
+  CaseDashboardResponse,
+  CaseScheduleUpdateRequest,
   TemporaryDraftSaveRequest,
   TemporaryDraftSaveResponse,
 } from '../types/session'
@@ -354,4 +356,23 @@ function extractFilename(contentDisposition: string | undefined): string | null 
 function buildFallbackExportFilename(request: DocumentExportRequest): string {
   const extension = request.format === 'pdf' ? 'pdf' : request.format === 'hwpx' ? 'hwpx' : 'docx'
   return `${request.document_type}_${request.case_id}_${request.session_number}회기_${request.session_date || 'date'}.${extension}`
+}
+
+
+export const fetchCaseDashboard = async (caseId: string): Promise<CaseDashboardResponse> => {
+  const response = await client.get<CaseDashboardResponse>(
+    `/api/cases/${encodeURIComponent(caseId)}/dashboard`,
+  )
+  return response.data
+}
+
+export const updateCaseSchedule = async (
+  caseId: string,
+  payload: CaseScheduleUpdateRequest,
+): Promise<CaseDashboardResponse> => {
+  const response = await client.patch<CaseDashboardResponse>(
+    `/api/cases/${encodeURIComponent(caseId)}/schedule`,
+    payload,
+  )
+  return response.data
 }

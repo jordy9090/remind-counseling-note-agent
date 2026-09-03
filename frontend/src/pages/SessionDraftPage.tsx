@@ -51,6 +51,7 @@ import {
   type SpeakerRole,
   type SpeakerRoleMap,
 } from '../lib/audioTranscriptWorkflow'
+import CaseDashboardPanel from '../components/case-dashboard/CaseDashboardPanel'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import type {
   AudioCapabilitiesResponse,
@@ -961,6 +962,7 @@ export default function SessionDraftPage() {
         {currentScreen === 'case_list' ? (
           <CaseListWorkspace
             cases={caseSummaries}
+            initialCaseId={form.case_id}
             onCreateSession={openSessionInput}
             onOpenCase={() => {
               setForm(initialForm)
@@ -1413,15 +1415,18 @@ function TopWorkspaceBar({
 
 function CaseListWorkspace({
   cases,
+  initialCaseId,
   onCreateSession,
   onOpenCase,
 }: {
   cases: CaseSummary[]
+  initialCaseId: string
   onCreateSession: () => void
   onOpenCase: (caseItem: CaseSummary) => void
 }) {
   return (
     <section className="px-6 py-5">
+      <CaseDashboardPanel initialCaseId={initialCaseId} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-extrabold tracking-normal text-black">케이스 목록</h2>
