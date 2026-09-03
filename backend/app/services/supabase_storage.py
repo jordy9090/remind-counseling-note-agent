@@ -907,7 +907,7 @@ def update_case_schedule(
     _require_owned_case(actor_storage, case_id, actor)
     payload = request.model_dump(exclude_unset=True)
     if payload:
-        actor_storage.update("cases", {"id": f"eq.{case_id}"}, payload)
+        actor_storage.update("cases", payload, query={"id": f"eq.{case_id}"})
     return fetch_case_dashboard(case_id, actor=actor)
 
 
