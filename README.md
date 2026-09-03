@@ -9,6 +9,41 @@ Re:mind는 수련상담사가 상담 후 자료를 정리하고, 다회기 근�
 
 ## Product boundary
 
+### Current grounding architecture
+## Current Product Architecture
+
+```text
+Transcript
+→ Raw Window Retrieval
+→ Grounded Generation
+→ Semantic Source Validation
+→ Counselor Evidence Review
+```
+
+Production evidence unit은 sanitized transcript의 `raw region`입니다. `transcript_turns`와 deterministic `transcript_windows`에서 후보를 찾고, 실제 원문 turn으로 region을 다시 조립한 뒤 생성 claim의 source support를 별도로 검증합니다. 실제 파일별 호출 경로와 저장소·테스트 매핑은 [Product Runtime Map](docs/product_runtime_map.md)에 있습니다.
+
+중요한 구분:
+
+```text
+Production:
+raw region as evidence
+
+Experimental:
+episode extraction
+turn-function labeling
+exact-span selector
+```
+
+실험 코드는 `research/` 아래에 보존하며 production runtime이 import하지 않습니다. Grounding은 현재 opt-in이고 기본값은 다음과 같습니다.
+
+```env
+ENABLE_RAW_REGION_GROUNDING=false
+```
+
+DEV evidence demo는 `frontend/src/fixtures/dev/groundingDemo.ts`의 synthetic fixture만 사용합니다. DEV-only lazy module로 분리되어 production bundle에 포함되지 않으며, `import.meta.env.DEV`이면서 URL에 `?grounding-demo=1`이 있을 때만 활성화됩니다.
+
+## 제품 원칙
+
 - 입력에 없는 정보를 확정적으로 쓰지 않습니다.
 - `direct`, `ai_organized`, `clinical_review`, `missing` 상태를 구분합니다.
 - 사례개념화, 임상 가설, 목표·전략의 최종 판단은 상담사가 수행합니다.
@@ -26,20 +61,25 @@ Supabase authentication과 user-scoped RLS 경로가 구현되어 있어도 실�
 
 ```text
 sanitize_input
+  → formulate_evidence_needs
   → formulate_retrieval_query
+  → retrieve_raw_evidence_regions
   → retrieve_case_memory
   → retrieve_authoritative_kb
-  → finalize_retrieval_report
+  → assemble_generation_grounding
+  → fuse_and_rerank
   → structure_session
   → map_evidence
   → generate_summary
+  → generate_grounded_document
+  → validate_claim_sources
   → verify_output
   → conditional_revision
        ├─ reverify → verify_output
        └─ preview  → transform_document_preview
 ```
 
-이것은 11-node LangGraph stateful workflow입니다. Retrieval service는 graph node에서 직접
+이것은 LangGraph stateful workflow입니다. Retrieval service는 graph node에서 직접
 호출됩니다. LLM function calling, `ToolNode`, input-dependent retrieval routing, reranker model은
 현재 구현되어 있지 않습니다. 자세한 경계는 [architecture](docs/architecture.md)에 있습니다.
 
@@ -101,14 +141,22 @@ not include WhisperX; see [Vercel deployment](docs/deployment_vercel.md).
 │   │   ├── schemas/             # Pydantic contracts
 │   │   └── services/            # retrieval, persistence, export, STT
 │   ├── smoke_test.py
-│   ├── test_supervision_form.py
-│   └── test_vercel_wrappers.py
+│   └── test_*.py                # product regression tests only
 ├── frontend/
 │   ├── scripts/                 # static workflow verifiers
 │   └── src/                     # React counselor workspace
-├── supabase/migrations/         # schema, pgvector, user ownership, RLS
+├── research/
+│   ├── raw_evidence_experiments/
+│   ├── case_retrieval_experiments/
+│   └── legacy_muspsy_evaluation/
 ├── docs/
-└── .github/workflows/
+│   ├── product_runtime_map.md
+│   ├── architecture.md
+│   └── raw_evidence_grounding_checkpoint.md
+├── supabase/
+│   └── migrations/             # Production migration chain only
+├── .github/workflows/
+└── results/debug/               # generated locally; ignored
 ```
 
 ## Local development
@@ -192,6 +240,8 @@ uv run python test_supervision_form.py
 
 cd ../frontend
 pnpm install --frozen-lockfile
+pnpm verify:grounding-review
+pnpm verify:grounding-demo-browser
 pnpm verify:material-workflow
 pnpm verify:audio-transcript-workflow
 pnpm build
@@ -206,6 +256,10 @@ build를 별도 job으로 검증합니다.
 - [Product spec](docs/product_spec.md)
 - [MVP scope](docs/mvp_scope.md)
 - [Architecture](docs/architecture.md)
+- [Product runtime map](docs/product_runtime_map.md)
+- [Schema](docs/schema.md)
 - [API contract](docs/api_contract.md)
+- [Audio licenses and attribution](docs/THIRD_PARTY_AUDIO_COMPONENTS.md)
+- [H100 audio STT runbook](docs/h100_audio_runbook.md)
 - [Security checklist](docs/security_checklist.md)
 - [Development plan](docs/development_plan.md)

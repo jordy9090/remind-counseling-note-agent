@@ -200,6 +200,72 @@ export interface PersistenceReport {
   message: string
 }
 
+export type GroundingSourceType = 'raw_transcript' | 'counselor_confirmed' | 'authoritative_kb'
+export type GroundingSupportType = 'direct_evidence' | 'counselor_judgment' | 'clinical_inference' | 'unsupported'
+export type GroundingClaimKind = 'factual' | 'clinical_inference' | 'administrative'
+export type ClaimSupportVerdict = 'supported' | 'partial' | 'unsupported'
+
+export interface GroundingSource {
+  evidence_id: string
+  source_type: GroundingSourceType
+  source_ref: string
+  source_text: string
+  session_id?: string | null
+  session_number?: number | null
+  start_turn_index?: number | null
+  end_turn_index?: number | null
+  similarity_score?: number | null
+  retrieval_method: string
+  need_ids: string[]
+}
+
+export interface GroundedClaim {
+  claim_id: string
+  need_id: string
+  target_field: string
+  text: string
+  claim_kind: GroundingClaimKind
+  support_type: GroundingSupportType
+  evidence_ids: string[]
+  review_required: boolean
+}
+
+export interface ClaimSupportValidation {
+  verdict: ClaimSupportVerdict
+  supported_evidence_ids: string[]
+  category?: 'missing_fact' | 'contradiction' | 'wrong_event' | 'wrong_session' | 'over_inference' | null
+}
+
+export interface GroundedGenerationResult {
+  enabled: boolean
+  context: {
+    needs: Array<{
+      need_id: string
+      target_field: string
+      query_text: string
+      source_requirement: 'raw_factual' | 'counselor_judgment'
+    }>
+    sources: GroundingSource[]
+    need_to_evidence_ids: Record<string, string[]>
+    diagnostics: Record<string, number>
+  }
+  claims: GroundedClaim[]
+  citation_diagnostics: Array<{
+    claim_id: string
+    invalid_evidence_ids: string[]
+    reason: string
+  }>
+  claim_support_validations: Record<string, ClaimSupportValidation>
+  metrics: {
+    citation_validity: number
+    factual_claim_citation_coverage: number
+    unsupported_factual_claim_rate: number
+    semantic_support_validity: number
+    raw_evidence_usage: number
+    source_type_distribution: Record<string, number>
+  }
+}
+
 export interface GenerateNoteResponse {
   structured_case_data: StructuredCaseData
   evidence_mapped_data: EvidenceMappedData
@@ -214,6 +280,7 @@ export interface GenerateNoteResponse {
   retrieved_template_context?: RetrievedTemplateContext | null
   retrieved_privacy_context: RetrievedPrivacyRule[]
   retrieval_report: RetrievalReport
+  grounding?: GroundedGenerationResult | null
   persistence_report: PersistenceReport
   stub: boolean
 }
@@ -271,6 +338,7 @@ export interface NoteDraftResponse {
   evidence_check: EvidenceCheckItem[]
   missing_items: string[]
   warnings: string[]
+  grounding?: GroundedGenerationResult | null
   full_response?: GenerateNoteResponse
 }
 
@@ -535,4 +603,53 @@ export interface AudioTranscriptionResponse {
   transcript_text: string
   nonverbal_notes: string
   warnings: string[]
+}
+
+export interface CaseDashboardSession {
+  session_id: string
+  session_number: number
+  session_date: string | null
+  session_title: string
+  summary: string | null
+  transcript_status: string
+  note_confirmation_status: string | null
+}
+
+export interface CaseDashboardDocument {
+  document_id: string
+  document_type: string
+  title: string
+  status: string
+  session_number: number | null
+  created_at: string | null
+}
+
+export interface CaseDashboardExport {
+  export_id: string
+  document_type: string
+  format: string
+  title: string
+  status: string
+  error: string | null
+  session_number: number | null
+  created_at: string | null
+}
+
+export interface CaseDashboardResponse {
+  case_id: string
+  case_alias: string | null
+  status: string
+  total_session_count: number
+  first_consultation_date: string | null
+  latest_consultation_date: string | null
+  total_scheduled_session_count: number | null
+  next_scheduled_date: string | null
+  sessions: CaseDashboardSession[]
+  documents: CaseDashboardDocument[]
+  exports: CaseDashboardExport[]
+}
+
+export interface CaseScheduleUpdateRequest {
+  total_scheduled_session_count?: number | null
+  next_scheduled_date?: string | null
 }

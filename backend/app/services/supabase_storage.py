@@ -10,7 +10,20 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
-from app.schemas.note import ConfirmGeneratedNoteRequest, ConfirmGeneratedNoteResponse, GenerateNoteResponse, PersistenceReport, SessionInput
+from app.schemas.note import (
+    CaseDashboardDocument,
+    CaseDashboardExport,
+    CaseDashboardResponse,
+    CaseDashboardSession,
+    CaseScheduleUpdateRequest,
+    ConfirmGeneratedNoteRequest,
+    ConfirmGeneratedNoteResponse,
+    GenerateNoteResponse,
+    PersistenceReport,
+    SessionInput,
+    SupervisionReportDraft,
+    SupervisionReportRequest,
+)
 from app.services.deidentification import deidentify_text
 from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
 
@@ -191,7 +204,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
     try:
         existing_case = actor_storage.maybe_single(
             "cases",
-            {"id": f"eq.{session_input.case_id}", "select": "id,user_id,counselor_id"},
+            {"id": f"eq.{session_input.case_id}", "select": "id,user_id,counselor_id,case_alias"},
         )
         if existing_case:
             owner = str(existing_case.get("user_id") or existing_case.get("counselor_id") or "").strip()
@@ -202,7 +215,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
             [
                 {
                     "id": session_input.case_id,
-                    "case_alias": session_input.case_id,
+                    "case_alias": _resolve_case_alias(session_input, existing_case),
                     "counselor_id": actor or None,
                     "user_id": actor,
                     "status": "active",
@@ -218,6 +231,12 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         session_id = str(session_rows[0]["id"]) if session_rows else None
         report.session_id = session_id
 
+        draft_json = result.session_summary_draft.model_dump(mode="json")
+        if result.grounding is not None:
+            # Claim-to-evidence mapping is additive JSON metadata; canonical source
+            # snapshots remain separate evidence_items rows.
+            draft_json["grounding"] = result.grounding.model_dump(mode="json")
+
         note_rows = actor_storage.insert(
             "generated_notes",
             [
@@ -225,7 +244,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
                     "case_id": session_input.case_id,
                     "session_id": session_id,
                     "note_type": session_input.target_document_type,
-                    "draft_json": result.session_summary_draft.model_dump(mode="json"),
+                    "draft_json": draft_json,
                     "confirmed_json": {},
                     "counselor_edited": False,
                     "confirmation_status": "draft",
@@ -235,18 +254,27 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
         report.note_id = str(note_rows[0]["id"]) if note_rows else None
 
-        evidence_rows = [
-            {
-                "case_id": session_input.case_id,
-                "session_id": session_id,
-                "source_type": item.evidence_type,
-                "source_ref": ",".join(item.source_refs),
-                "source_text": item.content,
-                "linked_field": item.field,
-                "user_id": actor,
-            }
-            for item in result.evidence_mapped_data.items
-        ]
+        if result.grounding is not None:
+            evidence_rows = _grounding_evidence_rows(
+                result.grounding,
+                case_id=session_input.case_id,
+                session_id=session_id,
+                user_id=actor,
+            )
+        else:
+            # Legacy false-flag behavior is intentionally preserved.
+            evidence_rows = [
+                {
+                    "case_id": session_input.case_id,
+                    "session_id": session_id,
+                    "source_type": item.evidence_type,
+                    "source_ref": ",".join(item.source_refs),
+                    "source_text": item.content,
+                    "linked_field": item.field,
+                    "user_id": actor,
+                }
+                for item in result.evidence_mapped_data.items
+            ]
         if evidence_rows:
             actor_storage.insert("evidence_items", evidence_rows, return_representation=False)
 
@@ -465,6 +493,27 @@ def _raw_input_text(session_input: SessionInput) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _resolve_case_alias(session_input: SessionInput, existing_case: dict[str, Any] | None) -> str:
+    """Store the client alias in cases.case_alias.
+
+    입력에 client_alias가 있으면 그것을 저장하고, 없으면 기존에 저장된 alias를
+    보존한다(재생성 시 alias가 case_id로 되돌아가는 것을 방지). 둘 다 없을 때만
+    case_id를 표시용 alias로 사용한다.
+    """
+    client_alias = (session_input.client_alias or "").strip()
+    if client_alias:
+        return client_alias
+    existing_alias = str((existing_case or {}).get("case_alias") or "").strip()
+    if existing_alias:
+        return existing_alias
+    return session_input.case_id
+
+
+def _transcript_status(session_input: SessionInput) -> str:
+    """현재 동기 파이프라인 기준: 저장 시점에 축어록이 반영돼 있으면 completed."""
+    return "completed" if (session_input.transcript_text or "").strip() else "none"
+
+
 def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse, *, user_id: str) -> dict[str, Any]:
     return {
         "case_id": session_input.case_id,
@@ -472,6 +521,7 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
         "session_number": session_input.session_number,
         "session_date": session_input.session_date or None,
         "session_title": _session_title(session_input),
+        "transcript_status": _transcript_status(session_input),
         "raw_input_text": _raw_input_text(session_input) if settings.save_raw_input else None,
         "sanitized_input_text": json.dumps(
             result.sanitized_input.model_dump(mode="json"),
@@ -491,6 +541,33 @@ def _stored_message() -> str:
 
 def _masked(text: str) -> str:
     return deidentify_text(text)[0]
+
+
+def _grounding_evidence_rows(
+    grounding: Any,
+    *,
+    case_id: str,
+    session_id: str | None,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    """Persist exact sanitized source snapshots, never generated claim paraphrases."""
+    fields_by_id: dict[str, set[str]] = {}
+    for claim in grounding.claims:
+        for evidence_id in claim.evidence_ids:
+            fields_by_id.setdefault(evidence_id, set()).add(claim.target_field)
+    return [
+        {
+            "case_id": case_id,
+            "session_id": session_id,
+            "source_type": source.source_type,
+            "source_ref": source.source_ref,
+            "source_text": source.source_text,
+            "linked_field": ",".join(sorted(fields_by_id[source.evidence_id])),
+            "user_id": user_id,
+        }
+        for source in grounding.context.sources
+        if source.evidence_id in fields_by_id
+    ]
 
 
 def _case_memory_rows_from_confirmed_note(
@@ -599,3 +676,341 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Case dashboard / schedule / supervision-report persistence
+# ---------------------------------------------------------------------------
+
+_NOTE_TYPE_LABELS = {
+    "session_note": "회기 기록",
+    "supervision_report": "수퍼비전 보고서",
+    "termination_report": "종결 보고서",
+}
+
+
+def _require_owned_case(actor_storage: SupabaseStorage, case_id: str, actor: str) -> dict[str, Any]:
+    case_row = actor_storage.maybe_single(
+        "cases",
+        {
+            "id": f"eq.{case_id}",
+            "select": "id,case_alias,status,user_id,counselor_id,total_scheduled_session_count,next_scheduled_date",
+        },
+    )
+    if not case_row:
+        raise SupabaseStorageError("해당 케이스를 찾을 수 없습니다.")
+    owner = str(case_row.get("user_id") or case_row.get("counselor_id") or "").strip()
+    if owner and owner != actor:
+        raise SupabaseStorageError("다른 사용자의 케이스에는 접근할 수 없습니다.")
+    return case_row
+
+
+def _note_summary_text(note_row: dict[str, Any]) -> str | None:
+    """확정본 우선으로 회기요약의 대표 문장을 추출한다."""
+    for payload_key in ("confirmed_json", "draft_json"):
+        payload = note_row.get(payload_key)
+        if not isinstance(payload, dict) or not payload:
+            continue
+        for field in ("session_theme", "session_content", "presenting_problem"):
+            section = payload.get(field)
+            if isinstance(section, dict):
+                text = str(section.get("text") or "").strip()
+                if text:
+                    return text[:300]
+    return None
+
+
+def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> CaseDashboardResponse:
+    """Aggregate sessions, consultation dates, and generated documents for one case."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; dashboard is unavailable.")
+
+    case_row = _require_owned_case(actor_storage, case_id, actor)
+    session_rows = actor_storage.select(
+        "sessions",
+        {
+            "case_id": f"eq.{case_id}",
+            "select": "id,session_number,session_date,session_title,transcript_status,created_at",
+            "order": "session_number.asc",
+        },
+    )
+    note_rows = actor_storage.select(
+        "generated_notes",
+        {
+            "case_id": f"eq.{case_id}",
+            "select": "id,session_id,note_type,confirmation_status,draft_json,confirmed_json,created_at",
+            "order": "created_at.desc",
+        },
+    )
+
+    latest_note_by_session: dict[str, dict[str, Any]] = {}
+    for note_row in note_rows:  # note_rows는 created_at desc — 첫 항목이 최신
+        session_key = str(note_row.get("session_id") or "")
+        if session_key and session_key not in latest_note_by_session:
+            latest_note_by_session[session_key] = note_row
+
+    session_number_by_id = {
+        str(row.get("id")): _as_int(row.get("session_number")) for row in session_rows
+    }
+
+    sessions = []
+    for row in session_rows:
+        session_id = str(row.get("id"))
+        latest_note = latest_note_by_session.get(session_id)
+        sessions.append(
+            CaseDashboardSession(
+                session_id=session_id,
+                session_number=_as_int(row.get("session_number")) or 0,
+                session_date=row.get("session_date") or None,
+                session_title=str(row.get("session_title") or ""),
+                summary=_note_summary_text(latest_note) if latest_note else None,
+                transcript_status=str(row.get("transcript_status") or "none"),
+                note_confirmation_status=(
+                    str(latest_note.get("confirmation_status")) if latest_note else None
+                ),
+            )
+        )
+
+    documents = []
+    for note_row in note_rows:
+        note_type = str(note_row.get("note_type") or "session_note")
+        session_number = session_number_by_id.get(str(note_row.get("session_id") or ""))
+        label = _NOTE_TYPE_LABELS.get(note_type, note_type)
+        title = f"{session_number}회기 {label}" if session_number else label
+        documents.append(
+            CaseDashboardDocument(
+                document_id=str(note_row.get("id")),
+                document_type=note_type,
+                title=title,
+                status=str(note_row.get("confirmation_status") or "draft"),
+                session_number=session_number,
+                created_at=note_row.get("created_at") or None,
+            )
+        )
+
+    export_rows = actor_storage.select(
+        "document_exports",
+        {
+            "case_id": f"eq.{case_id}",
+            "select": "id,session_number,document_type,format,title,status,error,created_at",
+            "order": "created_at.desc",
+            "limit": 20,
+        },
+    )
+    exports = [
+        CaseDashboardExport(
+            export_id=str(row.get("id")),
+            document_type=str(row.get("document_type") or ""),
+            format=str(row.get("format") or ""),
+            title=str(row.get("title") or ""),
+            status=str(row.get("status") or "completed"),
+            error=row.get("error") or None,
+            session_number=_as_int(row.get("session_number")),
+            created_at=row.get("created_at") or None,
+        )
+        for row in export_rows
+    ]
+
+    session_dates = sorted(str(row.get("session_date")) for row in session_rows if row.get("session_date"))
+    return CaseDashboardResponse(
+        case_id=case_id,
+        case_alias=case_row.get("case_alias") or None,
+        status=str(case_row.get("status") or "active"),
+        total_session_count=len(session_rows),
+        first_consultation_date=session_dates[0] if session_dates else None,
+        latest_consultation_date=session_dates[-1] if session_dates else None,
+        total_scheduled_session_count=_as_int(case_row.get("total_scheduled_session_count")),
+        next_scheduled_date=case_row.get("next_scheduled_date") or None,
+        sessions=sessions,
+        documents=documents,
+        exports=exports,
+    )
+
+
+def _build_document_export_row(
+    *,
+    case_id: str,
+    session_number: int | None,
+    document_type: str,
+    export_format: str,
+    title: str,
+    status: str,
+    error: str | None,
+    user_id: str,
+) -> dict[str, Any]:
+    return {
+        "case_id": case_id,
+        "session_number": session_number,
+        "document_type": document_type,
+        "format": export_format,
+        "title": title,
+        "status": status,
+        "error": (error or None) and str(error)[:500],
+        "user_id": user_id,
+    }
+
+
+def record_document_export(
+    *,
+    case_id: str,
+    session_number: int | None,
+    document_type: str,
+    export_format: str,
+    title: str,
+    status: str,
+    error: str | None = None,
+    actor: str = "server_demo_actor",
+) -> bool:
+    """Best-effort export-history logging for the case dashboard.
+
+    Export 자체를 막지 않도록 어떤 실패도 삼킨다 (반환값으로만 성공 여부 보고).
+    동기 export라 terminal 상태(completed/failed)만 기록한다.
+    """
+    if not settings.enable_persistence:
+        return False
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        return False
+    try:
+        actor_storage.insert(
+            "document_exports",
+            [
+                _build_document_export_row(
+                    case_id=case_id,
+                    session_number=session_number,
+                    document_type=document_type,
+                    export_format=export_format,
+                    title=title,
+                    status=status,
+                    error=error,
+                    user_id=actor,
+                )
+            ],
+        )
+        return True
+    except Exception:
+        return False
+
+
+def update_case_schedule(
+    case_id: str,
+    request: CaseScheduleUpdateRequest,
+    *,
+    actor: str = "server_demo_actor",
+) -> CaseDashboardResponse:
+    """Update total_scheduled_session_count / next_scheduled_date on an owned case."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; schedule update is unavailable.")
+
+    _require_owned_case(actor_storage, case_id, actor)
+    payload = request.model_dump(exclude_unset=True)
+    if payload:
+        actor_storage.update("cases", payload, query={"id": f"eq.{case_id}"})
+    return fetch_case_dashboard(case_id, actor=actor)
+
+
+def persist_supervision_report(
+    request: SupervisionReportRequest,
+    report: SupervisionReportDraft,
+    *,
+    actor: str = "server_demo_actor",
+) -> PersistenceReport:
+    """Store a generated supervision report in generated_notes so it appears in
+    document lists and the case dashboard. Same-session reports are updated in
+    place instead of inserted again (중복 저장 방지)."""
+    session_input = request.session_input
+    persistence = PersistenceReport(
+        enabled=settings.enable_persistence,
+        requested=request.persist,
+        case_id=session_input.case_id,
+    )
+    if not request.persist:
+        persistence.message = "Persistence was not requested for this supervision report."
+        return persistence
+    if not settings.enable_persistence:
+        persistence.message = "ENABLE_PERSISTENCE is false; report returned without storage."
+        return persistence
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        persistence.message = "Supabase credentials are missing; report returned without storage."
+        return persistence
+
+    try:
+        existing_case = actor_storage.maybe_single(
+            "cases",
+            {"id": f"eq.{session_input.case_id}", "select": "id,user_id,counselor_id,case_alias"},
+        )
+        if existing_case:
+            owner = str(existing_case.get("user_id") or existing_case.get("counselor_id") or "").strip()
+            if owner and owner != actor:
+                raise SupabaseStorageError("동일한 케이스 ID가 다른 사용자에게 이미 등록되어 있습니다.")
+        actor_storage.upsert(
+            "cases",
+            [
+                {
+                    "id": session_input.case_id,
+                    "case_alias": _resolve_case_alias(session_input, existing_case),
+                    "counselor_id": actor or None,
+                    "user_id": actor,
+                    "status": "active",
+                }
+            ],
+            on_conflict="id",
+        )
+
+        session_row = actor_storage.maybe_single(
+            "sessions",
+            {
+                "case_id": f"eq.{session_input.case_id}",
+                "session_number": f"eq.{session_input.session_number}",
+                "select": "id",
+            },
+        )
+        session_id = str(session_row["id"]) if session_row else None
+        persistence.session_id = session_id
+
+        report_json = report.model_dump(mode="json")
+        existing_note = actor_storage.maybe_single(
+            "generated_notes",
+            {
+                "case_id": f"eq.{session_input.case_id}",
+                "note_type": "eq.supervision_report",
+                "session_id": f"eq.{session_id}" if session_id else "is.null",
+                "select": "id",
+                "order": "created_at.desc",
+                "limit": 1,
+            },
+        )
+        if existing_note:
+            note_id = str(existing_note["id"])
+            actor_storage.update(
+                "generated_notes",
+                {"id": f"eq.{note_id}"},
+                {"draft_json": report_json, "updated_at": datetime.now(UTC).isoformat()},
+            )
+            persistence.note_id = note_id
+        else:
+            note_rows = actor_storage.insert(
+                "generated_notes",
+                [
+                    {
+                        "case_id": session_input.case_id,
+                        "session_id": session_id,
+                        "note_type": "supervision_report",
+                        "draft_json": report_json,
+                        "confirmed_json": {},
+                        "counselor_edited": False,
+                        "confirmation_status": "draft",
+                        "user_id": actor,
+                    }
+                ],
+            )
+            persistence.note_id = str(note_rows[0]["id"]) if note_rows else None
+        persistence.stored = True
+        persistence.message = "Supervision report stored in generated_notes (note_type=supervision_report)."
+    except (SupabaseStorageError, HTTPError, URLError) as error:
+        persistence.stored = False
+        persistence.message = f"Supervision report storage failed: {error}"
+    return persistence

@@ -27,19 +27,27 @@ React frontend
 ```text
 sanitize_input
   ↓
+formulate_evidence_needs
+  ↓
 formulate_retrieval_query
   ↓
-retrieve_case_memory
+retrieve_raw_evidence_regions
   ↓
-retrieve_authoritative_kb
+retrieve_case_memory / retrieve_authoritative_kb
   ↓
-finalize_retrieval_report
+assemble_generation_grounding
+  ↓
+fuse_and_rerank
   ↓
 structure_session
   ↓
 map_evidence
   ↓
 generate_summary
+  ↓
+generate_grounded_document
+  ↓
+validate_claim_sources
   ↓
 verify_output
   ↓
@@ -49,13 +57,25 @@ conditional_revision
 ```
 
 각 retrieval node는 일반 Python service 함수를 직접 호출합니다.
+Raw-region grounding nodes stay in the graph but return empty/no-op state when `ENABLE_RAW_REGION_GROUNDING=false`, which is the default. The established non-grounding generation behavior is preserved in that mode.
+
+### Retrieval node 책임
 
 - `retrieve_case_memory`: 동일 상담자·사례 범위의 이전 확정 기록 검색
 - `retrieve_authoritative_kb`: 문서 양식과 개인정보·윤리 경고 규칙 검색
-- `finalize_retrieval_report`: 검색 결과 수와 latency를 집계
+- `fuse_and_rerank`: 검색 결과 수와 latency를 집계
 
-`finalize_retrieval_report`는 reranker 모델을 호출하지 않습니다. Dense/hybrid 검색은
+`fuse_and_rerank`는 이름과 달리 별도 reranker 모델을 호출하지 않습니다. Dense/hybrid 검색은
 `backend/app/services/retrieval.py`가 담당하며 feature flag로 활성화합니다.
+
+### Raw transcript regions
+
+- `case_id` 기준 최근 이전 회기 기록 retrieval
+- 문서 목적별 양식 KB retrieval
+- 개인정보/윤리/보안 규칙 KB retrieval
+- Supabase 또는 RAG가 꺼져 있으면 빈 context로 계속 진행
+- Grounding flag가 켜진 경우 `transcript_windows` dense retrieval 결과를 scoped `transcript_turns`로 다시 조립해 raw candidate region을 생성
+- Query text나 검색 window text 자체를 최종 evidence로 사용하지 않음
 
 ## 3. Supervision-report graph
 
@@ -109,6 +129,12 @@ format report
 설명하는 것이 정확합니다. Export와 transcription은 사용자가 명시적으로 호출하는 별도
 API 서비스이며 LLM이 선택하는 tools가 아닙니다.
 
+### generate_grounded_document / validate_claim_sources
+
+- request-local evidence ID를 사용해 factual claim과 raw/counselor source를 연결
+- 존재하지 않는 source ID와 source hierarchy 위반을 거부
+- semantic support를 별도 검증하고 partial/unsupported claim을 counselor review 대상으로 표시
+
 ## 5. API and service boundaries
 
 주요 API는 다음과 같습니다.
@@ -159,3 +185,11 @@ retrieval router와 field-level evidence sufficiency check입니다. 이 기능�
 
 이론 문서를 추가할 경우 문서 양식·윤리 KB와 분리하고, 이론 설명은 사례 근거로 집계하지
 않습니다.
+
+## 8. Production and research boundary
+
+Grounding product schema에는 `transcript_turns`와 `transcript_windows`가 필요합니다. `evidence_episodes`와 `match_evidence_episodes`는 runtime prerequisite가 아니며, 원격에 적용되지 않은 실험 SQL은 `research/raw_evidence_experiments/supabase`로 분리되어 있습니다.
+
+Production uses raw regions as evidence. Episode extraction, turn-function labeling, evidence-episode retrieval, and query-conditioned exact-span selection are controlled research paths under `research/`. No module under `backend/app`, `api`, or `frontend/src` imports `research`.
+
+The full file-by-file path, data tables, and regression mapping is maintained in `docs/product_runtime_map.md`.

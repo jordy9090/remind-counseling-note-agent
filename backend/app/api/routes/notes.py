@@ -25,7 +25,12 @@ from app.schemas.note import (
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
-from app.services.supabase_storage import NoteConfirmationError, confirm_generated_note, persist_generated_note
+from app.services.supabase_storage import (
+    NoteConfirmationError,
+    confirm_generated_note,
+    persist_generated_note,
+    persist_supervision_report,
+)
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -68,7 +73,10 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
 async def generate_supervision_report(request: SupervisionReportRequest, actor: PreviewActor) -> SupervisionReportDraft:
     """Generate a Korean personal counseling case supervision report draft."""
     try:
-        return run_supervision_report_pipeline(request)
+        report = run_supervision_report_pipeline(request)
+        # persist=true면 생성 성공 후에만 문서 레코드를 만든다 (실패 시 pending 레코드가 남지 않음)
+        report.persistence = persist_supervision_report(request, report, actor=actor)
+        return report
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(

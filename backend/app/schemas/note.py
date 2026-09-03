@@ -1,9 +1,12 @@
 """Schemas for the Re:mind MVP note-generation workflows."""
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.grounding import GroundedGenerationResult
 
 
 EvidenceType = Literal[
@@ -264,6 +267,11 @@ class GenerateNoteResponse(BaseModel):
     retrieved_template_context: RetrievedTemplateContext | None = None
     retrieved_privacy_context: list[RetrievedPrivacyRule] = Field(default_factory=list)
     retrieval_report: RetrievalReport = Field(default_factory=RetrievalReport)
+    # Additive provenance metadata. None while ENABLE_RAW_REGION_GROUNDING is false.
+    grounding: GroundedGenerationResult | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     persistence_report: PersistenceReport = Field(default_factory=PersistenceReport)
     stub: bool = False
 
@@ -352,6 +360,79 @@ class SupervisionReportRequest(BaseModel):
     counseling_strategy: str = ""
     supervision_request: str = ""
     transcript_mode: Literal["full", "summary"] = "summary"
+    # true면 생성된 보고서를 generated_notes(note_type='supervision_report')에 저장해
+    # 문서 목록/대시보드에서 조회할 수 있게 한다. 기본 false — 기존 호출 호환.
+    persist: bool = False
+
+
+class CaseDashboardSession(BaseModel):
+    """Per-session row for the case dashboard."""
+
+    session_id: str
+    session_number: int
+    session_date: str | None = None
+    session_title: str = ""
+    summary: str | None = None
+    transcript_status: str = "none"
+    note_confirmation_status: str | None = None
+
+
+class CaseDashboardDocument(BaseModel):
+    """Generated document row for the case dashboard."""
+
+    document_id: str
+    document_type: str
+    title: str = ""
+    status: str = "draft"
+    session_number: int | None = None
+    created_at: str | None = None
+
+
+class CaseDashboardExport(BaseModel):
+    """One document-export attempt (문서 변환 이력)."""
+
+    export_id: str
+    document_type: str
+    format: str
+    title: str = ""
+    status: str = "completed"
+    error: str | None = None
+    session_number: int | None = None
+    created_at: str | None = None
+
+
+class CaseDashboardResponse(BaseModel):
+    """Aggregated per-case view: sessions, dates, and generated documents."""
+
+    case_id: str
+    case_alias: str | None = None
+    status: str = "active"
+    total_session_count: int = 0
+    first_consultation_date: str | None = None
+    latest_consultation_date: str | None = None
+    total_scheduled_session_count: int | None = None
+    next_scheduled_date: str | None = None
+    sessions: list[CaseDashboardSession] = Field(default_factory=list)
+    documents: list[CaseDashboardDocument] = Field(default_factory=list)
+    exports: list[CaseDashboardExport] = Field(default_factory=list)
+
+
+class CaseScheduleUpdateRequest(BaseModel):
+    """Update scheduling metadata on a case (both fields optional)."""
+
+    total_scheduled_session_count: int | None = Field(default=None, ge=0)
+    next_scheduled_date: str | None = None
+
+    @field_validator("next_scheduled_date")
+    @classmethod
+    def _validate_date(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        try:
+            date.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError("next_scheduled_date는 YYYY-MM-DD 형식이어야 합니다.") from error
+        return value
 
 
 class SupervisionSpeakerTurn(BaseModel):
@@ -437,3 +518,5 @@ class SupervisionReportDraft(BaseModel):
     sections: list[SupervisionReportSection]
     aiReview: SupervisionAiReviewPanel
     evidenceIndex: dict[str, dict[str, str]] = Field(default_factory=dict)
+    # persist=true 요청 시 저장 결과(문서 목록 반영 여부)가 담긴다. 기존 응답 호환을 위해 optional.
+    persistence: PersistenceReport | None = None

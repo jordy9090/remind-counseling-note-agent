@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import audio, documents, health, materials, notes
+from app.api.routes import audio, cases, documents, health, materials, notes
 from app.core.config import validate_runtime_security
 
 app = FastAPI(
@@ -26,6 +26,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(notes.router)
+app.include_router(cases.router)
 app.include_router(documents.router)
 app.include_router(materials.router)
 app.include_router(audio.router)
