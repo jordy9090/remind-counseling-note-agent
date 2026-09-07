@@ -1031,7 +1031,14 @@ export default function SessionDraftPage({
   const hasCompactSidePanel = currentScreen === 'session_input' || currentScreen === 'summary_draft' || currentScreen === 'final_document'
 
   return (
-    <main className="min-h-screen bg-[#f1f2f4] text-slate-950">
+    <main className="app-shell min-h-screen bg-[#f1f2f4] text-slate-950">
+      <details className="mobile-navigation">
+        <summary><img src="/remind-logo.png" alt="Re:mind" /><span>메뉴</span></summary>
+        <nav aria-label="모바일 메뉴" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open') }}>
+          <SidebarButton icon={<FolderOpen className="h-4 w-4" />} onClick={openCaseList}>케이스 목록</SidebarButton>
+          <SidebarButton icon={<Plus className="h-4 w-4" />} onClick={openSessionInput}>새 회기 입력</SidebarButton>
+        </nav>
+      </details>
       <AppSidebar
         activeScreen={currentScreen}
         collapsed={isSidebarCollapsed}
@@ -1278,7 +1285,7 @@ function AppSidebar({
 
   return (
     <aside
-      className={`border-slate-200 bg-white transition-[width] duration-200 md:fixed md:inset-y-0 md:left-0 md:z-40 md:border-r ${
+      className={`desktop-sidebar border-slate-200 bg-white transition-[width] duration-200 md:fixed md:inset-y-0 md:left-0 md:z-40 md:border-r ${
         collapsed ? 'md:w-[56px]' : 'md:w-[200px]'
       }`}
     >
@@ -1456,11 +1463,11 @@ function TopWorkspaceBar({
 
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
-      <div className="flex min-h-[var(--workspace-header-height)] items-center justify-between gap-4 px-[clamp(16px,2vw,28px)]">
+      <div className="workspace-header-content">
         {currentScreen === 'case_list' ? (
           <div />
         ) : (
-          <nav className="flex flex-wrap items-center gap-3 text-xs">
+          <nav className="workflow-steps" aria-label="회기 작업 단계">
             {workflowSteps.map((step, index) => {
               const StepIcon = step === '회기입력' ? Edit3 : step === '요약초안' ? ClipboardList : step === '문서변환' ? FolderOpen : FileText
               const enabled = canOpenWorkflowStep(step)
@@ -1491,7 +1498,7 @@ function TopWorkspaceBar({
           </nav>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="workflow-actions">
           {showTemporarySave && (
             <>
               {draftSaveMessage && (
@@ -1699,7 +1706,7 @@ function SessionInputWorkspace({
 
           <div className="mt-5">
             <p className="text-sm font-semibold text-slate-700">상담 일시</p>
-            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_110px_14px_110px] items-center gap-2">
+            <div className="session-schedule mt-2">
               <button
                 type="button"
                 onClick={onEditBasicInfo}
@@ -1747,7 +1754,7 @@ function SessionInputWorkspace({
             <button
               type="button"
               onClick={onAddMaterial}
-              className="mt-2 flex w-full flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-7 text-center hover:bg-slate-50"
+              className="mt-2 flex w-full flex-col items-center justify-center gap-2 whitespace-normal rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-7 text-center hover:bg-slate-50"
             >
               <Upload className="h-6 w-6 text-slate-500" aria-hidden="true" />
               <span className="text-sm font-medium text-slate-700">클릭하여 파일을 선택하거나 직접 입력해주세요.</span>
@@ -2058,19 +2065,19 @@ function DocumentTransformWorkspace({
   selectedType: FinalDocumentType
 }) {
   return (
-    <section className="min-h-[calc(100vh-var(--workspace-header-height))] px-10 py-20">
+    <section className="min-h-[calc(100vh-var(--workspace-header-height))] px-4 py-10 sm:px-10 sm:py-20">
       <div className="mx-auto max-w-[760px] text-center">
         <h1 className="text-2xl font-extrabold leading-tight tracking-normal text-black">어떤 문서로 변환할까요?</h1>
         <p className="mt-3 text-sm font-bold text-slate-500">회기 요약을 원하는 문서 양식대로 변환해드려요</p>
       </div>
 
-      <div className="mx-auto mt-12 grid max-w-[730px] gap-6 md:grid-cols-3">
+      <div className="mx-auto mt-12 grid max-w-[730px] gap-6 xl:grid-cols-3">
         {transformOptions.map((option) => (
           <button
             key={option.id}
             type="button"
             onClick={() => onSelectType(option.id)}
-            className={`h-[226px] rounded-[8px] border bg-white p-6 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
+            className={`min-h-[226px] whitespace-normal rounded-[8px] border bg-white p-6 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
               selectedType === option.id ? 'border-blue-600 bg-blue-50' : 'border-slate-300'
             }`}
           >
@@ -2089,7 +2096,7 @@ function DocumentTransformWorkspace({
       </div>
 
       <section className="mx-auto mt-10 max-w-[730px]">
-        <div className="flex justify-center gap-4">
+        <div className="flex flex-wrap justify-center gap-4">
           <button
             type="button"
             onClick={onBackToDraft}
