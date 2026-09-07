@@ -1549,8 +1549,8 @@ function CaseListWorkspace({
         <div>
           <h2 className="text-base font-extrabold tracking-normal text-black">케이스 목록</h2>
         </div>
-        <div className="flex items-center gap-3">
-        <div className="flex gap-2 text-[11px]">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 md:flex-nowrap">
+        <div className="flex flex-wrap gap-2 text-[11px] md:flex-nowrap">
           {['전체', '진행중', '종결', '대기중'].map((filter, index) => (
             <button
               key={filter}
