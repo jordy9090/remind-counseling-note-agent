@@ -2,6 +2,15 @@
 
 These instructions apply to every coding agent working in this repository.
 
+## Developer-facing language
+
+- Write developer-facing documentation, PR titles/descriptions, issue titles/descriptions, and commit messages in natural technical English.
+- Write new developer-facing comments/docstrings in English, and use English when meaningfully editing existing ones. Do not translate existing source comments solely for consistency in a documentation PR.
+- Keep counselor-facing UI and counseling-domain content in Korean.
+- Preserve technical meaning, identifiers, filenames, commands, and architecture claims.
+- Keep Korean counselor-facing UI copy, validation/error messages, counseling templates and field labels, generation prompts/text, source/reference documents, and intentional counseling fixtures unchanged.
+- In mixed content, translate only the developer explanation; preserve exact Korean product labels and examples.
+
 ## Execution priorities
 
 1. Preserve user data, authentication boundaries, and the currently healthy Production deployment.

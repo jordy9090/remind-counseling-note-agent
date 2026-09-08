@@ -1,6 +1,56 @@
 # API Contract
 
-The MVP V1 end-to-end demo uses FastAPI as the backend, React/Vite as the frontend, and optional Supabase-backed retrieval.
+The current DTO baseline is `backend/app/schemas/note.py` at
+`4815b4457af2c5ccbccbafe4e53687229988346c`; grounding/document contracts follow their schemas in the same directory.
+API implementation and current UI invocation may differ. See the [Product Runtime Map](product_runtime_map.md)
+for connections, runtime differences, and feature flags, and the [Data Model](data_model.md) for DB relationships and retention conditions.
+
+## Core DTO concepts
+
+| DTO | Meaning in the current contract |
+| --- | --- |
+| `EvidenceType` | Literal of `direct`, `inferred`, `counselor_input`, `previous_context`, `prior_context_based`, `needs_review`, `mixed`, `model_inference`. Separate from grounding support verdicts and supervision evidence status |
+| `EvidenceItem` | Structured item with `content`, `evidence_type`, `source_refs`. Each field in `StructuredCaseData`, such as presenting concerns, topics, content, interventions, and responses, is an array of these items |
+| `EvidenceMappedItem` | Structured item with target `field` and `requires_review` added. Contained in `EvidenceMappedData.items` |
+| `SummarySection` | `text`, `evidence_type`, `source_refs`, `requires_review`. `SessionSummaryDraft` contains `session_info` and seven sections: topics, presenting concerns, content, interventions, responses, reflection, and next plan |
+| `VerificationReport` | `grounded_items` contains claim/refs; `weakly_grounded_items` and `unsupported_or_risky_claims` contain claim/reason/recommendation; `sensitive_info_items` contains potential sensitive information; `requires_counselor_review` is an array of field/reason |
+| `GeneratedDocumentDraft` | Document type, draft status before review, section text and refs, missing/review fields, and notice. Does not imply DB confirmation status |
+
+`source_refs` are source identifier strings, not a guarantee of sufficient evidence.
+`requires_review` indicates a need for review, not whether counselor confirmation is complete.
+
+### Major request/response nesting
+
+- **Generate:** `SessionInput → GenerateNoteResponse`. Required input keys are `case_id`,
+  `session_number`, `counselor_memo`, and `transcript_text`. A required string key is distinct
+  from validation requiring nonempty content. `persist` defaults to false.
+- **Generate response:** `sanitized_input.sources` contains sanitized input;
+  `structured_case_data` and `evidence_mapped_data.items` contain structuring/evidence mapping;
+  `session_summary_draft` contains the editable summary.
+  `verification_report`, `document_transform_preview`, and optional `session_note_draft` and
+  `termination_report_draft` are also returned. `retrieved_case_context`,
+  `retrieved_template_context`, `retrieved_privacy_context`, `retrieval_report`,
+  `persistence_report`, and `stub` distinguish retrieval, persistence, and execution outcomes.
+- **Grounding:** `GenerateNoteResponse.grounding` is a separate `GroundedGenerationResult`.
+  When OFF, its model value is None; `exclude_if` declares it omitted from JSON.
+  Clients must handle this field being absent.
+- **Confirm:** `ConfirmGeneratedNoteRequest` allows only `note_id`, `confirmed_note`,
+  `counselor_edited`, and `create_case_memory`; extra fields are rejected.
+  The response contains the note ID, confirmation status/time, memory/embedding counts, and a message.
+  The generation response's `confirmed_session_note` is a review projection; it is not equivalent
+  to this confirm request or the confirmation meaning of DB `generated_notes.confirmed_json`.
+- **Recompose:** The request includes `session_input`, `session_topic`, and `visible_section_ids`.
+  The response nests `GenerateNoteResponse` in `result`, with section IDs and cache key/hit outside it.
+- **Temporary Draft:** The request is a workspace snapshot of the form, screen, selections, edited sections,
+  and optional result/report. The save response contains ID/time/message; retrieval returns
+  `TemporaryDraftRecord`, a snapshot with `saved_at`. Separate from generation/confirmation DTOs.
+- **Supervision:** The request includes required `session_input`, optional `session_summary_draft`,
+  session history, previous feedback, goals/strategies, and report metadata. Top-level `persist`
+  requests saving. The response is a separate report DTO with `meta`, `sections[].contentBlocks`,
+  `evidenceIndex`, `aiReview`, and optional persistence information.
+
+Pydantic code takes precedence for exact types and defaults. Persistence conditions are collected in
+the Data Model above; this document does not duplicate the DB schema.
 
 ## Health Check
 
@@ -22,7 +72,7 @@ Response:
 POST /api/notes/generate
 ```
 
-The endpoint runs the retrieval-aware LangGraph note generation workflow and returns the full Pydantic-validated `GenerateNoteResponse`. If `OPENAI_API_KEY` is missing, or if the LLM call fails, the backend falls back to deterministic demo output. If Supabase or RAG settings are missing, retrieval and persistence are skipped while the response shape remains stable. The React frontend maps this full response into its screen-specific display state.
+The endpoint runs the LangGraph note workflow and returns `GenerateNoteResponse`. Missing OpenAI credentials use stub mode; the generate route also retries pipeline failures in stub mode. Retrieval is controlled by `ENABLE_RAG`; note persistence independently requires `ENABLE_PERSISTENCE`, actor database credentials, and request `persist=true`. Raw-region grounding is another opt-in condition. The current frontend requests generation without persistence and projects the response into display state.
 
 ### Request
 
@@ -46,7 +96,7 @@ Accepted input aliases:
 - `session_no` is also accepted for `session_number`.
 - `document_type` is also accepted for `target_document_type`.
 - `persist=true` stores the generated note only when `ENABLE_PERSISTENCE=1` and Supabase credentials are configured.
-- `SAVE_RAW_INPUT=0` is the default; raw counselor memo/transcript payloads are not stored unless `SAVE_RAW_INPUT=1`.
+- `SAVE_RAW_INPUT=0` makes `sessions.raw_input_text` null; it does not disable temporary draft or cache storage. See the Data Model for storage-specific conditions.
 - With `ENABLE_REAL_USER_AUTH=1`, protected endpoints require `Authorization: Bearer <Supabase access token>`. The `X-Remind-Preview-Token` path is available only when `ALLOW_LEGACY_PREVIEW_TOKEN=1` is explicitly enabled for a synthetic-data demo.
 - `POST /api/notes/confirm` accepts only `note_id`, `confirmed_note`, `counselor_edited`, and `create_case_memory`; case/session/counselor identity is derived from stored rows and the server actor.
 - `ENABLE_CASE_MEMORY=0` is the default. Confirmed note memory chunks are written only when persistence and case-memory indexing are explicitly enabled.
@@ -90,7 +140,7 @@ Field notes:
 POST /api/notes/recompose
 ```
 
-When the counselor changes the "요약에 포함할 항목" checklist, the frontend calls this endpoint instead of only hiding sections locally. The backend regenerates a checklist-specific AI draft and caches it by normalized `session_input`, `session_topic`, and `visible_section_ids`, so repeated clicks with the same settings reuse the existing generated draft instead of spending more LLM tokens.
+The endpoint supports checklist-specific regeneration and an actor-scoped result cache. The current frontend checklist only changes local visibility and does not call this endpoint. Direct API callers send `session_input`, `session_topic`, and `visible_section_ids`; matching cache keys reuse the generated result.
 
 ### Request
 

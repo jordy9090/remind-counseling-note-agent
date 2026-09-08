@@ -1,6 +1,6 @@
 # Vercel Deployment
 
-Vercel은 Vite frontend와 `api/` 아래의 Python serverless wrappers를 배포합니다.
+Vercel deploys the Vite frontend and Python serverless wrappers under `api/`.
 
 ## Project settings
 
@@ -9,12 +9,11 @@ Vercel은 Vite frontend와 `api/` 아래의 Python serverless wrappers를 배포
 - Build command: `npm --prefix frontend run build`
 - Output directory: `frontend/dist`
 
-`vercel.json`에는 `/api/notes/drafts/:draft_id`를 serverless-compatible detail endpoint로
-rewrite하는 규칙이 있습니다.
+`vercel.json` includes a rule rewriting `/api/notes/drafts/:draft_id` to a serverless-compatible detail endpoint.
 
 ## Serverless API coverage
 
-현재 `api/` wrappers가 제공하는 경로:
+Paths currently provided by the `api/` wrappers:
 
 ```text
 GET  /api/health
@@ -30,9 +29,9 @@ GET  /api/documents/capabilities
 POST /api/documents/export
 ```
 
-WhisperX audio endpoints는 무거운 model/runtime dependency 때문에 현재 Vercel wrapper가
-없습니다. Audio transcription이 필요한 배포는 별도 FastAPI/GPU runtime을 사용하고
-`VITE_API_BASE_URL`을 그 origin으로 설정해야 합니다.
+WhisperX audio endpoints currently have no Vercel wrappers because of their heavy model/runtime
+dependencies. Deployments requiring audio transcription must use a separate FastAPI/GPU runtime
+and set `VITE_API_BASE_URL` to that origin.
 
 ## Required production authentication
 
@@ -57,7 +56,7 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY`와 `OPENAI_API_KEY`를 `VITE_` 변수에 넣지 않습니다.
+Do not put `SUPABASE_SERVICE_ROLE_KEY` or `OPENAI_API_KEY` in `VITE_` variables.
 
 ## Optional generation and retrieval
 
@@ -75,8 +74,8 @@ EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSION=1536
 ```
 
-합성 데이터 UI demo는 `USE_STUB=1`로 실행할 수 있습니다. Shared/public deployment에는
-식별 가능한 상담자료를 업로드하지 않습니다.
+The synthetic-data UI demo can run with `USE_STUB=1`. Do not upload identifiable
+counseling materials to shared/public deployments.
 
 ## Deploy
 
@@ -86,4 +85,4 @@ npx vercel pull --yes --environment production
 npx vercel deploy --prod --archive=tgz
 ```
 
-배포 후 [deployment checklist](deployment_checklist.md)를 실행합니다.
+Run the [deployment checklist](deployment_checklist.md) after deployment.

@@ -2,67 +2,67 @@
 
 ## Product definition
 
-Re:mind는 상담 후 자료를 회기별로 정리하고, 다회기 근거를 문서 주장에 연결하며,
-수퍼비전과 공식 보고서 준비까지 이어주는 상담사 workspace입니다.
+Re:mind is a counselor workspace that organizes post-session materials by session, connects evidence
+across sessions to document claims, and supports preparation for supervision and formal reports.
 
 ## Initial customer hypothesis
 
-초기 사용자는 학회 자격 수련 중이거나 이에 준하는 업무를 하며 다음 문서를 반복해서
-만드는 개인 상담사입니다.
+Initial users are individual counselors in professional association credential training, or doing
+equivalent work, who repeatedly prepare the following documents.
 
-- 축어록과 회기 기록
-- 사례 보고서와 수퍼비전 준비자료
-- 종결 보고서와 기관 양식
+- Transcripts and session notes
+- Case reports and supervision preparation materials
+- Termination reports and institutional forms
 
-현재 경력 연차보다 실제 수련 상태와 문서 반복 빈도를 세그먼트 기준으로 봅니다.
-수퍼바이저는 임상 검수자와 협업 사용자 후보이며, 초기 단독 구매자로 가정하지 않습니다.
+Segmentation is based on actual training status and frequency of document preparation rather than years
+of experience. Supervisors are potential clinical reviewers and collaborators, not assumed initial sole purchasers.
 
 ## Core jobs
 
-1. 클로바노트·메모·기존 문서에서 상담 자료를 가져온다.
-2. 축어록을 보정하고 상담자 개입과 내담자 반응을 분리한다.
-3. 이전 회기에서 현재 기록에 필요한 목표·변화·중요 발화 근거를 찾는다.
-4. 근거, AI 정리, 정보 부족, 임상 검토 필요 상태를 구분한다.
-5. 상담사가 직접 수정·확정한 뒤 원하는 양식으로 내보낸다.
-6. 수퍼비전에서 받은 인간 피드백을 다음 회기 준비에 다시 연결한다.
+1. Bring in counseling materials from CLOVA Note, notes, and existing documents.
+2. Correct transcripts and separate counselor interventions from client responses.
+3. Find evidence of goals, changes, and significant utterances in previous sessions needed for the current note.
+4. Distinguish evidence, AI organization, missing information, and items requiring clinical review.
+5. Let the counselor edit and confirm, then export in the desired format.
+6. Carry human supervision feedback into preparation for the next session.
 
 ## Positioning hypothesis
 
-> 수련상담사가 스스로 판단할 수 있도록 다회기 원문 근거와 누락을 정리하고,
-> 인간 수퍼비전의 피드백을 다음 회기까지 이어주는 상담 문서화 workspace
+> A counseling documentation workspace that organizes source evidence across sessions and missing information
+> so counselors in training can exercise their own judgment, and carries human supervision feedback into the next session.
 
-차별화 가설은 이론 개수나 AI 조언의 양보다 다음 조합에 있습니다.
+The differentiation hypothesis rests on this combination rather than the number of theories or volume of AI advice.
 
-- 문장·항목별 다회기 원문 근거
-- 목표와 진전 trajectory
-- 가설을 확정하지 않는 누락·충돌 표시
-- 상담사 수정·확정 이력
-- 인간 수퍼비전 피드백 carryover
-- 국내 수련 문서 양식과 export
+- Source evidence across sessions for each sentence/item
+- Goal and progress trajectories
+- Missing-information/conflict markers that do not confirm hypotheses
+- Counselor edit/confirmation history
+- Human supervision feedback carryover
+- Korean training document formats and export
 
 ## Product boundaries
 
-- AI 출력은 검토 가능한 초안입니다.
-- 사례개념화, 임상 가설, 목표·전략, 수퍼비전 질문의 최종 판단은 상담사가 수행합니다.
-- Re:mind는 상담, 진단, 위험 판단, 치료 권고, 상담사 평가를 수행하지 않습니다.
-- 제품은 수퍼바이저의 유료 시간을 대체한다고 주장하지 않습니다.
+- AI output is a reviewable draft.
+- Counselors make final judgments on case conceptualization, clinical hypotheses, goals/strategies, and supervision questions.
+- Re:mind does not provide counseling, diagnosis, risk assessment, treatment recommendations, or counselor evaluation.
+- The product does not claim to replace a supervisor's paid time.
 
 ## Current evidence
 
-- 상담사 인터뷰에서는 축어록 보정, 다회기 정리, 개입·반응 분리, 문서 변환의 pain이
-  반복해서 관찰되었습니다.
-- 송은영 상담사는 이론별 분석에 호기심을 보였지만 일상 업무에서 반복 사용하리라고
-  확신하지 않았고, GPT 대비 유료 메리트와 기존 사례 이전 비용을 지적했습니다.
-- 최한나 교수 인터뷰에서는 목표·진전 흐름이 이론을 가로지르는 공통 축이며, 완성된
-  임상 해석이 수련생의 중간 사고 과정을 생략시킬 수 있다는 교육적 위험이 제기되었습니다.
+- Counselor interviews repeatedly identified pain points in transcript correction, organization across sessions,
+  separation of interventions/responses, and document conversion.
+- Counselor 송은영 expressed curiosity about theory-specific analysis but was unsure she would use it repeatedly
+  in daily work, and raised the paid value relative to GPT and the cost of transferring existing cases.
+- An interview with Professor 최한나 identified goal/progress trajectories as a common axis across theories and
+  raised the educational risk that completed clinical interpretations could bypass trainees' intermediate reasoning.
 
-한 명의 테스트와 전문가 자문은 방향 신호이며 시장 검증 완료를 뜻하지 않습니다.
+One person's test and expert consultation provide directional signals, not completed market validation.
 
 ## Open validation questions
 
-- 수련상담사가 어떤 순간에 제품을 반복해서 여는가?
-- 축어록·회기 기록의 저빈도/고빈도 사용 패턴은 어떻게 다른가?
-- 수퍼비전 준비시간을 몇 분 줄이고, 그 절감에 얼마를 지불하는가?
-- 유료 수퍼비전 60분의 전·중·후 중 어느 지점에서 화면을 사용하는가?
-- 기존 사례 import가 첫 사용과 3회 이상 반복 사용을 얼마나 막는가?
-- 상담사 3~5명에게서 GPT 대비 우위가 같은 형태로 재현되는가?
+- At what moments do counselors in training repeatedly open the product?
+- How do low- and high-frequency transcript/session-note usage patterns differ?
+- How many minutes does it save in supervision preparation, and how much will users pay for that saving?
+- At which point before, during, or after a paid 60-minute supervision session do users use the screen?
+- How much does importing existing cases hinder first use and repeated use three or more times?
+- Does the same advantage over GPT recur across 3–5 counselors?
