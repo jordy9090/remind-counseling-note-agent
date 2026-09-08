@@ -4,7 +4,7 @@ from __future__ import annotations
 import traceback
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.security import require_preview_access
 from app.core.config import settings
@@ -14,6 +14,7 @@ from app.schemas.note import (
     ConfirmGeneratedNoteRequest,
     ConfirmGeneratedNoteResponse,
     GenerateNoteResponse,
+    GeneratedNoteRecord,
     RecomposeNoteRequest,
     RecomposeNoteResponse,
     SessionInput,
@@ -28,6 +29,7 @@ from app.services.recompose_cache import recompose_note_with_cache
 from app.services.supabase_storage import (
     NoteConfirmationError,
     confirm_generated_note,
+    fetch_generated_note,
     persist_generated_note,
     persist_supervision_report,
 )
@@ -54,6 +56,20 @@ async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Note confirmation failed: {str(error)}")
+
+
+@router.get("/records/{note_id}", response_model=GeneratedNoteRecord)
+async def get_note_record(note_id: str, actor: PreviewActor, response: Response) -> GeneratedNoteRecord:
+    """Return the complete owned draft and confirmed record without regenerating."""
+    try:
+        response.headers["Cache-Control"] = "private, no-store"
+        return fetch_generated_note(note_id, actor=actor)
+    except NoteConfirmationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="저장된 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
 
 
 @router.post("/recompose", response_model=RecomposeNoteResponse)

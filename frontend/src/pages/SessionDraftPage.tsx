@@ -46,6 +46,13 @@ import {
   getAudioCapabilities,
   getDocumentCapabilities,
   transcribeAudio,
+  saveTemporaryDraft,
+  listTemporaryDrafts,
+  loadTemporaryDraft,
+  loadGeneratedNote,
+  confirmGeneratedNote,
+  fetchCaseDashboard,
+  persistenceErrorMessage,
 } from '../api/client'
 import {
   buildNonverbalNotes,
@@ -65,6 +72,7 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
+import { confirmedPayload, isObject, noteFromRecord, readStoredSections, recordPayload, sectionFingerprint } from '../lib/persistenceWorkflow'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -83,6 +91,9 @@ import type {
   SupervisionContentBlock,
   SupervisionReportDraft,
   SupervisionReportSection,
+  TemporaryDraftRecord,
+  GeneratedNoteRecord,
+  CaseDashboardDocument,
 } from '../types/session'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
@@ -362,7 +373,19 @@ export default function SessionDraftPage({
   const [selectedGroundingClaimId, setSelectedGroundingClaimId] = useState<string | null>(
     localGroundingDemoClaimId,
   )
-  const isSavingDraft = false
+  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const [isPersistenceBusy, setIsPersistenceBusy] = useState(false)
+  const persistenceLock = useRef(false)
+  const [savedDraft, setSavedDraft] = useState<{ id: string; caseId: string; sessionNumber: number } | null>(null)
+  const [storedNoteId, setStoredNoteId] = useState<string | null>(null)
+  const [storedNote, setStoredNote] = useState<GeneratedNoteRecord | null>(null)
+  const [confirmedFingerprint, setConfirmedFingerprint] = useState<string | null>(null)
+  const [persistenceError, setPersistenceError] = useState<string | null>(null)
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restoreCaseId, setRestoreCaseId] = useState('')
+  const [savedDrafts, setSavedDrafts] = useState<TemporaryDraftRecord[]>([])
+  const [savedNotes, setSavedNotes] = useState<CaseDashboardDocument[]>([])
+  const [hasListedRecords, setHasListedRecords] = useState(false)
   const [draftSaveMessage, setDraftSaveMessage] = useState<string | null>(null)
   const isRecomposingDraft = false
   const [draftRecomposeMessage, setDraftRecomposeMessage] = useState<string | null>(null)
@@ -423,6 +446,17 @@ export default function SessionDraftPage({
     : defaultChecklistItems
 
   const updateField = (field: keyof SessionInput, value: string | number) => {
+    if ((field === 'case_id' || field === 'session_number') && form[field] !== value) {
+      if (result && !window.confirm('케이스 또는 회기 번호를 변경하면 현재 화면의 요약이 초기화됩니다. 변경할까요?')) return
+      setStoredNoteId(null)
+      setStoredNote(null)
+      setConfirmedFingerprint(null)
+      setResult(null)
+      setDraftSections([])
+      setFinalDocumentSections([])
+      setDraftSaveMessage(null)
+    }
+    setDraftSaveMessage(null)
     setForm((prev) => ({ ...prev, [field]: value }))
   }
 
@@ -757,13 +791,23 @@ export default function SessionDraftPage({
   const showGeneratedDraft = (data: NoteDraftResponse) => {
     const sections = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
     setResult(data)
+    setSupervisionReportDraft(null)
+    setFinalDocumentSections([])
     setDraftSections(sections)
     setVisibleSectionIds(new Set(sections.map((section) => section.id)))
     setCurrentScreen('summary_draft')
+    const report = data.full_response?.persistence_report
+    setStoredNoteId(report?.stored && report.note_id ? report.note_id : null)
+    setStoredNote(null)
+    setConfirmedFingerprint(null)
+    setDraftSaveMessage(report?.stored ? 'AI 초안을 저장했습니다. 상담사 확정 전 상태입니다.' : null)
+    setPersistenceError(!isLocalGroundingDemo && !report?.stored
+      ? 'AI 초안은 생성되었지만 기록 저장에 실패했습니다. 임시저장으로 작업을 보관할 수 있으며, 상담사 확정은 저장된 AI 초안에서 가능합니다.' : null)
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (persistenceLock.current || isLoading) return
     if (!form.case_id.trim()) {
       setHasSubmitted(true)
       setError('기본 정보에서 내담자/케이스를 입력해주세요.')
@@ -784,10 +828,10 @@ export default function SessionDraftPage({
       setError('업로드한 자료가 아직 회기 입력에 반영되지 않았습니다. 자료에 반영할 항목을 선택해주세요.')
       return
     }
+    if (result && !window.confirm('새 초안을 생성하면 현재 화면의 편집 내용이 교체됩니다. 계속할까요?')) return
     setHasSubmitted(true)
     setError(null)
-    setResult(null)
-    setSupervisionReportDraft(null)
+    setPersistenceError(null)
     setExpandedEvidenceId(null)
     setSelectedGroundingClaimId(null)
     setEditingSectionId(null)
@@ -796,7 +840,7 @@ export default function SessionDraftPage({
       setLoading: setIsLoading,
       generate: () => isLocalGroundingDemo && groundingDemoNote
         ? Promise.resolve(groundingDemoNote)
-        : generateNoteDraft({ ...form, persist: false }),
+        : generateNoteDraft({ ...form, persist: true }),
       onSuccess: showGeneratedDraft,
       onError: (requestError) => {
         setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
@@ -805,6 +849,7 @@ export default function SessionDraftPage({
   }
 
   const toggleSectionVisibility = (sectionId: DraftSectionId) => {
+    setDraftSaveMessage(null)
     const nextVisibleSectionIds = new Set(visibleSectionIds)
     if (nextVisibleSectionIds.has(sectionId)) {
       nextVisibleSectionIds.delete(sectionId)
@@ -825,6 +870,7 @@ export default function SessionDraftPage({
   }
 
   const updateDraftSectionContent = (sectionId: DraftSectionId, content: string) => {
+    setDraftSaveMessage(null)
     setDraftSections((prev) =>
       prev.map((section) => (
         section.id === sectionId
@@ -836,6 +882,7 @@ export default function SessionDraftPage({
 
   const addCustomSection = () => {
     if (!result) return
+    setDraftSaveMessage(null)
     const id = `custom_${Date.now()}`
     const newSection: DraftSection = {
       id,
@@ -855,10 +902,6 @@ export default function SessionDraftPage({
 
   const goBackToInput = () => {
     setCurrentScreen('session_input')
-    setResult(null)
-    setSupervisionReportDraft(null)
-    setDraftSections([])
-    setFinalDocumentSections([])
     setExpandedEvidenceId(null)
     setSelectedGroundingClaimId(null)
     setEditingSectionId(null)
@@ -984,8 +1027,234 @@ export default function SessionDraftPage({
     setEditingSupervisionText('')
   }
 
-  const handleTemporarySave = () => {
-    setDraftSaveMessage('현재 작성 내용은 이 브라우저 세션에 유지됩니다.')
+  const runPersistence = async (operation: () => Promise<void>) => {
+    if (persistenceLock.current || isLoading) return
+    persistenceLock.current = true
+    setIsPersistenceBusy(true)
+    setPersistenceError(null)
+    setDraftSaveMessage(null)
+    try {
+      await operation()
+    } catch (requestError) {
+      setPersistenceError(persistenceErrorMessage(requestError))
+    } finally {
+      persistenceLock.current = false
+      setIsPersistenceBusy(false)
+    }
+  }
+
+  const handleTemporarySave = () => void runPersistence(async () => {
+    if (!form.case_id.trim()) throw new Error('기본 정보에서 내담자/케이스를 입력해주세요.')
+    if (materials.some((material) => material.status === 'uploading' || material.status === 'transcribing')) {
+      throw new Error('자료 처리가 완료된 뒤 임시저장해주세요.')
+    }
+    setIsSavingDraft(true)
+    try {
+      const response = await saveTemporaryDraft({
+        draft_id: savedDraft?.caseId === form.case_id && savedDraft.sessionNumber === form.session_number ? savedDraft.id : undefined,
+        case_id: form.case_id,
+        session_number: form.session_number,
+        session_date: form.session_date,
+        counselor_name: form.counselor_name,
+        screen: currentScreen,
+        form,
+        session_topic: sessionTopic,
+        is_deidentified: isDeidentified,
+        selected_previous_session_ids: selectedPreviousSessionIds,
+        attachments: serializeMaterialsForDraft(materials),
+        visible_section_ids: [...visibleSectionIds],
+        draft_sections: draftSections,
+        final_document_sections: finalDocumentSections,
+        result: result ? { ...result, workspace_note_id: storedNoteId } : undefined,
+        final_document_type: finalDocumentType,
+        supervision_report_draft: supervisionReportDraft && editingSupervisionBlockId ? {
+          ...supervisionReportDraft,
+          sections: supervisionReportDraft.sections.map((section) => ({ ...section,
+            contentBlocks: section.contentBlocks.map((block) => block.id === editingSupervisionBlockId
+              ? updateSupervisionBlockFromText(block, editingSupervisionText) : block),
+          })),
+        } : supervisionReportDraft,
+      })
+      setSavedDraft({ id: response.draft_id, caseId: response.case_id, sessionNumber: response.session_number })
+      setDraftSaveMessage(`임시저장 완료 · ${formatSavedTime(response.saved_at)}. 저장된 기록에서 다시 불러올 수 있습니다. 원본 첨부파일은 저장되지 않습니다.`)
+    } finally {
+      setIsSavingDraft(false)
+    }
+  })
+
+  const handleConfirm = () => void runPersistence(async () => {
+    const original = result?.full_response?.session_summary_draft || storedNote?.draft_json
+    if (!storedNoteId || !original || !result || result.case_id !== form.case_id || result.session_number !== form.session_number) {
+      throw new Error('저장된 AI 초안을 불러오거나 새로 생성한 뒤 확정해주세요.')
+    }
+    const response = await confirmGeneratedNote({
+      note_id: storedNoteId,
+      confirmed_note: confirmedPayload({ ...original }, draftSections),
+      counselor_edited: true,
+      create_case_memory: false,
+    })
+    if (response.confirmation_status !== 'confirmed') throw new Error('서버의 확정 상태를 확인하지 못했습니다.')
+    setConfirmedFingerprint(sectionFingerprint(draftSections))
+    setDraftSaveMessage('상담사 확정 완료. 현재 요약의 최신 편집 내용을 저장했습니다.')
+  })
+
+  const refreshSavedRecords = () => void runPersistence(async () => {
+    setSavedDrafts([])
+    setSavedNotes([])
+    setHasListedRecords(false)
+    const [drafts, dashboard] = await Promise.allSettled([
+      listTemporaryDrafts(restoreCaseId.trim() || undefined),
+      restoreCaseId.trim() ? fetchCaseDashboard(restoreCaseId.trim()) : Promise.resolve(null),
+    ])
+    if (drafts.status === 'fulfilled') setSavedDrafts(drafts.value)
+    if (dashboard.status === 'fulfilled') setSavedNotes(dashboard.value?.documents.filter((document) => document.document_type === 'session_note') || [])
+    setHasListedRecords(true)
+    if (drafts.status === 'rejected' || dashboard.status === 'rejected') {
+      throw new Error('일부 저장 목록을 불러오지 못했습니다. 로그인 상태와 케이스 ID를 확인한 뒤 다시 조회해주세요.')
+    }
+  })
+
+  const allowRestore = () => !(hasUsableNoteInput || result || materials.length)
+    || window.confirm('저장된 기록으로 현재 화면의 작성 내용을 교체합니다. 저장하지 않은 변경사항은 사라집니다. 불러올까요?')
+
+  const resetRestoredUi = () => {
+    setEditingSectionId(null)
+    setExpandedEvidenceId(null)
+    setSelectedGroundingClaimId(null)
+    setEditingSupervisionBlockId(null)
+    setDocumentExportStatus(null)
+    setError(null)
+    setRestoreOpen(false)
+    setMaterialModal(null)
+  }
+
+  const restoreTemporary = (draftId: string) => {
+    if (!allowRestore()) return
+    void runPersistence(async () => {
+      const draft = await loadTemporaryDraft(draftId)
+      if (!isObject(draft.form) || typeof draft.form.counselor_memo !== 'string'
+        || typeof draft.form.transcript_text !== 'string' || typeof draft.form.previous_session_summary !== 'string'
+        || draft.form.case_id !== draft.case_id || draft.form.session_number !== draft.session_number) {
+        throw new Error('저장된 입력 형식을 확인할 수 없어 현재 화면을 유지합니다.')
+      }
+      const sections = draft.draft_sections.length ? readStoredSections(draft.draft_sections) : []
+      if (!sections) throw new Error('저장된 요약 형식을 확인할 수 없어 현재 화면을 유지합니다.')
+      const restoredResult = isObject(draft.result) ? draft.result : null
+      if (restoredResult && (typeof restoredResult.session_summary !== 'string'
+        || !Array.isArray(restoredResult.missing_items) || !Array.isArray(restoredResult.warnings))) {
+        throw new Error('저장된 생성 결과 형식을 확인할 수 없어 현재 화면을 유지합니다.')
+      }
+      const noteId = typeof restoredResult?.workspace_note_id === 'string' ? restoredResult.workspace_note_id : null
+      // Never replace temporary edits with the confirmed payload. Read only to verify status.
+      let record: GeneratedNoteRecord | null = null
+      let statusUnavailable = false
+      if (noteId) {
+        try { record = await loadGeneratedNote(noteId) } catch { statusUnavailable = true }
+        if (record && (record.case_id !== draft.case_id || record.session_number !== draft.session_number)) {
+          throw new Error('임시저장과 연결된 기록의 케이스·회기가 일치하지 않아 현재 화면을 유지합니다.')
+        }
+      }
+      const restoredForm = { ...initialForm, ...draft.form }
+      const restoredNote = restoredResult as unknown as NoteDraftResponse | null
+      const baseSections = restoredNote ? buildDocumentSections(restoredNote, restoredForm, draft.session_topic, new Set(draft.visible_section_ids)) : []
+      const nextSections = sections.map((section) => ({
+        ...(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)),
+        ...section,
+        // Saved edited text is authoritative; stale source claims must not be revalidated by restore.
+        groundingItems: markGroundingItemsStale(baseSections.find((base) => base.id === section.id)?.groundingItems || []),
+      }))
+      const finalSections = draft.final_document_sections || []
+      if (!finalSections.every((section) => isObject(section) && typeof section.id === 'string'
+        && typeof section.title === 'string' && typeof section.content === 'string'
+        && (section.contentKind === 'paragraph' || section.contentKind === 'list'))) {
+        throw new Error('저장된 최종문서 형식을 확인할 수 없어 현재 화면을 유지합니다.')
+      }
+      const finalType = ['session_note', 'supervision_report', 'termination_report'].includes(draft.final_document_type)
+        ? draft.final_document_type as FinalDocumentType : 'session_note'
+      const report = draft.supervision_report_draft
+      if (report && (!isObject(report) || !Array.isArray(report.sections) || !isObject(report.aiReview))) {
+        throw new Error('저장된 보고서 형식을 확인할 수 없어 현재 화면을 유지합니다.')
+      }
+      setForm(restoredForm)
+      setSessionTopic(draft.session_topic)
+      setIsDeidentified(draft.is_deidentified)
+      setSelectedPreviousSessionIds(draft.selected_previous_session_ids)
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      objectUrlsRef.current.clear()
+      setMaterials(draft.attachments.filter((material): material is UploadedMaterial =>
+        isObject(material) && typeof material.id === 'string' && typeof material.filename === 'string'
+        && (material.kind === 'document' || material.kind === 'audio') && Array.isArray(material.warnings)
+        && Array.isArray(material.appliedTargets),
+      ).map(({ file: _file, objectUrl: _url, ...material }) => ({ ...material,
+        status: material.status === 'uploading' || material.status === 'transcribing' ? 'failed' : material.status,
+      })))
+      setResult(restoredNote)
+      setDraftSections(nextSections)
+      setVisibleSectionIds(new Set(draft.visible_section_ids))
+      setFinalDocumentType(finalType)
+      setFinalDocumentSections((finalSections as FinalDocumentSection[]).map((section) => ({ ...section, groundingItems: [] })))
+      setSupervisionReportDraft((report as SupervisionReportDraft | null) || null)
+      setStoredNoteId(record ? noteId : null)
+      setStoredNote(record)
+      const confirmedSections = record?.confirmation_status === 'confirmed' ? readStoredSections(record.confirmed_json.workspace_sections) : null
+      setConfirmedFingerprint(confirmedSections ? sectionFingerprint(confirmedSections) : null)
+      setSavedDraft({ id: draftId, caseId: draft.case_id, sessionNumber: draft.session_number })
+      setCurrentScreen(restoredNote
+        ? draft.screen === 'final_document' && (finalType === 'supervision_report' ? Boolean(report) : finalSections.length > 0)
+          ? 'final_document' : 'summary_draft'
+        : 'session_input')
+      resetRestoredUi()
+      setDraftSaveMessage('임시저장을 불러왔습니다. 회기 입력과 요약 편집 내용을 복원했습니다. 첨부파일은 다시 선택해주세요.')
+      if (statusUnavailable) setPersistenceError('임시저장은 복원했지만 원본 기록의 상태를 조회하지 못했습니다. 확정하려면 저장된 AI 기록을 다시 불러와주세요.')
+    })
+  }
+
+  const restoreNote = (noteId: string) => {
+    if (!allowRestore()) return
+    void runPersistence(async () => {
+      const record = await loadGeneratedNote(noteId)
+      const data = noteFromRecord(record)
+      const payload = recordPayload(record)
+      const info = isObject(record.draft_json.session_info) ? record.draft_json.session_info : {}
+      const nextForm: SessionInput = {
+        ...initialForm, case_id: record.case_id, session_number: record.session_number, session_date: record.session_date,
+        client_alias: typeof info.client_alias === 'string' ? info.client_alias : '',
+        counselor_name: typeof info.counselor_name === 'string' ? info.counselor_name : '',
+      }
+      const theme = isObject(payload.session_theme) && typeof payload.session_theme.text === 'string' ? payload.session_theme.text : ''
+      const baseSections = buildDocumentSections(data, nextForm, theme, defaultVisibleSectionIds)
+      const savedSections = readStoredSections(payload.workspace_sections)
+      const sections = savedSections ? savedSections.map((section) => ({
+        ...(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)), ...section,
+      })) : baseSections.flatMap((section) => {
+        const field = section.id === 'supervision_memo' ? 'reflection' : section.id === 'main_issue' ? 'presenting_problem' : section.id
+        const value = payload[field]
+        if (isObject(value) && typeof value.text === 'string') return [{ ...section, content: value.text }]
+        if (isObject(payload.sections) && typeof payload.sections[field] === 'string') return [{ ...section, content: payload.sections[field] as string }]
+        // Older confirmed records may omit optional sections; never label an invented placeholder as confirmed.
+        return record.confirmation_status === 'confirmed' ? [] : [section]
+      })
+      setForm(nextForm)
+      setSessionTopic(theme)
+      setResult(data)
+      setDraftSections(sections)
+      setVisibleSectionIds(new Set(sections.filter((section) => section.visible).map((section) => section.id)))
+      setStoredNoteId(record.note_id)
+      setStoredNote(record)
+      setConfirmedFingerprint(record.confirmation_status === 'confirmed' ? sectionFingerprint(sections) : null)
+      setSavedDraft(null)
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      objectUrlsRef.current.clear()
+      setMaterials([])
+      setSelectedPreviousSessionIds([])
+      setFinalDocumentSections([])
+      setSupervisionReportDraft(null)
+      setCurrentScreen('summary_draft')
+      resetRestoredUi()
+      setDraftSaveMessage(record.confirmation_status === 'confirmed'
+        ? '서버에서 상담사 확정본 전체를 불러왔습니다. 원문 입력은 임시저장에서 복원할 수 있습니다.'
+        : '서버에서 AI 초안을 불러왔습니다. 상담사 검토와 확정이 필요합니다.')
+    })
   }
 
   const handleDownloadDocument = async (format: DocumentExportFormat) => {
@@ -1032,6 +1301,7 @@ export default function SessionDraftPage({
 
   return (
     <main className="app-shell min-h-screen bg-[#f1f2f4] text-slate-950">
+      <fieldset disabled={isPersistenceBusy || isLoading} className="min-w-0">
       <details className="mobile-navigation">
         <summary><img src="/remind-logo.png" alt="Re:mind" /><span>메뉴</span></summary>
         <nav aria-label="모바일 메뉴" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open') }}>
@@ -1051,7 +1321,7 @@ export default function SessionDraftPage({
         <TopWorkspaceBar
           activeStep={activeStep}
           currentScreen={currentScreen}
-          draftSaveMessage={draftSaveMessage}
+          draftSaveMessage={null}
           isSavingDraft={isSavingDraft}
           resultReady={Boolean(result)}
           onGoToFinalDocument={() => openFinalDocument()}
@@ -1061,6 +1331,49 @@ export default function SessionDraftPage({
           onOpenSessionInput={openSessionInput}
           onTemporarySave={handleTemporarySave}
         />
+
+        <section aria-label="기록 저장과 복원" className="border-b border-slate-200 bg-white px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" className="rounded-md border border-slate-300 px-3 py-2 font-semibold" onClick={() => {
+              setRestoreOpen((open) => !open)
+              setRestoreCaseId(form.case_id)
+              setHasListedRecords(false)
+              setSavedDrafts([])
+              setSavedNotes([])
+            }}>저장된 기록 불러오기</button>
+            {currentScreen === 'summary_draft' && result && <>
+              <span>{confirmedFingerprint
+                ? confirmedFingerprint === sectionFingerprint(draftSections) ? '상담사 확정본' : '확정본에 미확정 수정사항이 있습니다'
+                : storedNoteId ? 'AI 초안 · 상담사 미확정' : 'AI 초안 · 기록 미저장'}</span>
+              <button type="button" disabled={!storedNoteId || confirmedFingerprint === sectionFingerprint(draftSections)}
+                className="rounded-md bg-blue-700 px-3 py-2 font-semibold text-white disabled:opacity-50" onClick={handleConfirm}>상담사 확정</button>
+            </>}
+            {isPersistenceBusy && <span role="status">저장소 요청 처리 중…</span>}
+          </div>
+          {draftSaveMessage && <p role="status" className="mt-2 break-words text-slate-600">{draftSaveMessage}</p>}
+          {persistenceError && <p role="alert" className="mt-2 break-words text-red-700">{persistenceError}</p>}
+          {restoreOpen && <div className="mt-3 space-y-3">
+            <p className="text-slate-600">임시저장은 현재 계정에서 조회합니다. AI 초안·확정본은 케이스 ID를 입력해 조회하세요.</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="min-w-0">케이스 ID<input aria-label="저장 기록 케이스 ID" className="mt-1 block w-full rounded border border-slate-300 px-3 py-2" value={restoreCaseId} onChange={(event) => {
+                setRestoreCaseId(event.target.value)
+                setHasListedRecords(false)
+                setSavedDrafts([])
+                setSavedNotes([])
+              }} /></label>
+              <button type="button" className="rounded border border-slate-300 px-3 py-2 font-semibold" onClick={refreshSavedRecords}>저장 목록 조회</button>
+            </div>
+            {hasListedRecords && <div className="max-h-64 space-y-2 overflow-y-auto">
+              {!savedDrafts.length && !savedNotes.length && <p>조회된 저장 기록이 없습니다.</p>}
+              {savedDrafts.map((draft) => <button key={draft.draft_id} type="button" onClick={() => restoreTemporary(draft.draft_id)} className="block w-full break-words rounded border border-slate-200 p-3 text-left hover:bg-slate-50">
+                임시저장 · {draft.case_id} · {draft.session_number}회기 · {formatSavedTime(draft.saved_at)}
+              </button>)}
+              {savedNotes.map((note) => <button key={note.document_id} type="button" onClick={() => restoreNote(note.document_id)} className="block w-full break-words rounded border border-slate-200 p-3 text-left hover:bg-slate-50">
+                {note.status === 'confirmed' ? '확정본' : 'AI 초안'} · {note.title} · {note.created_at ? formatSavedTime(note.created_at) : ''}
+              </button>)}
+            </div>}
+          </div>}
+        </section>
 
         {currentScreen === 'case_list' ? (
           <CaseListWorkspace
@@ -1116,6 +1429,7 @@ export default function SessionDraftPage({
 
               {currentScreen === 'summary_draft' && result && (
                 <SummaryDraftWorkspace
+                  confirmationState={confirmedFingerprint ? confirmedFingerprint === sectionFingerprint(draftSections) ? 'confirmed' : 'edited' : 'draft'}
                   editingSectionId={editingSectionId}
                   expandedEvidenceId={expandedEvidenceId}
                   form={form}
@@ -1184,7 +1498,7 @@ export default function SessionDraftPage({
                   aiReview={supervisionReportDraft.aiReview}
                   capabilities={documentCapabilities}
                   capabilitiesError={documentCapabilitiesError}
-                  draftSaveMessage={draftSaveMessage}
+                  draftSaveMessage={null}
                   exportError={documentExportError}
                   exportStatus={documentExportStatus}
                   isExporting={isExportingDocument}
@@ -1198,7 +1512,7 @@ export default function SessionDraftPage({
                   documentType={finalDocumentType}
                   capabilities={documentCapabilities}
                   capabilitiesError={documentCapabilitiesError}
-                  draftSaveMessage={draftSaveMessage}
+                  draftSaveMessage={null}
                   exportError={documentExportError}
                   exportStatus={documentExportStatus}
                   isExporting={isExportingDocument}
@@ -1264,6 +1578,7 @@ export default function SessionDraftPage({
           onUploadDocumentFiles={uploadDocumentFiles}
         />
       )}
+      </fieldset>
     </main>
   )
 }
@@ -1860,6 +2175,7 @@ function SessionInputWorkspace({
 }
 
 function SummaryDraftWorkspace({
+  confirmationState,
   editingSectionId,
   expandedEvidenceId,
   form,
@@ -1870,6 +2186,7 @@ function SummaryDraftWorkspace({
   selectedGroundingClaimId,
   sections,
 }: {
+  confirmationState: 'draft' | 'confirmed' | 'edited'
   editingSectionId: DraftSectionId | null
   expandedEvidenceId: DraftSectionId | null
   form: SessionInput
@@ -1886,9 +2203,12 @@ function SummaryDraftWorkspace({
         <div className="flex items-center gap-3">
           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">i</span>
           <div>
-            <p className="text-xs font-bold text-slate-900">AI 초안이 생성되었습니다.</p>
+            <p className="text-xs font-bold text-slate-900">{confirmationState === 'confirmed'
+              ? '상담사가 확정한 회기요약입니다.' : confirmationState === 'edited'
+                ? '확정 이후 수정한 내용이 있습니다.' : 'AI 초안입니다. 상담사 검토가 필요합니다.'}</p>
             <p className="mt-1 text-xs font-semibold text-slate-700">
-              근거가 연결된 항목을 확인하고, 상담사 판단이 필요한 문장을 검토해 주세요.
+              {confirmationState === 'confirmed' ? '내용을 수정하면 다시 확정해야 최신 수정본이 기록에 반영됩니다.'
+                : '내용과 근거를 검토한 뒤 상담사 확정 버튼으로 최신 요약을 저장해주세요.'}
             </p>
           </div>
         </div>
@@ -1900,7 +2220,7 @@ function SummaryDraftWorkspace({
           <div>
             <div className="flex items-center gap-3">
               <ChevronRight className="h-6 w-6 rotate-180" />
-              <h1 className="text-xl font-bold tracking-normal">요약 초안</h1>
+              <h1 className="text-xl font-bold tracking-normal">{confirmationState === 'confirmed' ? '확정 회기요약' : '요약 초안'}</h1>
             </div>
             <p className="mt-1.5 text-xs font-bold text-blue-50">
               {getClientDisplayName(form)} · {form.session_number}회기 · {formatCompactDate(form.session_date)}
@@ -3668,6 +3988,11 @@ function SourceBadge({ interactive = false, type }: { interactive?: boolean; typ
   )
 }
 
+function emptyRestoredSection(id: string): DraftSection {
+  return { id, title: id, content: '', visible: true, editable: true, toggleable: true,
+    sourceBadges: ['editable', 'needs_review'], confidence: 'low', evidence: [], groundingItems: [] }
+}
+
 function buildDocumentSections(
   result: NoteDraftResponse,
   form: SessionInput,
@@ -4305,6 +4630,9 @@ function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
     pageCount: material.pageCount,
     warnings: material.warnings,
     error: material.error,
+    extractedText: material.extractedText,
+    transcriptText: material.transcriptText,
+    segments: material.segments,
     durationSeconds: material.durationSeconds,
     language: material.language,
     runtimeMode: material.runtimeMode,
