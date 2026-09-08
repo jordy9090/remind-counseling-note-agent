@@ -1,8 +1,8 @@
 # Re:mind Raw Evidence Grounding — Demo Checkpoint
 
-## 1. 문제
+## 1. Problem
 
-기존 흐름은 다음과 같았다.
+The previous flow was:
 
 ```text
 raw counseling transcript
@@ -11,9 +11,9 @@ raw counseling transcript
 → downstream generation
 ```
 
-이 구조에서는 AI가 이전 요약에서 누락하거나 추정한 내용을 후속 생성이 factual evidence처럼 재사용할 위험이 있다.
+This structure risks downstream generation reusing omissions or assumptions from earlier AI summaries as factual evidence.
 
-## 2. 최종 결정
+## 2. Final decision
 
 ```text
 raw transcript
@@ -24,26 +24,28 @@ raw transcript
 → counselor review UI
 ```
 
-## 3. 버린 접근
+## 3. Rejected approaches
 
 - Global semantic episode extraction
 - Turn-function based episode assembly
 - Query-conditioned exact-span selector
 
-Controlled synthetic evaluation에서 extraction/selection instability 또는 false-positive가 관찰되어 제품 경로에서 채택하지 않았다. 관련 코드는 연구·평가 이력을 재현하기 위한 experimental 코드이며 production graph에 연결하지 않는다.
+Controlled synthetic evaluation revealed extraction/selection instability or false positives, so these
+approaches were not adopted in the product path. Related code is experimental code for reproducing
+research/evaluation history and is not connected to the production graph.
 
-보존 위치: `research/raw_evidence_experiments/`
+Location: `research/raw_evidence_experiments/`
 
-## 4. 현재 evidence unit
+## 4. Current evidence unit
 
-현재 evidence unit은 `raw region`이다.
+The current evidence unit is a `raw region`.
 
-- Deterministic하게 생성한다.
-- 비식별화된 sanitized transcript를 사용한다.
-- Controlled demo의 평균 region 길이는 약 8 turns이다.
-- 각 region은 canonical `source_ref`를 유지한다.
+- Generated deterministically.
+- Uses de-identified, sanitized transcripts.
+- Average region length in the controlled demo is approximately 8 turns.
+- Each region retains a canonical `source_ref`.
 
-## 5. source hierarchy
+## 5. Source hierarchy
 
 ```text
 Raw transcript evidence
@@ -52,13 +54,13 @@ Model clinical inference
 Unsupported
 ```
 
-## 6. hallucination 방어
+## 6. Hallucination defenses
 
-- Retrieval query text 자체는 generation evidence로 취급하지 않는다.
-- Generation에는 validated source만 제공한다.
-- 인용한 source ID의 존재 여부와 claim-source semantic support를 별도로 검증한다.
-- Partial 또는 unsupported claim은 `review_required`로 보낸다.
-- 잘못 인용된 source를 다른 source로 자동 relink하지 않는다.
+- Retrieval query text itself is not treated as generation evidence.
+- Only validated sources are provided to generation.
+- Cited source ID existence and claim-source semantic support are validated separately.
+- Partial or unsupported claims are sent to `review_required`.
+- Incorrectly cited sources are not automatically relinked to other sources.
 
 ## 7. UI
 
@@ -68,11 +70,13 @@ AI claim
 → exact cited historical transcript
 ```
 
-상담사는 요약 문장 옆의 근거 control을 통해 인용된 과거 회기와 sanitized 원문을 직접 확인한다. 상담사 확정 기록, AI 해석, 근거 부족 상태는 서로 다른 review state로 표시한다.
+Counselors use the evidence control beside a summary sentence to directly inspect the cited historical
+session and sanitized source text. Counselor-confirmed notes, AI interpretations, and insufficient
+evidence are displayed as distinct review states.
 
-## 8. 현재 검증 상태
+## 8. Current verification status
 
-아래 결과는 작은 controlled synthetic corpus에만 해당하며 production 또는 실제 상담 정확도를 의미하지 않는다.
+These results apply only to a small controlled synthetic corpus, not to production or real counseling accuracy.
 
 - Raw region Gold Span Containment@5: 7/7
 - Gold Session Recall@5: 7/7
@@ -83,25 +87,25 @@ AI claim
 - False Supported Rate: 0%
 - Source-removal False Support: 0%
 - Wrong-source swap approved: 0
-- PR5 grounding/evidence UI verification 및 frontend production build 통과
-- DEV synthetic demo는 `/api/notes/generate` 호출 없이 evidence UI에 진입
+- PR5 grounding/evidence UI verification and frontend production build passed
+- DEV synthetic demo enters the evidence UI without calling `/api/notes/generate`
 
-로컬 검증 산출물은 `results/debug/` 아래에 생성하며 checkpoint commit에는 포함하지 않는다.
+Local verification artifacts are generated under `results/debug/` and are not included in the checkpoint commit.
 
-## 9. 현재 limitation
+## 9. Current limitations
 
-- Synthetic corpus가 작다.
-- Retrieval precision 자체는 아직 실제 상담 데이터에서 검증되지 않았다.
-- Top-5에는 non-gold이지만 의미상 관련된 region이 존재한다.
-- Counselor-facing usability validation이 필요하다.
-- Grounding feature flag의 기본값은 OFF다.
-- Supabase remote migration과 production deployment는 별도 검증이 필요하다.
+- The synthetic corpus is small.
+- Retrieval precision itself has not yet been validated on real counseling data.
+- Top-5 contains regions that are non-gold but semantically related.
+- Counselor-facing usability validation is needed.
+- The grounding feature flag defaults to OFF.
+- Remote Supabase migrations and production deployment require separate verification.
 
-## 10. 다음 제품 검증
+## 10. Next product validation
 
-상담사에게 다음을 확인한다.
+Ask counselors:
 
-1. AI 문장에서 원문을 바로 확인하는 방식이 실제 검토에 도움이 되는가?
-2. 약 8-turn 원문 범위가 너무 길거나 짧은가?
-3. Raw evidence, 상담사 확정 기록, AI 해석의 구분이 이해되는가?
-4. 이런 근거 확인 기능이 있으면 AI 작성 문서를 실제 업무에서 사용할 의향이 높아지는가?
+1. Does opening the source directly from an AI sentence help with actual review?
+2. Is a source range of approximately 8 turns too long or too short?
+3. Is the distinction among raw evidence, counselor-confirmed notes, and AI interpretations understandable?
+4. Does this evidence-inspection feature increase willingness to use AI-written documents in actual work?
