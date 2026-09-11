@@ -48,6 +48,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!supabase) return
+    const client = supabase
     const urlError = readAuthErrorFromUrl()
     if (urlError) {
       setMessage(urlError)
@@ -55,11 +56,22 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
     }
     void Promise.all([supabase.auth.getSession(), getAvailableOAuthProviders()]).then(([auth, available]) => {
-      setSession(auth.data.session)
+      const current = auth.data.session
+      if (current?.user?.is_anonymous) {
+        void client.auth.signOut()
+        setSession(null)
+      } else {
+        setSession(current)
+      }
       setProviders(available)
       setLoading(false)
     })
     const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // 과거 익명 세션이 브라우저에 남아 있으면 워크스페이스를 열지 않고 정리한다 (API도 익명 토큰을 거부함)
+      if (nextSession?.user?.is_anonymous) {
+        void client.auth.signOut()
+        return
+      }
       setSession(nextSession)
       if (event === 'PASSWORD_RECOVERY') setMode('recovery')
       if (event === 'SIGNED_OUT') {
