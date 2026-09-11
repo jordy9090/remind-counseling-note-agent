@@ -1,8 +1,8 @@
 # Security Checklist
 
-Re:mind는 Supabase authentication과 user-scoped RLS 경로를 구현했지만, 실제 상담자료를
-운영할 준비가 완료된 상태는 아닙니다. 아래 통제의 구현 여부와 배포 설정을 별도로 검증해야
-합니다.
+Re:mind implements Supabase authentication and user-scoped RLS paths, but is not yet ready
+for operating with real counseling data. Verify implementation of the controls below and
+deployment settings separately.
 
 ## Required Before Real Counseling Data
 

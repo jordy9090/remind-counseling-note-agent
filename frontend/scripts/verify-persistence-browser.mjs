@@ -11,6 +11,9 @@ const apiUrl = 'http://127.0.0.1:8017'
 const caseId = `SYNTHETIC-BROWSER-${Date.now()}`
 const memo = '합성 내담자는 산책한 뒤 마음이 편안해졌다고 말했다.'
 const edited = '상담사가 확인한 최신 합성 문장. 내담자는 산책 후 편안함을 보고했다. '.repeat(12)
+const rawDocument = 'SYNTHETIC-UNAPPLIED-DOCUMENT-CACHE'
+const rawAudioEdit = 'SYNTHETIC-UNAPPLIED-AUDIO-EDIT'
+const appliedAudio = '상담사가 수정하고 회기 입력에 반영한 합성 발화'
 const port = 9500 + process.pid % 400
 const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'remind-persistence-browser-'))
 const screenshots = path.resolve('screenshots/persistence')
@@ -31,6 +34,20 @@ try {
   cdp.on('Network.requestWillBeSent', ({ request }) => requests.push(request))
   cdp.on('Page.javascriptDialogOpening', () => void cdp.send('Page.handleJavaScriptDialog', { accept: true }))
   cdp.on('Fetch.requestPaused', async ({ requestId, request }) => {
+    const reply = async (value) => cdp.send('Fetch.fulfillRequest', { requestId, responseCode: 200,
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: new URL(pageUrl).origin },
+        { name: 'Access-Control-Allow-Headers', value: 'authorization,content-type,apikey,x-client-info' },
+        { name: 'Access-Control-Allow-Methods', value: 'GET,POST,OPTIONS' }],
+      body: Buffer.from(JSON.stringify(value)).toString('base64') })
+    if (request.url.endsWith('/api/audio/capabilities')) return reply({
+      upload: { available: true }, transcription: { available: true }, speaker_diarization: { available: true }, runtime_mode: 'stub',
+    })
+    if (request.url.endsWith('/api/audio/transcribe')) return reply({
+      transcription_id: 'synthetic-transcription', filename: 'synthetic.wav', status: 'completed', runtime_mode: 'stub',
+      diarization_status: 'completed', duration_seconds: 3, language: 'ko', language_probability: 1,
+      transcript_text: 'Synthetic initial audio cache', nonverbal_notes: 'Synthetic acoustic cache', warnings: [],
+      segments: [{ id: 1, start: 0, end: 3, speaker: 'SPEAKER_00', text: 'Synthetic initial audio cache', words: [{ text: 'Synthetic word cache' }] }],
+    })
     const fail = (failDraft && request.url.endsWith('/api/notes/drafts') && request.method === 'POST')
       || (failConfirm && request.url.endsWith('/api/notes/confirm'))
     if (fail) {
@@ -42,7 +59,7 @@ try {
   await cdp.send('Network.enable')
   await cdp.send('Runtime.enable')
   await cdp.send('Page.enable')
-  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: `${apiUrl}/api/notes/*` }] })
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: `${apiUrl}/api/notes/*` }, { urlPattern: `${apiUrl}/api/audio/*` }] })
   // Seed a synthetic Supabase client session, keeping AuthGate and token client unchanged.
   const seed = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('sb-127-auth-token', JSON.stringify({access_token:'synthetic-access-token',refresh_token:'synthetic-refresh-token',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,user:{id:'synthetic-user-a',aud:'authenticated',role:'authenticated',app_metadata:{},user_metadata:{},created_at:'2026-09-09T00:00:00Z'}}));` })
   await cdp.send('Page.reload')
@@ -56,16 +73,67 @@ try {
   await click('회기 중 특이사항', true)
   await fill('#modal_counselor_memo', memo)
   await click('완료')
+  await click('클릭하여 파일을 선택하거나 직접 입력해주세요.', true)
+  await click('문서 업로드', true)
+  await uploadSyntheticFile('input[type=file][accept^=".pdf"]', 'synthetic-private.txt', rawDocument, 'text/plain')
+  await hasText('추출 완료')
+  await click('완료')
+  await click('클릭하여 파일을 선택하거나 직접 입력해주세요.', true)
+  await click('음성 업로드', true)
+  await cdp.evaluate(`document.querySelector('input[type=file][accept^=".mp3"]').closest('section').querySelector('input[type=checkbox]').click()`)
+  await uploadSyntheticFile('input[type=file][accept^=".mp3"]', 'synthetic.wav', 'Synthetic audio bytes', 'audio/wav')
+  await click('완료')
+  await click('축어록 생성')
+  await click('축어록 확인')
+  await fill('textarea:not([readonly])', appliedAudio)
+  await click('회기요약 입력에 반영')
+  await cdp.evaluate(`document.querySelector('[aria-label="닫기"]')?.click()`)
+  await click('축어록 확인')
+  await fill('textarea:not([readonly])', rawAudioEdit)
+  await cdp.evaluate(`document.querySelector('[aria-label="닫기"]').click()`)
+  failDraft = true
+  await click('임시저장')
+  await hasText('저장소 요청을 완료하지 못했습니다')
+  await click('축어록 확인')
+  assert.equal(await cdp.evaluate(`document.querySelector('textarea:not([readonly])').value`), rawAudioEdit, 'failed save must preserve unapplied in-memory segment edits')
+  await cdp.evaluate(`document.querySelector('[aria-label="닫기"]').click()`)
+  failDraft = false
   const before = requests.filter((r) => r.method === 'POST' && r.url.endsWith('/api/notes/drafts')).length
   await cdp.evaluate(`(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='임시저장'); b.click(); b.click(); })()`)
   await hasText('임시저장 완료')
   assert.equal(requests.filter((r) => r.method === 'POST' && r.url.endsWith('/api/notes/drafts')).length, before + 1, 'duplicate save must be blocked')
+  const savedRequest = JSON.parse(requests.filter(r => r.method === 'POST' && r.url.endsWith('/api/notes/drafts')).at(-1).postData)
+  assert(!JSON.stringify(savedRequest).includes(rawDocument))
+  assert(!JSON.stringify(savedRequest).includes(rawAudioEdit))
+  assert(savedRequest.form.transcript_text.includes(appliedAudio))
+  assert(savedRequest.attachments.every(a => a.requiresReattachment && !('segments' in a) && !('lastAppliedTranscriptText' in a)))
+  const savedOnServer = await apiJson(`/api/notes/drafts?case_id=${caseId}`)
+  assert(!JSON.stringify(savedOnServer).includes(rawDocument))
+  assert(!JSON.stringify(savedOnServer).includes(rawAudioEdit))
+  assert(savedOnServer[0].form.transcript_text.includes(appliedAudio))
+  assert(!(await cdp.evaluate('JSON.stringify(localStorage)')).includes(rawAudioEdit))
+  assert(!(await cdp.evaluate('JSON.stringify(localStorage)')).includes(rawDocument))
   await cdp.send('Page.reload')
   await hasText('저장된 기록 불러오기')
   await click('저장된 기록 불러오기')
   await click('저장 목록 조회')
   await click(`임시저장 · ${caseId}`, true)
   await hasText(memo)
+  await hasText('파일을 재첨부해주세요')
+  await hasText('회기 입력에 미반영한 축어록 수정은 복원되지 않았습니다')
+  await cdp.evaluate(`[...document.querySelectorAll('.material-row')].find(row=>row.textContent.includes('축어록/STT')).querySelector('button').click()`)
+  assert((await cdp.evaluate(`document.querySelector('#modal_transcript_text').value`)).includes(appliedAudio), 'applied input must restore in its editor')
+  await click('완료')
+  assert(!(await bodyText()).includes(rawAudioEdit))
+  assert.equal(await cdp.evaluate(`[...document.querySelectorAll('button')].filter(b=>['축어록 확인','내용 확인','자료에 반영'].includes(b.textContent.trim())).length`), 0)
+  assert.equal(await cdp.evaluate(`[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()==='축어록 생성'&&!b.disabled).length`), 0)
+  for (const width of [375, 768, 1440]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 768 })
+    await cdp.evaluate('new Promise(resolve => requestAnimationFrame(resolve))')
+    assert(await cdp.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), `restored attachments overflow at ${width}`)
+    await captureScreenshot(cdp, path.join(screenshots, `reattachment-${width}.png`))
+  }
+  console.log('document/audio caches excluded from request and stored draft; applied input restored; reattachment state and failed-save edits: passed')
   console.log('temporary save -> reload -> server restore: passed')
 
   failDraft = true
@@ -111,6 +179,40 @@ try {
   await hasText('재확정 전 합성 수정 문장')
   await hasText('확정본에 미확정 수정사항이 있습니다')
   console.log('temporary edits never overwritten by confirmed original: passed')
+  await click('상담사 확정')
+  await hasText('상담사 확정 완료')
+  let stored = await apiJson(`/api/notes/records/${payload.note_id}`)
+  assert.equal(stored.confirmed_json.session_content.text, '재확정 전 합성 수정 문장')
+  const originalAi = structuredClone(stored.draft_json)
+  for (const shape of ['string', 'object', 'sections']) {
+    const text = `합성 ${shape} 형식 확정본`
+    const values = { session_content: text, next_plan: '', psychological_test: '상담사가 확인한 합성 검사 요약' }
+    const confirmed = shape === 'sections' ? { sections: values } : shape === 'object'
+      ? Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { text: v }])) : values
+    await apiJson('/api/notes/confirm', { note_id: payload.note_id, confirmed_note: confirmed, counselor_edited: true, create_case_memory: false })
+    await reopenConfirmed()
+    await hasText(text)
+    await hasText('상담사가 확인한 합성 검사 요약')
+    assert(!(await bodyText()).includes('다음 회기 계획을 입력해 주세요.'), 'intentional empty plan must not become a placeholder')
+    await editSummary(`${text} 재확정`)
+    await click('상담사 확정')
+    await hasText('상담사 확정 완료')
+    await reopenConfirmed()
+    await hasText(`${text} 재확정`)
+    stored = await apiJson(`/api/notes/records/${payload.note_id}`)
+    assert.equal(stored.confirmed_json.session_content.text, `${text} 재확정`)
+    assert.equal(stored.confirmed_json.next_plan.text, '')
+    assert.equal(stored.confirmed_json.psychological_test.text, '상담사가 확인한 합성 검사 요약')
+    assert.equal(stored.confirmed_json.reflection, undefined, 'missing confirmed fields must not reappear from AI')
+    assert.deepEqual(stored.draft_json, originalAi)
+  }
+  await apiJson('/api/notes/confirm', { note_id: payload.note_id, confirmed_note: { session_content: { broken: true } }, counselor_edited: true, create_case_memory: false })
+  await click('저장된 기록 불러오기')
+  await click('저장 목록 조회')
+  await click('확정본 ·', true)
+  await hasText('저장된 항목 형식을 확인할 수 없어 복원하지 않았습니다')
+  assert((await bodyText()).includes('합성 sections 형식 확정본 재확정'), 'failed confirmed restore must preserve current edits')
+  console.log('legacy string/object/sections -> edit -> reconfirm -> reopen; empty and missing fields, AI original, malformed restore: passed')
 
   for (const width of [375, 767, 768, 1024, 1440]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 768 })
@@ -131,6 +233,13 @@ try {
   assert.equal(exceptions.length, 0, `browser exceptions: ${exceptions.join(', ')}`)
   console.log('save/confirm failure UI and missing token: passed')
   console.log(`screenshots: ${screenshots}`)
+} catch (error) {
+  try {
+    console.error('Failure screen:', await bodyText())
+    console.error('Failure overlay:', await cdp.evaluate(`document.querySelector('vite-error-overlay')?.shadowRoot?.textContent || ''`))
+    await captureScreenshot(cdp, path.join(screenshots, 'failure.png'))
+  } catch {}
+  throw error
 } finally {
   try { await cdp?.send('Browser.close') } catch {}
   socket?.close()
@@ -138,7 +247,7 @@ try {
   // Keep any locked temporary browser profile for the OS to reclaim.
 }
 
-async function bodyText() { return cdp.evaluate('document.body.innerText') }
+async function bodyText() { return cdp.evaluate('document.body?.innerText || ""') }
 async function hasText(text) { return waitFor(async () => (await bodyText()).includes(text), 30000) }
 async function click(text, partial = false) {
   await waitFor(async () => cdp.evaluate(`(() => {const b=[...document.querySelectorAll('button')].find(b=>${partial ? 'b.textContent.trim().includes' : 'b.textContent.trim() ==='}(${JSON.stringify(text)}) && !b.matches(':disabled')); if(!b)return false; b.click(); return true})()`))
@@ -151,6 +260,27 @@ async function editSummary(text) {
   await cdp.evaluate(`(() => {const section=[...document.querySelectorAll('section')].find(e=>e.querySelector('h2')?.textContent==='상담 내용'); section.querySelector('button.mt-4').click()})()`)
   await fill('section textarea', text)
   await cdp.evaluate(`document.querySelector('section textarea').blur()`)
+}
+
+async function uploadSyntheticFile(selector, filename, text, type) {
+  await waitFor(async () => cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}) && !document.querySelector(${JSON.stringify(selector)}).disabled)`))
+  await cdp.evaluate(`(() => { const input=document.querySelector(${JSON.stringify(selector)}); const transfer=new DataTransfer(); transfer.items.add(new File([${JSON.stringify(text)}],${JSON.stringify(filename)},{type:${JSON.stringify(type)}})); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); })()`)
+}
+async function apiJson(route, body) {
+  const response = await fetch(`${apiUrl}${route}`, { method: body ? 'POST' : 'GET',
+    headers: { Authorization: 'Bearer synthetic-access-token', 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined })
+  assert(response.ok, `${route}: ${response.status}`)
+  return response.json()
+}
+async function reopenConfirmed() {
+  await cdp.send('Page.reload')
+  await hasText('저장된 기록 불러오기')
+  await click('저장된 기록 불러오기')
+  await fill('[aria-label="저장 기록 케이스 ID"]', caseId)
+  await click('저장 목록 조회')
+  await click('확정본 ·', true)
+  await hasText('서버에서 상담사 확정본 전체를 불러왔습니다')
 }
 
 async function captureScreenshot(cdp, screenshotPath) {

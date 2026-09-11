@@ -1,195 +1,192 @@
 # Architecture
 
-## 1. Runtime overview
+## Baseline and responsibilities
 
-Re:mind의 현재 제품 경로는 React frontend, FastAPI 또는 Vercel Python functions,
-LangGraph 기반 문서 생성 workflow, 선택적 Supabase retrieval/persistence로 구성됩니다.
+Current implementation baseline: `4815b4457af2c5ccbccbafe4e53687229988346c`.
+The user confirmed that on 2026-09-09 Production runs this SHA on Vercel with
+`git / main / READY`, at [remind.ai.kr](https://remind.ai.kr).
+Remote environment variables and Supabase migration/RLS state have not been verified.
+This document describes only the implementation at this commit.
+
+| Layer | Responsibility |
+| --- | --- |
+| Frontend | Auth entry, session material editing, response projection for display, evidence review, document transformation/download requests |
+| Backend | Auth actor validation, API/Pydantic contracts, graph execution, material extraction/audio transcription/document export, persistence requests |
+| AI workflow | Note structuring, summarization, verification, and optional retrieval/grounding; separate supervision form assembly |
+| Storage | User-scoped cases, sessions, drafts, confirmed notes, evidence, retrieval data, and export history |
+| Research | Experiment/evaluation code not imported by the product; separate from the product runtime and migration chain |
+
+Feature-specific files and APIs are collected in the [Product Runtime Map](product_runtime_map.md);
+relationships and persistence conditions are in the [Data Model](data_model.md).
+
+## Frontend
 
 ```text
-React frontend
-  ├─ Supabase Auth
-  └─ REST API
-       ├─ FastAPI backend (local/server)
-       └─ Vercel Python wrappers (serverless)
-            ↓
-       LangGraph workflows / document and audio services
-            ↓
-       Optional Supabase + OpenAI + WhisperX
+main.tsx → App
+             ├─ DEV + ?grounding-demo=1 → lazy GroundingDemoPage
+             └─ AuthGate
+                  ├─ No auth configuration → connection preparation screen
+                  ├─ No session → Landing (public) → 로그인 / 무료로 시작하기
+                  │      → email signin · signup (+ confirmation email, resend) · password reset
+                  │      → PASSWORD_RECOVERY event → new-password form
+                  └─ Existing session → SessionDraftPage (header shows email + 로그아웃)
 ```
 
-모든 생성 응답은 Pydantic schema로 검증됩니다. `USE_STUB=1`에서는 외부 모델 없이
-결정론적 출력으로 smoke test와 데모를 실행할 수 있습니다.
+Anonymous sign-in was removed; the API guard also rejects tokens whose user is `is_anonymous`.
+OAuth buttons appear only when a provider is enabled remotely (out of scope for the normal path).
+The Supabase SDK maintains and refreshes the auth session; Axios sends its access token to the API.
 
-## 2. Note-generation graph
+The normal workspace switches screens using `currentScreen` state instead of a URL router.
 
-실제 wiring은 `backend/app/graph/graph.py`에 있습니다.
+```text
+session_input → summary_draft → document_transform → final_document
+      ↕
+   case_list (dashboard lookup and schedule updates for an existing case ID)
+```
+
+The normal entry screen is `session_input`. Input, edits, and final documents live in React memory;
+there is no flow to restore the screen from a URL or persistent storage. The temporary-save button only
+displays a message. Note generation uses `persist:false`; supervision generation also makes no save request.
+Checklist changes affect local display and are not connected to the recompose/confirm APIs.
+The case dashboard separately reads the DB and updates schedules, so not saving notes does not
+disable reads/writes across all APIs.
+
+## Backend
+
+```text
+Frontend /api
+  ├─ Integrated FastAPI app (local/server)
+  │    └─ health / notes / cases / materials / audio / documents routers
+  └─ Vercel api/ Python functions
+       └─ Individual FastAPI wrapper → shared route or service
+```
+
+Vercel deploys the Vite static build and individual wrappers. The user-confirmed Production source
+is Git main, but the repository's GitHub Actions contain no deployment job.
+Detailed deployment policies and environment variables require checking remote settings.
+
+The two backends do not run exactly the same app. Key differences:
+
+- Audio APIs exist only in the integrated FastAPI app. Vercel wrappers have no WhisperX path.
+- FastAPI export records export history on a best-effort basis when persistence is enabled;
+  Vercel export does not call the same recording function.
+- The integrated FastAPI CORS allowlist contains localhost addresses. Connecting a separate Production
+  origin requires more than changing `VITE_API_BASE_URL`.
+- `vercel.json` rewrites draft-detail and case dashboard/schedule paths to individual functions.
+
+Protected APIs obtain an actor through the shared auth dependency. With `ENABLE_REAL_USER_AUTH=1`,
+it validates the Bearer token through Supabase `/auth/v1/user` and passes the user ID and JWT onward.
+User DB paths apply RLS using a public key and the validated JWT. Legacy preview tokens and local
+bypass are separate paths that must be explicitly enabled. `counselor_name` is not an authorization identifier.
+
+## Note graph
+
+The entry point is `run_note_pipeline`; `backend/app/graph/graph.py` defines the wiring.
+There are 16 registered nodes. The five marked * below return empty/no-op state when grounding is OFF.
 
 ```text
 sanitize_input
-  ↓
-formulate_evidence_needs
-  ↓
-formulate_retrieval_query
-  ↓
-retrieve_raw_evidence_regions
-  ↓
-retrieve_case_memory / retrieve_authoritative_kb
-  ↓
-assemble_generation_grounding
-  ↓
-fuse_and_rerank
-  ↓
-structure_session
-  ↓
-map_evidence
-  ↓
-generate_summary
-  ↓
-generate_grounded_document
-  ↓
-validate_claim_sources
-  ↓
-verify_output
-  ↓
-conditional_revision
-  ├─ reverify ───────────────→ verify_output
-  └─ preview ────────────────→ transform_document_preview → END
+→ formulate_evidence_needs *
+→ formulate_retrieval_query
+→ retrieve_raw_evidence_regions *
+→ retrieve_case_memory
+→ retrieve_authoritative_kb
+→ assemble_generation_grounding *
+→ fuse_and_rerank
+→ structure_session
+→ map_evidence
+→ generate_summary
+→ generate_grounded_document *
+→ validate_claim_sources *
+→ verify_output
+→ conditional_revision
+    ├─ reverify → verify_output (at most one additional pass)
+    └─ preview → transform_document_preview → END
 ```
 
-각 retrieval node는 일반 Python service 함수를 직접 호출합니다.
-Raw-region grounding nodes stay in the graph but return empty/no-op state when `ENABLE_RAW_REGION_GROUNDING=false`, which is the default. The established non-grounding generation behavior is preserved in that mode.
+The default path de-identifies input, structures it, maps source references, generates a summary,
+verifies output, and assembles document drafts/previews. OpenAI structured output uses Pydantic contracts.
+A deterministic stub is used with `USE_STUB=1` or without an API key.
+The Generate API also retries pipeline exceptions with a stub fallback.
+A successful response alone therefore does not establish that a real model ran; inspect `stub` and the report fields.
 
-### Retrieval node 책임
+When risky claims are found, `conditional_revision` marks summary items without direct evidence for
+review and verifies once more. It does not rewrite the text with an LLM.
+`fuse_and_rerank` aggregates retrieval metrics; it does not run a separate reranker model.
+Nodes call retrieval functions directly; there is no ToolNode or autonomous tool selection.
 
-- `retrieve_case_memory`: 동일 상담자·사례 범위의 이전 확정 기록 검색
-- `retrieve_authoritative_kb`: 문서 양식과 개인정보·윤리 경고 규칙 검색
-- `fuse_and_rerank`: 검색 결과 수와 latency를 집계
+### Retrieval and grounding OFF/ON
 
-`fuse_and_rerank`는 이름과 달리 별도 reranker 모델을 호출하지 않습니다. Dense/hybrid 검색은
-`backend/app/services/retrieval.py`가 담당하며 feature flag로 활성화합니다.
-
-### Raw transcript regions
-
-- `case_id` 기준 최근 이전 회기 기록 retrieval
-- 문서 목적별 양식 KB retrieval
-- 개인정보/윤리/보안 규칙 KB retrieval
-- Supabase 또는 RAG가 꺼져 있으면 빈 context로 계속 진행
-- Grounding flag가 켜진 경우 `transcript_windows` dense retrieval 결과를 scoped `transcript_turns`로 다시 조립해 raw candidate region을 생성
-- Query text나 검색 window text 자체를 최종 evidence로 사용하지 않음
-
-## 3. Supervision-report graph
-
-`backend/app/graph/supervision_report.py`에는 한국상담심리학회 개인상담 사례 수퍼비전
-보고서 형식을 만드는 별도 11-node workflow가 있습니다.
-
-```text
-load_case_context
-  ↓
-normalize_inputs
-  ↓
-build_evidence_index
-  ↓
-generate A sections
-  ↓
-generate B sections
-  ↓
-generate C sections
-  ↓
-generate supervision questions
-  ↓
-evidence grounding checker
-  ↓
-clinical safety guard
-  ↓
-build AI review panel
-  ↓
-format report
-```
-
-이 workflow는 현재 고정 순서로 실행됩니다. 수퍼비전 보고서 입력 schema에는 회기 이력,
-합의 목표, 임상 목표, 상담전략, 이전 수퍼비전 피드백이 있으나 frontend는 아직 이 필드를
-모두 입력받아 전달하지 않습니다.
-
-## 4. Agentic capability boundary
-
-현재 구현을 정확히 분류하면 다음과 같습니다.
-
-| Capability | Status |
+| Condition | Actual behavior |
 | --- | --- |
-| LangGraph stateful workflow | 구현됨 |
-| Case-memory and authoritative-KB retrieval | 구현됨 |
-| Evidence mapping and output verification | 구현됨 |
-| Verification-driven conditional revision loop | 구현됨 |
-| Input-dependent retrieval source routing | 미구현 |
-| Section-level evidence sufficiency routing | 미구현 |
-| LLM function calling / `ToolNode` / autonomous tool selection | 미구현 |
-| Retrieval reranker model | 미구현 |
+| `ENABLE_RAG=false` (default) | Skips case/KB retrieval; independent of generation and persistence settings |
+| RAG ON, dense OFF | Lightweight search of saved confirmed notes for the same user/case and the template/ethics KB |
+| RAG ON, `ENABLE_DENSE_RETRIEVAL=true` | Case-memory vector search and KB dense/hybrid search, with lightweight fallback when needed |
+| `ENABLE_HYBRID_RETRIEVAL=true` (code default) | Selects the hybrid RPC for KB search on the dense path; does not enable RAG by itself |
+| `ENABLE_RAW_REGION_GROUNDING=false` (default) | The five nodes above are no-ops; the model's `grounding` value is None and is declared to be omitted during serialization |
+| Grounding ON | Adds evidence needs, a source registry, grounded claims, and source ID/hierarchy and semantic support validation |
 
-따라서 현재 제품은 **LangGraph-orchestrated, retrieval-aware document workflow**로
-설명하는 것이 정확합니다. Export와 transcription은 사용자가 명시적으로 호출하는 별도
-API 서비스이며 LLM이 선택하는 tools가 아닙니다.
+Raw-region retrieval requires more than grounding ON: RAG ON, dense ON, a DB connection, transcript
+tables/RPCs, and previously stored and embedded windows. Window candidates are reassembled from scoped
+transcript turns; neither the query nor window search text itself is used as final evidence.
+Unmet conditions and retrieval failures are recorded in the report; execution may continue with empty raw context.
 
-### generate_grounded_document / validate_claim_sources
+**Raw transcript turn/window ingestion is not automatically connected to the current product flow.**
+Upload, STT, and note persistence do not call the storage/indexing helpers.
+Enabling flags or applying migrations alone does not automatically create historical source retrieval data.
 
-- request-local evidence ID를 사용해 factual claim과 raw/counselor source를 연결
-- 존재하지 않는 source ID와 source hierarchy 위반을 거부
-- semantic support를 별도 검증하고 partial/unsupported claim을 counselor review 대상으로 표시
+With grounding ON, claims are checked for cited IDs and permitted source hierarchy; semantic support is
+validated using only the cited sources. Partially supported/unsupported claims and clinical inferences
+require counselor review. Stub support checks are limited to source-text containment, distinct from
+real-model semantic validation. The frontend displays cited sources in the review UI and marks grounding
+for edited items as stale.
 
-## 5. API and service boundaries
+## Supervision graph
 
-주요 API는 다음과 같습니다.
+The separate entry point `run_supervision_report_pipeline` runs these 11 nodes in a fixed order.
 
 ```text
-GET  /api/health
-POST /api/notes/generate
-POST /api/notes/confirm
-POST /api/notes/recompose
-POST /api/notes/supervision-report
-POST /api/notes/drafts
-GET  /api/notes/drafts
-GET  /api/notes/drafts/{draft_id}
-POST /api/materials/documents/extract
-GET  /api/audio/capabilities
-POST /api/audio/transcribe
-GET  /api/documents/capabilities
-POST /api/documents/export
+load_case_context → normalize_inputs → build_evidence_index
+→ generate_section_A → generate_section_B → generate_section_C
+→ generate_supervision_questions → evidence_grounding_checker
+→ clinical_safety_guard → generate_ai_review_panel → format_supervision_report
 ```
 
-- 문서 추출은 PDF 텍스트 레이어, DOCX, TXT를 지원합니다.
-- 음성 전사는 별도 WhisperX service이며 기본 비활성화입니다.
-- DOCX export는 기본 지원하고 PDF는 서버 capability가 충족될 때 지원합니다.
-- HWPX는 capability contract만 있으며 검증된 template exporter는 아직 없습니다.
+This graph places session materials and summaries from the request into a form using rules.
+`load_case_context` is not a DB lookup. The graph does not directly call an LLM, retrieve case memory/KB,
+or perform the note graph's raw-region semantic validation. Its grounding checker checks evidence ID
+existence and some missing evidence.
 
-## 6. Authentication and storage boundary
+The current frontend sends the latest counselor-edited summary, session input, pseudonym, and transcript
+mode. Not all backend fields for additional session history, previous supervision feedback, clinical goals,
+and strategies are connected to the UI. Missing information remains marked as requiring input in the form.
+The current screen locally assembles session notes and termination documents from the edited summary;
+only supervision calls a separate report API.
 
-`ENABLE_REAL_USER_AUTH=1`에서는 Supabase access token을 검증하고 authenticated user id를
-storage actor로 사용합니다. `supabase/migrations/20260823000100_user_owned_counseling_data.sql`
-은 상담 데이터에 `user_id`와 RLS policy를 추가합니다. Preview token은 명시적으로 활성화한
-legacy demo 경로입니다.
+## Storage and file boundaries
 
-인증과 RLS가 구현되어 있어도 실제 상담자료 운영에 필요한 감사 로그, 보관·삭제 정책,
-동의 절차, 운영 보안 검토까지 완료된 상태는 아닙니다. 자세한 경계는
-`docs/security_checklist.md`를 따릅니다.
+### Currently unsupported scope
 
-## 7. Candidate adaptive retrieval experiment
+At this baseline commit, real-time counseling intervention/monitoring, recording/streaming STT,
+payment/booking services, center administration, theory lens/theory KB, and bulk case import are not implemented.
+Updating a case's planned session count and next session date is separate from a booking service.
+OCR for scanned-image PDFs and HWPX export are also unsupported. This list describes current scope, not a development plan.
 
-향후 검증 후보는 문서 유형과 section 요구사항에 따라 `skip / case_memory / both`를 고르는
-retrieval router와 field-level evidence sufficiency check입니다. 이 기능은 현재 구현에 포함되지
-않습니다. 구현 전에 route별 정답과 필수 근거 slot을 상담사·수퍼바이저와 정의하고 다음을
-측정해야 합니다.
+### Persistence conditions
 
-- route accuracy와 activation rate
-- retrieval latency와 token 사용량
-- 근거 coverage와 unsupported claim 비율
-- 추가 입력 요청의 적절성
+`ENABLE_RAG` (retrieval), `ENABLE_PERSISTENCE` (note/report persistence), and
+`ENABLE_RAW_REGION_GROUNDING` (additional grounding) are independent conditions.
+Note persistence also requires request `persist=true`; report persistence requires top-level `persist=true`.
+The confirm API validates an already-saved note before updating its confirmed JSON.
 
-이론 문서를 추가할 경우 문서 양식·윤리 KB와 분리하고, 이론 설명은 사례 근거로 집계하지
-않습니다.
+`ENABLE_CASE_MEMORY` controls memory indexing during confirmation; it is not a global switch blocking
+reads of existing memory. `SAVE_RAW_INPUT` controls only the session raw field.
+The Temporary Draft API and recompose disk cache are separate paths, not blocked by the same flag.
 
-## 8. Production and research boundary
+Original document/audio uploads use temporary files during the request and clean them up. Retention of
+extracted text, generated results, and drafts is separate from not retaining original files. DOCX is
+generated server-side. PDF prefers WeasyPrint, with a ReportLab fallback on ImportError/OSError.
+HWPX is unsupported.
 
-Grounding product schema에는 `transcript_turns`와 `transcript_windows`가 필요합니다. `evidence_episodes`와 `match_evidence_episodes`는 runtime prerequisite가 아니며, 원격에 적용되지 않은 실험 SQL은 `research/raw_evidence_experiments/supabase`로 분리되어 있습니다.
-
-Production uses raw regions as evidence. Episode extraction, turn-function labeling, evidence-episode retrieval, and query-conditioned exact-span selection are controlled research paths under `research/`. No module under `backend/app`, `api`, or `frontend/src` imports `research`.
-
-The full file-by-file path, data tables, and regression mapping is maintained in `docs/product_runtime_map.md`.
+See the [Data Model](data_model.md) for entities, FKs, RLS, and migration status.
+Code existence alone does not establish remote application or completed operational controls for real use.

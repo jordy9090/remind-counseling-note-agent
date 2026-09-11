@@ -72,7 +72,8 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
-import { confirmedPayload, isObject, noteFromRecord, readStoredSections, recordPayload, sectionFingerprint } from '../lib/persistenceWorkflow'
+import { confirmedPayload, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint } from '../lib/persistenceWorkflow'
+import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -207,6 +208,7 @@ interface UploadedMaterial {
   lastAppliedTranscriptText?: string
   lastAppliedNonverbalNotes?: string
   lastAppliedMode?: MaterialApplyMode
+  requiresReattachment?: boolean
   appliedTargets: MaterialApplyTarget[]
 }
 
@@ -1050,7 +1052,7 @@ export default function SessionDraftPage({
     }
     setIsSavingDraft(true)
     try {
-      const response = await saveTemporaryDraft({
+      const response = await saveTemporaryDraft(temporaryDraftPayload({
         draft_id: savedDraft?.caseId === form.case_id && savedDraft.sessionNumber === form.session_number ? savedDraft.id : undefined,
         case_id: form.case_id,
         session_number: form.session_number,
@@ -1061,7 +1063,7 @@ export default function SessionDraftPage({
         session_topic: sessionTopic,
         is_deidentified: isDeidentified,
         selected_previous_session_ids: selectedPreviousSessionIds,
-        attachments: serializeMaterialsForDraft(materials),
+        attachments: materials,
         visible_section_ids: [...visibleSectionIds],
         draft_sections: draftSections,
         final_document_sections: finalDocumentSections,
@@ -1074,16 +1076,17 @@ export default function SessionDraftPage({
               ? updateSupervisionBlockFromText(block, editingSupervisionText) : block),
           })),
         } : supervisionReportDraft,
-      })
+      }))
       setSavedDraft({ id: response.draft_id, caseId: response.case_id, sessionNumber: response.session_number })
-      setDraftSaveMessage(`임시저장 완료 · ${formatSavedTime(response.saved_at)}. 저장된 기록에서 다시 불러올 수 있습니다. 원본 첨부파일은 저장되지 않습니다.`)
+      setDraftSaveMessage(`임시저장 완료 · ${formatSavedTime(response.saved_at)}. ${REATTACHMENT_NOTICE} 회기 입력에 미반영한 축어록 수정은 저장되지 않습니다.`)
     } finally {
       setIsSavingDraft(false)
     }
   })
 
   const handleConfirm = () => void runPersistence(async () => {
-    const original = result?.full_response?.session_summary_draft || storedNote?.draft_json
+    const original = storedNote && isConfirmedRecord(storedNote)
+      ? recordPayload(storedNote) : result?.full_response?.session_summary_draft || storedNote?.draft_json
     if (!storedNoteId || !original || !result || result.case_id !== form.case_id || result.session_number !== form.session_number) {
       throw new Error('저장된 AI 초안을 불러오거나 새로 생성한 뒤 확정해주세요.')
     }
@@ -1131,7 +1134,7 @@ export default function SessionDraftPage({
   const restoreTemporary = (draftId: string) => {
     if (!allowRestore()) return
     void runPersistence(async () => {
-      const draft = await loadTemporaryDraft(draftId)
+      const draft = temporaryDraftPayload(await loadTemporaryDraft(draftId))
       if (!isObject(draft.form) || typeof draft.form.counselor_memo !== 'string'
         || typeof draft.form.transcript_text !== 'string' || typeof draft.form.previous_session_summary !== 'string'
         || draft.form.case_id !== draft.case_id || draft.form.session_number !== draft.session_number) {
@@ -1175,6 +1178,11 @@ export default function SessionDraftPage({
       if (report && (!isObject(report) || !Array.isArray(report.sections) || !isObject(report.aiReview))) {
         throw new Error('저장된 보고서 형식을 확인할 수 없어 현재 화면을 유지합니다.')
       }
+      let confirmedSections = null
+      if (record && isConfirmedRecord(record)) {
+        try { confirmedSections = restoreStoredSections(recordPayload(record), baseSections, true) }
+        catch { statusUnavailable = true }
+      }
       setForm(restoredForm)
       setSessionTopic(draft.session_topic)
       setIsDeidentified(draft.is_deidentified)
@@ -1185,8 +1193,8 @@ export default function SessionDraftPage({
         isObject(material) && typeof material.id === 'string' && typeof material.filename === 'string'
         && (material.kind === 'document' || material.kind === 'audio') && Array.isArray(material.warnings)
         && Array.isArray(material.appliedTargets),
-      ).map(({ file: _file, objectUrl: _url, ...material }) => ({ ...material,
-        status: material.status === 'uploading' || material.status === 'transcribing' ? 'failed' : material.status,
+      ).map((material) => ({ ...material,
+        status: 'selected', requiresReattachment: true, warnings: [REATTACHMENT_NOTICE],
       })))
       setResult(restoredNote)
       setDraftSections(nextSections)
@@ -1194,9 +1202,8 @@ export default function SessionDraftPage({
       setFinalDocumentType(finalType)
       setFinalDocumentSections((finalSections as FinalDocumentSection[]).map((section) => ({ ...section, groundingItems: [] })))
       setSupervisionReportDraft((report as SupervisionReportDraft | null) || null)
-      setStoredNoteId(record ? noteId : null)
+      setStoredNoteId(record && !statusUnavailable ? noteId : null)
       setStoredNote(record)
-      const confirmedSections = record?.confirmation_status === 'confirmed' ? readStoredSections(record.confirmed_json.workspace_sections) : null
       setConfirmedFingerprint(confirmedSections ? sectionFingerprint(confirmedSections) : null)
       setSavedDraft({ id: draftId, caseId: draft.case_id, sessionNumber: draft.session_number })
       setCurrentScreen(restoredNote
@@ -1204,7 +1211,7 @@ export default function SessionDraftPage({
           ? 'final_document' : 'summary_draft'
         : 'session_input')
       resetRestoredUi()
-      setDraftSaveMessage('임시저장을 불러왔습니다. 회기 입력과 요약 편집 내용을 복원했습니다. 첨부파일은 다시 선택해주세요.')
+      setDraftSaveMessage(`임시저장을 불러왔습니다. 회기 입력과 요약 편집 내용을 복원했습니다. ${REATTACHMENT_NOTICE} 회기 입력에 미반영한 축어록 수정은 복원되지 않습니다.`)
       if (statusUnavailable) setPersistenceError('임시저장은 복원했지만 원본 기록의 상태를 조회하지 못했습니다. 확정하려면 저장된 AI 기록을 다시 불러와주세요.')
     })
   }
@@ -1221,19 +1228,12 @@ export default function SessionDraftPage({
         client_alias: typeof info.client_alias === 'string' ? info.client_alias : '',
         counselor_name: typeof info.counselor_name === 'string' ? info.counselor_name : '',
       }
-      const theme = isObject(payload.session_theme) && typeof payload.session_theme.text === 'string' ? payload.session_theme.text : ''
+      const confirmed = isConfirmedRecord(record)
+      const theme = readStoredText(payload, 'session_theme') ?? ''
       const baseSections = buildDocumentSections(data, nextForm, theme, defaultVisibleSectionIds)
-      const savedSections = readStoredSections(payload.workspace_sections)
-      const sections = savedSections ? savedSections.map((section) => ({
+      const sections = restoreStoredSections(payload, baseSections, confirmed).map((section) => ({
         ...(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)), ...section,
-      })) : baseSections.flatMap((section) => {
-        const field = section.id === 'supervision_memo' ? 'reflection' : section.id === 'main_issue' ? 'presenting_problem' : section.id
-        const value = payload[field]
-        if (isObject(value) && typeof value.text === 'string') return [{ ...section, content: value.text }]
-        if (isObject(payload.sections) && typeof payload.sections[field] === 'string') return [{ ...section, content: payload.sections[field] as string }]
-        // Older confirmed records may omit optional sections; never label an invented placeholder as confirmed.
-        return record.confirmation_status === 'confirmed' ? [] : [section]
-      })
+      }))
       setForm(nextForm)
       setSessionTopic(theme)
       setResult(data)
@@ -1241,7 +1241,7 @@ export default function SessionDraftPage({
       setVisibleSectionIds(new Set(sections.filter((section) => section.visible).map((section) => section.id)))
       setStoredNoteId(record.note_id)
       setStoredNote(record)
-      setConfirmedFingerprint(record.confirmation_status === 'confirmed' ? sectionFingerprint(sections) : null)
+      setConfirmedFingerprint(confirmed ? sectionFingerprint(sections) : null)
       setSavedDraft(null)
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
       objectUrlsRef.current.clear()
@@ -1251,7 +1251,7 @@ export default function SessionDraftPage({
       setSupervisionReportDraft(null)
       setCurrentScreen('summary_draft')
       resetRestoredUi()
-      setDraftSaveMessage(record.confirmation_status === 'confirmed'
+      setDraftSaveMessage(confirmed
         ? '서버에서 상담사 확정본 전체를 불러왔습니다. 원문 입력은 임시저장에서 복원할 수 있습니다.'
         : '서버에서 AI 초안을 불러왔습니다. 상담사 검토와 확정이 필요합니다.')
     })
@@ -3456,6 +3456,7 @@ function UploadedMaterialRow({
   const canPreview = canApply
   const canTranscribe =
     material.kind === 'audio' &&
+    Boolean(material.file) &&
     material.status !== 'transcribed' &&
     material.status !== 'transcribing' &&
     transcriptionAvailable
@@ -3478,7 +3479,7 @@ function UploadedMaterialRow({
         </div>
         {material.status === 'uploading' || material.status === 'transcribing' ? (
           <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-blue-600" />
-        ) : material.status === 'failed' ? (
+        ) : material.status === 'failed' || material.requiresReattachment ? (
           <AlertTriangle className="mt-1 h-4 w-4 shrink-0 text-rose-600" />
         ) : (
           <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-emerald-600" />
@@ -4587,6 +4588,9 @@ function markAudioMaterialDirty(material: UploadedMaterial): UploadedMaterial {
 }
 
 function materialMetaText(material: UploadedMaterial): string {
+  if (material.requiresReattachment) return material.dirtySinceApply
+    ? '회기 입력에 미반영한 축어록 수정은 복원되지 않았습니다. 파일을 재첨부해주세요.'
+    : '첨부 원문 미리보기는 복원되지 않습니다. 파일을 재첨부해주세요.'
   if (material.kind === 'audio' && material.dirtySinceApply && getMaterialText(material).trim()) {
     return '축어록 수정사항이 회기 입력에 아직 다시 반영되지 않았습니다.'
   }
@@ -4617,36 +4621,6 @@ function formatSeconds(value: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
-
-function serializeMaterialsForDraft(materials: UploadedMaterial[]) {
-  return materials.map((material) => ({
-    id: material.id,
-    kind: material.kind,
-    filename: material.filename,
-    mediaType: material.mediaType,
-    status: material.status,
-    characterCount: material.characterCount,
-    pageCount: material.pageCount,
-    warnings: material.warnings,
-    error: material.error,
-    extractedText: material.extractedText,
-    transcriptText: material.transcriptText,
-    segments: material.segments,
-    durationSeconds: material.durationSeconds,
-    language: material.language,
-    runtimeMode: material.runtimeMode,
-    diarizationStatus: material.diarizationStatus,
-    languageProbability: material.languageProbability,
-    speakerRoleMap: material.speakerRoleMap,
-    nonverbalNotes: material.nonverbalNotes,
-    dirtySinceApply: material.dirtySinceApply,
-    expectedSpeakers: material.expectedSpeakers,
-    lastAppliedTranscriptText: material.lastAppliedTranscriptText,
-    lastAppliedNonverbalNotes: material.lastAppliedNonverbalNotes,
-    lastAppliedMode: material.lastAppliedMode,
-    appliedTargets: material.appliedTargets,
-  }))
 }
 
 const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {

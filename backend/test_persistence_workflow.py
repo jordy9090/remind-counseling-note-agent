@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
+import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -175,6 +177,88 @@ class PersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/notes/confirm", headers=other, json={
             "note_id": note_id, "confirmed_note": confirmed, "counselor_edited": True, "create_case_memory": False,
         }).status_code, 404)
+
+    def test_temporary_draft_excludes_upload_caches_at_storage_boundary(self):
+        raw = "SYNTHETIC-UNAPPLIED-UPLOAD-CACHE"
+        payload = {
+            "case_id": INPUT["case_id"], "session_number": 1, "form": {**INPUT, "attachments": [{"content": raw}]},
+            "attachments": [{"id": "synthetic-material", "kind": "audio", "filename": "synthetic.wav",
+                             "status": "transcribed", "appliedTargets": ["transcript_text"], "dirtySinceApply": True,
+                             "extractedText": raw, "transcriptText": raw, "segments": [{"text": raw, "words": [{"text": raw}]}],
+                             "nonverbalNotes": raw, "lastAppliedTranscriptText": raw, "lastAppliedNonverbalNotes": raw,
+                             "warnings": [raw], "speakerRoleMap": {"speaker": {"content": raw}}}],
+            "draft_sections": [{"id": "session_content", "title": "상담 내용", "content": "Counselor edit", "visible": True,
+                                "evidence": [{"excerpt": raw}], "groundingItems": [{"source": {"text": raw}}]}],
+            "final_document_sections": [{"id": "final", "title": "Final", "content": "Final edit", "contentKind": "paragraph",
+                                         "groundingItems": [{"text": raw}]}],
+            "result": {"case_id": INPUT["case_id"], "session_number": 1, "session_summary": "AI summary",
+                       "workspace_note_id": "synthetic-note", "evidence_check": [{"source_excerpt": raw}],
+                       "grounding": {"regions": [{"content": raw}]}, "full_response": {"sanitized_input": {"sources": {"transcript_text": raw}}}},
+        }
+        saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        stored = self.store.tables[settings.supabase_drafts_table][0]["data"]
+        self.assertNotIn(raw, json.dumps(stored))
+        self.assertEqual(stored["form"], INPUT)
+        self.assertEqual(stored["draft_sections"][0]["content"], "Counselor edit")
+        self.assertEqual(stored["final_document_sections"][0]["content"], "Final edit")
+        self.assertTrue(stored["attachments"][0]["requiresReattachment"])
+        self.assertTrue(stored["attachments"][0]["dirtySinceApply"])
+        url = f'/api/notes/drafts/{saved.json()["draft_id"]}'
+        loaded = self.client.get(url, headers=self.headers).json()
+        self.assertEqual(loaded, stored)
+        self.assertNotIn(raw, self.client.get("/api/notes/drafts", headers=self.headers).text)
+
+    def test_temporary_projection_preserves_reports_and_filters_legacy_reads_without_deletion(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers).json()
+        row = self.store.tables[settings.supabase_drafts_table][0]
+        clean = json_copy(row["data"])
+        self.assertNotIn("SYNTHETIC-RAW-CACHE", json.dumps(clean))
+        self.assertEqual(clean["form"]["transcript_text"], payload["form"]["transcript_text"])
+        block = clean["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+        self.assertEqual(block["text"], "Counselor report edit")
+        self.assertEqual(block["rows"], [{"column": "Edited table cell"}])
+        self.assertEqual(block["speakerTurns"][0]["text"], "Counselor-selected report excerpt")
+        # Emulate an older stored draft. GET/list must not return caches or rewrite rows.
+        row["data"] = {**payload, "draft_id": saved["draft_id"], "saved_at": saved["saved_at"]}
+        legacy = json_copy(row["data"])
+        url = f'/api/notes/drafts/{saved["draft_id"]}'
+        self.assertEqual(self.client.get(url, headers=self.headers).json(), clean)
+        self.assertNotIn("SYNTHETIC-RAW-CACHE", self.client.get("/api/notes/drafts", headers=self.headers).text)
+        self.assertEqual(row["data"], legacy)
+
+    def test_local_disk_uses_the_same_temporary_storage_boundary(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
+                patch.object(supabase_store, "configured_for", return_value=False):
+            saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers).json()
+            stored_files = list(Path(directory).rglob("*.json"))
+            self.assertEqual(len(stored_files), 1)
+            stored = json.loads(stored_files[0].read_text(encoding="utf-8"))
+            self.assertNotIn("SYNTHETIC-RAW-CACHE", json.dumps(stored))
+            self.assertEqual(stored["form"]["counselor_memo"], payload["form"]["counselor_memo"])
+            url = f'/api/notes/drafts/{saved["draft_id"]}'
+            self.assertEqual(self.client.get(url, headers=self.headers).json(), stored)
+
+    def test_confirmed_string_object_sections_and_empty_values_survive_reconfirmation(self):
+        for fields in ({"session_content": "Counselor string", "next_plan": ""},
+                       {"session_content": {"text": "Counselor object"}, "next_plan": {"text": ""}},
+                       {"sections": {"session_content": "Counselor sections", "next_plan": ""}}):
+            with self.subTest(fields=fields):
+                note_id = self.generate()["persistence_report"]["note_id"]
+                url = f"/api/notes/records/{note_id}"
+                original = self.client.get(url, headers=self.headers).json()["draft_json"]
+                for _ in range(2):
+                    response = self.client.post("/api/notes/confirm", headers=self.headers, json={
+                        "note_id": note_id, "confirmed_note": fields, "counselor_edited": True, "create_case_memory": False,
+                    })
+                    self.assertEqual(response.status_code, 200)
+                    loaded = self.client.get(url, headers=self.headers).json()
+                    self.assertEqual(loaded["confirmed_json"], fields)
+                    self.assertEqual(loaded["draft_json"], original)
 
     def test_missing_or_invalid_token_never_reaches_storage(self):
         for headers in ({}, {"Authorization": "Bearer invalid"}):

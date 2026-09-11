@@ -1,265 +1,145 @@
 # Re:mind
 
-Re:mind는 수련상담사가 상담 후 자료를 정리하고, 다회기 근거를 확인하며, 회기 기록과
-수퍼비전 보고서 같은 공식 문서를 준비하는 AI 보조 workspace입니다.
+Re:mind is a counseling documentation workspace that helps counselors organize post-session materials, review evidence, and prepare drafts of session notes, supervision reports, and termination documents. AI output is a draft for review; counselors retain final responsibility for factual accuracy and clinical judgment.
 
-현재 제품은 React + FastAPI/Vercel Python functions + LangGraph + optional Supabase로
-구성됩니다. 상담사 메모, 축어록/STT, 이전 회기 기록을 구조화하고 source reference가
-연결된 초안을 만든 뒤 상담사가 수정·확정하고 DOCX/PDF로 내보낼 수 있습니다.
+## Documentation baseline
 
-## Product boundary
+The current implementation baseline is `origin/main` at
+`4815b4457af2c5ccbccbafe4e53687229988346c`. Subsequent development plans are not described as current features.
 
-### Current grounding architecture
-## Current Product Architecture
+Production information confirmed by the user on 2026-09-09: [remind.ai.kr](https://remind.ai.kr),
+Vercel Production, source `git`, branch `main`, the SHA above, state `READY`.
+This does not confirm remote Supabase migration application or activation of individual feature flags.
 
-```text
-Transcript
-→ Raw Window Retrieval
-→ Grounded Generation
-→ Semantic Source Validation
-→ Counselor Evidence Review
-```
+## Stack
 
-Production evidence unit은 sanitized transcript의 `raw region`입니다. `transcript_turns`와 deterministic `transcript_windows`에서 후보를 찾고, 실제 원문 turn으로 region을 다시 조립한 뒤 생성 claim의 source support를 별도로 검증합니다. 실제 파일별 호출 경로와 저장소·테스트 매핑은 [Product Runtime Map](docs/product_runtime_map.md)에 있습니다.
+- Frontend: React 18, TypeScript, Vite, Tailwind CSS, Axios, Supabase Auth
+- Backend: Python 3.11+, FastAPI and Vercel Python functions
+- AI: LangGraph, LangChain/OpenAI structured output; optional retrieval/grounding
+- Data: Supabase Postgres/Auth, optional pgvector search and record persistence
+- Documents/audio: python-docx, WeasyPrint/ReportLab; optional WhisperX in a separate runtime
 
-중요한 구분:
+## Current user workflow
 
-```text
-Production:
-raw region as evidence
+1. Landing is public. `로그인` opens the email login form and `무료로 시작하기` opens email signup.
+   Signup sends a confirmation email; after confirmation (or an existing persisted session) the
+   workspace opens. Password reset and logout are available. Anonymous sign-in is no longer used and
+   anonymous tokens are rejected by the protected API.
+2. Enter a case ID and session materials. Enter notes/transcripts directly or extract text from PDF/DOCX/TXT
+   and apply it to the input. Automatic audio transcription requires a supporting backend.
+3. Generate a session summary, inspect evidence and review items, and edit it directly. The checklist
+   controls which already-generated items are displayed.
+4. Transform the summary into a session note, supervision report, or termination document, then download
+   the edited content as DOCX/PDF. PDF depends on server capabilities; HWPX is unsupported.
+5. In the case dashboard, retrieve sessions, documents, and export history saved under an existing case ID,
+   and update the planned total session count and next session date.
 
-Experimental:
-episode extraction
-turn-function labeling
-exact-span selector
-```
+The current screen's generation request does not request persistence (`persist:false`). The temporary-save
+button only displays a message. Content lives in React memory, so restoration after a refresh is not
+guaranteed. The existence of save, confirm, and recompose APIs does not mean the current UI calls them.
+OAuth buttons render only when a provider is enabled in the Supabase project; email auth is the normal path.
 
-실험 코드는 `research/` 아래에 보존하며 production runtime이 import하지 않습니다. Grounding은 현재 opt-in이고 기본값은 다음과 같습니다.
+Raw-region grounding is OFF by default. Historical transcript turn/window storage and indexing are not
+automatically connected to material input. See [Architecture](docs/architecture.md) for conditions and
+[Product Runtime Map](docs/product_runtime_map.md) for actual connections.
 
-```env
-ENABLE_RAW_REGION_GROUNDING=false
-```
+## Local setup
 
-DEV evidence demo는 `frontend/src/fixtures/dev/groundingDemo.ts`의 synthetic fixture만 사용합니다. DEV-only lazy module로 분리되어 production bundle에 포함되지 않으며, `import.meta.env.DEV`이면서 URL에 `?grounding-demo=1`이 있을 때만 활성화됩니다.
+The commands below use PowerShell, starting at the repository root. Python 3.11+, uv,
+Node.js, and pnpm are required. CI uses Python 3.11, Node.js 22, and pnpm 10.
 
-## 제품 원칙
+Backend:
 
-- 입력에 없는 정보를 확정적으로 쓰지 않습니다.
-- `direct`, `ai_organized`, `clinical_review`, `missing` 상태를 구분합니다.
-- 사례개념화, 임상 가설, 목표·전략의 최종 판단은 상담사가 수행합니다.
-- 생성 초안은 상담사 검토 전 최종 기록으로 사용하지 않습니다.
-- 진단, 위험 점수화, 치료 권고, 심리검사 자동 해석, 상담사 평가는 제공하지 않습니다.
-- case memory와 KB는 문서화 근거, 양식, 개인정보·윤리 경고 범위에서 사용합니다.
-
-Supabase authentication과 user-scoped RLS 경로가 구현되어 있어도 실제 상담자료 운영에
-필요한 감사 로그, 보관·삭제 정책, 동의 절차, 운영 보안 검토는 남아 있습니다. 공유 데모에는
-합성 데이터만 사용하세요.
-
-## Implemented workflow
-
-### Note generation
-
-```text
-sanitize_input
-  → formulate_evidence_needs
-  → formulate_retrieval_query
-  → retrieve_raw_evidence_regions
-  → retrieve_case_memory
-  → retrieve_authoritative_kb
-  → assemble_generation_grounding
-  → fuse_and_rerank
-  → structure_session
-  → map_evidence
-  → generate_summary
-  → generate_grounded_document
-  → validate_claim_sources
-  → verify_output
-  → conditional_revision
-       ├─ reverify → verify_output
-       └─ preview  → transform_document_preview
-```
-
-이것은 LangGraph stateful workflow입니다. Retrieval service는 graph node에서 직접
-호출됩니다. LLM function calling, `ToolNode`, input-dependent retrieval routing, reranker model은
-현재 구현되어 있지 않습니다. 자세한 경계는 [architecture](docs/architecture.md)에 있습니다.
-
-### Current capabilities
-
-- PDF 텍스트 레이어, DOCX, TXT 자료 추출
-- 선택적 WhisperX transcription과 speaker diarization
-- 동일 사용자·사례 범위의 이전 확정 기록 retrieval
-- 문서 양식과 개인정보·윤리 KB retrieval
-- 선택적 pgvector dense/hybrid retrieval
-- 회기요약 생성, 근거 매핑, verification, conditional revision
-- 상담사 편집, recompose, confirm, temporary draft persistence
-- 한국상담심리학회 개인상담 사례 수퍼비전 보고서 A-1~C-2 초안
-- 회기 기록·수퍼비전 보고서·종결 보고서 DOCX export
-- 지원 runtime의 PDF export
-- Supabase email/password/OAuth frontend auth와 access-token 검증
-
-현재 제외 범위는 OCR, 실시간 STT, HWPX template export, 결제·예약·관리자 기능,
-자율형 AI 수퍼바이저입니다. 전체 범위와 알려진 공백은 [MVP scope](docs/mvp_scope.md)를
-참조하세요.
-
-## API
-
-```text
-GET  /api/health
-POST /api/notes/generate
-POST /api/notes/confirm
-POST /api/notes/recompose
-POST /api/notes/supervision-report
-POST /api/notes/drafts
-GET  /api/notes/drafts
-GET  /api/notes/drafts/{draft_id}
-POST /api/materials/documents/extract
-GET  /api/audio/capabilities
-POST /api/audio/transcribe
-GET  /api/documents/capabilities
-POST /api/documents/export
-```
-
-Audio endpoints are available on the FastAPI runtime. The current Vercel serverless wrapper set does
-not include WhisperX; see [Vercel deployment](docs/deployment_vercel.md).
-
-`POST /api/notes/generate`는 Pydantic으로 검증된 `GenerateNoteResponse`를 반환합니다.
-`USE_STUB=1`에서는 OpenAI key 없이 결정론적 test output을 생성합니다.
-
-문서 업로드는 원본을 영구 저장하지 않고 임시 파일에서 텍스트를 추출한 뒤 정리합니다.
-스캔 이미지 PDF OCR은 지원하지 않습니다. 음성 원본도 현재 backend/Supabase에 영구
-저장하지 않습니다.
-
-## Repository layout
-
-```text
-.
-├── api/                         # Vercel Python wrappers
-├── backend/
-│   ├── app/
-│   │   ├── api/                 # FastAPI routes and auth
-│   │   ├── graph/               # note and supervision LangGraph workflows
-│   │   ├── schemas/             # Pydantic contracts
-│   │   └── services/            # retrieval, persistence, export, STT
-│   ├── smoke_test.py
-│   └── test_*.py                # product regression tests only
-├── frontend/
-│   ├── scripts/                 # static workflow verifiers
-│   └── src/                     # React counselor workspace
-├── research/
-│   ├── raw_evidence_experiments/
-│   ├── case_retrieval_experiments/
-│   └── legacy_muspsy_evaluation/
-├── docs/
-│   ├── product_runtime_map.md
-│   ├── architecture.md
-│   └── raw_evidence_grounding_checkpoint.md
-├── supabase/
-│   └── migrations/             # Production migration chain only
-├── .github/workflows/
-└── results/debug/               # generated locally; ignored
-```
-
-## Local development
-
-### Backend
-
-```bash
-cd backend
+```powershell
+Set-Location backend
 uv sync --link-mode=copy
+$env:USE_STUB = "1"
+$env:RUNTIME_ENVIRONMENT = "development"
+$env:ENABLE_REAL_USER_AUTH = "1"
+$env:ENABLE_PERSISTENCE = "0"
+$env:ENABLE_RAG = "0"
+$env:ENABLE_CASE_MEMORY = "0"
+$env:SAVE_RAW_INPUT = "0"
 uv run uvicorn app.main:app --reload
 ```
 
-합성 데이터로 local bypass를 사용할 때 `backend/.env`:
+The backend reads `backend/.env`. The user authentication path requires `SUPABASE_URL` and
+`SUPABASE_PUBLISHABLE_KEY`. Use the same project as the frontend. Email signup requires the project's
+Site URL / Redirect URLs to include the app origin so confirmation and reset links return to Re:mind.
+`USE_STUB=1` replaces OpenAI calls; it does not bypass authentication.
 
-```env
-USE_STUB=1
-RUNTIME_ENVIRONMENT=development
-REMIND_ALLOW_LOCAL_BYPASS=1
-ENABLE_PERSISTENCE=0
-ENABLE_RAG=0
-ENABLE_CASE_MEMORY=0
-SAVE_RAW_INPUT=0
-```
+Run the frontend from the repository root in a separate terminal.
 
-실제 Supabase user authentication 경로의 핵심 설정:
-
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_PUBLISHABLE_KEY=your-publishable-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-ENABLE_REAL_USER_AUTH=1
-ALLOW_LEGACY_PREVIEW_TOKEN=0
-REMIND_ALLOW_LOCAL_BYPASS=0
-SAVE_RAW_INPUT=0
-```
-
-Browser에는 publishable key만 제공하고 service-role key는 backend 환경에만 둡니다.
-
-### Frontend
-
-```bash
-cd frontend
+```powershell
+Set-Location frontend
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-```env
-VITE_API_BASE_URL=http://localhost:8000
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
-```
+The frontend requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in
+`frontend/.env.local`. Without `VITE_API_BASE_URL`, Vite's development `/api` proxy connects
+to `http://localhost:8000`. The normal UI does not allow workspace entry without auth configuration.
+Do not put service-role/OpenAI keys in `VITE_` variables.
 
-`VITE_API_BASE_URL`을 생략하면 same-origin `/api`를 사용합니다.
+For API-only checks with local synthetic data, explicitly set `ENABLE_REAL_USER_AUTH=0`,
+`RUNTIME_ENVIRONMENT=development`, and `REMIND_ALLOW_LOCAL_BYPASS=1` instead of real-user
+authentication. This path does not bypass the normal frontend AuthGate.
+For actual WhisperX execution, follow the [H100 runbook](docs/h100_audio_runbook.md).
 
-## Optional retrieval
+## Build and primary checks
 
-Supabase migration은 `supabase/migrations`에서 관리합니다. 공유 project에 적용하기 전에
-pending migration과 RLS policy를 검토하세요. `supabase db reset`을 공유 project에 실행하지
-마세요.
+Run these in their respective directories after installing dependencies.
 
-```env
-ENABLE_PERSISTENCE=1
-ENABLE_RAG=1
-ENABLE_CASE_MEMORY=1
-ENABLE_DENSE_RETRIEVAL=1
-ENABLE_HYBRID_RETRIEVAL=1
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
-```
-
-`ENABLE_CASE_MEMORY=0`과 `SAVE_RAW_INPUT=0`이 안전한 기본값입니다.
-
-## Validation
-
-```bash
-cd backend
-uv sync --link-mode=copy
+```powershell
+# backend
 uv run python smoke_test.py
 uv run python test_vercel_wrappers.py
 uv run python test_supervision_form.py
+uv run python test_case_dashboard.py
+uv run python test_grounded_generation.py
+uv run python test_raw_window_pipeline.py
+uv run python test_transcript_storage.py
+```
 
-cd ../frontend
-pnpm install --frozen-lockfile
-pnpm verify:grounding-review
-pnpm verify:grounding-demo-browser
+```powershell
+# frontend
 pnpm verify:material-workflow
 pnpm verify:audio-transcript-workflow
+pnpm verify:grounding-review
+pnpm verify:counselor-edit
 pnpm build
 ```
 
-`test_supervision_form.py`의 PDF regression은 WeasyPrint system dependencies와 한국어 font가
-필요합니다. GitHub Actions가 backend smoke, serverless wrappers, PDF/supervision, frontend
-build를 별도 job으로 검증합니다.
+For the grounding DEV browser check, start the server in another terminal with
+`pnpm dev -- --host 127.0.0.1 --port 4174`, then run `pnpm verify:grounding-demo-browser`.
+The default browser is Windows Edge; use `EDGE_PATH` for a different installation path.
+The DEV fixture is not enabled in production build/preview.
 
-## Product and security docs
+`pnpm build` runs TypeScript checks and the Vite build. Backend PDF CI installs WeasyPrint native
+dependencies and Korean fonts. Local PDF generation may use the ReportLab fallback; distinguish this
+from verification with the same renderer. Test coverage and CI inclusion are documented in the
+[Runtime Map](docs/product_runtime_map.md#verification-commands-and-coverage).
+Passing mock/stub tests does not establish remote RLS correctness, real LLM quality, or Production E2E success.
 
-- [Product spec](docs/product_spec.md)
-- [MVP scope](docs/mvp_scope.md)
-- [Architecture](docs/architecture.md)
-- [Product runtime map](docs/product_runtime_map.md)
-- [Schema](docs/schema.md)
-- [API contract](docs/api_contract.md)
-- [Audio licenses and attribution](docs/THIRD_PARTY_AUDIO_COMPONENTS.md)
-- [H100 audio STT runbook](docs/h100_audio_runbook.md)
-- [Security checklist](docs/security_checklist.md)
-- [Development plan](docs/development_plan.md)
+## Detailed documentation
+
+- [Architecture](docs/architecture.md): system responsibilities and default/optional paths
+- [Product Runtime Map](docs/product_runtime_map.md): connections from screens to APIs, storage, and tests
+- [Data Model](docs/data_model.md): entities, ownership, persistence conditions, and migration baseline
+- [API contract](docs/api_contract.md): major requests/responses and DTO concepts
+- [Vercel deployment](docs/deployment_vercel.md), [Deployment checklist](docs/deployment_checklist.md):
+  existing deployment guidance; compare current state with the baseline above and runtime documentation
+- [Supabase migrations](supabase/README.md): migration workflow
+- [Product spec](docs/product_spec.md), [Security checklist](docs/security_checklist.md):
+  product hypotheses and operational security controls
+- [Grounding checkpoint](docs/raw_evidence_grounding_checkpoint.md): research decisions and synthetic evaluation at that time
+- [Audio licenses](docs/THIRD_PARTY_AUDIO_COMPONENTS.md), [H100 runbook](docs/h100_audio_runbook.md)
+
+Audit logging, retention/deletion, consent, and operational security review for real counseling data remain separate work.
+
+Use the following precedence when comparing documentation with implementation.
+
+1. Runtime behavior: production code
+2. Database schema: `supabase/migrations/`
+3. Runtime documentation: this README, architecture, product runtime map, data model, API contract
+4. Product/research/history documents: supporting reference. Product hypotheses and research results do not imply enabled features.
