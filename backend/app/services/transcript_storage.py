@@ -1,6 +1,7 @@
 """Production storage helpers for sanitized transcript turns and exact spans."""
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from app.schemas.evidence import StoredTranscriptTurn, TranscriptTurn
@@ -10,6 +11,41 @@ from app.services.supabase_storage import SupabaseStorage, storage
 
 class TranscriptStorageError(RuntimeError):
     pass
+
+
+TRANSCRIPT_SPEAKER_PATTERN = re.compile(
+    r"^\s*(?P<label>Cl|Client|내담자|C|Counselor|상담자)\s*:\s*(?P<text>.*)$",
+    re.IGNORECASE,
+)
+
+
+def parse_transcript_turns(transcript_text: str) -> list[TranscriptTurn]:
+    """Convert a sanitized line-based transcript into deterministic turns."""
+    turns: list[TranscriptTurn] = []
+    for line in (transcript_text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = TRANSCRIPT_SPEAKER_PATTERN.match(stripped)
+        if match:
+            label = match.group("label").lower()
+            text = match.group("text").strip()
+            if label in {"cl", "client", "내담자"}:
+                speaker_role = "client"
+            else:
+                speaker_role = "counselor"
+        else:
+            speaker_role = "unknown"
+            text = stripped
+        if text:
+            turns.append(
+                TranscriptTurn(
+                    turn_index=len(turns),
+                    speaker_role=speaker_role,
+                    sanitized_text=text,
+                )
+            )
+    return turns
 
 
 def build_transcript_source_ref(session_id: str, start_turn_index: int, end_turn_index: int) -> str:

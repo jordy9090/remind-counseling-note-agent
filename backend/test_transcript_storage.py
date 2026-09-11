@@ -10,6 +10,7 @@ from app.services.transcript_storage import (
     build_transcript_source_ref,
     build_transcript_span_text,
     get_transcript_turns,
+    parse_transcript_turns,
     store_transcript_turns,
 )
 
@@ -75,6 +76,22 @@ class TranscriptStorageTests(unittest.TestCase):
         expected = f'transcript:{self.corpus["session_id"]}:1-6'
         self.assertEqual(build_transcript_source_ref(self.corpus["session_id"], 1, 6), expected)
         self.assertEqual(build_transcript_source_ref(self.corpus["session_id"], 1, 6), expected)
+
+    def test_parse_transcript_turns_preserves_all_nonempty_lines(self):
+        turns = parse_transcript_turns(
+            "Client: 이름: 홍길동은 불안해요.\n"
+            "상담자: 어떤 상황에서 그런가요?\n"
+            "화자 표시 없는 메모\n\n"
+            "Cl: 전화는 010-1234-5678입니다."
+        )
+
+        self.assertEqual([turn.turn_index for turn in turns], [0, 1, 2, 3])
+        self.assertEqual(
+            [turn.speaker_role for turn in turns],
+            ["client", "counselor", "unknown", "client"],
+        )
+        self.assertEqual(turns[0].sanitized_text, "이름: 홍길동은 불안해요.")
+        self.assertEqual(turns[2].sanitized_text, "화자 표시 없는 메모")
 
     def test_build_orders_shuffled_turns(self):
         text = build_transcript_span_text(list(reversed(self.turns())), 1, 3)
