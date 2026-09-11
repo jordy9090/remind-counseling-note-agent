@@ -230,6 +230,13 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
         session_id = str(session_rows[0]["id"]) if session_rows else None
         report.session_id = session_id
+        _persist_transcript_evidence(
+            session_input=session_input,
+            result=result,
+            user_id=str(actor),
+            session_id=session_id,
+            storage_client=actor_storage,
+        )
 
         draft_json = result.session_summary_draft.model_dump(mode="json")
         if result.grounding is not None:
@@ -541,6 +548,44 @@ def _stored_message() -> str:
 
 def _masked(text: str) -> str:
     return deidentify_text(text)[0]
+
+
+def _persist_transcript_evidence(
+    *,
+    session_input: SessionInput,
+    result: GenerateNoteResponse,
+    user_id: str,
+    session_id: str | None,
+    storage_client: SupabaseStorage,
+) -> None:
+    sanitized_transcript = result.sanitized_input.sources.transcript_text.strip()
+    if not sanitized_transcript:
+        return
+    if not session_id:
+        raise SupabaseStorageError("Transcript evidence cannot be stored without a session id.")
+
+    # Local imports avoid a module cycle: transcript storage uses this REST client.
+    from app.services.transcript_storage import parse_transcript_turns, store_transcript_turns
+    from app.services.transcript_windows import index_transcript_windows
+
+    turns = parse_transcript_turns(sanitized_transcript)
+    if not turns:
+        return
+    store_transcript_turns(
+        user_id=user_id,
+        counselor_id=user_id,
+        case_id=session_input.case_id,
+        session_id=session_id,
+        turns=turns,
+        storage_client=storage_client,
+    )
+    index_transcript_windows(
+        user_id=user_id,
+        counselor_id=user_id,
+        case_id=session_input.case_id,
+        session_id=session_id,
+        storage_client=storage_client,
+    )
 
 
 def _grounding_evidence_rows(
