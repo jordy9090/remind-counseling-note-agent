@@ -8,12 +8,13 @@ import LandingPage from '../pages/LandingPage'
 // signin/signup/reset: 비로그인 폼. verify: 가입 직후 인증 메일 안내. recovery: 재설정 링크로 돌아온 뒤 새 비밀번호 설정.
 type AuthMode = 'signin' | 'signup' | 'reset' | 'verify' | 'recovery'
 const PRIVACY_NOTE = '상담 기록은 계정별로 분리하여 관리됩니다. 민감정보는 필요한 범위에서 비식별화해 입력해주세요.'
+const ALREADY_REGISTERED_MESSAGE = '이미 가입된 이메일입니다. 로그인으로 돌아가 로그인해주세요.'
 
 function authErrorMessage(message: string) {
   const normalized = message.toLowerCase()
   if (normalized.includes('invalid login credentials')) return '이메일 또는 비밀번호를 확인해주세요.'
   if (normalized.includes('email not confirmed')) return '이메일 인증을 먼저 완료해주세요. 인증 메일이 없다면 아래에서 다시 받을 수 있습니다.'
-  if (normalized.includes('user already registered')) return '이미 가입된 이메일입니다. 로그인해주세요.'
+  if (normalized.includes('user already registered')) return ALREADY_REGISTERED_MESSAGE
   if (normalized.includes('password should be') || normalized.includes('weak password')) return '비밀번호는 8자 이상으로 입력해주세요.'
   if (normalized.includes('rate limit') || normalized.includes('too many')) return '요청이 많습니다. 잠시 후 다시 시도해주세요.'
   if (normalized.includes('anonymous')) return '익명 로그인은 지원하지 않습니다. 이메일로 가입해주세요.'
@@ -144,7 +145,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3.5 font-bold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void resendVerification()}>{submitting && <Loader2 className="animate-spin" size={18} />}인증 메일 다시 보내기</button>
           <button className="w-full rounded-xl px-4 py-3 text-sm font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>
         </div>
-        <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">메일이 오지 않으면 스팸함을 확인하거나 몇 분 뒤 다시 보내기를 눌러주세요.</p>
+        <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">메일이 오지 않으면 스팸함을 확인하거나 몇 분 뒤 다시 보내기를 눌러주세요. 이미 가입된 이메일이라면 메일이 오지 않으니 로그인으로 돌아가 로그인해주세요.</p>
       </AuthShell>
     }
 
@@ -169,6 +170,12 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
         setSubmitting(false)
         if (error) return setMessage(authErrorMessage(error.message))
+        // 이미 가입된 이메일이면 Supabase는 (이메일 존재 비노출을 위해) 오류 대신
+        // identities가 빈 사용자 객체를 돌려주고 메일을 보내지 않는다 → 로그인 안내
+        if (data.user && (data.user.identities?.length ?? 0) === 0) {
+          setPassword('')
+          return setMessage(ALREADY_REGISTERED_MESSAGE)
+        }
         // 이메일 인증이 켜져 있으면 session 없이 돌아온다 → 인증 안내 화면
         if (!data.session) { setPassword(''); setMode('verify') }
         return
