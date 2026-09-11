@@ -11,6 +11,7 @@
     "verify:grounding-review": "node scripts/verify-grounding-review.mjs",
     "verify:grounding-demo-browser": "node scripts/verify-grounding-demo-browser.mjs",
     "verify:counselor-edit": "node scripts/verify-counselor-edit.mjs",
+    "verify:auth-flow": "node scripts/verify-auth-flow.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -21,8 +21,10 @@ This does not confirm remote Supabase migration application or activation of ind
 
 ## Current user workflow
 
-1. In an environment with auth configured, the Landing start button requests Supabase anonymous sign-in.
-   An existing session opens the workspace. Allowing anonymous sign-in is a separate remote setting.
+1. Landing is public. `로그인` opens the email login form and `무료로 시작하기` opens email signup.
+   Signup sends a confirmation email; after confirmation (or an existing persisted session) the
+   workspace opens. Password reset and logout are available. Anonymous sign-in is no longer used and
+   anonymous tokens are rejected by the protected API.
 2. Enter a case ID and session materials. Enter notes/transcripts directly or extract text from PDF/DOCX/TXT
    and apply it to the input. Automatic audio transcription requires a supporting backend.
 3. Generate a session summary, inspect evidence and review items, and edit it directly. The checklist
@@ -35,7 +37,7 @@ This does not confirm remote Supabase migration application or activation of ind
 The current screen's generation request does not request persistence (`persist:false`). The temporary-save
 button only displays a message. Content lives in React memory, so restoration after a refresh is not
 guaranteed. The existence of save, confirm, and recompose APIs does not mean the current UI calls them.
-Email/password/OAuth form code remains, but is not connected to the normal Landing flow.
+OAuth buttons render only when a provider is enabled in the Supabase project; email auth is the normal path.
 
 Raw-region grounding is OFF by default. Historical transcript turn/window storage and indexing are not
 automatically connected to material input. See [Architecture](docs/architecture.md) for conditions and
@@ -62,8 +64,8 @@ uv run uvicorn app.main:app --reload
 ```
 
 The backend reads `backend/.env`. The user authentication path requires `SUPABASE_URL` and
-`SUPABASE_PUBLISHABLE_KEY`. Use the same project as the frontend; the current Landing entry requires
-anonymous sign-in to be enabled in that project.
+`SUPABASE_PUBLISHABLE_KEY`. Use the same project as the frontend. Email signup requires the project's
+Site URL / Redirect URLs to include the app origin so confirmation and reset links return to Re:mind.
 `USE_STUB=1` replaces OpenAI calls; it does not bypass authentication.
 
 Run the frontend from the repository root in a separate terminal.

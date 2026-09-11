@@ -42,13 +42,13 @@ Distinguish API existence from UI invocation.
 ### User
 
 - **Meaning:** Supabase Auth user and session. The migration chain has no separate public users/profile table.
-- **Ownership:** The validated Auth ID becomes user_id on counseling records. Anonymous sign-in users
-  also use SDK-issued user sessions; anonymous users are not equivalent to the DB anon role.
+- **Ownership:** The validated Auth ID becomes user_id on counseling records. Only email-authenticated
+  users are accepted; anonymous sessions are rejected by the API guard.
 - **Relation:** Counseling tables connect through user_id values, with no auth.users FK/cascade.
   Deleting an Auth user alone is not guaranteed to delete all counseling records.
-- **Created:** When the current Landing start button requests Supabase anonymous sign-in.
-- **Current UI use:** Connected; existing sessions can be reused. Remote anonymous sign-in activation
-  is unverified, and normal entry to email/password/OAuth forms is disconnected.
+- **Created:** On email signup from Landing (`무료로 시작하기`); the account becomes usable after email
+  confirmation.
+- **Current UI use:** Connected; persisted sessions survive refresh, and logout ends the session.
 
 ### Case — cases
 
