@@ -802,7 +802,7 @@ export default function SessionDraftPage({
     setStoredNoteId(report?.stored && report.note_id ? report.note_id : null)
     setStoredNote(null)
     setConfirmedFingerprint(null)
-    setDraftSaveMessage(report?.stored ? 'AI 초안을 저장했습니다. 상담사 확정 전 상태입니다.' : null)
+    setDraftSaveMessage(report?.stored ? 'AI 초안을 저장했습니다. 검토 후 현재 요약을 저장해주세요.' : null)
     setPersistenceError(!isLocalGroundingDemo && !report?.stored
       ? 'AI 초안은 생성되었지만 기록 저장에 실패했습니다. 임시저장으로 작업을 보관할 수 있으며, 상담사 확정은 저장된 AI 초안에서 가능합니다.' : null)
   }
@@ -1098,7 +1098,7 @@ export default function SessionDraftPage({
     })
     if (response.confirmation_status !== 'confirmed') throw new Error('서버의 확정 상태를 확인하지 못했습니다.')
     setConfirmedFingerprint(sectionFingerprint(draftSections))
-    setDraftSaveMessage('상담사 확정 완료. 현재 요약의 최신 편집 내용을 저장했습니다.')
+    setDraftSaveMessage('상담사 검토 완료. 현재 요약의 최신 편집 내용을 저장했습니다.')
   })
 
   const refreshSavedRecords = () => void runPersistence(async () => {
@@ -1330,24 +1330,17 @@ export default function SessionDraftPage({
           onOpenCaseList={openCaseList}
           onOpenSessionInput={openSessionInput}
           onTemporarySave={handleTemporarySave}
+          onRestore={() => {
+            setRestoreOpen((open) => !open)
+            setRestoreCaseId(form.case_id)
+            setHasListedRecords(false)
+            setSavedDrafts([])
+            setSavedNotes([])
+          }}
         />
 
-        <section aria-label="기록 저장과 복원" className="border-b border-slate-200 bg-white px-4 py-3 text-sm">
+        {(restoreOpen || draftSaveMessage || persistenceError || isPersistenceBusy) && <section aria-label="기록 저장과 복원" className="border-b border-slate-200 bg-white px-4 py-2 text-xs">
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" className="rounded-md border border-slate-300 px-3 py-2 font-semibold" onClick={() => {
-              setRestoreOpen((open) => !open)
-              setRestoreCaseId(form.case_id)
-              setHasListedRecords(false)
-              setSavedDrafts([])
-              setSavedNotes([])
-            }}>저장된 기록 불러오기</button>
-            {currentScreen === 'summary_draft' && result && <>
-              <span>{confirmedFingerprint
-                ? confirmedFingerprint === sectionFingerprint(draftSections) ? '상담사 확정본' : '확정본에 미확정 수정사항이 있습니다'
-                : storedNoteId ? 'AI 초안 · 상담사 미확정' : 'AI 초안 · 기록 미저장'}</span>
-              <button type="button" disabled={!storedNoteId || confirmedFingerprint === sectionFingerprint(draftSections)}
-                className="rounded-md bg-blue-700 px-3 py-2 font-semibold text-white disabled:opacity-50" onClick={handleConfirm}>상담사 확정</button>
-            </>}
             {isPersistenceBusy && <span role="status">저장소 요청 처리 중…</span>}
           </div>
           {draftSaveMessage && <p role="status" className="mt-2 break-words text-slate-600">{draftSaveMessage}</p>}
@@ -1369,11 +1362,11 @@ export default function SessionDraftPage({
                 임시저장 · {draft.case_id} · {draft.session_number}회기 · {formatSavedTime(draft.saved_at)}
               </button>)}
               {savedNotes.map((note) => <button key={note.document_id} type="button" onClick={() => restoreNote(note.document_id)} className="block w-full break-words rounded border border-slate-200 p-3 text-left hover:bg-slate-50">
-                {note.status === 'confirmed' ? '확정본' : 'AI 초안'} · {note.title} · {note.created_at ? formatSavedTime(note.created_at) : ''}
+                {note.status === 'confirmed' ? '상담사 검토 완료본' : 'AI 초안'} · {note.title} · {note.created_at ? formatSavedTime(note.created_at) : ''}
               </button>)}
             </div>}
           </div>}
-        </section>
+        </section>}
 
         {currentScreen === 'case_list' ? (
           <CaseListWorkspace
@@ -1429,6 +1422,8 @@ export default function SessionDraftPage({
 
               {currentScreen === 'summary_draft' && result && (
                 <SummaryDraftWorkspace
+                  onConfirm={handleConfirm}
+                  confirmDisabled={isPersistenceBusy || !storedNoteId || confirmedFingerprint === sectionFingerprint(draftSections)}
                   confirmationState={confirmedFingerprint ? confirmedFingerprint === sectionFingerprint(draftSections) ? 'confirmed' : 'edited' : 'draft'}
                   editingSectionId={editingSectionId}
                   expandedEvidenceId={expandedEvidenceId}
@@ -1748,6 +1743,7 @@ function TopWorkspaceBar({
   onOpenCaseList,
   onOpenSessionInput,
   onTemporarySave,
+  onRestore,
   resultReady,
 }: {
   activeStep: WorkflowStep
@@ -1760,6 +1756,7 @@ function TopWorkspaceBar({
   onOpenCaseList: () => void
   onOpenSessionInput: () => void
   onTemporarySave: () => void
+  onRestore: () => void
   resultReady: boolean
 }) {
   const activeIndex = workflowSteps.indexOf(activeStep)
@@ -1814,6 +1811,9 @@ function TopWorkspaceBar({
         )}
 
         <div className="workflow-actions">
+          <button type="button" onClick={onRestore} className="inline-flex h-8 items-center rounded-md px-2 text-xs font-semibold text-slate-500 hover:bg-slate-50">
+            이전 작업 불러오기
+          </button>
           {showTemporarySave && (
             <>
               {draftSaveMessage && (
@@ -2175,6 +2175,8 @@ function SessionInputWorkspace({
 }
 
 function SummaryDraftWorkspace({
+  onConfirm,
+  confirmDisabled,
   confirmationState,
   editingSectionId,
   expandedEvidenceId,
@@ -2186,6 +2188,8 @@ function SummaryDraftWorkspace({
   selectedGroundingClaimId,
   sections,
 }: {
+  onConfirm: () => void
+  confirmDisabled: boolean
   confirmationState: 'draft' | 'confirmed' | 'edited'
   editingSectionId: DraftSectionId | null
   expandedEvidenceId: DraftSectionId | null
@@ -2199,21 +2203,6 @@ function SummaryDraftWorkspace({
 }) {
   return (
     <section className="space-y-3">
-      <div className="rounded-[8px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">i</span>
-          <div>
-            <p className="text-xs font-bold text-slate-900">{confirmationState === 'confirmed'
-              ? '상담사가 확정한 회기요약입니다.' : confirmationState === 'edited'
-                ? '확정 이후 수정한 내용이 있습니다.' : 'AI 초안입니다. 상담사 검토가 필요합니다.'}</p>
-            <p className="mt-1 text-xs font-semibold text-slate-700">
-              {confirmationState === 'confirmed' ? '내용을 수정하면 다시 확정해야 최신 수정본이 기록에 반영됩니다.'
-                : '내용과 근거를 검토한 뒤 상담사 확정 버튼으로 최신 요약을 저장해주세요.'}
-            </p>
-          </div>
-        </div>
-      </div>
-
       <article className="relative rounded-[7px] border border-slate-200 bg-white shadow-sm">
       <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
         <div className="flex items-start justify-between gap-4">
@@ -2224,6 +2213,10 @@ function SummaryDraftWorkspace({
             </div>
             <p className="mt-1.5 text-xs font-bold text-blue-50">
               {getClientDisplayName(form)} · {form.session_number}회기 · {formatCompactDate(form.session_date)}
+            </p>
+            <p role="status" className="mt-2 text-xs font-semibold text-blue-50">
+              {confirmationState === 'confirmed' ? '상담사 검토 완료' : confirmationState === 'edited'
+                ? '수정사항 있음 · 다시 저장 필요' : 'AI 초안 · 검토 필요'}
             </p>
           </div>
           <button
@@ -2254,6 +2247,13 @@ function SummaryDraftWorkspace({
         ) : (
           <div className="px-2 py-12 text-center text-sm text-slate-500">오른쪽 체크리스트에서 표시할 항목을 선택하세요.</div>
         )}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-4">
+        <p className="text-xs text-slate-500">임시저장은 작업 중 상태를, 검토 완료는 현재 요약을 저장합니다.</p>
+        <button type="button" onClick={onConfirm} disabled={confirmDisabled}
+          className="inline-flex min-h-10 items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+          검토 완료하고 저장
+        </button>
       </div>
       </article>
     </section>
