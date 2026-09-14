@@ -2742,7 +2742,7 @@ function SupervisionContentBlockView({
         <button
           type="button"
           onClick={() => onBeginEdit(block)}
-          className="block w-full rounded-[6px] px-1 py-1 text-left hover:bg-slate-50"
+          className="block w-full whitespace-normal rounded-[6px] px-1 py-1 text-left hover:bg-slate-50"
         >
           <SupervisionBlockContent block={block} />
         </button>

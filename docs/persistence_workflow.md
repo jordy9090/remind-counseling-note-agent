@@ -157,6 +157,16 @@ alongside it; both `상담사:` and `상담자:` labels are recognized. Empty su
 The conversion pipeline is deterministic and makes no external model calls. Auth, storage
 policies, AI prompts/models, and the server temporary-draft allowlist are unchanged.
 
+The follow-up Preview (`1664723`) returned the reviewed summary and all four synthetic speaker
+turns in the real deterministic conversion response. Mobile visual inspection also found that
+report content buttons inherited the global no-wrap rule, clipping transcript sentences.
+The content button now explicitly allows wrapping; short action buttons retain their styling.
+Frontend typecheck/build passed after this scoped wrapping fix (the existing bundle-size warning
+remains). The owner confirmed Preview has `USE_STUB=0` but no `OPENAI_API_KEY`; the
+`Settings.stub_mode` expression therefore selects stub mode before model execution. Add the
+server-only variable to the Preview environment and deploy again before the single authorized
+live generation. Production variable presence is still unverified; no secret was read or copied.
+
 The pre-release Production deployment predates that allowlist and is not a safe full rollback
 target after this release. Use a forward recovery commit that retains the allowlist and its
 draft-store read/write projections; verify the affected flow before switching Production.
