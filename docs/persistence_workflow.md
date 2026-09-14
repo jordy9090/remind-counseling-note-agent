@@ -130,3 +130,33 @@ Hosted Supabase Auth/RLS and two-user isolation require separately authorized en
 verification. Local substitutes do not establish hosted RLS correctness.
 No main merge, Production deployment, remote configuration change, or paid API call is part
 of this task.
+
+## Hosted release follow-up (2026-09-14)
+
+The release follow-up is separately authorized; the original local-only results above remain
+distinct from hosted verification. Candidate `f076a55` passed normal email login, input/TXT
+application, temporary save/reload, counselor edit/confirmation, logout/login, full confirmed
+note restoration (including an intentional empty field), and edited-report workspace restoration.
+The generation endpoint returned `stub:true` with `stored:true`; this does **not** establish a
+successful live AI generation. Release remains blocked until the deployed generation configuration
+or failure cause is resolved and actual generation is verified within the approved cost scope.
+
+Normal A/B JWT checks against the shared Supabase project `bgjapctiawosgpjcyfuq` found no
+cross-account reads or updates: backend detail/confirmation/schedule requests returned 404;
+direct RLS reads and updates for the synthetic case, session, generated note and temporary draft
+returned zero rows for B. A could retrieve its saved draft directly, confirming the backend's
+temporary persistence target and exclusion of attachment raw caches. These checks used public
+keys and normal user JWTs, never administrator credentials. Deployed configuration values and
+Production smoke testing remain unverified.
+
+The hosted report exposed two conversion defects: full-transcript mode omitted the counselor's
+edited summary from visible report content, and the `상담사:` speaker label dropped counselor
+turns. The follow-up preserves the existing full transcript and adds the existing summary table
+alongside it; both `상담사:` and `상담자:` labels are recognized. Empty summary values remain empty.
+`python -m unittest test_supervision_form` passes all eight tests, including both regressions.
+The conversion pipeline is deterministic and makes no external model calls. Auth, storage
+policies, AI prompts/models, and the server temporary-draft allowlist are unchanged.
+
+The pre-release Production deployment predates that allowlist and is not a safe full rollback
+target after this release. Use a forward recovery commit that retains the allowlist and its
+draft-store read/write projections; verify the affected flow before switching Production.

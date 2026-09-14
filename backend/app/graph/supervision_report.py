@@ -193,7 +193,8 @@ def generate_section_C(state: SupervisionReportState) -> dict[str, Any]:
     content_blocks: list[SupervisionContentBlock] = []
     if request.transcript_mode == "full" and transcript:
         content_blocks.append(SupervisionContentBlock(id="C-2.transcript", type="transcript", label="완전 축어록", speakerTurns=transcript, evidenceIds=[turn.turnId for turn in transcript], reviewStatus="needs_human_input", evidenceStatus="direct", warnings=["원문 발화와 침묵시간을 제출 전 대조하세요."]))
-    else:
+    # Keep the counselor's current summary visible alongside the source transcript.
+    if summary is not None or request.transcript_mode != "full" or not transcript:
         content_blocks.append(SupervisionContentBlock(id="C-2.summary", type="table", label="회기 축약 요약", rows=[{
             "주요 사건": _soften_clinical_language(summary.session_content.text) if summary else PLACEHOLDER,
             "인지적 평가": PLACEHOLDER,
@@ -388,7 +389,7 @@ def _parse_transcript(text: str) -> list[dict[str, Any]]:
         stripped = line.strip()
         if stripped.startswith(("Cl:", "내담자:", "Client:")):
             speaker = "client"
-        elif stripped.startswith(("C:", "상담자:", "Counselor:")):
+        elif stripped.startswith(("C:", "상담자:", "상담사:", "Counselor:")):
             speaker = "counselor"
         else:
             continue

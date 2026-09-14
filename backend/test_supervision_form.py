@@ -113,6 +113,32 @@ class SupervisionFormTests(unittest.TestCase):
         self.assertNotIn("판단하였다", rendered)
         self.assertIn("추후 확인이 필요하다", rendered)
 
+    def test_full_transcript_also_preserves_reviewed_summary(self):
+        section = lambda text: {"text": text, "evidence_type": "direct", "source_refs": []}
+        summary = {
+            "session_info": {"case_id": "CASE-TEST", "session_number": 1,
+                             "session_date": "2026-09-14", "counselor_name": "합성 상담사"},
+            **{key: section("") for key in ("session_theme", "presenting_problem", "session_content",
+                "counselor_intervention", "client_response", "reflection", "next_plan")},
+        }
+        summary["session_content"] = section("상담사가 수정한 합성 회기 내용")
+        report = run_supervision_report_pipeline(request_for(
+            transcript_mode="full", session_summary_draft=summary,
+        ))
+        blocks = {block.id: block for item in report.sections for block in item.contentBlocks}
+        self.assertIn("C-2.transcript", blocks)
+        self.assertEqual(blocks["C-2.summary"].rows[0]["주요 사건"], "상담사가 수정한 합성 회기 내용")
+        self.assertEqual(blocks["C-2.summary"].rows[0]["상담자의 개입"], "")
+
+    def test_full_transcript_accepts_counselor_label_used_by_the_ui(self):
+        request = request_for(transcript_mode="full")
+        request.session_input.transcript_text = "상담사: 산책은 어땠나요?\n내담자: 편안했어요.\n상담자: 다음 주에도 이어가볼까요?"
+        report = run_supervision_report_pipeline(request)
+        block = next(block for section in report.sections for block in section.contentBlocks
+                     if block.id == "C-2.transcript")
+        self.assertEqual([turn.speaker for turn in block.speakerTurns], ["counselor", "client", "counselor"])
+        self.assertEqual(block.speakerTurns[0].text, "산책은 어땠나요?")
+
     def test_docx_and_pdf_use_official_metadata_grid(self):
         export_request = DocumentExportRequest(
             format="docx",
