@@ -162,7 +162,7 @@ assert(pageSource.includes('localGroundingDemoStale'), 'demo fixture must expose
 assert(pageSource.includes('hasSelectedInlineGrounding'), 'selected inline evidence must highlight the rendered summary paragraph')
 assert(pageSource.includes('bg-amber-100 ring-2 ring-amber-300'), 'selected summary paragraph must use the stronger Figma amber state')
 assert(pageSource.includes('? Promise.resolve(groundingDemoNote)'), 'DEV demo submit must resolve the synthetic fixture locally')
-assert(pageSource.includes(': generateNoteDraft({ ...form, persist: false })'), 'normal submit must retain the production API call')
+assert(pageSource.includes(': generateNoteDraft({ ...form, persist: true })'), 'normal submit must call the API with AI draft persistence enabled')
 
 const loadingTransitions = []
 let mockFailure

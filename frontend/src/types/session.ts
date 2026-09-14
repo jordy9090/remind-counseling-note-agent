@@ -370,6 +370,23 @@ export interface TemporaryDraftSaveResponse {
   message: string
 }
 
+export interface TemporaryDraftRecord extends TemporaryDraftSaveRequest {
+  draft_id: string
+  saved_at: string
+}
+
+export interface GeneratedNoteRecord {
+  note_id: string
+  case_id: string
+  session_id: string
+  session_number: number
+  session_date: string
+  note_type: string
+  draft_json: Record<string, unknown>
+  confirmed_json: Record<string, unknown>
+  confirmation_status: string
+}
+
 export interface RecomposeNoteRequest {
   session_input: SessionInput
   session_topic: string

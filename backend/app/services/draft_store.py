@@ -16,6 +16,7 @@ from app.schemas.note import (
     TemporaryDraftSaveResponse,
 )
 from app.services import supabase_store
+from app.services.temporary_draft_payload import temporary_draft_payload
 
 
 SAFE_DRAFT_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
@@ -25,7 +26,7 @@ def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> T
     """Create or update a temporary draft record."""
     draft_id = request.draft_id if _is_safe_draft_id(request.draft_id) else _new_draft_id()
     saved_at = datetime.now(UTC).isoformat()
-    data = request.model_dump()
+    data = temporary_draft_payload(request.model_dump())
     data["draft_id"] = draft_id
     data["saved_at"] = saved_at
     record = TemporaryDraftRecord(**data)
@@ -48,21 +49,23 @@ def get_temporary_draft(draft_id: str, *, actor: str) -> TemporaryDraftRecord | 
     if not _is_safe_draft_id(draft_id):
         return None
     if supabase_store.configured_for(actor):
-        return supabase_store.get_draft_row(draft_id, actor=actor)
+        record = supabase_store.get_draft_row(draft_id, actor=actor)
+        return TemporaryDraftRecord(**temporary_draft_payload(record.model_dump())) if record else None
     path = _draft_path(draft_id, actor=actor)
     if not path.exists():
         return None
-    return TemporaryDraftRecord(**json.loads(path.read_text(encoding="utf-8")))
+    return TemporaryDraftRecord(**temporary_draft_payload(json.loads(path.read_text(encoding="utf-8"))))
 
 
 def list_temporary_drafts(*, actor: str, case_id: str | None = None) -> list[TemporaryDraftRecord]:
     """List saved temporary drafts, newest first."""
     if supabase_store.configured_for(actor):
-        return supabase_store.list_draft_rows(actor=actor, case_id=case_id)
+        return [TemporaryDraftRecord(**temporary_draft_payload(record.model_dump()))
+                for record in supabase_store.list_draft_rows(actor=actor, case_id=case_id)]
     records: list[TemporaryDraftRecord] = []
     for path in _draft_dir(actor).glob("*.json"):
         try:
-            record = TemporaryDraftRecord(**json.loads(path.read_text(encoding="utf-8")))
+            record = TemporaryDraftRecord(**temporary_draft_payload(json.loads(path.read_text(encoding="utf-8"))))
         except Exception:
             continue
         if case_id and record.case_id != case_id:
