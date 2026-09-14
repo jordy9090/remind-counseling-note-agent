@@ -105,7 +105,7 @@ Local verification artifacts are generated under `results/debug/` and are not in
 
 Ask counselors:
 
-1. Does opening the source directly from an AI sentence help with actual review?
-2. Is a source range of approximately 8 turns too long or too short?
-3. Is the distinction among raw evidence, counselor-confirmed notes, and AI interpretations understandable?
-4. Does this evidence-inspection feature increase willingness to use AI-written documents in actual work?
+1. AI가 작성한 문장에서 근거 원문을 바로 열어 보는 것이 실제 검토에 도움이 되나요?
+2. 근거로 제시되는 원문 범위가 약 8개 발화(턴)일 때, 너무 길거나 짧게 느껴지나요?
+3. 원문 근거, 상담사가 검토·확정한 기록, AI의 해석이 서로 어떻게 다른지 이해하기 쉬운가요?
+4. 이 근거 확인 기능이 있으면 실제 업무에서 AI가 작성한 문서를 사용할 의향이 높아지나요?
