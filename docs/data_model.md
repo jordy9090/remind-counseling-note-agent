@@ -34,7 +34,7 @@ matching. Not every table has the same composite FKs or parent-check policies.
 | `SAVE_RAW_INPUT` (default false) | Whether sessions.raw_input_text is saved. Does not block draft JSON/cache |
 
 Current UI note/report generation does not request saving and does not call confirm/draft/recompose APIs.
-Case dashboard lookup and schedule updates, however, are connected to the DB.
+The owned case list (`GET /api/cases`), client dashboard, record/draft restore, and schedule updates, however, are connected to the DB.
 Distinguish API existence from UI invocation.
 
 ## Entities
@@ -57,8 +57,10 @@ Distinguish API existence from UI invocation.
 - **Relation:** id is a global text PK, not a per-user composite PK. The same case ID cannot be
   independently created for different users. Multiple Sessions/Generated Notes connect through case_id FKs.
 - **Created:** Upserted by note/report generation paths that request persistence. No standalone case-creation UI/API.
-- **Current UI use:** Case ID is used in input; existing cases can be looked up and their schedules updated
-  in the dashboard. Normal note generation alone does not save a new case.
+- **Current UI use:** Case ID is used in input. The case list screen shows every case owned by the logged-in
+  user (server-side `user_id` filter under RLS) with session/document/draft counts; selecting one opens the
+  client dashboard where schedules are updated and saved records are reopened. Generation with `persist:true`
+  upserts the case, so a generated session appears in the list after refresh or re-login.
 
 ### Session — sessions
 
@@ -71,8 +73,8 @@ Distinguish API existence from UI invocation.
   raw_input_text is null when SAVE_RAW_INPUT=false; the true path also applies masking in code.
   At save time, transcript_status is completed if transcript text exists, otherwise none.
   This value does not imply a background STT job.
-- **Current UI use:** Session input is screen state. Existing saved sessions appear in the dashboard,
-  but the current note UI does not request session persistence.
+- **Current UI use:** Session input is screen state. Saved sessions appear per case in the client dashboard
+  (date, transcript status, summary status, linked documents and temporary drafts) and are counted in the case list.
 
 ### Generated Note — generated_notes
 

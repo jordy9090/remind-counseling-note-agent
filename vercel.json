@@ -12,6 +12,10 @@
       "destination": "/api/notes/draft?draft_id=:draft_id"
     },
     {
+      "source": "/api/cases",
+      "destination": "/api/cases/list"
+    },
+    {
       "source": "/api/cases/:case_id/dashboard",
       "destination": "/api/cases/dashboard?case_id=:case_id"
     },

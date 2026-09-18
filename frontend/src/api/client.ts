@@ -19,6 +19,7 @@ import type {
   SupervisionReportDraft,
   SupervisionReportRequest,
   CaseDashboardResponse,
+  CaseListResponse,
   CaseScheduleUpdateRequest,
   TemporaryDraftSaveRequest,
   TemporaryDraftSaveResponse,
@@ -393,6 +394,12 @@ function buildFallbackExportFilename(request: DocumentExportRequest): string {
   return `${request.document_type}_${request.case_id}_${request.session_number}회기_${request.session_date || 'date'}.${extension}`
 }
 
+
+/** 로그인 사용자가 소유한 케이스 목록. 서버가 사용자 JWT(RLS)로만 조회하므로 다른 계정의 케이스는 포함되지 않는다. */
+export const fetchCaseList = async (): Promise<CaseListResponse> => {
+  const response = await client.get<CaseListResponse>('/api/cases')
+  return response.data
+}
 
 export const fetchCaseDashboard = async (caseId: string): Promise<CaseDashboardResponse> => {
   const response = await client.get<CaseDashboardResponse>(

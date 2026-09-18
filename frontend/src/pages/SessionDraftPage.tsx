@@ -52,8 +52,18 @@ import {
   loadGeneratedNote,
   confirmGeneratedNote,
   fetchCaseDashboard,
+  fetchCaseList,
   persistenceErrorMessage,
 } from '../api/client'
+import {
+  CASE_STATUS_FILTERS,
+  caseDisplayName,
+  caseRequestErrorMessage,
+  caseStatusKind,
+  caseStatusLabel,
+  filterCases,
+  type CaseStatusFilter,
+} from '../lib/caseList'
 import {
   buildNonverbalNotes,
   buildTranscriptText,
@@ -62,7 +72,7 @@ import {
   type SpeakerRole,
   type SpeakerRoleMap,
 } from '../lib/audioTranscriptWorkflow'
-import CaseDashboardPanel from '../components/case-dashboard/CaseDashboardPanel'
+import CaseDashboardPanel, { type StartSessionInput } from '../components/case-dashboard/CaseDashboardPanel'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import {
   buildGroundingReviewItems,
@@ -95,6 +105,7 @@ import type {
   TemporaryDraftRecord,
   GeneratedNoteRecord,
   CaseDashboardDocument,
+  CaseListItem,
 } from '../types/session'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
@@ -107,7 +118,7 @@ const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
 }
 
 type WorkflowStep = (typeof workflowSteps)[number]
-type AppScreen = 'case_list' | 'session_input' | 'summary_draft' | 'document_transform' | 'final_document'
+type AppScreen = 'case_list' | 'case_dashboard' | 'session_input' | 'summary_draft' | 'document_transform' | 'final_document'
 type FinalDocumentType = 'session_note' | 'supervision_report' | 'termination_report'
 export type DevGroundingDemoData = {
   form: SessionInput
@@ -253,19 +264,6 @@ interface PreviousSessionOption {
   detail: string
 }
 
-interface CaseSummary {
-  id: string
-  name: string
-  type: string
-  lastDate: string
-  counselor: string
-  mainIssue: string
-  status: '진행중' | '종결' | '대기중'
-  sessionCount: number
-  progressLabel: string
-  progress: number
-}
-
 const defaultChecklistItems: ChecklistItem[] = [
   { id: 'main_issue', title: '주호소' },
   { id: 'session_theme', title: '회기 주제' },
@@ -289,8 +287,6 @@ function buildPreviousSessionSummary(selectedIds: string[]): string {
     .map((session) => `${session.label}: ${session.summary}`)
     .join('\n\n')
 }
-
-const caseSummaries: CaseSummary[] = []
 
 const initialForm: SessionInput = {
   case_id: '',
@@ -407,6 +403,13 @@ export default function SessionDraftPage({
   const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
   const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
+  // 로그인 사용자 소유 케이스 목록(서버가 RLS로 필터). 목록 화면 진입 시마다 다시 불러온다.
+  const [caseList, setCaseList] = useState<CaseListItem[]>([])
+  const [isCaseListLoading, setIsCaseListLoading] = useState(false)
+  const [caseListError, setCaseListError] = useState<string | null>(null)
+  const [caseFilter, setCaseFilter] = useState<CaseStatusFilter>('all')
+  const [caseSearch, setCaseSearch] = useState('')
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
 
   const hasUsableNoteInput = Boolean(
     form.counselor_memo.trim() ||
@@ -435,6 +438,27 @@ export default function SessionDraftPage({
       objectUrlsRef.current.clear()
     }
   }, [])
+
+  const loadCaseList = async () => {
+    setIsCaseListLoading(true)
+    setCaseListError(null)
+    try {
+      const response = await fetchCaseList()
+      setCaseList(response.cases)
+    } catch (requestError) {
+      setCaseList([])
+      setCaseListError(caseRequestErrorMessage(requestError, '케이스 목록을 불러오지 못했습니다.'))
+    } finally {
+      setIsCaseListLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    // 최초 진입 시 사이드바 최근 케이스, 목록 화면 진입 시 최신 목록. 데모 모드는 저장소를 조회하지 않는다.
+    if (isLocalGroundingDemo) return
+    if (currentScreen === 'case_list' || caseList.length === 0) void loadCaseList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentScreen])
 
   const activeStep = getActiveStep(currentScreen)
   const completedSteps = useMemo(() => {
@@ -913,7 +937,40 @@ export default function SessionDraftPage({
     setCurrentScreen('case_list')
   }
 
+  const openCaseDashboard = (caseId: string) => {
+    setSelectedCaseId(caseId)
+    setCurrentScreen('case_dashboard')
+  }
+
   const openSessionInput = () => {
+    setCurrentScreen('session_input')
+  }
+
+  /** 대시보드에서 "새 회기 입력": 케이스 ID·가명·다음 회기 번호를 채운 빈 회기 입력 화면을 연다. */
+  const startSessionForCase = ({ caseId, caseAlias, sessionNumber }: StartSessionInput) => {
+    const sameSession = form.case_id === caseId && form.session_number === sessionNumber
+    if (!sameSession && (hasUsableNoteInput || result || materials.length)
+      && !window.confirm('현재 화면의 작성 내용을 비우고 이 케이스의 새 회기를 시작합니다. 저장하지 않은 변경사항은 사라집니다. 계속할까요?')) return
+    if (!sameSession) {
+      setForm({ ...initialForm, case_id: caseId, client_alias: caseAlias || '', session_number: sessionNumber })
+      setSessionTopic('')
+      setResult(null)
+      setDraftSections([])
+      setFinalDocumentSections([])
+      setSupervisionReportDraft(null)
+      setStoredNoteId(null)
+      setStoredNote(null)
+      setConfirmedFingerprint(null)
+      setSavedDraft(null)
+      setSelectedPreviousSessionIds([])
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      objectUrlsRef.current.clear()
+      setMaterials([])
+      setError(null)
+      setHasSubmitted(false)
+      setDraftSaveMessage(null)
+      setPersistenceError(null)
+    }
     setCurrentScreen('session_input')
   }
 
@@ -1312,6 +1369,13 @@ export default function SessionDraftPage({
       <AppSidebar
         activeScreen={currentScreen}
         collapsed={isSidebarCollapsed}
+        recentCases={caseList.slice(0, 5)}
+        search={caseSearch}
+        onChangeSearch={(value) => {
+          setCaseSearch(value)
+          if (value.trim() && currentScreen !== 'case_list') setCurrentScreen('case_list')
+        }}
+        onOpenCase={openCaseDashboard}
         onOpenCaseList={openCaseList}
         onOpenSessionInput={openSessionInput}
         onToggleCollapsed={() => setIsSidebarCollapsed((current) => !current)}
@@ -1370,13 +1434,26 @@ export default function SessionDraftPage({
 
         {currentScreen === 'case_list' ? (
           <CaseListWorkspace
-            cases={caseSummaries}
-            initialCaseId={form.case_id}
+            cases={filterCases(caseList, caseFilter, caseSearch)}
+            totalCount={caseList.length}
+            filter={caseFilter}
+            search={caseSearch}
+            isLoading={isCaseListLoading}
+            error={caseListError}
+            onChangeFilter={setCaseFilter}
+            onChangeSearch={setCaseSearch}
+            onRetry={() => void loadCaseList()}
             onCreateSession={openSessionInput}
-            onOpenCase={() => {
-              setForm(initialForm)
-              setCurrentScreen(result ? 'summary_draft' : 'session_input')
-            }}
+            onOpenCase={openCaseDashboard}
+          />
+        ) : currentScreen === 'case_dashboard' && selectedCaseId ? (
+          <CaseDashboardPanel
+            key={selectedCaseId}
+            caseId={selectedCaseId}
+            onBack={openCaseList}
+            onOpenNote={restoreNote}
+            onOpenDraft={restoreTemporary}
+            onStartSession={startSessionForCase}
           />
         ) : (
           <div
@@ -1581,12 +1658,20 @@ export default function SessionDraftPage({
 function AppSidebar({
   activeScreen,
   collapsed,
+  recentCases,
+  search,
+  onChangeSearch,
+  onOpenCase,
   onOpenCaseList,
   onOpenSessionInput,
   onToggleCollapsed,
 }: {
   activeScreen: AppScreen
   collapsed: boolean
+  recentCases: CaseListItem[]
+  search: string
+  onChangeSearch: (value: string) => void
+  onOpenCase: (caseId: string) => void
   onOpenCaseList: () => void
   onOpenSessionInput: () => void
   onToggleCollapsed: () => void
@@ -1629,6 +1714,9 @@ function AppSidebar({
             <input
               className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400"
               placeholder="내담자/케이스 검색"
+              aria-label="내담자/케이스 검색"
+              value={search}
+              onChange={(event) => onChangeSearch(event.target.value)}
             />
           </label>
 
@@ -1650,8 +1738,28 @@ function AppSidebar({
             </SidebarButton>
           </nav>
 
-          <div className="border-t border-slate-200 px-1 pt-4 text-[10px] font-medium text-slate-400">
-            최근 케이스가 없습니다.
+          <div className="border-t border-slate-200 pt-3">
+            <p className="px-1 text-[10px] font-medium text-slate-400">최근 케이스</p>
+            {recentCases.length === 0 ? (
+              <p className="mt-2 px-1 text-[10px] font-medium text-slate-400">최근 케이스가 없습니다.</p>
+            ) : (
+              <ul className="mt-1 space-y-0.5">
+                {recentCases.map((item) => (
+                  <li key={item.case_id}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenCase(item.case_id)}
+                      className="w-full rounded-[5px] px-2 py-1.5 text-left hover:bg-slate-50"
+                    >
+                      <p className="truncate text-xs font-semibold text-slate-900">{caseDisplayName(item)}</p>
+                      <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                        {item.total_session_count}회기 · {caseStatusLabel(item.status)}
+                      </p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 
@@ -1692,42 +1800,6 @@ function SidebarButton({
     >
       {icon}
       {children}
-    </button>
-  )
-}
-
-function CaseListItem({
-  active = false,
-  meta,
-  name,
-  status,
-  tone = 'blue',
-}: {
-  active?: boolean
-  meta: string
-  name: string
-  status: string
-  tone?: 'blue' | 'green' | 'orange'
-}) {
-  const toneClass =
-    tone === 'green'
-      ? 'bg-emerald-50 text-emerald-700'
-      : tone === 'orange'
-        ? 'bg-orange-50 text-orange-700'
-        : 'bg-blue-50 text-blue-700'
-
-  return (
-    <button
-      type="button"
-      className={`w-full rounded-[6px] px-3 py-2 text-left text-xs ${
-        active ? 'bg-blue-50' : 'border-b border-slate-100 hover:bg-slate-50'
-      }`}
-    >
-      <p className="font-semibold text-slate-900">{name}</p>
-      <div className="mt-2 flex items-center gap-1.5 text-[10px] text-slate-500">
-        <span className={`rounded-full px-2 py-0.5 font-medium ${toneClass}`}>{status}</span>
-        <span>{meta}</span>
-      </div>
     </button>
   )
 }
@@ -1776,7 +1848,7 @@ function TopWorkspaceBar({
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
       <div className="workspace-header-content">
-        {currentScreen === 'case_list' ? (
+        {currentScreen === 'case_list' || currentScreen === 'case_dashboard' ? (
           <div />
         ) : (
           <nav className="workflow-steps" aria-label="회기 작업 단계">
@@ -1848,102 +1920,165 @@ function TopWorkspaceBar({
 
 function CaseListWorkspace({
   cases,
-  initialCaseId,
+  totalCount,
+  filter,
+  search,
+  isLoading,
+  error,
+  onChangeFilter,
+  onChangeSearch,
+  onRetry,
   onCreateSession,
   onOpenCase,
 }: {
-  cases: CaseSummary[]
-  initialCaseId: string
+  cases: CaseListItem[]
+  totalCount: number
+  filter: CaseStatusFilter
+  search: string
+  isLoading: boolean
+  error: string | null
+  onChangeFilter: (filter: CaseStatusFilter) => void
+  onChangeSearch: (value: string) => void
+  onRetry: () => void
   onCreateSession: () => void
-  onOpenCase: (caseItem: CaseSummary) => void
+  onOpenCase: (caseId: string) => void
 }) {
+  const isFiltered = filter !== 'all' || search.trim().length > 0
   return (
-    <section className="px-6 py-5">
-      <CaseDashboardPanel initialCaseId={initialCaseId} />
+    <section aria-label="케이스 목록" className="px-4 py-5 md:px-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-extrabold tracking-normal text-black">케이스 목록</h2>
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            {isLoading ? '저장된 케이스를 불러오는 중입니다…' : `내 계정에 저장된 케이스 ${totalCount}건`}
+          </p>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-3 md:flex-nowrap">
-        <div className="flex flex-wrap gap-2 text-[11px] md:flex-nowrap">
-          {['전체', '진행중', '종결', '대기중'].map((filter, index) => (
-            <button
-              key={filter}
-              type="button"
-              className={`h-8 rounded-full px-3.5 font-bold shadow-sm ${
-                index === 0 ? 'bg-blue-600 text-white' : 'bg-white text-black hover:bg-slate-50'
-              }`}
-            >
-              {filter}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={onCreateSession}
-          className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          새 회기 생성
-        </button>
+          <div className="flex flex-wrap gap-2 text-[11px] md:flex-nowrap">
+            {CASE_STATUS_FILTERS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={filter === option.id}
+                onClick={() => onChangeFilter(option.id)}
+                className={`h-8 rounded-full px-3.5 font-bold shadow-sm ${
+                  filter === option.id ? 'bg-blue-600 text-white' : 'bg-white text-black hover:bg-slate-50'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={isLoading}
+            aria-label="케이스 목록 새로고침"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <History className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={onCreateSession}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            새 회기 생성
+          </button>
         </div>
       </div>
 
-      <div className="grid max-w-[790px] gap-3 md:grid-cols-2 lg:grid-cols-3">
+      <label className="mb-4 flex h-9 max-w-[420px] items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-500 shadow-sm md:hidden">
+        <Search className="h-4 w-4" />
+        <input
+          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400"
+          placeholder="내담자/케이스 검색"
+          aria-label="내담자/케이스 검색"
+          value={search}
+          onChange={(event) => onChangeSearch(event.target.value)}
+        />
+      </label>
+
+      {error && (
+        <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <p className="min-w-0 flex-1">{error}</p>
+          <button type="button" onClick={onRetry} className="font-bold underline">다시 시도</button>
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {cases.map((caseItem) => (
-          <CaseCard key={caseItem.id} caseItem={caseItem} onOpen={() => onOpenCase(caseItem)} />
+          <CaseCard key={caseItem.case_id} caseItem={caseItem} onOpen={() => onOpenCase(caseItem.case_id)} />
         ))}
       </div>
-      {!cases.length && (
-        <div className="max-w-[790px] rounded-[10px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
-          <p className="text-sm font-semibold text-slate-600">아직 등록된 케이스가 없습니다.</p>
-          <button type="button" onClick={onCreateSession} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white">
-            첫 회기 입력하기
-          </button>
+      {!cases.length && !isLoading && !error && (
+        <div className="rounded-[10px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+          <p className="text-sm font-semibold text-slate-600">
+            {isFiltered ? '조건에 맞는 케이스가 없습니다.' : '아직 저장된 케이스가 없습니다.'}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            {isFiltered ? '필터나 검색어를 바꿔보세요.' : '회기를 입력해 요약초안을 생성하면 케이스가 자동으로 저장됩니다.'}
+          </p>
+          {!isFiltered && (
+            <button type="button" onClick={onCreateSession} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+              첫 회기 입력하기
+            </button>
+          )}
         </div>
       )}
     </section>
   )
 }
 
-function CaseCard({ caseItem, onOpen }: { caseItem: CaseSummary; onOpen: () => void }) {
+function CaseCard({ caseItem, onOpen }: { caseItem: CaseListItem; onOpen: () => void }) {
+  const kind = caseStatusKind(caseItem.status)
   const statusTone =
-    caseItem.status === '종결'
-      ? 'bg-emerald-50 text-emerald-700'
-      : caseItem.status === '대기중'
-        ? 'bg-orange-50 text-orange-700'
-        : 'bg-blue-50 text-blue-700'
-  const progressColor =
-    caseItem.status === '종결' ? 'bg-emerald-500' : caseItem.status === '대기중' ? 'bg-orange-500' : 'bg-blue-600'
+    kind === 'closed' ? 'bg-emerald-50 text-emerald-700' : kind === 'pending' ? 'bg-orange-50 text-orange-700' : 'bg-blue-50 text-blue-700'
+  const progressColor = kind === 'closed' ? 'bg-emerald-500' : kind === 'pending' ? 'bg-orange-500' : 'bg-blue-600'
+  const scheduled = caseItem.total_scheduled_session_count
+  const progress = scheduled && scheduled > 0 ? Math.min(100, Math.round((caseItem.total_session_count / scheduled) * 100)) : null
+  const progressLabel = scheduled ? `${caseItem.total_session_count}/${scheduled}회 진행` : '예정 회기 미설정'
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="min-h-[190px] rounded-[10px] border border-slate-200 bg-white p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      aria-label={`${caseDisplayName(caseItem)} 대시보드 열기`}
+      className="rounded-[10px] border border-slate-200 bg-white p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-extrabold text-black">{caseItem.name}</h3>
-          <p className="mt-0.5 text-[9px] text-slate-500">케이스 ID: {caseItem.id}</p>
+        <div className="min-w-0">
+          <h3 className="truncate text-base font-extrabold text-black">{caseDisplayName(caseItem)}</h3>
+          <p className="mt-0.5 truncate text-[10px] text-slate-500">케이스 ID: {caseItem.case_id}</p>
         </div>
-        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${statusTone}`}>{caseItem.status}</span>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${statusTone}`}>{caseStatusLabel(caseItem.status)}</span>
       </div>
 
       <dl className="mt-2.5 grid gap-1 text-[10px] leading-4">
-        <CaseMeta label="상담 유형" value={caseItem.type} />
-        <CaseMeta label="최근 회기" value={caseItem.lastDate} />
-        <CaseMeta label="담당 상담사" value={caseItem.counselor} />
-        <CaseMeta label="주요 이슈" value={caseItem.mainIssue} />
+        <CaseMeta label="회기 수" value={`${caseItem.total_session_count}회${caseItem.latest_session_number ? ` (최근 ${caseItem.latest_session_number}회기)` : ''}`} />
+        <CaseMeta label="최근 상담일" value={caseItem.latest_consultation_date || '—'} />
+        <CaseMeta label="다음 예정일" value={caseItem.next_scheduled_date || '—'} />
       </dl>
+
+      <div className="mt-2.5 flex flex-wrap gap-1.5 text-[10px] font-bold">
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">축어록 {caseItem.transcript_completed_count}/{caseItem.total_session_count}</span>
+        <span className={`rounded-full px-2 py-0.5 ${caseItem.confirmed_note_count ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+          검토 완료 {caseItem.confirmed_note_count}
+        </span>
+        {caseItem.draft_note_count > 0 && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">AI 초안 {caseItem.draft_note_count}</span>}
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">문서 {caseItem.document_count}</span>
+        {caseItem.temporary_draft_count > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">임시저장 {caseItem.temporary_draft_count}</span>}
+      </div>
 
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between text-[11px] font-bold text-slate-500">
-          <span>{caseItem.sessionCount}회기</span>
-          <span className="text-blue-700">{caseItem.progressLabel}</span>
+          <span>{caseItem.total_session_count}회기</span>
+          <span className="text-blue-700">{progressLabel}</span>
         </div>
         <div className="h-2.5 rounded-full bg-slate-100">
-          <div className={`h-2.5 rounded-full ${progressColor}`} style={{ width: `${caseItem.progress}%` }} />
+          <div className={`h-2.5 rounded-full ${progressColor}`} style={{ width: `${progress ?? 0}%` }} />
         </div>
       </div>
     </button>

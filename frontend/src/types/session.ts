@@ -670,3 +670,28 @@ export interface CaseScheduleUpdateRequest {
   total_scheduled_session_count?: number | null
   next_scheduled_date?: string | null
 }
+
+export interface CaseListItem {
+  case_id: string
+  case_alias: string | null
+  status: string
+  created_at: string | null
+  updated_at: string | null
+  total_session_count: number
+  latest_session_number: number | null
+  first_consultation_date: string | null
+  latest_consultation_date: string | null
+  total_scheduled_session_count: number | null
+  next_scheduled_date: string | null
+  transcript_completed_count: number
+  confirmed_note_count: number
+  draft_note_count: number
+  document_count: number
+  export_count: number
+  temporary_draft_count: number
+}
+
+export interface CaseListResponse {
+  cases: CaseListItem[]
+  total_count: number
+}

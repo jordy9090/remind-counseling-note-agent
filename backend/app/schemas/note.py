@@ -431,6 +431,35 @@ class CaseDashboardResponse(BaseModel):
     exports: list[CaseDashboardExport] = Field(default_factory=list)
 
 
+class CaseListItem(BaseModel):
+    """One owned case with aggregate counts for the case list screen."""
+
+    case_id: str
+    case_alias: str | None = None
+    status: str = "active"
+    created_at: str | None = None
+    updated_at: str | None = None
+    total_session_count: int = 0
+    latest_session_number: int | None = None
+    first_consultation_date: str | None = None
+    latest_consultation_date: str | None = None
+    total_scheduled_session_count: int | None = None
+    next_scheduled_date: str | None = None
+    transcript_completed_count: int = 0
+    confirmed_note_count: int = 0
+    draft_note_count: int = 0
+    document_count: int = 0
+    export_count: int = 0
+    temporary_draft_count: int = 0
+
+
+class CaseListResponse(BaseModel):
+    """All cases owned by the authenticated user, most recently active first."""
+
+    cases: list[CaseListItem] = Field(default_factory=list)
+    total_count: int = 0
+
+
 class CaseScheduleUpdateRequest(BaseModel):
     """Update scheduling metadata on a case (both fields optional)."""
 

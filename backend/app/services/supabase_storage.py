@@ -15,6 +15,8 @@ from app.schemas.note import (
     CaseDashboardExport,
     CaseDashboardResponse,
     CaseDashboardSession,
+    CaseListItem,
+    CaseListResponse,
     CaseScheduleUpdateRequest,
     ConfirmGeneratedNoteRequest,
     ConfirmGeneratedNoteResponse,
@@ -849,6 +851,131 @@ def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> C
         documents=documents,
         exports=exports,
     )
+
+
+def _latest_timestamp(*values: Any) -> str | None:
+    """ISO 타임스탬프 문자열 중 가장 늦은 것을 돌려준다 (없으면 None)."""
+    candidates = [str(value) for value in values if value]
+    return max(candidates) if candidates else None
+
+
+def aggregate_case_list(
+    case_rows: list[dict[str, Any]],
+    session_rows: list[dict[str, Any]],
+    note_rows: list[dict[str, Any]],
+    export_rows: list[dict[str, Any]],
+    draft_rows: list[dict[str, Any]],
+) -> CaseListResponse:
+    """Pure aggregation: fold sessions/notes/exports/drafts into per-case counts.
+
+    Rows that reference a case the caller does not own are ignored, so a
+    child row can never surface a case that is missing from case_rows.
+    """
+    items: dict[str, CaseListItem] = {}
+    activity: dict[str, str | None] = {}
+    for row in case_rows:
+        case_id = str(row.get("id") or "").strip()
+        if not case_id:
+            continue
+        items[case_id] = CaseListItem(
+            case_id=case_id,
+            case_alias=row.get("case_alias") or None,
+            status=str(row.get("status") or "active"),
+            created_at=row.get("created_at") or None,
+            total_scheduled_session_count=_as_int(row.get("total_scheduled_session_count")),
+            next_scheduled_date=row.get("next_scheduled_date") or None,
+        )
+        activity[case_id] = row.get("created_at") or None
+
+    session_dates: dict[str, list[str]] = {}
+    for row in session_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.total_session_count += 1
+        number = _as_int(row.get("session_number"))
+        if number is not None and (item.latest_session_number is None or number > item.latest_session_number):
+            item.latest_session_number = number
+        if row.get("session_date"):
+            session_dates.setdefault(item.case_id, []).append(str(row["session_date"]))
+        if str(row.get("transcript_status") or "") == "completed":
+            item.transcript_completed_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("created_at"))
+
+    for row in note_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.document_count += 1
+        if str(row.get("note_type") or "session_note") == "session_note":
+            if str(row.get("confirmation_status") or "draft") in {"confirmed", "demo_confirmed"}:
+                item.confirmed_note_count += 1
+            else:
+                item.draft_note_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("created_at"), row.get("updated_at"))
+
+    for row in export_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.export_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("created_at"))
+
+    for row in draft_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.temporary_draft_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("saved_at"))
+
+    for case_id, item in items.items():
+        dates = sorted(session_dates.get(case_id, []))
+        item.first_consultation_date = dates[0] if dates else None
+        item.latest_consultation_date = dates[-1] if dates else None
+        item.updated_at = activity.get(case_id)
+
+    ordered = sorted(items.values(), key=lambda item: item.updated_at or "", reverse=True)
+    return CaseListResponse(cases=ordered, total_count=len(ordered))
+
+
+def list_cases(*, actor: str = "server_demo_actor") -> CaseListResponse:
+    """Return every case the actor owns with session/document/draft counts.
+
+    모든 조회는 사용자 JWT(RLS)로 실행되고 user_id 필터를 한 번 더 건다.
+    """
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; case list is unavailable.")
+
+    owner_filter = {"user_id": f"eq.{actor}"}
+    case_rows = actor_storage.select(
+        "cases",
+        {
+            **owner_filter,
+            "select": "id,case_alias,status,created_at,total_scheduled_session_count,next_scheduled_date",
+            "order": "created_at.desc",
+        },
+    )
+    if not case_rows:
+        return CaseListResponse()
+    session_rows = actor_storage.select(
+        "sessions",
+        {**owner_filter, "select": "case_id,session_number,session_date,transcript_status,created_at"},
+    )
+    note_rows = actor_storage.select(
+        "generated_notes",
+        {**owner_filter, "select": "case_id,note_type,confirmation_status,created_at,updated_at"},
+    )
+    export_rows = actor_storage.select("document_exports", {**owner_filter, "select": "case_id,created_at"})
+    try:
+        draft_rows = actor_storage.select(
+            settings.supabase_drafts_table,
+            {**owner_filter, "select": "case_id,session_number,saved_at"},
+        )
+    except SupabaseStorageError:
+        # 임시저장 테이블은 목록의 부가 정보일 뿐이므로 조회 실패가 목록 자체를 막지 않는다.
+        draft_rows = []
+    return aggregate_case_list(case_rows, session_rows, note_rows, export_rows, draft_rows)
 
 
 def _build_document_export_row(

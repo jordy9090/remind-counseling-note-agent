@@ -8,10 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.security import require_preview_access
 from app.core.config import settings
-from app.schemas.note import CaseDashboardResponse, CaseScheduleUpdateRequest
+from app.schemas.note import CaseDashboardResponse, CaseListResponse, CaseScheduleUpdateRequest
 from app.services.supabase_storage import (
     SupabaseStorageError,
     fetch_case_dashboard,
+    list_cases,
     update_case_schedule,
 )
 
@@ -28,6 +29,20 @@ def _storage_error_status(error: SupabaseStorageError) -> int:
     if "credentials are missing" in message:
         return 503
     return 502
+
+
+@router.get("", response_model=CaseListResponse)
+async def get_case_list(actor: PreviewActor) -> CaseListResponse:
+    """로그인 사용자가 소유한 케이스 목록과 회기·문서·임시저장 집계를 반환한다."""
+    if not settings.supabase_configured and not getattr(actor, "access_token", ""):
+        raise HTTPException(status_code=503, detail="Supabase가 설정되지 않아 케이스 목록을 사용할 수 없습니다.")
+    try:
+        return list_cases(actor=actor)
+    except SupabaseStorageError as error:
+        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
+    except Exception as error:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"케이스 목록 조회 중 오류가 발생했습니다: {str(error)}")
 
 
 @router.get("/{case_id}/dashboard", response_model=CaseDashboardResponse)
