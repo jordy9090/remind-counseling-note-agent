@@ -5,40 +5,32 @@ import {
   Bookmark,
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   ClipboardCheck,
   ClipboardList,
   Download,
   Edit3,
   FileText,
-  FolderOpen,
   History,
   Info,
-  List,
   Loader2,
-  Mic,
-  PanelLeftClose,
-  PanelLeftOpen,
   PenLine,
   Plus,
   Save,
-  Search,
-  Send,
   ShieldCheck,
-  Upload,
+  Sparkles,
   Workflow,
   X,
   type LucideIcon,
 } from 'lucide-react'
-import BasicInfoCard from '../components/session-input/BasicInfoCard'
-import MaterialRow from '../components/session-input/MaterialRow'
-import ProcessStatusCard from '../components/session-input/ProcessStatusCard'
 import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
 import GroundingEvidenceReview, {
   EvidenceDrawer,
   EvidenceSourcePanel,
 } from '../components/note/GroundingEvidenceReview'
 import {
+  createCase,
   downloadDocumentExport,
   extractDocumentMaterial,
   generateNoteDraft,
@@ -54,15 +46,15 @@ import {
   fetchCaseDashboard,
   fetchCaseList,
   persistenceErrorMessage,
+  updateCaseProfile,
 } from '../api/client'
 import {
-  CASE_STATUS_FILTERS,
+  DEFAULT_CLIENT_FILTER,
   caseDisplayName,
   caseRequestErrorMessage,
-  caseStatusKind,
-  caseStatusLabel,
-  filterCases,
-  type CaseStatusFilter,
+  formatKoreanDate,
+  isConfirmedStatus,
+  type ClientFilter,
 } from '../lib/caseList'
 import {
   buildNonverbalNotes,
@@ -72,7 +64,17 @@ import {
   type SpeakerRole,
   type SpeakerRoleMap,
 } from '../lib/audioTranscriptWorkflow'
+import AppSidebar, { MobileNavItems, type ShellSection } from '../components/app-shell/AppSidebar'
+import { GhostButton, OutlineButton, PrimaryButton } from '../components/app-shell/ui'
 import CaseDashboardPanel, { type StartSessionInput } from '../components/case-dashboard/CaseDashboardPanel'
+import ClientFormModal, { type ClientFormInitial } from '../components/clients/ClientFormModal'
+import ClientPickerModal from '../components/clients/ClientPickerModal'
+import DocumentArchivePage from '../components/documents/DocumentArchivePage'
+import SettingsPage from '../components/settings/SettingsPage'
+import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
+import SessionRecordModal, { type SessionTime } from '../components/session-input/SessionRecordModal'
+import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
+import ClientListPage from './ClientListPage'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
 import {
   buildGroundingReviewItems,
@@ -84,6 +86,22 @@ import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
 import { confirmedPayload, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
+import {
+  customChecklistId,
+  defaultChecklistItems,
+  readChecklistPreference,
+  writeChecklistPreference,
+  type ChecklistItem,
+  type DraftSectionId,
+} from '../lib/checklist'
+import {
+  AUDIO_APPLY_TARGETS,
+  materialApplyTargetLabel,
+  type MaterialApplyMode,
+  type MaterialApplyTarget,
+  type UploadedMaterial,
+  type UploadedMaterialKind,
+} from '../types/materials'
 import type {
   AudioCapabilitiesResponse,
   AudioSegment,
@@ -105,7 +123,11 @@ import type {
   TemporaryDraftRecord,
   GeneratedNoteRecord,
   CaseDashboardDocument,
+  CaseDashboardResponse,
   CaseListItem,
+  CaseCreateRequest,
+  CaseProfileUpdateRequest,
+  RecentDocumentItem,
 } from '../types/session'
 
 const workflowSteps = ['회기입력', '요약초안', '문서변환', '최종문서'] as const
@@ -118,7 +140,16 @@ const reviewStatusSymbol: Record<'done' | 'partial' | 'missing', string> = {
 }
 
 type WorkflowStep = (typeof workflowSteps)[number]
-type AppScreen = 'case_list' | 'case_dashboard' | 'session_input' | 'summary_draft' | 'document_transform' | 'final_document'
+type AppScreen =
+  | 'home'
+  | 'clients'
+  | 'client_detail'
+  | 'documents'
+  | 'settings'
+  | 'session_input'
+  | 'summary_draft'
+  | 'document_transform'
+  | 'final_document'
 type FinalDocumentType = 'session_note' | 'supervision_report' | 'termination_report'
 export type DevGroundingDemoData = {
   form: SessionInput
@@ -143,18 +174,6 @@ type MaterialModalMode =
   | 'edit_previous'
   | 'edit_test'
 
-type DraftSectionId =
-  | 'client_info'
-  | 'main_issue'
-  | 'session_theme'
-  | 'session_content'
-  | 'counselor_intervention'
-  | 'client_response'
-  | 'next_plan'
-  | 'risk_signal'
-  | 'supervision_memo'
-  | string
-
 type SourceBadgeKind =
   | 'memo'
   | 'transcript'
@@ -167,61 +186,12 @@ type SourceBadgeKind =
   | 'editable'
   | 'needs_review'
 
-type UploadedMaterialKind = 'document' | 'audio'
-type UploadedMaterialStatus =
-  | 'uploading'
-  | 'completed'
-  | 'warning'
-  | 'selected'
-  | 'transcribing'
-  | 'transcribed'
-  | 'failed'
-type MaterialApplyTarget =
-  | 'transcript_text'
-  | 'nonverbal_notes'
-  | 'counselor_memo'
-  | 'previous_session_summary'
-  | 'psychological_test_summary'
-type MaterialApplyMode = 'append' | 'replace'
-const AUDIO_APPLY_TARGETS: MaterialApplyTarget[] = ['transcript_text', 'nonverbal_notes']
-
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(import.meta.env.VITE_DOCUMENT_UPLOAD_MAX_BYTES)
   || (import.meta.env.PROD ? 4 * 1024 * 1024 : 20 * 1024 * 1024)
 const DOCUMENT_UPLOAD_LIMIT_LABEL = `${Math.floor(DOCUMENT_UPLOAD_MAX_BYTES / 1024 / 1024)}MB`
 const AUDIO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
 const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['.pdf', '.docx', '.txt'])
 const AUDIO_UPLOAD_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav'])
-
-interface UploadedMaterial {
-  id: string
-  kind: UploadedMaterialKind
-  filename: string
-  mediaType?: string
-  status: UploadedMaterialStatus
-  characterCount?: number
-  pageCount?: number | null
-  extractedText?: string
-  warnings: string[]
-  error?: string
-  file?: File
-  objectUrl?: string
-  transcriptText?: string
-  segments?: AudioSegment[]
-  durationSeconds?: number | null
-  language?: string | null
-  speakerRoleMap?: SpeakerRoleMap
-  runtimeMode?: 'real' | 'stub'
-  diarizationStatus?: 'completed' | 'fallback' | 'disabled'
-  languageProbability?: number | null
-  nonverbalNotes?: string
-  dirtySinceApply?: boolean
-  expectedSpeakers?: number
-  lastAppliedTranscriptText?: string
-  lastAppliedNonverbalNotes?: string
-  lastAppliedMode?: MaterialApplyMode
-  requiresReattachment?: boolean
-  appliedTargets: MaterialApplyTarget[]
-}
 
 interface CompactEvidence {
   label: string
@@ -251,11 +221,6 @@ interface FinalDocumentSection {
   groundingItems: GroundingReviewItem[]
 }
 
-interface ChecklistItem {
-  id: DraftSectionId
-  title: string
-}
-
 interface PreviousSessionOption {
   id: string
   label: string
@@ -263,18 +228,6 @@ interface PreviousSessionOption {
   summary: string
   detail: string
 }
-
-const defaultChecklistItems: ChecklistItem[] = [
-  { id: 'main_issue', title: '주호소' },
-  { id: 'session_theme', title: '회기 주제' },
-  { id: 'session_content', title: '상담 내용' },
-  { id: 'counselor_intervention', title: '상담자 개입' },
-  { id: 'client_response', title: '내담자 반응' },
-  { id: 'next_plan', title: '다음 계획' },
-  { id: 'psychological_test', title: '심리검사 요약' },
-  { id: 'risk_signal', title: '위험 신호' },
-  { id: 'supervision_memo', title: '슈퍼비전 메모' },
-]
 
 const defaultVisibleSectionIds = new Set<DraftSectionId>(defaultChecklistItems.map((item) => item.id))
 
@@ -326,7 +279,7 @@ export default function SessionDraftPage({
   const localGroundingDemoScreen: AppScreen = isLocalGroundingDemo
     && (localGroundingDemoView === 'final' || localGroundingDemoView === 'supervision')
     ? 'final_document'
-    : isLocalGroundingDemo ? 'summary_draft' : 'session_input'
+    : isLocalGroundingDemo ? 'summary_draft' : 'home'
   const groundingDemoForm = devGroundingDemo?.form ?? initialForm
   const groundingDemoNote = devGroundingDemo?.note ?? null
   const groundingDemoSupervisionReport = devGroundingDemo?.supervisionReport ?? null
@@ -365,7 +318,11 @@ export default function SessionDraftPage({
           : section)
       : []
   ))
-  const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(defaultVisibleSectionIds)
+  const [visibleSectionIds, setVisibleSectionIds] = useState<Set<DraftSectionId>>(() => {
+    if (isLocalGroundingDemo) return defaultVisibleSectionIds
+    const preference = readChecklistPreference()
+    return preference ? new Set<DraftSectionId>(preference.visible) : defaultVisibleSectionIds
+  })
   const [editingSectionId, setEditingSectionId] = useState<DraftSectionId | null>(null)
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<DraftSectionId | null>(null)
   const [selectedGroundingClaimId, setSelectedGroundingClaimId] = useState<string | null>(
@@ -403,14 +360,28 @@ export default function SessionDraftPage({
   const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
   const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
-  // 로그인 사용자 소유 케이스 목록(서버가 RLS로 필터). 목록 화면 진입 시마다 다시 불러온다.
+  // 로그인 사용자 소유 케이스 목록(서버가 RLS로 필터) + 최근 문서. 홈/내담자/문서 화면 진입 시마다 다시 불러온다.
   const [caseList, setCaseList] = useState<CaseListItem[]>([])
+  const [recentDocuments, setRecentDocuments] = useState<RecentDocumentItem[]>([])
   const [isCaseListLoading, setIsCaseListLoading] = useState(false)
   const [caseListError, setCaseListError] = useState<string | null>(null)
-  const [caseFilter, setCaseFilter] = useState<CaseStatusFilter>('all')
-  const [caseSearch, setCaseSearch] = useState('')
+  const [clientFilter, setClientFilter] = useState<ClientFilter>(DEFAULT_CLIENT_FILTER)
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
-
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0)
+  const [clientModal, setClientModal] = useState<{ mode: 'create' } | { mode: 'edit'; caseId: string; initial: ClientFormInitial } | null>(null)
+  const [clientModalSubmitting, setClientModalSubmitting] = useState(false)
+  const [clientModalError, setClientModalError] = useState<string | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // 새 회기 기록 모달을 닫을 때 돌아갈 화면
+  const [inputReturnScreen, setInputReturnScreen] = useState<AppScreen>('home')
+  // UI-only: 상담 시간(백엔드 필드 없음). 저장·요약 생성에는 쓰이지 않는다.
+  const [sessionTime, setSessionTime] = useState<SessionTime>({ start: '', end: '' })
+  const [customChecklistItems, setCustomChecklistItems] = useState<ChecklistItem[]>(() => (
+    isLocalGroundingDemo ? [] : readChecklistPreference()?.custom || []
+  ))
+  const [rememberChecklist, setRememberChecklist] = useState<boolean>(() => !isLocalGroundingDemo && readChecklistPreference() !== null)
+  // 회기 상세 화면의 "생성된 문서": 현재 케이스 대시보드에서 이 회기 번호의 문서만
+  const [sessionDocuments, setSessionDocuments] = useState<CaseDashboardDocument[]>([])
   const hasUsableNoteInput = Boolean(
     form.counselor_memo.trim() ||
       form.transcript_text.trim() ||
@@ -445,31 +416,50 @@ export default function SessionDraftPage({
     try {
       const response = await fetchCaseList()
       setCaseList(response.cases)
+      setRecentDocuments(response.recent_documents || [])
     } catch (requestError) {
       setCaseList([])
-      setCaseListError(caseRequestErrorMessage(requestError, '케이스 목록을 불러오지 못했습니다.'))
+      setRecentDocuments([])
+      setCaseListError(caseRequestErrorMessage(requestError, '내담자 목록을 불러오지 못했습니다.'))
     } finally {
       setIsCaseListLoading(false)
     }
   }
 
   useEffect(() => {
-    // 최초 진입 시 사이드바 최근 케이스, 목록 화면 진입 시 최신 목록. 데모 모드는 저장소를 조회하지 않는다.
+    // 최초 진입과 목록성 화면 진입 시 최신 목록. 데모 모드는 저장소를 조회하지 않는다.
     if (isLocalGroundingDemo) return
-    if (currentScreen === 'case_list' || caseList.length === 0) void loadCaseList()
+    if (['home', 'clients', 'documents', 'client_detail'].includes(currentScreen) || caseList.length === 0) void loadCaseList()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentScreen])
 
-  const activeStep = getActiveStep(currentScreen)
-  const completedSteps = useMemo(() => {
-    if (isLoading) return 1
-    if (result) return processSteps.length
-    return 0
-  }, [isLoading, result])
+  useEffect(() => {
+    // 회기 상세: 같은 케이스·회기 번호의 생성 문서 목록 (best-effort)
+    if (isLocalGroundingDemo || currentScreen !== 'summary_draft' || !form.case_id.trim()) return
+    let cancelled = false
+    fetchCaseDashboard(form.case_id.trim())
+      .then((dashboard) => {
+        if (cancelled) return
+        setSessionDocuments(dashboard.documents.filter((document) => document.session_number === form.session_number))
+      })
+      .catch(() => {
+        if (!cancelled) setSessionDocuments([])
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentScreen, form.case_id, form.session_number, storedNoteId, confirmedFingerprint])
 
-  const checklistItems = result
-    ? draftSections.filter((section) => section.toggleable).map((section) => ({ id: section.id, title: section.title }))
-    : defaultChecklistItems
+  useEffect(() => {
+    // "다음에도 이 설정 사용하기": 체크리스트 선택과 사용자 정의 항목을 브라우저에 보관
+    if (isLocalGroundingDemo) return
+    writeChecklistPreference(rememberChecklist ? { visible: [...visibleSectionIds], custom: customChecklistItems } : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rememberChecklist, visibleSectionIds, customChecklistItems])
+
+  const checklistItems: ChecklistItem[] = [...defaultChecklistItems, ...customChecklistItems]
+
 
   const updateField = (field: keyof SessionInput, value: string | number) => {
     if ((field === 'case_id' || field === 'session_number') && form[field] !== value) {
@@ -497,6 +487,21 @@ export default function SessionDraftPage({
       }))
       return next
     })
+  }
+
+  /** 새 회기 기록 모달의 단일 업로드 입력: 확장자로 문서/음성을 나눈다. */
+  const uploadFiles = (files: FileList | null, audioConsent: boolean) => {
+    if (!files?.length) return
+    const selected = Array.from(files)
+    const documents = selected.filter((file) => !AUDIO_UPLOAD_EXTENSIONS.has(getFileExtension(file.name)))
+    const audios = selected.filter((file) => AUDIO_UPLOAD_EXTENSIONS.has(getFileExtension(file.name)))
+    setError(null)
+    if (audios.length && !audioConsent) {
+      setError('음성 파일을 올리려면 아래 음성 업로드 동의를 먼저 체크해주세요.')
+      return
+    }
+    if (documents.length) void uploadDocumentFiles(toFileList(documents))
+    if (audios.length) void addAudioFiles(toFileList(audios))
   }
 
   const uploadDocumentFiles = async (files: FileList | null) => {
@@ -531,6 +536,12 @@ export default function SessionDraftPage({
         const localId = pendingMaterials[index].id
         try {
           const extracted = await extractDocumentMaterial(file)
+          // 추출된 텍스트는 축어록 입력에 바로 반영한다 (Figma: 업로드 → 체크 표시). 파일 항목을 눌러 위치를 바꿀 수 있다.
+          const text = (extracted.extracted_text || '').trim()
+          if (text) {
+            setForm((prev) => ({ ...prev, transcript_text: mergeMaterialText(prev.transcript_text, extracted.extracted_text, 'append') }))
+            setDraftSaveMessage(null)
+          }
           setMaterials((prev) =>
             prev.map((material) =>
               material.id === localId
@@ -545,7 +556,7 @@ export default function SessionDraftPage({
                     extractedText: extracted.extracted_text,
                     warnings: extracted.warnings,
                     error: undefined,
-                    appliedTargets: material.appliedTargets,
+                    appliedTargets: text ? ['transcript_text'] : material.appliedTargets,
                   }
                 : material,
             ),
@@ -574,7 +585,7 @@ export default function SessionDraftPage({
       setMaterials((prev) => [invalidMaterial, ...prev])
       return
     }
-    await refreshAudioCapabilities()
+    const capabilities = await refreshAudioCapabilities()
     const nextMaterials = selectedFiles.map((file) => {
       const objectUrl = URL.createObjectURL(file)
       objectUrlsRef.current.add(objectUrl)
@@ -592,6 +603,10 @@ export default function SessionDraftPage({
       }
     })
     setMaterials((prev) => [...nextMaterials, ...prev])
+    // 자동 축어록이 가능한 환경이면 바로 전사하고 축어록 입력에 반영한다.
+    if (capabilities.transcription.available) {
+      for (const material of nextMaterials) void transcribeAudioMaterial(material.id, material.file, material.expectedSpeakers)
+    }
   }
 
   const removeMaterial = (materialId: string) => {
@@ -625,9 +640,15 @@ export default function SessionDraftPage({
     }
   }
 
-  const transcribeAudioMaterial = async (materialId: string) => {
+  /**
+   * 음성 전사. fileOverride/expectedSpeakersOverride는 업로드 직후 자동 전사(상태가 아직 반영되기 전)용.
+   * 전사가 끝나면 축어록·비언어 메모를 회기 입력에 자동 반영한다 (검토는 파일 항목 클릭).
+   */
+  const transcribeAudioMaterial = async (materialId: string, fileOverride?: File, expectedSpeakersOverride?: number) => {
     const target = materials.find((material) => material.id === materialId)
-    if (!target?.file) return
+    const file = fileOverride || target?.file
+    if (!file) return
+    const expectedSpeakers = expectedSpeakersOverride || target?.expectedSpeakers || 2
     setMaterials((prev) =>
       prev.map((material) =>
         material.id === materialId
@@ -642,16 +663,37 @@ export default function SessionDraftPage({
       ),
     )
     try {
-      const transcription = await transcribeAudio(target.file, 'ko', 'transcribe', target.expectedSpeakers || 2)
+      const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers)
+      let appliedTranscript = ''
+      let appliedNonverbal = ''
       setMaterials((prev) =>
-        prev.map((material) =>
-          material.id === materialId
-            ? buildTranscribedAudioMaterial(material, transcription)
-            : material,
-        ),
+        prev.map((material) => {
+          if (material.id !== materialId) return material
+          const transcribed = buildTranscribedAudioMaterial(material, transcription)
+          const speakerRoleMap = transcribed.speakerRoleMap || {}
+          appliedTranscript = buildTranscriptText(transcribed.segments || [], speakerRoleMap) || transcribed.transcriptText || ''
+          appliedNonverbal = buildNonverbalNotes(transcribed.segments || [], speakerRoleMap) || transcribed.nonverbalNotes || ''
+          if (!appliedTranscript.trim()) return transcribed
+          return {
+            ...transcribed,
+            transcriptText: appliedTranscript,
+            nonverbalNotes: appliedNonverbal,
+            appliedTargets: Array.from(new Set([...transcribed.appliedTargets, ...AUDIO_APPLY_TARGETS])),
+            dirtySinceApply: false,
+            lastAppliedTranscriptText: appliedTranscript,
+            lastAppliedNonverbalNotes: appliedNonverbal,
+            lastAppliedMode: 'append',
+          }
+        }),
       )
-      setSelectedMaterialId(materialId)
-      setMaterialModal('audio_review')
+      if (appliedTranscript.trim()) {
+        setForm((prev) => ({
+          ...prev,
+          transcript_text: mergeMaterialText(prev.transcript_text, appliedTranscript, 'append'),
+          nonverbal_notes: mergeMaterialText(prev.nonverbal_notes || '', appliedNonverbal, 'append'),
+        }))
+        setDraftSaveMessage(null)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '음성 축어록을 생성하지 못했습니다.'
       setMaterials((prev) =>
@@ -815,12 +857,17 @@ export default function SessionDraftPage({
   }
 
   const showGeneratedDraft = (data: NoteDraftResponse) => {
-    const sections = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
+    const generated = buildDocumentSections(data, form, sessionTopic, visibleSectionIds)
+    // 체크리스트에서 추가한 사용자 정의 항목은 상담사가 직접 채우는 빈 섹션으로 붙인다.
+    const custom = customChecklistItems
+      .filter((item) => visibleSectionIds.has(item.id) && !generated.some((section) => section.id === item.id))
+      .map((item) => ({ ...emptyRestoredSection(item.id), title: item.title, content: '' }))
+    const sections = [...generated, ...custom]
     setResult(data)
     setSupervisionReportDraft(null)
     setFinalDocumentSections([])
     setDraftSections(sections)
-    setVisibleSectionIds(new Set(sections.map((section) => section.id)))
+    setVisibleSectionIds(new Set(sections.filter((section) => section.visible).map((section) => section.id)))
     setCurrentScreen('summary_draft')
     const report = data.full_response?.persistence_report
     setStoredNoteId(report?.stored && report.note_id ? report.note_id : null)
@@ -829,10 +876,11 @@ export default function SessionDraftPage({
     setDraftSaveMessage(report?.stored ? 'AI 초안을 저장했습니다. 검토 후 현재 요약을 저장해주세요.' : null)
     setPersistenceError(!isLocalGroundingDemo && !report?.stored
       ? 'AI 초안은 생성되었지만 기록 저장에 실패했습니다. 임시저장으로 작업을 보관할 수 있으며, 상담사 확정은 저장된 AI 초안에서 가능합니다.' : null)
+    if (!isLocalGroundingDemo) void loadCaseList()
   }
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault()
     if (persistenceLock.current || isLoading) return
     if (!form.case_id.trim()) {
       setHasSubmitted(true)
@@ -927,33 +975,45 @@ export default function SessionDraftPage({
   }
 
   const goBackToInput = () => {
+    setInputReturnScreen('summary_draft')
     setCurrentScreen('session_input')
     setExpandedEvidenceId(null)
     setSelectedGroundingClaimId(null)
     setEditingSectionId(null)
   }
 
-  const openCaseList = () => {
-    setCurrentScreen('case_list')
+  const navigateSection = (section: ShellSection) => {
+    setCurrentScreen(section === 'clients' ? 'clients' : section)
   }
 
-  const openCaseDashboard = (caseId: string) => {
+  const openClientDetail = (caseId: string) => {
     setSelectedCaseId(caseId)
-    setCurrentScreen('case_dashboard')
+    setCurrentScreen('client_detail')
   }
 
-  const openSessionInput = () => {
-    setCurrentScreen('session_input')
+  /** 회기 작업 화면에서 뒤로: 내담자 프로필(있으면) 또는 홈 */
+  const leaveWorkflow = () => {
+    setCurrentScreen(selectedCaseId ? 'client_detail' : 'home')
+    setExpandedEvidenceId(null)
+    setSelectedGroundingClaimId(null)
+    setEditingSectionId(null)
   }
 
-  /** 대시보드에서 "새 회기 입력": 케이스 ID·가명·다음 회기 번호를 채운 빈 회기 입력 화면을 연다. */
+  const closeSessionInput = () => {
+    setError(null)
+    setHasSubmitted(false)
+    setCurrentScreen(inputReturnScreen)
+  }
+
+  /** 내담자 선택/프로필의 "새 회기 기록": 케이스 ID·가명·다음 회기 번호를 채운 새 회기 기록 모달을 연다. */
   const startSessionForCase = ({ caseId, caseAlias, sessionNumber }: StartSessionInput) => {
     const sameSession = form.case_id === caseId && form.session_number === sessionNumber
     if (!sameSession && (hasUsableNoteInput || result || materials.length)
-      && !window.confirm('현재 화면의 작성 내용을 비우고 이 케이스의 새 회기를 시작합니다. 저장하지 않은 변경사항은 사라집니다. 계속할까요?')) return
+      && !window.confirm('현재 화면의 작성 내용을 비우고 이 내담자의 새 회기를 시작합니다. 저장하지 않은 변경사항은 사라집니다. 계속할까요?')) return
     if (!sameSession) {
       setForm({ ...initialForm, case_id: caseId, client_alias: caseAlias || '', session_number: sessionNumber })
       setSessionTopic('')
+      setSessionTime({ start: '', end: '' })
       setResult(null)
       setDraftSections([])
       setFinalDocumentSections([])
@@ -971,7 +1031,105 @@ export default function SessionDraftPage({
       setDraftSaveMessage(null)
       setPersistenceError(null)
     }
+    setSelectedCaseId(caseId)
+    setPickerOpen(false)
+    setInputReturnScreen(currentScreen === 'session_input' ? inputReturnScreen : currentScreen === 'client_detail' ? 'client_detail' : 'client_detail')
     setCurrentScreen('session_input')
+  }
+
+  const startSessionFromPicker = (caseId: string) => {
+    const item = caseList.find((entry) => entry.case_id === caseId)
+    startSessionForCase({
+      caseId,
+      caseAlias: item?.case_alias || null,
+      sessionNumber: (item?.latest_session_number || 0) + 1,
+    })
+  }
+
+  const openDocument = (document: RecentDocumentItem) => {
+    setSelectedCaseId(document.case_id)
+    if (document.document_type === 'session_note') restoreNote(document.document_id)
+    else setCurrentScreen('client_detail')
+  }
+
+  const submitClientForm = async (payload: CaseCreateRequest & CaseProfileUpdateRequest) => {
+    if (!clientModal) return
+    setClientModalSubmitting(true)
+    setClientModalError(null)
+    try {
+      if (clientModal.mode === 'create') {
+        const created = await createCase(payload)
+        setClientModal(null)
+        await loadCaseList()
+        openClientDetail(created.case_id)
+      } else {
+        await updateCaseProfile(clientModal.caseId, payload)
+        setClientModal(null)
+        setDetailRefreshKey((value) => value + 1)
+        if (form.case_id === clientModal.caseId && payload.case_alias) setForm((prev) => ({ ...prev, client_alias: payload.case_alias || prev.client_alias }))
+        void loadCaseList()
+      }
+    } catch (requestError) {
+      setClientModalError(caseRequestErrorMessage(requestError, '내담자 정보를 저장하지 못했습니다.'))
+    } finally {
+      setClientModalSubmitting(false)
+    }
+  }
+
+  const openEditProfile = (dashboard: CaseDashboardResponse) => {
+    setClientModalError(null)
+    setClientModal({
+      mode: 'edit',
+      caseId: dashboard.case_id,
+      initial: {
+        case_alias: dashboard.case_alias,
+        status: dashboard.status,
+        client_age: dashboard.client_age,
+        client_gender: dashboard.client_gender,
+        client_occupation: dashboard.client_occupation,
+        marital_status: dashboard.marital_status,
+        family_composition: dashboard.family_composition,
+        client_phone: dashboard.client_phone,
+        client_email: dashboard.client_email,
+        client_notes: dashboard.client_notes,
+      },
+    })
+  }
+
+  /** 생성 전 체크리스트 토글: 생성 후에는 섹션 표시 토글과 같은 동작 */
+  const toggleChecklistItem = (sectionId: DraftSectionId) => {
+    if (result) {
+      toggleSectionVisibility(sectionId)
+      return
+    }
+    setVisibleSectionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(sectionId)) next.delete(sectionId)
+      else next.add(sectionId)
+      return next
+    })
+  }
+
+  const addCustomChecklistItem = (title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    const existing = checklistItems.find((item) => item.title === trimmed)
+    const id = existing?.id || customChecklistId(trimmed)
+    if (!existing) setCustomChecklistItems((prev) => [...prev, { id, title: trimmed }])
+    setVisibleSectionIds((prev) => new Set(prev).add(id))
+    if (result && !draftSections.some((section) => section.id === id)) {
+      setDraftSections((prev) => [...prev, { ...emptyRestoredSection(id), title: trimmed, content: '' }])
+    }
+  }
+
+  const removeCustomChecklistItem = (id: string) => {
+    setCustomChecklistItems((prev) => prev.filter((item) => item.id !== id))
+    setVisibleSectionIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+    setDraftSections((prev) => prev.filter((section) => section.id !== id))
   }
 
   const openDocumentTransform = () => {
@@ -1263,6 +1421,7 @@ export default function SessionDraftPage({
       setStoredNote(record)
       setConfirmedFingerprint(confirmedSections ? sectionFingerprint(confirmedSections) : null)
       setSavedDraft({ id: draftId, caseId: draft.case_id, sessionNumber: draft.session_number })
+      if (!restoredNote) setInputReturnScreen(selectedCaseId ? 'client_detail' : 'home')
       setCurrentScreen(restoredNote
         ? draft.screen === 'final_document' && (finalType === 'supervision_report' ? Boolean(report) : finalSections.length > 0)
           ? 'final_document' : 'summary_draft'
@@ -1356,54 +1515,56 @@ export default function SessionDraftPage({
 
   const hasCompactSidePanel = currentScreen === 'session_input' || currentScreen === 'summary_draft' || currentScreen === 'final_document'
 
+  const shellSection: ShellSection = currentScreen === 'home'
+    ? 'home'
+    : currentScreen === 'documents'
+      ? 'documents'
+      : currentScreen === 'settings'
+        ? 'settings'
+        : currentScreen === 'session_input'
+          ? (inputReturnScreen === 'home' ? 'home' : inputReturnScreen === 'documents' ? 'documents' : 'clients')
+          : 'clients'
+  const isWorkflowScreen = currentScreen === 'summary_draft' || currentScreen === 'document_transform' || currentScreen === 'final_document'
+  const backgroundScreen: AppScreen = currentScreen === 'session_input' ? inputReturnScreen : currentScreen
+  const clientDisplayName = getClientDisplayName(form) || '내담자'
+  const selectedCaseItem = selectedCaseId ? caseList.find((item) => item.case_id === selectedCaseId) || null : null
+
   return (
-    <main className="app-shell min-h-screen bg-[#f1f2f4] text-slate-950">
+    <main className={`app-shell min-h-screen text-slate-950 ${backgroundScreen === 'home' ? 'app-shell-home' : ''}`}>
       <fieldset disabled={isPersistenceBusy || isLoading} className="min-w-0">
       <details className="mobile-navigation">
         <summary><img src="/remind-logo.png" alt="Re:mind" /><span>메뉴</span></summary>
         <nav aria-label="모바일 메뉴" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open') }}>
-          <SidebarButton icon={<FolderOpen className="h-4 w-4" />} onClick={openCaseList}>케이스 목록</SidebarButton>
-          <SidebarButton icon={<Plus className="h-4 w-4" />} onClick={openSessionInput}>새 회기 입력</SidebarButton>
+          <MobileNavItems onNavigate={navigateSection} />
         </nav>
       </details>
       <AppSidebar
-        activeScreen={currentScreen}
+        active={shellSection}
         collapsed={isSidebarCollapsed}
-        recentCases={caseList.slice(0, 5)}
-        search={caseSearch}
-        onChangeSearch={(value) => {
-          setCaseSearch(value)
-          if (value.trim() && currentScreen !== 'case_list') setCurrentScreen('case_list')
-        }}
-        onOpenCase={openCaseDashboard}
-        onOpenCaseList={openCaseList}
-        onOpenSessionInput={openSessionInput}
+        onNavigate={navigateSection}
         onToggleCollapsed={() => setIsSidebarCollapsed((current) => !current)}
       />
 
-      <div className={`min-h-screen ${isSidebarCollapsed ? 'md:pl-[56px]' : 'md:pl-[200px]'}`}>
-        <TopWorkspaceBar
-          activeStep={activeStep}
-          currentScreen={currentScreen}
-          draftSaveMessage={null}
-          isSavingDraft={isSavingDraft}
-          resultReady={Boolean(result)}
-          onGoToFinalDocument={() => openFinalDocument()}
-          onGoToSummaryDraft={() => setCurrentScreen(result ? 'summary_draft' : currentScreen)}
-          onGoToTransform={openDocumentTransform}
-          onOpenCaseList={openCaseList}
-          onOpenSessionInput={openSessionInput}
-          onTemporarySave={handleTemporarySave}
-          onRestore={() => {
-            setRestoreOpen((open) => !open)
-            setRestoreCaseId(form.case_id)
-            setHasListedRecords(false)
-            setSavedDrafts([])
-            setSavedNotes([])
-          }}
-        />
+      <div className={`min-h-screen ${isSidebarCollapsed ? 'md:pl-[64px]' : 'md:pl-[253px]'}`}>
+        {isWorkflowScreen && (
+          <WorkflowHeader
+            clientName={clientDisplayName}
+            sessionNumber={form.session_number}
+            isSavingDraft={isSavingDraft}
+            showTemporarySave={currentScreen === 'summary_draft'}
+            onBack={currentScreen === 'summary_draft' ? leaveWorkflow : () => setCurrentScreen(currentScreen === 'final_document' ? 'document_transform' : 'summary_draft')}
+            onTemporarySave={handleTemporarySave}
+            onRestore={() => {
+              setRestoreOpen((open) => !open)
+              setRestoreCaseId(form.case_id)
+              setHasListedRecords(false)
+              setSavedDrafts([])
+              setSavedNotes([])
+            }}
+          />
+        )}
 
-        {(restoreOpen || draftSaveMessage || persistenceError || isPersistenceBusy) && <section aria-label="기록 저장과 복원" className="border-b border-slate-200 bg-white px-4 py-2 text-xs">
+        {(isWorkflowScreen || currentScreen === 'session_input') && (restoreOpen || draftSaveMessage || persistenceError || isPersistenceBusy) && <section aria-label="기록 저장과 복원" className="border-b border-grey-200 bg-white px-4 py-2 text-xs md:px-6">
           <div className="flex flex-wrap items-center gap-3">
             {isPersistenceBusy && <span role="status">저장소 요청 처리 중…</span>}
           </div>
@@ -1432,199 +1593,217 @@ export default function SessionDraftPage({
           </div>}
         </section>}
 
-        {currentScreen === 'case_list' ? (
-          <CaseListWorkspace
-            cases={filterCases(caseList, caseFilter, caseSearch)}
-            totalCount={caseList.length}
-            filter={caseFilter}
-            search={caseSearch}
-            isLoading={isCaseListLoading}
+        {backgroundScreen === 'home' && (
+          <HomeDashboardPage
+            cases={caseList}
+            recentDocuments={recentDocuments}
+            loading={isCaseListLoading}
             error={caseListError}
-            onChangeFilter={setCaseFilter}
-            onChangeSearch={setCaseSearch}
             onRetry={() => void loadCaseList()}
-            onCreateSession={openSessionInput}
-            onOpenCase={openCaseDashboard}
+            onNewSession={() => setPickerOpen(true)}
+            onAddClient={() => { setClientModalError(null); setClientModal({ mode: 'create' }) }}
+            onOpenClient={openClientDetail}
+            onOpenDocument={openDocument}
+            onViewClients={() => setCurrentScreen('clients')}
+            onViewDocuments={() => setCurrentScreen('documents')}
           />
-        ) : currentScreen === 'case_dashboard' && selectedCaseId ? (
+        )}
+        {backgroundScreen === 'clients' && (
+          <ClientListPage
+            cases={caseList}
+            loading={isCaseListLoading}
+            error={caseListError}
+            filter={clientFilter}
+            onChangeFilter={setClientFilter}
+            onRetry={() => void loadCaseList()}
+            onAddClient={() => { setClientModalError(null); setClientModal({ mode: 'create' }) }}
+            onOpenClient={openClientDetail}
+          />
+        )}
+        {backgroundScreen === 'client_detail' && selectedCaseId && (
           <CaseDashboardPanel
             key={selectedCaseId}
             caseId={selectedCaseId}
-            onBack={openCaseList}
+            refreshKey={detailRefreshKey}
+            onBack={() => setCurrentScreen('clients')}
             onOpenNote={restoreNote}
             onOpenDraft={restoreTemporary}
             onStartSession={startSessionForCase}
+            onEditProfile={openEditProfile}
           />
-        ) : (
-          <div
-            className={
-              currentScreen === 'document_transform'
-                ? 'px-0 py-0'
-                : hasCompactSidePanel
-                  ? 'workspace-grid-compact'
-                  : 'grid min-h-[calc(100vh-84px)] gap-4 pr-4 pt-4 md:grid-cols-[minmax(0,1fr)_320px]'
-            }
-          >
-            <section
-              className={
-                currentScreen === 'document_transform'
-                  ? 'min-w-0'
-                  : hasCompactSidePanel
-                    ? 'workspace-main-panel'
-                    : 'min-w-0 pb-4'
-              }
-            >
-              {currentScreen === 'session_input' && (
-                <SessionInputWorkspace
-                  completedSteps={completedSteps}
-                  error={error}
-                  form={form}
-                  hasMaterialRows={hasMaterialRows}
-                  hasSubmitted={hasSubmitted}
-                  isDeidentified={isDeidentified}
-                  isLoading={isLoading}
-                  materials={materials}
-                  audioCapabilities={audioCapabilities}
-                  sessionTopic={sessionTopic}
-                  onAddMaterial={() => setMaterialModal('add')}
-                  onEditBasicInfo={() => setMaterialModal('basic_info')}
-                  onEditMaterial={setMaterialModal}
-                  onOpenMaterial={openMaterialPreview}
-                  onRemoveMaterial={removeMaterial}
-                  onSetIsDeidentified={setIsDeidentified}
-                  onTranscribeAudio={transcribeAudioMaterial}
-                  onSubmit={handleSubmit}
-                />
-              )}
+        )}
+        {backgroundScreen === 'documents' && (
+          <DocumentArchivePage documents={recentDocuments} loading={isCaseListLoading} onOpenDocument={openDocument} />
+        )}
+        {backgroundScreen === 'settings' && <SettingsPage />}
 
-              {currentScreen === 'summary_draft' && result && (
-                <SummaryDraftWorkspace
-                  onConfirm={handleConfirm}
-                  confirmDisabled={isPersistenceBusy || !storedNoteId || confirmedFingerprint === sectionFingerprint(draftSections)}
-                  confirmationState={confirmedFingerprint ? confirmedFingerprint === sectionFingerprint(draftSections) ? 'confirmed' : 'edited' : 'draft'}
-                  editingSectionId={editingSectionId}
-                  expandedEvidenceId={expandedEvidenceId}
-                  form={form}
-                  sections={draftSections.filter((section) => section.visible)}
-                  onChangeContent={updateDraftSectionContent}
-                  onEditSection={setEditingSectionId}
-                  onToggleEvidence={(sectionId) =>
-                    setExpandedEvidenceId((current) => (current === sectionId ? null : sectionId))
-                  }
-                  onSelectGrounding={setSelectedGroundingClaimId}
-                  selectedGroundingClaimId={selectedGroundingClaimId}
-                />
-              )}
+        {isWorkflowScreen && (
+          <div className={currentScreen === 'document_transform' ? 'px-0 py-0' : 'mx-auto w-full max-w-[1240px] px-4 py-5 md:px-6'}>
+            {currentScreen === 'summary_draft' && result && (
+              <SessionDetailWorkspace
+                clientName={clientDisplayName}
+                form={form}
+                sessionTime={sessionTime}
+                sections={draftSections.filter((section) => section.visible)}
+                checklistItems={result ? draftSections.filter((section) => section.toggleable).map((section) => ({ id: section.id, title: section.title })) : checklistItems}
+                visibleSectionIds={visibleSectionIds}
+                materials={materials}
+                documents={sessionDocuments}
+                fullResponse={result.full_response}
+                confirmDisabled={isPersistenceBusy || !storedNoteId || confirmedFingerprint === sectionFingerprint(draftSections)}
+                confirmationState={confirmedFingerprint ? confirmedFingerprint === sectionFingerprint(draftSections) ? 'confirmed' : 'edited' : 'draft'}
+                editingSectionId={editingSectionId}
+                expandedEvidenceId={expandedEvidenceId}
+                selectedGroundingClaimId={selectedGroundingClaimId}
+                selectedGroundingItem={selectedDraftGroundingItem}
+                onConfirm={handleConfirm}
+                onRegenerate={goBackToInput}
+                onTransform={openDocumentTransform}
+                onChangeContent={updateDraftSectionContent}
+                onEditSection={setEditingSectionId}
+                onToggleEvidence={(sectionId) => setExpandedEvidenceId((current) => (current === sectionId ? null : sectionId))}
+                onSelectGrounding={setSelectedGroundingClaimId}
+                onCloseGrounding={() => setSelectedGroundingClaimId(null)}
+                onToggleSection={toggleSectionVisibility}
+                onAddCustomSection={addCustomSection}
+                onOpenDocument={(document) => document.document_type === 'session_note' && document.document_id !== storedNoteId && restoreNote(document.document_id)}
+                onAddMaterial={goBackToInput}
+              />
+            )}
 
-              {currentScreen === 'document_transform' && result && (
-                <DocumentTransformWorkspace
-                  preview={result.full_response?.document_transform_preview}
-                  selectedType={finalDocumentType}
-                  sections={draftSections}
-                  onBackToDraft={() => setCurrentScreen('summary_draft')}
-                  onSelectType={setFinalDocumentType}
-                  onCreateFinal={openFinalDocument}
-                />
-              )}
+            {currentScreen === 'document_transform' && result && (
+              <DocumentTransformWorkspace
+                preview={result.full_response?.document_transform_preview}
+                selectedType={finalDocumentType}
+                sections={draftSections}
+                onBackToDraft={() => setCurrentScreen('summary_draft')}
+                onSelectType={setFinalDocumentType}
+                onCreateFinal={openFinalDocument}
+              />
+            )}
 
-              {currentScreen === 'final_document' && result && (
-                finalDocumentType === 'supervision_report' ? (
-                  <SupervisionReportWorkspace
-                    editingBlockId={editingSupervisionBlockId}
-                    editingText={editingSupervisionText}
-                    error={finalDocumentError}
-                    expandedEvidenceId={expandedSupervisionEvidenceId}
-                    isLoading={isGeneratingFinalDocument}
-                    report={supervisionReportDraft}
-                    onBeginEdit={beginEditSupervisionBlock}
-                    onChangeEditingText={setEditingSupervisionText}
-                    onCommitEdit={commitEditSupervisionBlock}
-                    onToggleEvidence={setExpandedSupervisionEvidenceId}
+            {currentScreen === 'final_document' && result && (
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
+                <section className="min-w-0">
+                  {finalDocumentType === 'supervision_report' ? (
+                    <SupervisionReportWorkspace
+                      editingBlockId={editingSupervisionBlockId}
+                      editingText={editingSupervisionText}
+                      error={finalDocumentError}
+                      expandedEvidenceId={expandedSupervisionEvidenceId}
+                      isLoading={isGeneratingFinalDocument}
+                      report={supervisionReportDraft}
+                      onBeginEdit={beginEditSupervisionBlock}
+                      onChangeEditingText={setEditingSupervisionText}
+                      onCommitEdit={commitEditSupervisionBlock}
+                      onToggleEvidence={setExpandedSupervisionEvidenceId}
+                    />
+                  ) : (
+                    <FinalDocumentWorkspace
+                      documentType={finalDocumentType}
+                      form={form}
+                      sections={finalDocumentSections}
+                      selectedGroundingClaimId={selectedGroundingClaimId}
+                      selectedGroundingItem={selectedFinalGroundingItem}
+                      onCloseGrounding={() => setSelectedGroundingClaimId(null)}
+                      onSelectGrounding={setSelectedGroundingClaimId}
+                      onChangeSectionContent={(sectionId, content) =>
+                        setFinalDocumentSections((current) =>
+                          current.map((section) => (
+                            section.id === sectionId
+                              ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
+                              : section
+                          )),
+                        )
+                      }
+                    />
+                  )}
+                </section>
+                {finalDocumentType === 'supervision_report' && supervisionReportDraft ? (
+                  <SupervisionReviewPanel
+                    aiReview={supervisionReportDraft.aiReview}
+                    capabilities={documentCapabilities}
+                    capabilitiesError={documentCapabilitiesError}
+                    draftSaveMessage={null}
+                    exportError={documentExportError}
+                    exportStatus={documentExportStatus}
+                    isExporting={isExportingDocument}
+                    isSavingDraft={isSavingDraft}
+                    onBack={() => setCurrentScreen('document_transform')}
+                    onDownload={handleDownloadDocument}
+                    onTemporarySave={handleTemporarySave}
                   />
                 ) : (
-                  <FinalDocumentWorkspace
+                  <FinalReviewPanel
                     documentType={finalDocumentType}
-                    form={form}
-                    sections={finalDocumentSections}
-                    selectedGroundingClaimId={selectedGroundingClaimId}
-                    selectedGroundingItem={selectedFinalGroundingItem}
-                    onCloseGrounding={() => setSelectedGroundingClaimId(null)}
-                    onSelectGrounding={setSelectedGroundingClaimId}
-                    onChangeSectionContent={(sectionId, content) =>
-                      setFinalDocumentSections((current) =>
-                        current.map((section) => (
-                          section.id === sectionId
-                            ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
-                            : section
-                        )),
-                      )
-                    }
+                    capabilities={documentCapabilities}
+                    capabilitiesError={documentCapabilitiesError}
+                    draftSaveMessage={null}
+                    exportError={documentExportError}
+                    exportStatus={documentExportStatus}
+                    isExporting={isExportingDocument}
+                    isSavingDraft={isSavingDraft}
+                    missingItems={result?.missing_items || []}
+                    warnings={result?.warnings || []}
+                    onBack={() => setCurrentScreen('document_transform')}
+                    onDownload={handleDownloadDocument}
+                    onTemporarySave={handleTemporarySave}
                   />
-                )
-              )}
-            </section>
-
-            {currentScreen === 'document_transform' ? null : currentScreen === 'final_document' ? (
-              finalDocumentType === 'supervision_report' && supervisionReportDraft ? (
-                <SupervisionReviewPanel
-                  aiReview={supervisionReportDraft.aiReview}
-                  capabilities={documentCapabilities}
-                  capabilitiesError={documentCapabilitiesError}
-                  draftSaveMessage={null}
-                  exportError={documentExportError}
-                  exportStatus={documentExportStatus}
-                  isExporting={isExportingDocument}
-                  isSavingDraft={isSavingDraft}
-                  onBack={() => setCurrentScreen('document_transform')}
-                  onDownload={handleDownloadDocument}
-                  onTemporarySave={handleTemporarySave}
-                />
-              ) : (
-                <FinalReviewPanel
-                  documentType={finalDocumentType}
-                  capabilities={documentCapabilities}
-                  capabilitiesError={documentCapabilitiesError}
-                  draftSaveMessage={null}
-                  exportError={documentExportError}
-                  exportStatus={documentExportStatus}
-                  isExporting={isExportingDocument}
-                  isSavingDraft={isSavingDraft}
-                  missingItems={result?.missing_items || []}
-                  warnings={result?.warnings || []}
-                  onBack={() => setCurrentScreen('document_transform')}
-                  onDownload={handleDownloadDocument}
-                  onTemporarySave={handleTemporarySave}
-                />
-              )
-            ) : currentScreen === 'summary_draft' && selectedDraftGroundingItem ? (
-              <EvidenceSourcePanel
-                item={selectedDraftGroundingItem}
-                onClose={() => setSelectedGroundingClaimId(null)}
-              />
-            ) : (
-              <ReviewPanel
-                activeStep={activeStep}
-                checklistItems={checklistItems}
-                currentScreen={currentScreen}
-                draftRecomposeMessage={draftRecomposeMessage}
-                fullResponse={result?.full_response}
-                isLoading={isLoading}
-                isRecomposingDraft={isRecomposingDraft}
-                missingItems={result?.missing_items || []}
-                selectedPreviousSessionIds={selectedPreviousSessionIds}
-                resultReady={Boolean(result)}
-                visibleSectionIds={visibleSectionIds}
-                warnings={result?.warnings || []}
-                onAddCustomSection={addCustomSection}
-                onGoBack={goBackToInput}
-                onGoToTransform={openDocumentTransform}
-                onTogglePreviousSession={togglePreviousSession}
-                onToggleSection={toggleSectionVisibility}
-              />
+                )}
+              </div>
             )}
           </div>
         )}
       </div>
+
+      {currentScreen === 'session_input' && (
+        <SessionRecordModal
+          clientName={clientDisplayName}
+          form={form}
+          sessionTime={sessionTime}
+          materials={materials}
+          audioCapabilities={audioCapabilities}
+          checklistItems={checklistItems}
+          visibleSectionIds={visibleSectionIds}
+          rememberChecklist={rememberChecklist}
+          error={error}
+          isLoading={isLoading}
+          uploadLimitLabel={DOCUMENT_UPLOAD_LIMIT_LABEL}
+          onChangeSessionTime={setSessionTime}
+          onUpdateField={updateField}
+          onUploadFiles={uploadFiles}
+          onOpenMaterial={openMaterialPreview}
+          onRemoveMaterial={removeMaterial}
+          onToggleChecklist={toggleChecklistItem}
+          onAddCustomItem={addCustomChecklistItem}
+          onRemoveCustomItem={removeCustomChecklistItem}
+          onToggleRememberChecklist={setRememberChecklist}
+          onBack={inputReturnScreen === 'summary_draft' ? null : () => { closeSessionInput(); if (!selectedCaseItem) setPickerOpen(true) }}
+          onClose={closeSessionInput}
+          onSubmit={() => void handleSubmit()}
+        />
+      )}
+
+      {pickerOpen && (
+        <ClientPickerModal
+          cases={caseList}
+          onClose={() => setPickerOpen(false)}
+          onNext={startSessionFromPicker}
+          onAddClient={() => { setPickerOpen(false); setClientModalError(null); setClientModal({ mode: 'create' }) }}
+        />
+      )}
+
+      {clientModal && (
+        <ClientFormModal
+          key={clientModal.mode === 'edit' ? clientModal.caseId : 'create'}
+          mode={clientModal.mode}
+          initial={clientModal.mode === 'edit' ? clientModal.initial : undefined}
+          submitting={clientModalSubmitting}
+          error={clientModalError}
+          onClose={() => !clientModalSubmitting && setClientModal(null)}
+          onSubmit={(payload) => void submitClientForm(payload)}
+        />
+      )}
 
       {materialModal && (
         <MaterialModal
@@ -1643,7 +1822,7 @@ export default function SessionDraftPage({
           onApplyAudioTranscript={applyAudioTranscriptToForm}
           onApplyMaterial={applyMaterialToForm}
           onRefreshAudioCapabilities={refreshAudioCapabilities}
-          onTranscribeAudio={transcribeAudioMaterial}
+          onTranscribeAudio={(materialId) => void transcribeAudioMaterial(materialId)}
           onUpdateAudioExpectedSpeakers={updateAudioExpectedSpeakers}
           onUpdateAudioSegmentText={updateAudioSegmentText}
           onUpdateAudioSpeakerRole={updateAudioSpeakerRole}
@@ -1651,751 +1830,281 @@ export default function SessionDraftPage({
         />
       )}
       </fieldset>
+      <GeneratingOverlay active={isLoading} />
     </main>
   )
 }
 
-function AppSidebar({
-  activeScreen,
-  collapsed,
-  recentCases,
-  search,
-  onChangeSearch,
-  onOpenCase,
-  onOpenCaseList,
-  onOpenSessionInput,
-  onToggleCollapsed,
-}: {
-  activeScreen: AppScreen
-  collapsed: boolean
-  recentCases: CaseListItem[]
-  search: string
-  onChangeSearch: (value: string) => void
-  onOpenCase: (caseId: string) => void
-  onOpenCaseList: () => void
-  onOpenSessionInput: () => void
-  onToggleCollapsed: () => void
-}) {
-  const caseAreaActive = activeScreen !== 'session_input'
-
-  return (
-    <aside
-      className={`desktop-sidebar border-slate-200 bg-white transition-[width] duration-200 md:fixed md:inset-y-0 md:left-0 md:z-40 md:border-r ${
-        collapsed ? 'md:w-[56px]' : 'md:w-[200px]'
-      }`}
-    >
-      <div className="flex h-full flex-col">
-        <div
-          className={`flex min-h-[var(--workspace-header-height)] items-center border-b border-slate-100 ${
-            collapsed ? 'justify-center px-2' : 'justify-between px-6'
-          }`}
-        >
-          {!collapsed && (
-            <img
-              src="/remind-logo.png"
-              alt="Re:mind"
-              className="h-7 max-w-[104px] object-contain"
-            />
-          )}
-          <button
-            type="button"
-            onClick={onToggleCollapsed}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-            aria-label={collapsed ? '사이드바 열기' : '사이드바 닫기'}
-            title={collapsed ? '사이드바 열기' : '사이드바 닫기'}
-          >
-            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-          </button>
-        </div>
-
-        <div className={`${collapsed ? 'hidden' : 'space-y-4 px-3 py-3'}`}>
-          <label className="flex h-[30px] items-center gap-2 rounded-[5px] border border-slate-200 bg-slate-50 px-3 text-[11px] text-slate-500 shadow-sm">
-            <Search className="h-4 w-4" />
-            <input
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400"
-              placeholder="내담자/케이스 검색"
-              aria-label="내담자/케이스 검색"
-              value={search}
-              onChange={(event) => onChangeSearch(event.target.value)}
-            />
-          </label>
-
-          <nav className="space-y-2 text-xs">
-            <p className="px-1 text-[10px] font-medium text-slate-400">메뉴</p>
-            <SidebarButton
-              active={caseAreaActive}
-              icon={<FolderOpen className="h-4 w-4" />}
-              onClick={onOpenCaseList}
-            >
-              케이스 목록
-            </SidebarButton>
-            <SidebarButton
-              active={activeScreen === 'session_input'}
-              icon={<Plus className="h-4 w-4" />}
-              onClick={onOpenSessionInput}
-            >
-              새 회기 입력
-            </SidebarButton>
-          </nav>
-
-          <div className="border-t border-slate-200 pt-3">
-            <p className="px-1 text-[10px] font-medium text-slate-400">최근 케이스</p>
-            {recentCases.length === 0 ? (
-              <p className="mt-2 px-1 text-[10px] font-medium text-slate-400">최근 케이스가 없습니다.</p>
-            ) : (
-              <ul className="mt-1 space-y-0.5">
-                {recentCases.map((item) => (
-                  <li key={item.case_id}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenCase(item.case_id)}
-                      className="w-full rounded-[5px] px-2 py-1.5 text-left hover:bg-slate-50"
-                    >
-                      <p className="truncate text-xs font-semibold text-slate-900">{caseDisplayName(item)}</p>
-                      <p className="mt-0.5 truncate text-[10px] text-slate-500">
-                        {item.total_session_count}회기 · {caseStatusLabel(item.status)}
-                      </p>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-
-        <div className={`${collapsed ? 'hidden' : 'mt-auto border-t border-slate-200 px-3 py-3'}`}>
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 font-semibold text-white">
-              상
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-900">상담사</p>
-              <p className="text-[11px] text-slate-500">로컬 작업</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </aside>
-  )
-}
-
-function SidebarButton({
-  active = false,
-  children,
-  icon,
-  onClick,
-}: {
-  active?: boolean
-  children: ReactNode
-  icon: ReactNode
-  onClick?: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex h-[26px] w-full items-center gap-2 rounded-[5px] px-2 text-left font-semibold ${
-        active ? 'bg-blue-50 text-blue-700' : 'text-slate-800 hover:bg-slate-50'
-      }`}
-    >
-      {icon}
-      {children}
-    </button>
-  )
-}
-
-function TopWorkspaceBar({
-  activeStep,
-  currentScreen,
-  draftSaveMessage,
+function WorkflowHeader({
+  clientName,
+  sessionNumber,
   isSavingDraft,
-  onGoToFinalDocument,
-  onGoToSummaryDraft,
-  onGoToTransform,
-  onOpenCaseList,
-  onOpenSessionInput,
+  showTemporarySave,
+  onBack,
   onTemporarySave,
   onRestore,
-  resultReady,
 }: {
-  activeStep: WorkflowStep
-  currentScreen: AppScreen
-  draftSaveMessage: string | null
+  clientName: string
+  sessionNumber: number
   isSavingDraft: boolean
-  onGoToFinalDocument: () => void
-  onGoToSummaryDraft: () => void
-  onGoToTransform: () => void
-  onOpenCaseList: () => void
-  onOpenSessionInput: () => void
+  showTemporarySave: boolean
+  onBack: () => void
   onTemporarySave: () => void
   onRestore: () => void
-  resultReady: boolean
 }) {
-  const activeIndex = workflowSteps.indexOf(activeStep)
-  const showTemporarySave = currentScreen === 'session_input' || currentScreen === 'summary_draft'
-  const goToWorkflowStep = (step: WorkflowStep) => {
-    if (step === '회기입력') {
-      onOpenSessionInput()
-      return
-    }
-    if (!resultReady) return
-    if (step === '요약초안') onGoToSummaryDraft()
-    if (step === '문서변환') onGoToTransform()
-    if (step === '최종문서') onGoToFinalDocument()
-  }
-  const canOpenWorkflowStep = (step: WorkflowStep) => step === '회기입력' || resultReady
-
   return (
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
-      <div className="workspace-header-content">
-        {currentScreen === 'case_list' || currentScreen === 'case_dashboard' ? (
-          <div />
-        ) : (
-          <nav className="workflow-steps" aria-label="회기 작업 단계">
-            {workflowSteps.map((step, index) => {
-              const StepIcon = step === '회기입력' ? Edit3 : step === '요약초안' ? ClipboardList : step === '문서변환' ? FolderOpen : FileText
-              const enabled = canOpenWorkflowStep(step)
-              return (
-                <button
-                  key={step}
-                  type="button"
-                  disabled={!enabled}
-                  className={`flex items-center gap-3 ${enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-45'}`}
-                  onClick={() => goToWorkflowStep(step)}
-                >
-                  <span
-                    className={`inline-flex items-center gap-1.5 font-semibold ${
-                      index === activeIndex
-                        ? 'text-blue-700'
-                        : index < activeIndex
-                          ? 'text-slate-600'
-                          : 'text-slate-500'
-                    }`}
-                  >
-                    <StepIcon className="h-4 w-4" />
-                    {step}
-                  </span>
-                  {index < workflowSteps.length - 1 && <ChevronRight className="h-3 w-3 text-slate-500" />}
-                </button>
-              )
-            })}
-          </nav>
-        )}
-
+    <header className="sticky top-0 z-30 bg-[#f5f7fb]/95 backdrop-blur">
+      <div className="mx-auto flex w-full max-w-[1240px] flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-6">
+        <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-lg text-grey-500 hover:text-grey-900">
+          <ChevronLeft className="h-5 w-5" />
+          <span>뒤로가기</span>
+          <span className="text-grey-300">|</span>
+          <span className="font-extrabold text-grey-900">{clientName} · {sessionNumber}회기</span>
+        </button>
         <div className="workflow-actions">
-          <button type="button" onClick={onRestore} className="inline-flex h-8 items-center rounded-md px-2 text-xs font-semibold text-slate-500 hover:bg-slate-50">
+          <button type="button" onClick={onRestore} className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-grey-500 hover:bg-white">
             이전 작업 불러오기
           </button>
           {showTemporarySave && (
-            <>
-              {draftSaveMessage && (
-                <span className="hidden max-w-[168px] truncate text-[11px] font-semibold text-slate-500 xl:inline">
-                  {draftSaveMessage}
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={onTemporarySave}
-                disabled={isSavingDraft}
-                className="inline-flex h-8 items-center gap-1.5 rounded-[6px] border border-dashed border-slate-400 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
-              >
-                {isSavingDraft ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                {isSavingDraft ? '저장중' : '임시저장'}
-              </button>
-            </>
+            <GhostButton onClick={onTemporarySave} disabled={isSavingDraft} className="border-dashed">
+              {isSavingDraft ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {isSavingDraft ? '저장중' : '임시저장'}
+            </GhostButton>
           )}
-          <button
-            type="button"
-            onClick={onOpenCaseList}
-            className="inline-flex h-8 items-center gap-2 rounded-[6px] border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            <List className="h-4 w-4" />
-            목록으로
-          </button>
         </div>
       </div>
     </header>
   )
 }
 
-function CaseListWorkspace({
-  cases,
-  totalCount,
-  filter,
-  search,
-  isLoading,
-  error,
-  onChangeFilter,
-  onChangeSearch,
-  onRetry,
-  onCreateSession,
-  onOpenCase,
-}: {
-  cases: CaseListItem[]
-  totalCount: number
-  filter: CaseStatusFilter
-  search: string
-  isLoading: boolean
-  error: string | null
-  onChangeFilter: (filter: CaseStatusFilter) => void
-  onChangeSearch: (value: string) => void
-  onRetry: () => void
-  onCreateSession: () => void
-  onOpenCase: (caseId: string) => void
-}) {
-  const isFiltered = filter !== 'all' || search.trim().length > 0
-  return (
-    <section aria-label="케이스 목록" className="px-4 py-5 md:px-6">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-extrabold tracking-normal text-black">케이스 목록</h2>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            {isLoading ? '저장된 케이스를 불러오는 중입니다…' : `내 계정에 저장된 케이스 ${totalCount}건`}
-          </p>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-3 md:flex-nowrap">
-          <div className="flex flex-wrap gap-2 text-[11px] md:flex-nowrap">
-            {CASE_STATUS_FILTERS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                aria-pressed={filter === option.id}
-                onClick={() => onChangeFilter(option.id)}
-                className={`h-8 rounded-full px-3.5 font-bold shadow-sm ${
-                  filter === option.id ? 'bg-blue-600 text-white' : 'bg-white text-black hover:bg-slate-50'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={onRetry}
-            disabled={isLoading}
-            aria-label="케이스 목록 새로고침"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <History className="h-4 w-4" />}
-          </button>
-          <button
-            type="button"
-            onClick={onCreateSession}
-            className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
-          >
-            <Plus className="h-4 w-4" />
-            새 회기 생성
-          </button>
-        </div>
-      </div>
+type SessionSource = { id: string; label: string; text: string }
 
-      <label className="mb-4 flex h-9 max-w-[420px] items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-500 shadow-sm md:hidden">
-        <Search className="h-4 w-4" />
-        <input
-          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400"
-          placeholder="내담자/케이스 검색"
-          aria-label="내담자/케이스 검색"
-          value={search}
-          onChange={(event) => onChangeSearch(event.target.value)}
-        />
-      </label>
-
-      {error && (
-        <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <p className="min-w-0 flex-1">{error}</p>
-          <button type="button" onClick={onRetry} className="font-bold underline">다시 시도</button>
-        </div>
-      )}
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {cases.map((caseItem) => (
-          <CaseCard key={caseItem.case_id} caseItem={caseItem} onOpen={() => onOpenCase(caseItem.case_id)} />
-        ))}
-      </div>
-      {!cases.length && !isLoading && !error && (
-        <div className="rounded-[10px] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
-          <p className="text-sm font-semibold text-slate-600">
-            {isFiltered ? '조건에 맞는 케이스가 없습니다.' : '아직 저장된 케이스가 없습니다.'}
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {isFiltered ? '필터나 검색어를 바꿔보세요.' : '회기를 입력해 요약초안을 생성하면 케이스가 자동으로 저장됩니다.'}
-          </p>
-          {!isFiltered && (
-            <button type="button" onClick={onCreateSession} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white">
-              첫 회기 입력하기
-            </button>
-          )}
-        </div>
-      )}
-    </section>
-  )
+function buildSessionSources(form: SessionInput, materials: UploadedMaterial[]): SessionSource[] {
+  const sources: SessionSource[] = []
+  materials.forEach((material) => {
+    const text = getMaterialText(material)
+    if (text.trim()) sources.push({ id: `material:${material.id}`, label: material.filename, text })
+  })
+  if (form.transcript_text.trim() && !sources.length) sources.push({ id: 'transcript', label: '축어록', text: form.transcript_text })
+  else if (form.transcript_text.trim()) sources.push({ id: 'transcript', label: '축어록(반영본)', text: form.transcript_text })
+  if (form.counselor_memo.trim()) sources.push({ id: 'memo', label: '상담사 메모', text: form.counselor_memo })
+  if (form.previous_session_summary.trim()) sources.push({ id: 'previous', label: '이전 회기 요약', text: form.previous_session_summary })
+  if (form.psychological_test_summary?.trim()) sources.push({ id: 'test', label: '심리검사 요약', text: form.psychological_test_summary })
+  if (form.nonverbal_notes?.trim()) sources.push({ id: 'nonverbal', label: '비언어 관찰', text: form.nonverbal_notes })
+  return sources
 }
 
-function CaseCard({ caseItem, onOpen }: { caseItem: CaseListItem; onOpen: () => void }) {
-  const kind = caseStatusKind(caseItem.status)
-  const statusTone =
-    kind === 'closed' ? 'bg-emerald-50 text-emerald-700' : kind === 'pending' ? 'bg-orange-50 text-orange-700' : 'bg-blue-50 text-blue-700'
-  const progressColor = kind === 'closed' ? 'bg-emerald-500' : kind === 'pending' ? 'bg-orange-500' : 'bg-blue-600'
-  const scheduled = caseItem.total_scheduled_session_count
-  const progress = scheduled && scheduled > 0 ? Math.min(100, Math.round((caseItem.total_session_count / scheduled) * 100)) : null
-  const progressLabel = scheduled ? `${caseItem.total_session_count}/${scheduled}회 진행` : '예정 회기 미설정'
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`${caseDisplayName(caseItem)} 대시보드 열기`}
-      className="rounded-[10px] border border-slate-200 bg-white p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-base font-extrabold text-black">{caseDisplayName(caseItem)}</h3>
-          <p className="mt-0.5 truncate text-[10px] text-slate-500">케이스 ID: {caseItem.case_id}</p>
-        </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${statusTone}`}>{caseStatusLabel(caseItem.status)}</span>
-      </div>
-
-      <dl className="mt-2.5 grid gap-1 text-[10px] leading-4">
-        <CaseMeta label="회기 수" value={`${caseItem.total_session_count}회${caseItem.latest_session_number ? ` (최근 ${caseItem.latest_session_number}회기)` : ''}`} />
-        <CaseMeta label="최근 상담일" value={caseItem.latest_consultation_date || '—'} />
-        <CaseMeta label="다음 예정일" value={caseItem.next_scheduled_date || '—'} />
-      </dl>
-
-      <div className="mt-2.5 flex flex-wrap gap-1.5 text-[10px] font-bold">
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">축어록 {caseItem.transcript_completed_count}/{caseItem.total_session_count}</span>
-        <span className={`rounded-full px-2 py-0.5 ${caseItem.confirmed_note_count ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-          검토 완료 {caseItem.confirmed_note_count}
-        </span>
-        {caseItem.draft_note_count > 0 && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">AI 초안 {caseItem.draft_note_count}</span>}
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">문서 {caseItem.document_count}</span>
-        {caseItem.temporary_draft_count > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">임시저장 {caseItem.temporary_draft_count}</span>}
-      </div>
-
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between text-[11px] font-bold text-slate-500">
-          <span>{caseItem.total_session_count}회기</span>
-          <span className="text-blue-700">{progressLabel}</span>
-        </div>
-        <div className="h-2.5 rounded-full bg-slate-100">
-          <div className={`h-2.5 rounded-full ${progressColor}`} style={{ width: `${progress ?? 0}%` }} />
-        </div>
-      </div>
-    </button>
-  )
+function formatSessionTimeLabel(time: SessionTime): string {
+  if (!time.start || !time.end) return ''
+  const [sh, sm] = time.start.split(':').map(Number)
+  const [eh, em] = time.end.split(':').map(Number)
+  if ([sh, sm, eh, em].some((value) => Number.isNaN(value))) return ''
+  const minutes = eh * 60 + em - (sh * 60 + sm)
+  const fmt = (h: number, m: number) => `${h < 12 ? '오전' : '오후'} ${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')}`
+  const endLabel = `${eh % 12 === 0 ? 12 : eh % 12}:${String(em).padStart(2, '0')}`
+  return `${fmt(sh, sm)} - ${endLabel}${minutes > 0 ? ` (총 ${minutes}분)` : ''}`
 }
 
-function CaseMeta({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[62px_minmax(0,1fr)] items-center gap-2">
-      <dt className="whitespace-nowrap text-slate-500">{label}</dt>
-      <dd className="truncate font-extrabold text-black">{value}</dd>
-    </div>
-  )
-}
-
-function SessionInputWorkspace({
-  audioCapabilities,
-  completedSteps,
-  error,
+/** 회기 상세 (Figma "홍길동 · 1회기"): AI 회기 요약 카드 + 첨부 자료/요약 항목 탭 + 생성된 문서. */
+function SessionDetailWorkspace({
+  clientName,
   form,
-  hasMaterialRows,
-  hasSubmitted,
-  isDeidentified,
-  isLoading,
-  onAddMaterial,
-  onEditBasicInfo,
-  onEditMaterial,
-  onOpenMaterial,
-  onRemoveMaterial,
-  onSetIsDeidentified,
-  onTranscribeAudio,
-  onSubmit,
+  sessionTime,
+  sections,
+  checklistItems,
+  visibleSectionIds,
   materials,
-  sessionTopic,
-}: {
-  audioCapabilities: AudioCapabilitiesResponse | null
-  completedSteps: number
-  error: string | null
-  form: SessionInput
-  hasMaterialRows: boolean
-  hasSubmitted: boolean
-  isDeidentified: boolean
-  isLoading: boolean
-  onAddMaterial: () => void
-  onEditBasicInfo: () => void
-  onEditMaterial: (mode: MaterialModalMode) => void
-  onOpenMaterial: (materialId: string, mode: 'document_preview' | 'audio_review' | 'material_apply') => void
-  onRemoveMaterial: (materialId: string) => void
-  onSetIsDeidentified: (value: boolean) => void
-  onTranscribeAudio: (materialId: string) => void
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  materials: UploadedMaterial[]
-  sessionTopic: string
-}) {
-  // UI-only fields; not persisted or submitted.
-  // SessionInput 타입과 백엔드에 상담 시작/종료 시간 필드가 없어 화면 표시 용도로만 관리한다.
-  // 저장이 필요해지면 별도 작업으로 타입/스키마 확장과 함께 진행한다.
-  const [sessionStartTime, setSessionStartTime] = useState('10:00')
-  const [sessionEndTime, setSessionEndTime] = useState('10:50')
-
-  return (
-    <form id="session-input-form" onSubmit={onSubmit} className="session-input-form">
-      {/* TODO(design-token): 화면 배경 #F5F5F5, 배지 #6494FF는 전역 토큰 확정 후 tailwind.config로 이동 */}
-      <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4 py-2">
-        <BasicInfoCard
-          clientDisplayName={getClientDisplayName(form)}
-          onEditBasicInfo={onEditBasicInfo}
-          sessionDate={form.session_date}
-          sessionNumber={form.session_number}
-          sessionTopic={sessionTopic}
-        />
-
-        <section className="rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-bold tracking-normal text-slate-900">새 회기 시작</h2>
-
-          <div className="mt-5">
-            <p className="text-sm font-semibold text-slate-700">상담 일시</p>
-            <div className="session-schedule mt-2">
-              <button
-                type="button"
-                onClick={onEditBasicInfo}
-                className="flex h-11 items-center rounded-[10px] border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-700 hover:bg-slate-100"
-                title="날짜는 기본 정보에서 수정합니다"
-              >
-                {form.session_date || '날짜 미정'}
-              </button>
-              {/* UI-only field; not persisted or submitted */}
-              <input
-                type="time"
-                value={sessionStartTime}
-                onChange={(event) => setSessionStartTime(event.target.value)}
-                aria-label="상담 시작 시간 (화면 표시용)"
-                className="h-11 rounded-[10px] border border-slate-200 bg-slate-50 px-2 text-center text-sm text-slate-700"
-              />
-              <span className="text-center text-sm text-slate-400">~</span>
-              {/* UI-only field; not persisted or submitted */}
-              <input
-                type="time"
-                value={sessionEndTime}
-                onChange={(event) => setSessionEndTime(event.target.value)}
-                aria-label="상담 종료 시간 (화면 표시용)"
-                className="h-11 rounded-[10px] border border-slate-200 bg-slate-50 px-2 text-center text-sm text-slate-700"
-              />
-            </div>
-            <p className="mt-1.5 text-xs text-slate-400">시간은 화면 표시용이며 저장·요약 생성에는 사용되지 않습니다.</p>
-          </div>
-
-          <div className="mt-5">
-            <p className="text-sm font-semibold text-slate-700">음성 자료</p>
-            <button
-              type="button"
-              onClick={() => onEditMaterial('audio_upload')}
-              className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Mic className="h-4 w-4 text-blue-600" />
-              음성 파일 추가
-            </button>
-            <p className="mt-1.5 text-xs text-slate-400">현재는 음성 파일 업로드 후 자동 축어록(지원 환경)만 제공합니다.</p>
-          </div>
-
-          <div className="mt-5">
-            <p className="text-sm font-semibold text-slate-700">자료 업로드</p>
-            <button
-              type="button"
-              onClick={onAddMaterial}
-              className="mt-2 flex w-full flex-col items-center justify-center gap-2 whitespace-normal rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-7 text-center hover:bg-slate-50"
-            >
-              <Upload className="h-6 w-6 text-slate-500" aria-hidden="true" />
-              <span className="text-sm font-medium text-slate-700">클릭하여 파일을 선택하거나 직접 입력해주세요.</span>
-              <span className="text-xs text-slate-400">TXT, PDF, DOCX · 최대 {DOCUMENT_UPLOAD_LIMIT_LABEL}</span>
-            </button>
-
-            {hasMaterialRows && (
-              <div className="mt-3 divide-y divide-slate-200 rounded-[10px] border border-slate-200 bg-white">
-                {form.transcript_text.trim() && (
-              <MaterialRow
-                label="축어록/STT"
-                meta={`${countCharacters(form.transcript_text)}자 입력됨`}
-                actionLabel="열어서 수정"
-                onAction={() => onEditMaterial('edit_transcript')}
-              />
-            )}
-            {form.counselor_memo.trim() && (
-              <MaterialRow
-                label="상담사 메모"
-                meta={`${countCharacters(form.counselor_memo)}자 입력됨`}
-                actionLabel="열어서 수정"
-                onAction={() => onEditMaterial('edit_memo')}
-              />
-            )}
-            {form.psychological_test_summary?.trim() && (
-              <MaterialRow
-                label="심리검사 메모"
-                meta={`${countCharacters(form.psychological_test_summary || '')}자 입력됨`}
-                actionLabel="열어서 수정"
-                onAction={() => onEditMaterial('edit_test')}
-              />
-            )}
-            {materials.map((material) => (
-              <UploadedMaterialRow
-                key={material.id}
-                material={material}
-                transcriptionAvailable={Boolean(audioCapabilities?.transcription.available)}
-                transcriptionReason={audioCapabilities?.transcription.reason || null}
-                onApply={() => onOpenMaterial(material.id, 'material_apply')}
-                onDelete={() => onRemoveMaterial(material.id)}
-                onPreview={() => onOpenMaterial(material.id, material.kind === 'audio' ? 'audio_review' : 'document_preview')}
-                onTranscribe={() => onTranscribeAudio(material.id)}
-              />
-            ))}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-5">
-            <p className="text-sm font-semibold text-slate-700">메모</p>
-            {/* 인라인 편집은 props 계약(외부 시그니처 유지) 때문에 보류 — 기존 edit_memo 모달 흐름 사용.
-                다음 커밋에서 계약 변경 승인 시 인라인 textarea로 전환 가능 */}
-            <button
-              type="button"
-              onClick={() => onEditMaterial('edit_memo')}
-              className="mt-2 block min-h-[96px] w-full whitespace-pre-line rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100"
-            >
-              {form.counselor_memo.trim() ? (
-                form.counselor_memo
-              ) : (
-                <span className="text-slate-400">회기 중 특이사항, 상담사 소견 등을 입력하세요 (클릭하여 편집)</span>
-              )}
-            </button>
-          </div>
-
-          <label className="mt-5 flex items-center justify-between gap-3 rounded-[10px] bg-blue-50 px-3 py-2.5 text-blue-700">
-            <span className="flex items-center gap-2 text-xs font-semibold text-blue-700">
-              <ShieldCheck className="h-3.5 w-3.5 text-blue-700" />
-              개인정보 비식별화
-            </span>
-            <input
-              type="checkbox"
-              checked={isDeidentified}
-              onChange={(event) => onSetIsDeidentified(event.target.checked)}
-              className="h-3.5 w-3.5 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-            />
-          </label>
-        </section>
-
-        {/* 확정 hex #2563EB == tailwind blue-600 (동일값 확인됨) */}
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-        >
-          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
-          요약 초안 생성
-        </button>
-
-        <ProcessStatusCard completedSteps={completedSteps} isLoading={isLoading} steps={processSteps} />
-
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 h-4 w-4" />
-              <p>{error}</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </form>
-  )
-}
-
-function SummaryDraftWorkspace({
-  onConfirm,
+  documents,
+  fullResponse,
   confirmDisabled,
   confirmationState,
   editingSectionId,
   expandedEvidenceId,
-  form,
+  selectedGroundingClaimId,
+  selectedGroundingItem,
+  onConfirm,
+  onRegenerate,
+  onTransform,
   onChangeContent,
   onEditSection,
   onToggleEvidence,
   onSelectGrounding,
-  selectedGroundingClaimId,
-  sections,
+  onCloseGrounding,
+  onToggleSection,
+  onAddCustomSection,
+  onOpenDocument,
+  onAddMaterial,
 }: {
-  onConfirm: () => void
+  clientName: string
+  form: SessionInput
+  sessionTime: SessionTime
+  sections: DraftSection[]
+  checklistItems: ChecklistItem[]
+  visibleSectionIds: Set<DraftSectionId>
+  materials: UploadedMaterial[]
+  documents: CaseDashboardDocument[]
+  fullResponse?: GenerateNoteResponse
   confirmDisabled: boolean
   confirmationState: 'draft' | 'confirmed' | 'edited'
   editingSectionId: DraftSectionId | null
   expandedEvidenceId: DraftSectionId | null
-  form: SessionInput
+  selectedGroundingClaimId: string | null
+  selectedGroundingItem: GroundingReviewItem | null
+  onConfirm: () => void
+  onRegenerate: () => void
+  onTransform: () => void
   onChangeContent: (sectionId: DraftSectionId, content: string) => void
   onEditSection: (sectionId: DraftSectionId | null) => void
   onToggleEvidence: (sectionId: DraftSectionId) => void
   onSelectGrounding: (claimId: string) => void
-  selectedGroundingClaimId: string | null
-  sections: DraftSection[]
+  onCloseGrounding: () => void
+  onToggleSection: (sectionId: DraftSectionId) => void
+  onAddCustomSection: () => void
+  onOpenDocument: (document: CaseDashboardDocument) => void
+  onAddMaterial: () => void
 }) {
+  const [tab, setTab] = useState<'sources' | 'checklist'>('sources')
+  const [editMode, setEditMode] = useState(false)
+  const sources = useMemo(() => buildSessionSources(form, materials), [form, materials])
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null)
+  const activeSource = sources.find((source) => source.id === activeSourceId) || sources[0] || null
+  const timeLabel = formatSessionTimeLabel(sessionTime)
+  const statusLabel = confirmationState === 'confirmed' ? '상담사 검토 완료' : confirmationState === 'edited' ? '수정사항 있음 · 다시 저장 필요' : 'AI 초안 · 검토 필요'
+
   return (
-    <section className="space-y-3">
-      <article className="relative rounded-[7px] border border-slate-200 bg-white shadow-sm">
-      <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
-        <div className="flex items-start justify-between gap-4">
+    <div className="space-y-5">
+      <section className="rm-card p-5 md:p-6" aria-label={`${clientName} ${form.session_number}회기`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-3">
-              <ChevronRight className="h-6 w-6 rotate-180" />
-              <h1 className="text-xl font-bold tracking-normal">{confirmationState === 'confirmed' ? '확정 회기요약' : '요약 초안'}</h1>
-            </div>
-            <p className="mt-1.5 text-xs font-bold text-blue-50">
-              {getClientDisplayName(form)} · {form.session_number}회기 · {formatCompactDate(form.session_date)}
-            </p>
-            <p role="status" className="mt-2 text-xs font-semibold text-blue-50">
-              {confirmationState === 'confirmed' ? '상담사 검토 완료' : confirmationState === 'edited'
-                ? '수정사항 있음 · 다시 저장 필요' : 'AI 초안 · 검토 필요'}
+            <h1 className="text-2xl font-extrabold text-grey-900">{form.session_number}회기</h1>
+            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-grey-500">
+              <span className="inline-flex items-center gap-1"><ClipboardList className="h-4 w-4" />{formatKoreanDate(form.session_date) === '—' ? '날짜 미정' : formatKoreanDate(form.session_date)}</span>
+              {timeLabel && <span>{timeLabel}</span>}
+              <span className="text-xs text-grey-400">· {statusLabel}</span>
             </p>
           </div>
-          <button
-            type="button"
-            className="inline-flex h-8 items-center gap-2 rounded-[5px] bg-white px-5 text-xs font-bold text-blue-700 shadow-sm hover:bg-blue-50"
-          >
-            <Edit3 className="h-4 w-4" />
-            수정하기
-          </button>
+          <div className="flex flex-wrap gap-2.5">
+            <OutlineButton onClick={onRegenerate}><Sparkles className="h-4 w-4" />요약 다시하기</OutlineButton>
+            <PrimaryButton onClick={onTransform}><FileText className="h-4 w-4" />문서 변환하기</PrimaryButton>
+          </div>
         </div>
-      </div>
 
-      <div className="space-y-0 px-4 py-3">
-        {sections.length ? (
-          sections.map((section) => (
-            <DraftSectionBlock
-              key={section.id}
-              isEditing={editingSectionId === section.id}
-              isEvidenceExpanded={expandedEvidenceId === section.id}
-              section={section}
-              onChangeContent={onChangeContent}
-              onEditSection={onEditSection}
-              onToggleEvidence={onToggleEvidence}
-              onSelectGrounding={onSelectGrounding}
-              selectedGroundingClaimId={selectedGroundingClaimId}
-            />
-          ))
+        <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+          <article className="rounded-[12px] border border-primary-400/60 bg-white p-5">
+            <div className="flex items-center justify-between gap-3 border-b border-grey-200 pb-3">
+              <h2 className="text-base font-bold text-grey-900">AI 회기 요약</h2>
+              <button type="button" onClick={() => { setEditMode((value) => !value); onEditSection(null) }} className={`inline-flex items-center gap-1 text-sm ${editMode ? 'font-bold text-primary-400' : 'text-grey-500 hover:text-grey-900'}`}>
+                <PenLine className="h-4 w-4" />{editMode ? '수정 완료' : '수정하기'}
+              </button>
+            </div>
+            <div className="mt-2">
+              {sections.length ? (
+                sections.map((section) => (
+                  <DraftSectionBlock
+                    key={section.id}
+                    editMode={editMode}
+                    isEditing={editingSectionId === section.id}
+                    isEvidenceExpanded={expandedEvidenceId === section.id}
+                    section={section}
+                    onChangeContent={onChangeContent}
+                    onEditSection={onEditSection}
+                    onToggleEvidence={onToggleEvidence}
+                    onSelectGrounding={onSelectGrounding}
+                    selectedGroundingClaimId={selectedGroundingClaimId}
+                  />
+                ))
+              ) : (
+                <p className="px-2 py-12 text-center text-sm text-grey-500">오른쪽 요약 항목에서 표시할 항목을 선택하세요.</p>
+              )}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-grey-200 pt-4">
+              <p className="text-xs text-grey-500">임시저장은 작업 중 상태를, 검토 완료는 현재 요약을 저장합니다.</p>
+              <PrimaryButton className="h-10" onClick={onConfirm} disabled={confirmDisabled}>검토 완료하고 저장</PrimaryButton>
+            </div>
+          </article>
+
+          <aside className="rounded-[12px] border border-grey-200 bg-white">
+            <div className="flex items-center gap-2 border-b border-grey-200 px-3">
+              {[['sources', '첨부 자료'], ['checklist', '요약 항목']].map(([id, label]) => (
+                <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id as 'sources' | 'checklist')} className={`-mb-px border-b-2 px-4 py-3.5 text-sm font-bold ${tab === id ? 'border-primary-400 text-grey-900' : 'border-transparent text-grey-500 hover:text-grey-800'}`}>{label}</button>
+              ))}
+            </div>
+            <div className="p-4">
+              {selectedGroundingItem ? (
+                <EvidenceSourcePanel item={selectedGroundingItem} onClose={onCloseGrounding} />
+              ) : tab === 'sources' ? (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {sources.map((source) => (
+                      <button key={source.id} type="button" aria-pressed={activeSource?.id === source.id} onClick={() => setActiveSourceId(source.id)} className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-bold ${activeSource?.id === source.id ? 'border-primary-400 bg-primary-50 text-primary-400' : 'border-grey-200 bg-white text-grey-600 hover:bg-grey-100'}`}>
+                        {source.label}
+                      </button>
+                    ))}
+                    <button type="button" onClick={onAddMaterial} className="inline-flex h-8 items-center gap-1 rounded-full border border-dashed border-primary-400 px-3 text-xs font-bold text-primary-400 hover:bg-primary-50"><Plus className="h-3.5 w-3.5" />자료 추가</button>
+                  </div>
+                  <div className="rm-scroll mt-3 max-h-[460px] overflow-y-auto whitespace-pre-wrap rounded-[10px] bg-grey-100/70 p-4 text-sm leading-7 text-grey-800">
+                    {activeSource ? activeSource.text : '첨부된 자료가 없습니다. "자료 추가"로 회기 입력 화면에서 자료를 올릴 수 있습니다.'}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <ul className="space-y-2">
+                    {checklistItems.map((item) => {
+                      const checked = visibleSectionIds.has(item.id)
+                      return (
+                        <li key={item.id}>
+                          <label className={`flex h-11 cursor-pointer items-center gap-3 rounded-[10px] px-4 text-sm font-semibold ${checked ? 'bg-primary-50 text-primary-400' : 'bg-grey-100 text-grey-500'}`}>
+                            <input type="checkbox" checked={checked} onChange={() => onToggleSection(item.id)} className="sr-only" />
+                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${checked ? 'bg-primary-400' : 'border border-grey-400 bg-white'}`}>
+                              {checked && <Check className="h-3.5 w-3.5 text-white" />}
+                            </span>
+                            <span className="truncate">{item.title}</span>
+                            {!checked && <Info className="ml-auto h-4 w-4 text-grey-400" aria-label="요약에서 제외됨" />}
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  <button type="button" onClick={onAddCustomSection} className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-primary-400 bg-white text-sm font-bold text-primary-400 hover:bg-primary-50"><Plus className="h-4 w-4" />항목 추가하기</button>
+                  {fullResponse && <RetrievalContextPanel fullResponse={fullResponse} />}
+                </>
+              )}
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section className="rm-card p-5 md:p-6" aria-label="생성된 문서">
+        <h2 className="text-lg font-bold text-grey-900">생성된 문서</h2>
+        {documents.length === 0 ? (
+          <div className="py-10 text-center">
+            <FileText className="mx-auto h-12 w-12 text-grey-400" strokeWidth={1.2} />
+            <p className="mt-4 text-base font-bold text-grey-700">아직 생성된 문서가 없어요.</p>
+            <p className="mt-1.5 text-sm text-grey-500">회기 요약을 원하는 문서 형식으로 변환해보세요.</p>
+          </div>
         ) : (
-          <div className="px-2 py-12 text-center text-sm text-slate-500">오른쪽 체크리스트에서 표시할 항목을 선택하세요.</div>
+          <ul className="mt-4 space-y-2">
+            {documents.map((document) => (
+              <li key={document.document_id}>
+                <button type="button" onClick={() => onOpenDocument(document)} className="flex w-full items-center gap-3 rounded-[12px] border border-grey-200 px-4 py-3 text-left hover:bg-grey-100/60">
+                  <DocumentIcon type={document.document_type} confirmed={isConfirmedStatus(document.status)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold text-grey-900">{document.title}</span>
+                    <span className="block text-xs text-grey-500">{document.document_type === 'session_note' ? (isConfirmedStatus(document.status) ? '검토 완료' : 'AI 초안') : '보고서 초안'} · {document.created_at ? formatKoreanDate(document.created_at.slice(0, 10)) : ''}</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-grey-500" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-4">
-        <p className="text-xs text-slate-500">임시저장은 작업 중 상태를, 검토 완료는 현재 요약을 저장합니다.</p>
-        <button type="button" onClick={onConfirm} disabled={confirmDisabled}
-          className="inline-flex min-h-10 items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
-          검토 완료하고 저장
-        </button>
-      </div>
-      </article>
-    </section>
+      </section>
+    </div>
   )
 }
 
 function DraftSectionBlock({
+  editMode,
   isEditing,
   isEvidenceExpanded,
   onChangeContent,
@@ -2405,6 +2114,7 @@ function DraftSectionBlock({
   selectedGroundingClaimId,
   section,
 }: {
+  editMode: boolean
   isEditing: boolean
   isEvidenceExpanded: boolean
   onChangeContent: (sectionId: DraftSectionId, content: string) => void
@@ -2420,10 +2130,9 @@ function DraftSectionBlock({
   ))
 
   return (
-    <section className="relative border-b border-[#c7d0df] py-5 last:border-b-0">
+    <section className="relative py-4">
       <div className="flex flex-wrap items-center gap-1.5">
-        <Bookmark className="h-4 w-4 text-blue-700" />
-        <h2 className="mr-1.5 text-base font-bold text-blue-700">{section.title}</h2>
+        <h2 className="inline-flex h-7 items-center rounded-[6px] bg-primary-50 px-2.5 text-sm font-bold text-primary-400">{section.title}</h2>
         {section.sourceBadges.map((badge) =>
           badge === 'editable' ? null : (
             <button
@@ -2441,7 +2150,7 @@ function DraftSectionBlock({
       </div>
 
       {isEvidenceExpanded && (
-        <div className="absolute right-4 top-10 z-20 w-[190px] rounded-[6px] border border-slate-100 bg-white p-3 shadow-[0_14px_32px_rgba(15,23,42,0.18)] sm:right-16">
+        <div className="absolute right-2 top-10 z-20 w-[220px] rounded-[8px] border border-grey-200 bg-white p-3 shadow-[0_14px_32px_rgba(15,23,42,0.18)]">
           <EvidencePreview evidence={section.evidence} />
         </div>
       )}
@@ -2452,19 +2161,20 @@ function DraftSectionBlock({
           value={section.content}
           onBlur={() => onEditSection(null)}
           onChange={(event) => onChangeContent(section.id, event.target.value)}
-          className="mt-4 min-h-[110px] w-full resize-y rounded-md border border-blue-200 bg-white px-3 py-2 text-sm leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          className="mt-3 min-h-[110px] w-full resize-y rounded-[10px] border border-primary-100 bg-white px-3 py-2 text-sm leading-7 text-grey-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
         />
       ) : (
         <button
           type="button"
-          onClick={() => section.editable && onEditSection(section.id)}
-          className={`mt-4 block w-full rounded-[4px] px-2 py-1 text-left text-[13px] font-semibold leading-6 text-slate-900 ${
+          onClick={() => section.editable && (editMode || !section.content) && onEditSection(section.id)}
+          title={editMode ? '클릭해서 수정' : undefined}
+          className={`mt-3 block w-full whitespace-normal rounded-[6px] px-2 py-1 text-left text-sm leading-7 text-grey-800 ${
             hasSelectedInlineGrounding
-              ? 'bg-amber-100 ring-2 ring-amber-300 shadow-[0_0_0_2px_rgba(252,211,77,0.18)]'
-              : 'hover:bg-slate-50'
+              ? 'bg-amber-100 ring-2 ring-amber-300'
+              : editMode ? 'cursor-text ring-1 ring-dashed ring-primary-100 hover:bg-primary-50/40' : 'cursor-default'
           }`}
         >
-          <span className="whitespace-pre-wrap">{section.content || '내용을 입력해주세요.'}</span>
+          <span className="whitespace-pre-wrap">{section.content || (editMode ? '내용을 입력해주세요.' : '')}</span>
         </button>
       )}
       <GroundingEvidenceReview
@@ -3064,153 +2774,6 @@ function SupervisionStatusBadge({ status }: { status: SupervisionReportSection['
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${className}`}>{label}</span>
 }
 
-function ReviewPanel({
-  activeStep,
-  checklistItems,
-  currentScreen,
-  draftRecomposeMessage,
-  fullResponse,
-  isLoading,
-  isRecomposingDraft,
-  missingItems,
-  onAddCustomSection,
-  onGoBack,
-  onGoToTransform,
-  onTogglePreviousSession,
-  onToggleSection,
-  resultReady,
-  selectedPreviousSessionIds,
-  visibleSectionIds,
-  warnings,
-}: {
-  activeStep: WorkflowStep
-  checklistItems: ChecklistItem[]
-  currentScreen: AppScreen
-  draftRecomposeMessage: string | null
-  fullResponse?: GenerateNoteResponse
-  isLoading: boolean
-  isRecomposingDraft: boolean
-  missingItems: string[]
-  onAddCustomSection: () => void
-  onGoBack: () => void
-  onGoToTransform: () => void
-  onTogglePreviousSession: (sessionId: string) => void
-  onToggleSection: (sectionId: DraftSectionId) => void
-  resultReady: boolean
-  selectedPreviousSessionIds: string[]
-  visibleSectionIds: Set<DraftSectionId>
-  warnings: string[]
-}) {
-  const isSummaryDraft = currentScreen === 'summary_draft'
-  const isSessionInput = currentScreen === 'session_input'
-
-  return (
-    <aside
-      className={`review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white shadow-sm ${
-        isSummaryDraft ? 'p-5' : isSessionInput ? 'p-3.5' : 'p-6'
-      }`}
-    >
-      {currentScreen === 'session_input' ? (
-        <PreviousSessionLinkPanel
-          selectedIds={selectedPreviousSessionIds}
-          onToggle={onTogglePreviousSession}
-        />
-      ) : (
-        <>
-          <div>
-            {!isSummaryDraft && <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">{activeStep}</p>}
-            <h2 className={`${isSummaryDraft ? 'text-lg' : 'mt-2 text-lg'} font-bold`}>요약에 포함할 항목</h2>
-            {draftRecomposeMessage && (
-              <p className="mt-2 text-[11px] font-semibold leading-4 text-slate-500">{draftRecomposeMessage}</p>
-            )}
-          </div>
-
-          <div className={isSummaryDraft ? 'mt-4 space-y-2.5' : 'mt-4 space-y-2'}>
-            {checklistItems.map((item) => {
-              const checked = visibleSectionIds.has(item.id)
-              return (
-                <label
-                  key={item.id}
-                  className={`flex cursor-pointer items-center rounded-[8px] font-semibold ${
-                    isSummaryDraft ? 'h-8 gap-3 px-3.5 text-sm' : 'gap-2.5 px-3 py-2 text-sm'
-                  } ${checked ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={isRecomposingDraft}
-                    onChange={() => onToggleSection(item.id)}
-                    className="sr-only"
-                  />
-                  <span
-                    className={`flex shrink-0 items-center justify-center rounded-full ${isSummaryDraft ? 'h-[18px] w-[18px]' : 'h-4 w-4'} ${
-                      checked ? 'bg-blue-600' : 'bg-slate-300'
-                    }`}
-                  >
-                    <Check className={`${isSummaryDraft ? 'h-3.5 w-3.5' : 'h-3 w-3'} text-white`} />
-                  </span>
-                  <span className="truncate">{item.title}</span>
-                </label>
-              )
-            })}
-          </div>
-
-          <button
-            type="button"
-            onClick={onAddCustomSection}
-            disabled={!resultReady || isRecomposingDraft}
-            className={`mt-2 inline-flex w-full items-center justify-center gap-2 border bg-white font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300 ${
-              isSummaryDraft
-                ? 'h-8 rounded-[8px] border-slate-950 px-3 text-sm text-slate-950'
-                : 'rounded-md border-slate-300 px-3 py-2 text-sm text-slate-700'
-            }`}
-          >
-            <Plus className="h-4 w-4" />
-            항목 추가
-          </button>
-
-          {isSummaryDraft && fullResponse && <RetrievalContextPanel fullResponse={fullResponse} />}
-        </>
-      )}
-
-      <div className="mt-auto pt-5">
-        <div className="grid grid-cols-2 gap-2.5">
-          <button
-            type="button"
-            onClick={onGoBack}
-            disabled={isSessionInput}
-            className="inline-flex h-12 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-3 text-sm font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            이전 단계
-          </button>
-          {isSessionInput ? (
-            <button
-              type="submit"
-              form="session-input-form"
-              disabled={isLoading}
-              className="inline-flex h-12 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              요약초안
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onGoToTransform}
-              disabled={!resultReady || isRecomposingDraft}
-              className="inline-flex h-12 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-3 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              문서 변환
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      </div>
-    </aside>
-  )
-}
-
 function RetrievalContextPanel({ fullResponse }: { fullResponse: GenerateNoteResponse }) {
   const caseContext = fullResponse.retrieved_case_context || []
   const template = fullResponse.retrieved_template_context
@@ -3283,77 +2846,6 @@ function RetrievalMiniSection({
           </li>
         ))}
       </ul>
-    </section>
-  )
-}
-
-function PreviousSessionLinkPanel({
-  onToggle,
-  selectedIds,
-}: {
-  onToggle: (sessionId: string) => void
-  selectedIds: string[]
-}) {
-  const [activeSessionId, setActiveSessionId] = useState(previousSessionOptions[0]?.id || '')
-  const activeSession = previousSessionOptions.find((session) => session.id === activeSessionId)
-
-  return (
-    <section>
-      <div className="flex items-start gap-2.5">
-        <History className="mt-0.5 h-6 w-6 shrink-0 text-blue-700" />
-        <div>
-          <h2 className="text-lg font-bold text-slate-950">이전 회기 기록</h2>
-          <p className="mt-1.5 whitespace-nowrap text-xs leading-5 text-slate-500">클릭하면 이전 회기 내용을 불러옵니다.</p>
-        </div>
-      </div>
-
-      <div className="mt-4 space-y-3">
-        {previousSessionOptions.map((session) => {
-          const selected = selectedIds.includes(session.id)
-          return (
-            <button
-              key={session.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => {
-                setActiveSessionId(session.id)
-                onToggle(session.id)
-              }}
-              className={`min-h-[110px] w-full rounded-[9px] border p-3.5 text-left transition ${
-                selected
-                  ? 'border-blue-600 bg-blue-50 shadow-sm'
-                  : 'border-slate-300 bg-white hover:border-blue-300 hover:bg-blue-50/40'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-bold text-blue-700">{session.label}</p>
-                  <p className="mt-1 text-[11px] font-medium text-slate-500">{session.date}</p>
-                </div>
-                {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-700" />}
-              </div>
-              <p className="mt-3 overflow-hidden text-[12.5px] font-semibold leading-5 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                {session.summary}
-              </p>
-            </button>
-          )
-        })}
-      </div>
-
-      {activeSession && (
-        <div className="mt-4 border-t border-slate-200 pt-4">
-          <p className="text-sm font-bold text-slate-950">{activeSession.label} 자료</p>
-          <p className="mt-3 text-xs font-bold text-blue-700">[회기 요약]</p>
-          <p className="mt-1.5 whitespace-pre-wrap text-[11px] font-semibold leading-5 text-slate-700">
-            {activeSession.summary}
-          </p>
-          <p className="mt-4 text-xs font-bold text-blue-700">[상담 원문]</p>
-          <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-slate-700">
-            {activeSession.detail}
-          </pre>
-        </div>
-      )}
-
     </section>
   )
 }
@@ -4628,6 +4120,12 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+function toFileList(files: File[]): FileList {
+  const transfer = new DataTransfer()
+  files.forEach((file) => transfer.items.add(file))
+  return transfer.files
+}
+
 function makeMaterialId(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`
 }
@@ -4756,14 +4254,6 @@ function formatSeconds(value: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
-
-const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
-  transcript_text: '축어록',
-  nonverbal_notes: '비언어 관찰 메모',
-  counselor_memo: '상담사 메모',
-  previous_session_summary: '이전 회기 요약',
-  psychological_test_summary: '심리검사 요약',
 }
 
 interface TextModalConfig {

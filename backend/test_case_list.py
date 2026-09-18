@@ -128,7 +128,8 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/cases").status_code, 401)
         self.assertEqual(self.client.get("/api/cases", headers={"Authorization": "Bearer invalid"}).status_code, 401)
         self.assertEqual(self.store.calls, [], "unauthenticated requests must never reach storage")
-        self.assertEqual(self.client.get("/api/cases", headers=self.headers_b).json(), {"cases": [], "total_count": 0})
+        self.assertEqual(self.client.get("/api/cases", headers=self.headers_b).json(),
+                         {"cases": [], "total_count": 0, "recent_documents": []})
 
     def test_draft_table_failure_does_not_hide_cases(self) -> None:
         self.generate(self.headers_a)
@@ -145,6 +146,98 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()["cases"][0]["temporary_draft_count"], 0)
         self.assertEqual(listed.json()["cases"][0]["total_session_count"], 1)
+
+    def test_create_case_profile_update_and_isolation(self) -> None:
+        payload = {"case_alias": "합성 내담자", "client_age": 32, "client_gender": "남", "client_occupation": "직장인",
+                   "marital_status": "미혼", "family_composition": "1인", "client_phone": "010-0000-0000",
+                   "client_email": "synthetic@example.com", "client_notes": "  합성 특이사항  "}
+        created = self.client.post("/api/cases", json=payload, headers=self.headers_a)
+        self.assertEqual(created.status_code, 201, created.text[:300])
+        body = created.json()
+        case_id = body["case_id"]
+        self.assertTrue(case_id.startswith("case_"))
+        self.assertEqual(body["case_alias"], "합성 내담자")
+        self.assertEqual(body["client_age"], 32)
+        self.assertEqual(body["client_notes"], "합성 특이사항")
+        self.assertEqual(body["total_session_count"], 0)
+        self.assertEqual(body["presenting_problem"], None)
+        stored = self.store.tables["cases"][0]
+        self.assertEqual(stored["user_id"], "synthetic-user-a")
+        self.assertEqual(stored["client_gender"], "남")
+
+        listed = self.client.get("/api/cases", headers=self.headers_a).json()
+        self.assertEqual(listed["cases"][0]["case_id"], case_id)
+        self.assertEqual(listed["cases"][0]["client_occupation"], "직장인")
+        self.assertEqual(listed["recent_documents"], [])
+
+        updated = self.client.patch(f"/api/cases/{case_id}/profile", headers=self.headers_a,
+                                    json={"client_age": 33, "status": "closed", "client_notes": ""})
+        self.assertEqual(updated.status_code, 200, updated.text[:300])
+        self.assertEqual(updated.json()["client_age"], 33)
+        self.assertEqual(updated.json()["status"], "closed")
+        self.assertIsNone(updated.json()["client_notes"])
+        self.assertEqual(updated.json()["client_gender"], "남", "unset fields must be preserved")
+
+        # Generation for the created case keeps the profile and alias.
+        self.generate(self.headers_a, case_id=case_id, client_alias="")
+        dashboard = self.client.get(f"/api/cases/{case_id}/dashboard", headers=self.headers_a).json()
+        self.assertEqual(dashboard["case_alias"], "합성 내담자")
+        self.assertEqual(dashboard["client_age"], 33)
+        self.assertEqual(dashboard["total_session_count"], 1)
+        self.assertTrue(dashboard["presenting_problem"])
+        recent = self.client.get("/api/cases", headers=self.headers_a).json()["recent_documents"]
+        self.assertEqual(len(recent), 1)
+        self.assertEqual(recent[0]["case_alias"], "합성 내담자")
+        self.assertEqual(recent[0]["title"], "1회기 회기 기록")
+
+        # Other users cannot read or update the profile; duplicates and bad input are rejected.
+        self.assertEqual(self.client.patch(f"/api/cases/{case_id}/profile", headers=self.headers_b,
+                                           json={"client_age": 1}).status_code, 404)
+        self.assertNotIn(case_id, self.client.get("/api/cases", headers=self.headers_b).text)
+        duplicate = self.client.post("/api/cases", json={"case_alias": "x", "case_id": case_id}, headers=self.headers_a)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(self.client.post("/api/cases", json={"case_alias": "  "}, headers=self.headers_a).status_code, 422)
+        self.assertEqual(self.client.post("/api/cases", json={"case_alias": "x", "client_age": 200}, headers=self.headers_a).status_code, 422)
+        self.assertEqual(self.client.post("/api/cases", json={"case_alias": "x", "case_id": "bad id!"}, headers=self.headers_a).status_code, 422)
+        self.assertEqual(self.client.post("/api/cases", json={"case_alias": "x"}).status_code, 401)
+
+    def test_list_falls_back_when_profile_columns_are_missing(self) -> None:
+        """원격에 프로필 마이그레이션이 없어도 목록·대시보드는 기본 컬럼으로 동작해야 한다."""
+        from app.services import supabase_storage
+
+        self.generate(self.headers_a)
+        original = self.store.request
+
+        def missing_columns(method, table, **kwargs):
+            select = str((kwargs.get("query") or {}).get("select") or "")
+            if table == "cases" and method == "GET" and "client_age" in select:
+                raise supabase_storage.SupabaseStorageError('Supabase 400: {"code":"42703","message":"column cases.client_age does not exist"}')
+            return original(method, table, **kwargs)
+
+        with patch.object(self.store, "request", side_effect=missing_columns), \
+                patch.object(supabase_storage, "_profile_columns_available", None):
+            listed = self.client.get("/api/cases", headers=self.headers_a)
+            self.assertEqual(listed.status_code, 200, listed.text[:200])
+            self.assertEqual(listed.json()["cases"][0]["case_id"], INPUT["case_id"])
+            self.assertIsNone(listed.json()["cases"][0]["client_age"])
+            dashboard = self.client.get(f"/api/cases/{INPUT['case_id']}/dashboard", headers=self.headers_a)
+            self.assertEqual(dashboard.status_code, 200)
+            self.assertFalse(supabase_storage._profile_columns_available)
+
+    def test_profile_serverless_entry_point(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from api.cases.list import app as list_wrapper
+        from api.cases.profile import app as profile_wrapper
+
+        created = TestClient(list_wrapper).post("/api/cases", json={"case_alias": "합성"}, headers=self.headers_a)
+        self.assertEqual(created.status_code, 201)
+        case_id = created.json()["case_id"]
+        client = TestClient(profile_wrapper)
+        for path in (f"/api/cases/{case_id}/profile", f"/api/cases/profile?case_id={case_id}", f"/?case_id={case_id}"):
+            response = client.patch(path, json={"client_age": 40}, headers=self.headers_a)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.json()["client_age"], 40)
+            self.assertEqual(client.patch(path, json={"client_age": 40}).status_code, 401)
 
     def test_serverless_entry_point_matches_route(self) -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

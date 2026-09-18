@@ -52,11 +52,16 @@ Distinguish API existence from UI invocation.
 
 ### Case — cases
 
-- **Meaning:** Counseling case ID, pseudonym, status, and schedule metadata.
+- **Meaning:** Counseling case ID, pseudonym (displayed as the client's name), status, schedule metadata, and
+  the client profile (`client_age`, `client_gender`, `client_occupation`, `marital_status`, `family_composition`,
+  `client_phone`, `client_email`, `client_notes`, `updated_at`; migration `20260918000100_case_client_profile.sql`).
+  Phone/email are contact PII stored only under the owner's RLS scope; they are never sent to generation.
 - **Ownership:** user_id is the security owner; counselor_id records the server actor.
 - **Relation:** id is a global text PK, not a per-user composite PK. The same case ID cannot be
   independently created for different users. Multiple Sessions/Generated Notes connect through case_id FKs.
-- **Created:** Upserted by note/report generation paths that request persistence. No standalone case-creation UI/API.
+- **Created:** Inserted by `POST /api/cases` (내담자 추가 modal; server-generated `case_<hex>` id unless given) or
+  upserted by note/report generation paths that request persistence. Profile edits go through
+  `PATCH /api/cases/{case_id}/profile`.
 - **Current UI use:** Case ID is used in input. The case list screen shows every case owned by the logged-in
   user (server-side `user_id` filter under RLS) with session/document/draft counts; selecting one opens the
   client dashboard where schedules are updated and saved records are reopened. Generation with `persist:true`
@@ -195,6 +200,7 @@ it does not mean the same sequence has been applied remotely.
 | 20260826000100_case_memory_rpc_user_scope | Canonical user scope in memory RPC | Unverified |
 | 20260901000100_case_schedule_and_transcript_status | Schedule and transcription status | Earlier docs treated it as applied; current ledger unverified |
 | 20260902000100_document_exports | Export history | Earlier docs treated it as applied; current ledger unverified |
+| 20260918000100_case_client_profile | Client profile columns on cases | Pending on the shared project; the list/dashboard fall back to base columns until applied, create/profile APIs answer 503 |
 | 20260903000100_raw_evidence_layer | Transcript turns | Release review/application was pending at the previous checkpoint; current ledger unverified |
 | 20260903000200_transcript_window_retrieval | Transcript windows and match RPC | Release review/application was pending at the previous checkpoint; current ledger unverified |
 

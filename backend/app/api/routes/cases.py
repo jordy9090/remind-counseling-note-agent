@@ -8,11 +8,19 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.security import require_preview_access
 from app.core.config import settings
-from app.schemas.note import CaseDashboardResponse, CaseListResponse, CaseScheduleUpdateRequest
+from app.schemas.note import (
+    CaseCreateRequest,
+    CaseDashboardResponse,
+    CaseListResponse,
+    CaseProfileUpdateRequest,
+    CaseScheduleUpdateRequest,
+)
 from app.services.supabase_storage import (
     SupabaseStorageError,
+    create_case,
     fetch_case_dashboard,
     list_cases,
+    update_case_profile,
     update_case_schedule,
 )
 
@@ -26,9 +34,18 @@ def _storage_error_status(error: SupabaseStorageError) -> int:
         return 404
     if "다른 사용자" in message:
         return 403
+    if "이미 사용 중인" in message:
+        return 409
+    if "아직 준비되지 않았습니다" in message:
+        return 503
     if "credentials are missing" in message:
         return 503
     return 502
+
+
+def _require_storage(actor: str, feature: str) -> None:
+    if not settings.supabase_configured and not getattr(actor, "access_token", ""):
+        raise HTTPException(status_code=503, detail=f"Supabase가 설정되지 않아 {feature}을(를) 사용할 수 없습니다.")
 
 
 @router.get("", response_model=CaseListResponse)
@@ -43,6 +60,34 @@ async def get_case_list(actor: PreviewActor) -> CaseListResponse:
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"케이스 목록 조회 중 오류가 발생했습니다: {str(error)}")
+
+
+@router.post("", response_model=CaseDashboardResponse, status_code=201)
+async def post_case(request: CaseCreateRequest, actor: PreviewActor) -> CaseDashboardResponse:
+    """새 내담자(케이스)를 생성하고 대시보드 형태로 반환한다."""
+    _require_storage(actor, "내담자 생성")
+    try:
+        return create_case(request, actor=actor)
+    except SupabaseStorageError as error:
+        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
+    except Exception as error:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"내담자 생성 중 오류가 발생했습니다: {str(error)}")
+
+
+@router.patch("/{case_id}/profile", response_model=CaseDashboardResponse)
+async def patch_case_profile(
+    case_id: str, request: CaseProfileUpdateRequest, actor: PreviewActor
+) -> CaseDashboardResponse:
+    """내담자 프로필·이름·상태를 수정하고 갱신된 대시보드를 반환한다."""
+    _require_storage(actor, "프로필 수정")
+    try:
+        return update_case_profile(case_id, request, actor=actor)
+    except SupabaseStorageError as error:
+        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
+    except Exception as error:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"프로필 수정 중 오류가 발생했습니다: {str(error)}")
 
 
 @router.get("/{case_id}/dashboard", response_model=CaseDashboardResponse)

@@ -126,13 +126,151 @@ export function groupSessionRecords(
   return [...groups.values()].sort((a, b) => b.sessionNumber - a.sessionNumber)
 }
 
+// ---------------------------------------------------------------------------
+// 내담자 프로필·목록 표시 헬퍼 (Figma 대시보드)
+// ---------------------------------------------------------------------------
+
+export type ClientProfileLike = {
+  case_id: string
+  case_alias: string | null
+  client_age?: number | null
+  client_gender?: string | null
+  client_occupation?: string | null
+}
+
+/** "홍길동 · 32세 · 남 · 직장인" 형태의 메타 줄. 없는 값은 건너뛴다. */
+export function clientMetaLine(item: ClientProfileLike, includeName = true): string {
+  const parts = [
+    includeName ? caseDisplayName(item) : '',
+    item.client_age !== null && item.client_age !== undefined ? `${item.client_age}세` : '',
+    (item.client_gender || '').trim(),
+    (item.client_occupation || '').trim(),
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
+export type AgeBand = 'all' | 'teen' | '20s' | '30s' | '40s' | '50plus'
+export const AGE_BAND_OPTIONS: { id: AgeBand; label: string }[] = [
+  { id: 'all', label: '나이' },
+  { id: 'teen', label: '10대 이하' },
+  { id: '20s', label: '20대' },
+  { id: '30s', label: '30대' },
+  { id: '40s', label: '40대' },
+  { id: '50plus', label: '50대 이상' },
+]
+export const GENDER_OPTIONS: { id: string; label: string }[] = [
+  { id: 'all', label: '성별' },
+  { id: '남', label: '남' },
+  { id: '여', label: '여' },
+  { id: '기타', label: '기타' },
+]
+
+export function ageBand(age: number | null | undefined): Exclude<AgeBand, 'all'> | null {
+  if (age === null || age === undefined || !Number.isFinite(age)) return null
+  if (age < 20) return 'teen'
+  if (age < 30) return '20s'
+  if (age < 40) return '30s'
+  if (age < 50) return '40s'
+  return '50plus'
+}
+
+export interface ClientFilter {
+  status: CaseStatusFilter
+  gender: string
+  age: AgeBand
+  search: string
+}
+
+export const DEFAULT_CLIENT_FILTER: ClientFilter = { status: 'all', gender: 'all', age: 'all', search: '' }
+
+export function filterClients(cases: CaseListItem[], filter: ClientFilter): CaseListItem[] {
+  return filterCases(cases, filter.status, filter.search).filter((item) => {
+    if (filter.gender !== 'all' && (item.client_gender || '').trim() !== filter.gender) return false
+    if (filter.age !== 'all' && ageBand(item.client_age) !== filter.age) return false
+    return true
+  })
+}
+
+/** 2026-06-28 → 2026년 6월 28일 */
+export function formatKoreanDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!match) return value
+  return `${match[1]}년 ${Number(match[2])}월 ${Number(match[3])}일`
+}
+
+/** 상대 시간: 56분 전 / 3시간 전 / 2일 전 / 그 이후는 날짜 */
+export function relativeTime(value: string | null | undefined, now: Date = new Date()): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const diffMs = now.getTime() - date.getTime()
+  const minutes = Math.round(diffMs / 60000)
+  if (minutes < 1) return '방금 전'
+  if (minutes < 60) return `${minutes}분 전`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}시간 전`
+  const days = Math.round(hours / 24)
+  if (days < 7) return `${days}일 전`
+  return formatKoreanDate(date.toISOString().slice(0, 10))
+}
+
+export type ScheduleTone = 'done' | 'active' | 'upcoming'
+/** 다음 상담 예정일만 있는 현재 데이터로 축소한 일정 상태: 지난 날짜=완료, 오늘=진행 중, 미래=진행 전 */
+export function scheduleStatus(date: string | null | undefined, today: string = new Date().toISOString().slice(0, 10)): { label: string; tone: ScheduleTone } {
+  if (!date) return { label: '미정', tone: 'upcoming' }
+  const day = date.slice(0, 10)
+  if (day < today) return { label: '완료', tone: 'done' }
+  if (day === today) return { label: '진행 중', tone: 'active' }
+  return { label: '진행 전', tone: 'upcoming' }
+}
+
+export interface ScheduleRow {
+  case_id: string
+  name: string
+  date: string
+  status: { label: string; tone: ScheduleTone }
+}
+
+/** 홈 "나의 상담 일정": 다음 예정일이 있는 케이스를 날짜순으로. */
+export function buildScheduleRows(cases: CaseListItem[], today?: string): ScheduleRow[] {
+  return cases
+    .filter((item) => Boolean(item.next_scheduled_date))
+    .map((item) => ({
+      case_id: item.case_id,
+      name: caseDisplayName(item),
+      date: String(item.next_scheduled_date).slice(0, 10),
+      status: scheduleStatus(item.next_scheduled_date, today),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+export function paginate<T>(items: T[], page: number, pageSize: number): { items: T[]; page: number; pageCount: number } {
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize))
+  const safePage = Math.min(Math.max(1, page), pageCount)
+  return { items: items.slice((safePage - 1) * pageSize, safePage * pageSize), page: safePage, pageCount }
+}
+
 export function caseRequestErrorMessage(error: unknown, fallback = '케이스 정보를 불러오지 못했습니다.'): string {
   const response = (error as { response?: { status?: number; data?: { detail?: unknown } } })?.response
   const status = response?.status
   if (status === 401) return '로그인이 필요하거나 로그인 세션이 만료되었습니다. 다시 로그인해주세요.'
   if (status === 403) return '다른 사용자의 케이스에는 접근할 수 없습니다.'
   if (status === 404) return '해당 케이스로 저장된 기록이 없습니다.'
-  if (status === 503) return '저장소(Supabase)가 설정되지 않아 케이스 정보를 조회할 수 없습니다.'
+  if (status === 409) return '이미 사용 중인 케이스 ID입니다. 다른 ID를 입력해주세요.'
+  if (status === 422) {
+    const detail = response?.data?.detail
+    if (Array.isArray(detail) && detail.length) {
+      const first = detail[0] as { msg?: string }
+      if (typeof first?.msg === 'string') return first.msg.replace(/^Value error, /, '')
+    }
+    return '입력값을 확인해주세요.'
+  }
+  if (status === 503) {
+    const detail = response?.data?.detail
+    if (typeof detail === 'string' && /준비되지|migration/i.test(detail)) return detail
+    return '저장소(Supabase)가 설정되지 않아 케이스 정보를 조회할 수 없습니다.'
+  }
   if (typeof response?.data?.detail === 'string' && response.data.detail.trim()) return response.data.detail
   return error instanceof Error && !status ? error.message : fallback
 }

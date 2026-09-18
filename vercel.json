@@ -22,6 +22,10 @@
     {
       "source": "/api/cases/:case_id/schedule",
       "destination": "/api/cases/dashboard?case_id=:case_id"
+    },
+    {
+      "source": "/api/cases/:case_id/profile",
+      "destination": "/api/cases/profile?case_id=:case_id"
     }
   ],
   "functions": {
