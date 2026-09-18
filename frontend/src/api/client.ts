@@ -22,6 +22,8 @@ import type {
   CaseScheduleUpdateRequest,
   TemporaryDraftSaveRequest,
   TemporaryDraftSaveResponse,
+  TemporaryDraftRecord,
+  GeneratedNoteRecord,
 } from '../types/session'
 import { getAccessToken } from '../lib/supabase'
 
@@ -34,6 +36,11 @@ const client = axios.create({
 
 client.interceptors.request.use(async (config) => {
   const accessToken = await getAccessToken()
+  const needsPersistenceToken = /^\/api\/notes\/(drafts|confirm|records)(\/|$)/.test(config.url || '')
+    || (config.url === '/api/notes/generate' && config.data?.persist === true)
+  if (needsPersistenceToken && !accessToken) {
+    throw new Error('로그인이 필요하거나 로그인 세션이 만료되었습니다. 다시 로그인해주세요.')
+  }
   if (accessToken) {
     config.headers = config.headers ?? {}
     config.headers.Authorization = `Bearer ${accessToken}`
@@ -79,6 +86,33 @@ export const saveTemporaryDraft = async (
 ): Promise<TemporaryDraftSaveResponse> => {
   const response = await client.post<TemporaryDraftSaveResponse>('/api/notes/drafts', draft)
   return response.data
+}
+
+export const listTemporaryDrafts = async (caseId?: string): Promise<TemporaryDraftRecord[]> => {
+  const response = await client.get<TemporaryDraftRecord[]>('/api/notes/drafts', {
+    params: caseId ? { case_id: caseId } : undefined,
+  })
+  return response.data
+}
+
+export const loadTemporaryDraft = async (draftId: string): Promise<TemporaryDraftRecord> => {
+  const response = await client.get<TemporaryDraftRecord>(`/api/notes/drafts/${encodeURIComponent(draftId)}`)
+  return response.data
+}
+
+export const loadGeneratedNote = async (noteId: string): Promise<GeneratedNoteRecord> => {
+  const response = await client.get<GeneratedNoteRecord>(`/api/notes/records/${encodeURIComponent(noteId)}`)
+  return response.data
+}
+
+/** Do not expose storage diagnostics or counseling payloads in persistence errors. */
+export function persistenceErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    if (error.response?.status === 401 || error.response?.status === 403) return '로그인 상태 또는 기록 접근 권한을 확인해주세요.'
+    if (error.response?.status === 404) return '저장된 기록을 찾을 수 없습니다. 목록을 다시 조회해주세요.'
+    return '저장소 요청을 완료하지 못했습니다. 현재 작성 내용은 유지됩니다. 잠시 후 다시 시도해주세요.'
+  }
+  return error instanceof Error ? error.message : '저장소 요청을 완료하지 못했습니다.'
 }
 
 export interface RecomposeNoteDraftResult {
@@ -237,7 +271,7 @@ function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftRespo
       ...(fullResponse.retrieved_privacy_context || []).map((item) => item.warning),
       ...(fullResponse.retrieval_report?.failures || []).map((item) => `검색 실패: ${item}`),
       ...(fullResponse.persistence_report?.requested && !fullResponse.persistence_report?.stored
-        ? [fullResponse.persistence_report.message]
+        ? ['AI 초안은 생성되었지만 기록 저장에 실패했습니다. 임시저장으로 작성 내용을 보관해주세요.']
         : []),
     ]),
     grounding: fullResponse.grounding,

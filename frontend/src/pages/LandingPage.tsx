@@ -1,15 +1,15 @@
 import { FileText, Quote, Star } from 'lucide-react'
 
-interface LandingPageProps { onStart: () => void; startError?: string; starting?: boolean }
+interface LandingPageProps { onLogin: () => void; onSignup: () => void }
 
-export default function LandingPage({ onStart, startError, starting = false }: LandingPageProps) {
+export default function LandingPage({ onLogin, onSignup }: LandingPageProps) {
   return (
     <main className="landing bg-white text-slate-950">
       <header className="landing-header">
         <img src="/remind-logo.png" alt="Re:mind" />
         <div className="flex items-center gap-3">
-          
-          <button type="button" onClick={onStart} disabled={starting} className="rounded-md border border-slate-300 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">{starting ? '워크스페이스 여는 중' : '무료로 시작하기'}</button>
+          <button type="button" onClick={onLogin} className="px-3 py-2 font-semibold text-slate-500 hover:text-slate-900">로그인</button>
+          <button type="button" onClick={onSignup} className="rounded-md border border-slate-300 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">무료로 시작하기</button>
         </div>
       </header>
       <section className="landing-hero">
@@ -18,8 +18,7 @@ export default function LandingPage({ onStart, startError, starting = false }: L
           <div className="hero-copy">
             <img src="/remind-logo.png" alt="Re:mind" className="hero-logo" />
             <p className="hero-description">상담사의 기록 시간을 줄이고 문서의 완성도는 높여 상담에 더 집중할 수 있도록 돕습니다</p>
-            <button type="button" onClick={onStart} disabled={starting} className="hero-cta bg-blue-600 font-extrabold text-white hover:bg-blue-700">{starting ? '워크스페이스 여는 중' : '무료로 시작하기'}</button>
-            {startError && <p className="mt-3 text-sm font-semibold text-red-600" role="alert">{startError}</p>}
+            <button type="button" onClick={onSignup} className="hero-cta bg-blue-600 font-extrabold text-white hover:bg-blue-700">무료로 시작하기</button>
           </div>
           <div className="mockup-frame">
           <div className="product-mockup" aria-label="회기 요약과 AI 검토 예시">

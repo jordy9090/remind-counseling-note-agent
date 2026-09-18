@@ -19,6 +19,7 @@ from app.schemas.note import (
     ConfirmGeneratedNoteRequest,
     ConfirmGeneratedNoteResponse,
     GenerateNoteResponse,
+    GeneratedNoteRecord,
     PersistenceReport,
     SessionInput,
     SupervisionReportDraft,
@@ -367,6 +368,28 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
         memory_chunk_count=memory_chunk_count,
         memory_embedding_count=embedding_count,
         message=message,
+    )
+
+
+def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
+    """Read a note through the same actor/RLS and ownership chain as confirmation."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise NoteConfirmationError(503, "저장소 연결을 확인할 수 없습니다.")
+    note = _fetch_generated_note(note_id, actor=actor, actor_storage=actor_storage)
+    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
+    case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
+    context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
+    return GeneratedNoteRecord(
+        note_id=context.note_id,
+        case_id=context.case_id,
+        session_id=context.session_id,
+        session_number=context.session_number,
+        session_date=context.session_date,
+        note_type=str(note.get("note_type") or "session_note"),
+        draft_json=note.get("draft_json") or {},
+        confirmed_json=note.get("confirmed_json") or {},
+        confirmation_status=str(note.get("confirmation_status") or "draft"),
     )
 
 

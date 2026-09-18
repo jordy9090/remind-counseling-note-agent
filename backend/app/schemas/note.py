@@ -276,6 +276,20 @@ class GenerateNoteResponse(BaseModel):
     stub: bool = False
 
 
+class GeneratedNoteRecord(BaseModel):
+    """Owned stored note, including the complete counselor-confirmed payload."""
+
+    note_id: str
+    case_id: str
+    session_id: str
+    session_number: int
+    session_date: str
+    note_type: str
+    draft_json: dict[str, Any]
+    confirmed_json: dict[str, Any]
+    confirmation_status: str
+
+
 class TemporaryDraftSaveRequest(BaseModel):
     """Frontend workspace state saved by the counselor before final confirmation."""
 

@@ -4,6 +4,10 @@
   "outputDirectory": "frontend/dist",
   "rewrites": [
     {
+      "source": "/api/notes/records/:note_id",
+      "destination": "/api/notes/record?note_id=:note_id"
+    },
+    {
       "source": "/api/notes/drafts/:draft_id",
       "destination": "/api/notes/draft?draft_id=:draft_id"
     },

@@ -79,4 +79,7 @@ def _require_supabase_user(authorization: str | None) -> str:
     user_id = str(payload.get("id") or "").strip()
     if not user_id:
         raise HTTPException(status_code=401, detail="유효한 사용자 정보를 확인하지 못했습니다.")
+    # 익명 진입은 제거됐다. 원격 설정에 익명 로그인이 남아 있어도 보호 API는 이메일 계정만 허용한다.
+    if payload.get("is_anonymous") is True:
+        raise HTTPException(status_code=401, detail="익명 세션으로는 이용할 수 없습니다. 이메일로 로그인해주세요.")
     return AuthenticatedActor(user_id, token)

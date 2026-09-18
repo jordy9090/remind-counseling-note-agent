@@ -26,12 +26,14 @@ main.tsx → App
              ├─ DEV + ?grounding-demo=1 → lazy GroundingDemoPage
              └─ AuthGate
                   ├─ No auth configuration → connection preparation screen
-                  ├─ No session → Landing → Supabase anonymous sign-in request
-                  └─ Existing session → SessionDraftPage
+                  ├─ No session → Landing (public) → 로그인 / 무료로 시작하기
+                  │      → email signin · signup (+ confirmation email, resend) · password reset
+                  │      → PASSWORD_RECOVERY event → new-password form
+                  └─ Existing session → SessionDraftPage (header shows email + 로그아웃)
 ```
 
-Email/password/OAuth forms remain inside AuthGate, but the normal Landing flow currently has no
-path to open them. Allowing anonymous sign-in in remote Supabase is a separate setting.
+Anonymous sign-in was removed; the API guard also rejects tokens whose user is `is_anonymous`.
+OAuth buttons appear only when a provider is enabled remotely (out of scope for the normal path).
 The Supabase SDK maintains and refreshes the auth session; Axios sends its access token to the API.
 
 The normal workspace switches screens using `currentScreen` state instead of a URL router.

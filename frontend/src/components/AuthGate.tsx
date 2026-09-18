@@ -1,21 +1,38 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import type { Provider, Session } from '@supabase/supabase-js'
-import { ArrowLeft, Loader2, Mail } from 'lucide-react'
+import { ArrowLeft, Loader2, LogOut, Mail, MailCheck } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
 import LandingPage from '../pages/LandingPage'
 
-type AuthMode = 'signin' | 'signup' | 'reset' | 'recovery'
+// signin/signup/reset: 비로그인 폼. verify: 가입 직후 인증 메일 안내. recovery: 재설정 링크로 돌아온 뒤 새 비밀번호 설정.
+type AuthMode = 'signin' | 'signup' | 'reset' | 'verify' | 'recovery'
 const PRIVACY_NOTE = '상담 기록은 계정별로 분리하여 관리됩니다. 민감정보는 필요한 범위에서 비식별화해 입력해주세요.'
+const ALREADY_REGISTERED_MESSAGE = '이미 가입된 이메일입니다. 로그인으로 돌아가 로그인해주세요.'
 
 function authErrorMessage(message: string) {
   const normalized = message.toLowerCase()
   if (normalized.includes('invalid login credentials')) return '이메일 또는 비밀번호를 확인해주세요.'
-  if (normalized.includes('email not confirmed')) return '이메일 인증을 먼저 완료해주세요.'
-  if (normalized.includes('user already registered')) return '이미 가입된 이메일입니다.'
-  if (normalized.includes('password should be')) return '비밀번호는 8자 이상으로 입력해주세요.'
-  if (normalized.includes('rate limit')) return '요청이 많습니다. 잠시 후 다시 시도해주세요.'
+  if (normalized.includes('email not confirmed')) return '이메일 인증을 먼저 완료해주세요. 인증 메일이 없다면 아래에서 다시 받을 수 있습니다.'
+  if (normalized.includes('user already registered')) return ALREADY_REGISTERED_MESSAGE
+  if (normalized.includes('password should be') || normalized.includes('weak password')) return '비밀번호는 8자 이상으로 입력해주세요.'
+  if (normalized.includes('rate limit') || normalized.includes('too many')) return '요청이 많습니다. 잠시 후 다시 시도해주세요.'
+  if (normalized.includes('anonymous')) return '익명 로그인은 지원하지 않습니다. 이메일로 가입해주세요.'
   return '인증 요청을 완료하지 못했습니다. 잠시 후 다시 시도해주세요.'
+}
+
+/** 인증 메일/재설정 링크가 만료·오류로 돌아온 경우 Supabase가 URL hash에 남기는 오류를 읽는다. */
+function readAuthErrorFromUrl(): string {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : ''
+  if (!hash) return ''
+  const params = new URLSearchParams(hash)
+  const code = params.get('error_code') || params.get('error') || ''
+  const description = params.get('error_description') || ''
+  if (!code && !description) return ''
+  if (code === 'otp_expired' || description.toLowerCase().includes('expired')) {
+    return '링크가 만료되었습니다. 인증 메일 또는 재설정 메일을 다시 요청해주세요.'
+  }
+  return '링크를 확인하지 못했습니다. 메일의 링크를 다시 눌러주거나 새로 요청해주세요.'
 }
 
 export default function AuthGate({ children }: { children: ReactNode }) {
@@ -26,33 +43,70 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
+  const [unconfirmed, setUnconfirmed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [providers, setProviders] = useState<AvailableOAuthProviders>({ google: false, kakao: false })
 
   useEffect(() => {
     if (!supabase) return
+    const client = supabase
+    const urlError = readAuthErrorFromUrl()
+    if (urlError) {
+      setMessage(urlError)
+      setAuthOpen(true)
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
     void Promise.all([supabase.auth.getSession(), getAvailableOAuthProviders()]).then(([auth, available]) => {
-      setSession(auth.data.session)
+      const current = auth.data.session
+      if (current?.user?.is_anonymous) {
+        void client.auth.signOut()
+        setSession(null)
+      } else {
+        setSession(current)
+      }
       setProviders(available)
       setLoading(false)
     })
     const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // 과거 익명 세션이 브라우저에 남아 있으면 워크스페이스를 열지 않고 정리한다 (API도 익명 토큰을 거부함)
+      if (nextSession?.user?.is_anonymous) {
+        void client.auth.signOut()
+        return
+      }
       setSession(nextSession)
       if (event === 'PASSWORD_RECOVERY') setMode('recovery')
+      if (event === 'SIGNED_OUT') {
+        setAuthOpen(false)
+        setMode('signin')
+        setPassword('')
+        setMessage('')
+      }
       setLoading(false)
     })
     return () => data.subscription.unsubscribe()
   }, [])
 
-  const startAnonymousWorkspace = async () => {
-    if (!supabase || submitting) return
-    setSubmitting(true)
+  const openAuth = (nextMode: AuthMode) => {
+    setMode(nextMode)
+    setAuthOpen(true)
     setMessage('')
-    const { error } = await supabase.auth.signInAnonymously()
-    if (error) {
-      setSubmitting(false)
-      setMessage('워크스페이스를 열지 못했습니다. 잠시 후 다시 시도해주세요.')
-    }
+    setUnconfirmed(false)
+  }
+
+  const signOut = async () => {
+    if (!supabase) return
+    setSubmitting(true)
+    const { error } = await supabase.auth.signOut()
+    setSubmitting(false)
+    if (error) setMessage('로그아웃하지 못했습니다. 잠시 후 다시 시도해주세요.')
+  }
+
+  const resendVerification = async () => {
+    if (!supabase || !email) return
+    setSubmitting(true); setMessage('')
+    const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: window.location.origin } })
+    setSubmitting(false)
+    setMessage(error ? authErrorMessage(error.message) : '인증 메일을 다시 보냈습니다. 받은편지함과 스팸함을 확인해주세요.')
   }
 
   if (!isAuthConfigured) return <AuthShell><Brand /><AuthHeading title="서비스 연결을 준비하고 있습니다" description="인증 설정을 확인한 뒤 다시 시도해주세요." /></AuthShell>
@@ -67,7 +121,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         const { error } = await supabase.auth.updateUser({ password })
         setSubmitting(false)
         if (error) return setMessage(authErrorMessage(error.message))
-        setPassword(''); setMessage('비밀번호가 변경되었습니다.'); setMode('signin')
+        setPassword(''); setMessage(''); setMode('signin')
       }}>
         <PasswordField value={password} onChange={setPassword} autoComplete="new-password" />
         <PrimaryButton loading={submitting}>비밀번호 변경</PrimaryButton>
@@ -78,11 +132,21 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
   if (!session) {
     if (!authOpen) {
-      return <LandingPage
-        onStart={() => void startAnonymousWorkspace()}
-        startError={message}
-        starting={submitting}
-      />
+      return <LandingPage onLogin={() => openAuth('signin')} onSignup={() => openAuth('signup')} />
+    }
+
+    if (mode === 'verify') {
+      return <AuthShell>
+        <Brand />
+        <div className="mt-10 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700"><MailCheck size={24} /></div>
+        <AuthHeading title="이메일을 확인해주세요" description={`${email} 로 인증 메일을 보냈습니다. 메일의 확인 링크를 누르면 Re:mind 워크스페이스가 열립니다.`} />
+        {message && <div className="mt-6"><Feedback message={message} /></div>}
+        <div className="mt-8 space-y-3">
+          <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3.5 font-bold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void resendVerification()}>{submitting && <Loader2 className="animate-spin" size={18} />}인증 메일 다시 보내기</button>
+          <button className="w-full rounded-xl px-4 py-3 text-sm font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>
+        </div>
+        <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">메일이 오지 않으면 스팸함을 확인하거나 몇 분 뒤 다시 보내기를 눌러주세요. 이미 가입된 이메일이라면 메일이 오지 않으니 로그인으로 돌아가 로그인해주세요.</p>
+      </AuthShell>
     }
 
     const oauthEnabled = providers.google || providers.kakao
@@ -95,19 +159,33 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     const submit = async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault()
       if (!supabase) return
-      setSubmitting(true); setMessage('')
+      setSubmitting(true); setMessage(''); setUnconfirmed(false)
       if (mode === 'reset') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin })
         setSubmitting(false)
-        setMessage(error ? authErrorMessage(error.message) : '비밀번호 재설정 이메일을 보냈습니다.')
+        setMessage(error ? authErrorMessage(error.message) : '비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 누르면 새 비밀번호를 설정할 수 있습니다.')
         return
       }
-      const result = mode === 'signup'
-        ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
-        : await supabase.auth.signInWithPassword({ email, password })
+      if (mode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
+        setSubmitting(false)
+        if (error) return setMessage(authErrorMessage(error.message))
+        // 이미 가입된 이메일이면 Supabase는 (이메일 존재 비노출을 위해) 오류 대신
+        // identities가 빈 사용자 객체를 돌려주고 메일을 보내지 않는다 → 로그인 안내
+        if (data.user && (data.user.identities?.length ?? 0) === 0) {
+          setPassword('')
+          return setMessage(ALREADY_REGISTERED_MESSAGE)
+        }
+        // 이메일 인증이 켜져 있으면 session 없이 돌아온다 → 인증 안내 화면
+        if (!data.session) { setPassword(''); setMode('verify') }
+        return
+      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
       setSubmitting(false)
-      if (result.error) return setMessage(authErrorMessage(result.error.message))
-      if (mode === 'signup' && !result.data.session) setMessage('인증 이메일을 보냈습니다. 메일의 확인 링크를 눌러주세요.')
+      if (error) {
+        setUnconfirmed(error.message.toLowerCase().includes('email not confirmed'))
+        setMessage(authErrorMessage(error.message))
+      }
     }
 
     const heading = mode === 'reset' ? '비밀번호 찾기' : mode === 'signup' ? '무료로 시작하기' : '로그인'
@@ -130,10 +208,14 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         <EmailField value={email} onChange={setEmail} />
         {mode !== 'reset' && <PasswordField value={password} onChange={setPassword} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />}
         {message && <Feedback message={message} />}
+        {unconfirmed && mode === 'signin' && <button className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void resendVerification()}>인증 메일 다시 보내기</button>}
         <PrimaryButton loading={submitting}>{mode === 'signup' ? '계정 만들기' : mode === 'reset' ? '재설정 이메일 받기' : '이메일로 로그인'}</PrimaryButton>
       </form>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm">
-        {mode === 'signin' && <button className="font-semibold text-slate-600 hover:text-blue-700" type="button" onClick={() => { setMode('reset'); setMessage('') }}>비밀번호를 잊으셨나요?</button>}
+        {mode === 'signin' && <>
+          <button className="font-semibold text-slate-600 hover:text-blue-700" type="button" onClick={() => { setMode('reset'); setMessage('') }}>비밀번호를 잊으셨나요?</button>
+          <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signup'); setMessage(''); setUnconfirmed(false) }}>계정 만들기</button>
+        </>}
         {mode !== 'signin' && <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>}
       </div>
       <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">{PRIVACY_NOTE}</p>
@@ -141,7 +223,17 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return <div className="min-h-screen bg-slate-50">
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center px-4 py-3 sm:px-6 lg:px-8"><Brand compact /></div></header>{children}
+    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+        <Brand compact />
+        <div className="flex min-w-0 items-center gap-3">
+          {session.user.email && <span className="hidden truncate text-xs font-semibold text-slate-500 sm:inline">{session.user.email}</span>}
+          <button className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void signOut()}><LogOut size={14} />로그아웃</button>
+        </div>
+      </div>
+    </header>
+    {message && <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 lg:px-8"><Feedback message={message} /></div>}
+    {children}
   </div>
 }
 

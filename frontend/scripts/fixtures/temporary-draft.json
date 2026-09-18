@@ -1,0 +1,41 @@
+{
+  "case_id": "SYNTHETIC-CACHE-BOUNDARY", "session_number": 1, "session_date": "2026-09-11", "counselor_name": "Synthetic counselor",
+  "screen": "final_document", "session_topic": "Counselor topic", "is_deidentified": true,
+  "selected_previous_session_ids": ["session-previous"], "visible_section_ids": ["session_content"], "final_document_type": "supervision_report",
+  "form": {
+    "case_id": "SYNTHETIC-CACHE-BOUNDARY", "session_number": 1, "session_date": "2026-09-11", "counselor_name": "Synthetic counselor",
+    "client_alias": "Synthetic client", "counselor_memo": "Counselor memo", "transcript_text": "Counselor-applied transcript",
+    "previous_session_summary": "Previous summary", "counseling_goal": "Counselor goal", "psychological_test_summary": "Applied test summary",
+    "nonverbal_notes": "Applied observation", "key_issue_tags": ["Synthetic tag"], "target_document_type": "session_note", "persist": true,
+    "attachments": [{"content": "SYNTHETIC-RAW-CACHE"}]
+  },
+  "attachments": [{
+    "id": "material-audio", "kind": "audio", "filename": "synthetic.wav", "mediaType": "audio/wav", "status": "transcribed",
+    "characterCount": 200, "durationSeconds": 10, "appliedTargets": ["transcript_text"], "dirtySinceApply": true,
+    "extractedText": "SYNTHETIC-RAW-CACHE", "transcriptText": "SYNTHETIC-RAW-CACHE", "nonverbalNotes": "SYNTHETIC-RAW-CACHE",
+    "lastAppliedTranscriptText": "SYNTHETIC-RAW-CACHE", "lastAppliedNonverbalNotes": "SYNTHETIC-RAW-CACHE",
+    "segments": [{"text": "SYNTHETIC-RAW-CACHE", "words": [{"text": "SYNTHETIC-RAW-CACHE"}]}],
+    "warnings": ["SYNTHETIC-RAW-CACHE"], "error": "SYNTHETIC-RAW-CACHE",
+    "speakerRoleMap": {"speaker": "SYNTHETIC-RAW-CACHE"}, "file": {"text": "SYNTHETIC-RAW-CACHE"}, "objectUrl": "blob:SYNTHETIC-RAW-CACHE",
+    "language": {"content": "SYNTHETIC-RAW-CACHE"}, "cache": {"nested": {"content": "SYNTHETIC-RAW-CACHE"}}
+  }],
+  "draft_sections": [{"id": "session_content", "title": "Counselor section", "content": "Counselor summary edit", "visible": true,
+    "evidence": [{"excerpt": "SYNTHETIC-RAW-CACHE"}], "groundingItems": [{"source": {"text": "SYNTHETIC-RAW-CACHE"}}]}],
+  "final_document_sections": [{"id": "final", "title": "Final", "content": "Final document edit", "contentKind": "paragraph", "groundingItems": [{"text": "SYNTHETIC-RAW-CACHE"}]}],
+  "result": {"case_id": "SYNTHETIC-CACHE-BOUNDARY", "session_number": 1, "session_summary": "AI summary", "main_issue": "AI issue",
+    "counselor_intervention": "AI intervention", "client_response": "AI response", "next_plan": "AI plan", "workspace_note_id": "synthetic-note",
+    "missing_items": [], "warnings": ["Counselor review required"], "evidence_check": [{"source_excerpt": "SYNTHETIC-RAW-CACHE"}],
+    "grounding": {"regions": [{"content": "SYNTHETIC-RAW-CACHE"}]},
+    "full_response": {"sanitized_input": {"sources": {"transcript_text": "SYNTHETIC-RAW-CACHE"}}, "retrieved_case_context": [{"source_text": "SYNTHETIC-RAW-CACHE"}]}},
+  "supervision_report_draft": {
+    "reportId": "synthetic-report", "caseId": "SYNTHETIC-CACHE-BOUNDARY", "reportType": "personal_counseling_supervision", "title": "Edited report",
+    "meta": {"clientAlias": "Synthetic client", "sessionNumber": 1, "reportDate": "2026-09-11", "counselorName": "Synthetic counselor", "institution": "Synthetic institution"},
+    "sections": [{"id": "report-section", "title": "Edited report section", "level": 1, "status": "partial", "contentBlocks": [
+      {"id": "report-block", "type": "transcript", "text": "Counselor report edit", "rows": [{"column": "Edited table cell", "cache": {"text": "SYNTHETIC-RAW-CACHE"}}],
+        "speakerTurns": [{"turnId": "turn-1", "speaker": "client", "text": "Counselor-selected report excerpt", "silenceSeconds": 3, "segments": [{"text": "SYNTHETIC-RAW-CACHE"}]}],
+        "evidenceIds": ["evidence-1"], "aiGenerated": false, "demoValue": false, "reviewStatus": "edited", "segments": [{"text": "SYNTHETIC-RAW-CACHE"}]}
+    ]}],
+    "aiReview": {"completionChecklist": [], "missingFields": [], "demoInputs": [], "needsHumanReview": [], "unsupportedClaims": [], "suggestedSupervisionQuestions": [], "caution": "Review restored report", "cache": {"text": "SYNTHETIC-RAW-CACHE"}},
+    "evidenceIndex": {"evidence-1": {"label": "Source", "text": "SYNTHETIC-RAW-CACHE"}}
+  }
+}
