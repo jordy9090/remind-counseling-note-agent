@@ -89,6 +89,12 @@ def store_transcript_turns(
     _assert_scoped_session(user_id=user_id, case_id=case_id, session_id=session_id, storage_client=client)
     if len({turn.turn_index for turn in turns}) != len(turns):
         raise ValueError("Transcript turns must have unique turn_index values")
+    existing = get_transcript_turns(
+        user_id=user_id,
+        case_id=case_id,
+        session_id=session_id,
+        storage_client=client,
+    )
     rows = []
     for turn in turns:
         sanitized_text = deidentify_text(turn.sanitized_text, source=f"transcript.turn_{turn.turn_index}")[0]
@@ -99,7 +105,22 @@ def store_transcript_turns(
             **turn.model_dump(mode="json"), "sanitized_text": sanitized_text,
         })
     stored = client.upsert("transcript_turns", rows, on_conflict="session_id,turn_index") if rows else []
-    return [StoredTranscriptTurn.model_validate(row) for row in stored]
+    current_indices = {turn.turn_index for turn in turns}
+    for obsolete in existing:
+        if obsolete.turn_index not in current_indices:
+            client.delete(
+                "transcript_turns",
+                query={
+                    "user_id": f"eq.{user_id}",
+                    "case_id": f"eq.{case_id}",
+                    "session_id": f"eq.{session_id}",
+                    "turn_index": f"eq.{obsolete.turn_index}",
+                },
+            )
+    return sorted(
+        (StoredTranscriptTurn.model_validate(row) for row in stored),
+        key=lambda turn: turn.turn_index,
+    )
 
 
 def get_transcript_turns(

@@ -52,6 +52,20 @@ class FakeTranscriptStorage:
             result.append(existing)
         return result
 
+    def delete(self, table, *, query, return_representation=False):
+        target = getattr(self, table)
+        deleted = []
+        kept = []
+        for row in target:
+            matches = all(
+                str(row.get(key) or "") == str(condition)[3:]
+                for key, condition in query.items()
+                if str(condition).startswith("eq.")
+            )
+            (deleted if matches else kept).append(row)
+        setattr(self, table, kept)
+        return deleted if return_representation else []
+
 
 class TranscriptStorageTests(unittest.TestCase):
     def setUp(self):
@@ -151,6 +165,31 @@ class TranscriptStorageTests(unittest.TestCase):
         for token in ("[PERSON]", "[PHONE]", "[EMAIL]"):
             self.assertIn(token, text)
         self.assertEqual(self.fake.transcript_turns[0]["sanitized_text"], text)
+
+    def test_resave_replaces_eight_turns_with_three_in_the_same_scope(self):
+        first = [
+            TranscriptTurn(turn_index=index, speaker_role="client", sanitized_text=f"turn {index}")
+            for index in range(8)
+        ]
+        store_transcript_turns(
+            user_id=self.corpus["user_id"], counselor_id=self.corpus["counselor_id"],
+            case_id=self.corpus["case_id"], session_id=self.corpus["session_id"], turns=first,
+        )
+        replacement = [
+            TranscriptTurn(turn_index=index, speaker_role="client", sanitized_text=f"new turn {index}")
+            for index in range(3)
+        ]
+        store_transcript_turns(
+            user_id=self.corpus["user_id"], counselor_id=self.corpus["counselor_id"],
+            case_id=self.corpus["case_id"], session_id=self.corpus["session_id"], turns=replacement,
+        )
+
+        scoped = get_transcript_turns(
+            user_id=self.corpus["user_id"], case_id=self.corpus["case_id"],
+            session_id=self.corpus["session_id"],
+        )
+        self.assertEqual([turn.turn_index for turn in scoped], [0, 1, 2])
+        self.assertEqual([turn.sanitized_text for turn in scoped], ["new turn 0", "new turn 1", "new turn 2"])
 
 
 if __name__ == "__main__":
