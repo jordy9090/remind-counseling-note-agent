@@ -13,7 +13,7 @@
     },
     {
       "source": "/api/cases",
-      "destination": "/api/cases/list"
+      "destination": "/api/cases/dashboard?scope=list"
     },
     {
       "source": "/api/cases/:case_id/dashboard",
@@ -21,11 +21,11 @@
     },
     {
       "source": "/api/cases/:case_id/schedule",
-      "destination": "/api/cases/dashboard?case_id=:case_id"
+      "destination": "/api/cases/dashboard?case_id=:case_id&scope=schedule"
     },
     {
       "source": "/api/cases/:case_id/profile",
-      "destination": "/api/cases/profile?case_id=:case_id"
+      "destination": "/api/cases/dashboard?case_id=:case_id&scope=profile"
     }
   ],
   "functions": {

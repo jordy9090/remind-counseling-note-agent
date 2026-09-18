@@ -350,18 +350,24 @@ class TestVercelWrappers(unittest.TestCase):
             },
             config["rewrites"],
         )
-        self.assertIn({"source": "/api/cases", "destination": "/api/cases/list"}, config["rewrites"])
+        self.assertIn({"source": "/api/cases", "destination": "/api/cases/dashboard?scope=list"}, config["rewrites"])
         self.assertIn(
-            {"source": "/api/cases/:case_id/profile", "destination": "/api/cases/profile?case_id=:case_id"},
+            {"source": "/api/cases/:case_id/profile", "destination": "/api/cases/dashboard?case_id=:case_id&scope=profile"},
+            config["rewrites"],
+        )
+        self.assertIn(
+            {"source": "/api/cases/:case_id/schedule", "destination": "/api/cases/dashboard?case_id=:case_id&scope=schedule"},
             config["rewrites"],
         )
 
     def test_case_list_endpoint_requires_token_and_fails_closed_without_storage(self):
-        from api.cases.list import app as case_list_app
+        from api.cases.dashboard import app as case_app
 
-        client = TestClient(case_list_app)
+        client = TestClient(case_app)
         self.assertEqual(client.get("/").status_code, 401)
         response = client.get("/", headers={"X-Remind-Preview-Token": "secret-test-token"})
+        self.assertEqual(response.status_code, 503)
+        response = client.post("/api/cases", json={"case_alias": "x"}, headers={"X-Remind-Preview-Token": "secret-test-token"})
         self.assertEqual(response.status_code, 503)
 
     def test_draft_database_keys_are_scoped_per_user(self):
