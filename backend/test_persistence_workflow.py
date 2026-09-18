@@ -72,6 +72,10 @@ class MemoryStore:
                     row.update(json_copy(body))
                     result.append(row)
             return json_copy(result)
+        if method == "DELETE":
+            deleted = [row for row in rows if matches(row)]
+            self.tables[table] = [row for row in rows if not matches(row)]
+            return json_copy(deleted) if prefer == "return=representation" else None
         if method == "POST":
             result = []
             for value in body if isinstance(body, list) else [body]:

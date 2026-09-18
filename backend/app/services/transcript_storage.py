@@ -1,6 +1,7 @@
 """Production storage helpers for sanitized transcript turns and exact spans."""
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from app.schemas.evidence import StoredTranscriptTurn, TranscriptTurn
@@ -10,6 +11,41 @@ from app.services.supabase_storage import SupabaseStorage, storage
 
 class TranscriptStorageError(RuntimeError):
     pass
+
+
+TRANSCRIPT_SPEAKER_PATTERN = re.compile(
+    r"^\s*(?P<label>Cl|Client|내담자|C|Counselor|상담자)\s*:\s*(?P<text>.*)$",
+    re.IGNORECASE,
+)
+
+
+def parse_transcript_turns(transcript_text: str) -> list[TranscriptTurn]:
+    """Convert a sanitized line-based transcript into deterministic turns."""
+    turns: list[TranscriptTurn] = []
+    for line in (transcript_text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = TRANSCRIPT_SPEAKER_PATTERN.match(stripped)
+        if match:
+            label = match.group("label").lower()
+            text = match.group("text").strip()
+            if label in {"cl", "client", "내담자"}:
+                speaker_role = "client"
+            else:
+                speaker_role = "counselor"
+        else:
+            speaker_role = "unknown"
+            text = stripped
+        if text:
+            turns.append(
+                TranscriptTurn(
+                    turn_index=len(turns),
+                    speaker_role=speaker_role,
+                    sanitized_text=text,
+                )
+            )
+    return turns
 
 
 def build_transcript_source_ref(session_id: str, start_turn_index: int, end_turn_index: int) -> str:
@@ -53,6 +89,12 @@ def store_transcript_turns(
     _assert_scoped_session(user_id=user_id, case_id=case_id, session_id=session_id, storage_client=client)
     if len({turn.turn_index for turn in turns}) != len(turns):
         raise ValueError("Transcript turns must have unique turn_index values")
+    existing = get_transcript_turns(
+        user_id=user_id,
+        case_id=case_id,
+        session_id=session_id,
+        storage_client=client,
+    )
     rows = []
     for turn in turns:
         sanitized_text = deidentify_text(turn.sanitized_text, source=f"transcript.turn_{turn.turn_index}")[0]
@@ -63,7 +105,22 @@ def store_transcript_turns(
             **turn.model_dump(mode="json"), "sanitized_text": sanitized_text,
         })
     stored = client.upsert("transcript_turns", rows, on_conflict="session_id,turn_index") if rows else []
-    return [StoredTranscriptTurn.model_validate(row) for row in stored]
+    current_indices = {turn.turn_index for turn in turns}
+    for obsolete in existing:
+        if obsolete.turn_index not in current_indices:
+            client.delete(
+                "transcript_turns",
+                query={
+                    "user_id": f"eq.{user_id}",
+                    "case_id": f"eq.{case_id}",
+                    "session_id": f"eq.{session_id}",
+                    "turn_index": f"eq.{obsolete.turn_index}",
+                },
+            )
+    return sorted(
+        (StoredTranscriptTurn.model_validate(row) for row in stored),
+        key=lambda turn: turn.turn_index,
+    )
 
 
 def get_transcript_turns(

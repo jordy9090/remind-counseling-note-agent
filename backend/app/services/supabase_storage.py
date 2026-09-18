@@ -123,6 +123,17 @@ class SupabaseStorage:
         result = self._request("PATCH", table, query=query, body=values, prefer=prefer)
         return result if isinstance(result, list) else []
 
+    def delete(
+        self,
+        table: str,
+        *,
+        query: dict[str, str | int],
+        return_representation: bool = False,
+    ) -> list[dict[str, Any]]:
+        prefer = "return=representation" if return_representation else "return=minimal"
+        result = self._request("DELETE", table, query=query, prefer=prefer)
+        return result if isinstance(result, list) else []
+
     def rpc(self, function_name: str, params: dict[str, Any]) -> Any:
         """Call a Supabase PostgREST RPC function."""
         return self._request("POST", f"rpc/{function_name}", body=params)
@@ -297,6 +308,29 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         report.message = _stored_message()
     except Exception as error:
         report.message = f"Supabase persistence failed; generation response was preserved: {error}"
+        return report
+
+    sanitized_transcript = result.sanitized_input.sources.transcript_text.strip()
+    if not sanitized_transcript:
+        report.evidence_indexing_message = "No sanitized transcript was supplied; existing transcript evidence was preserved."
+        return report
+
+    report.evidence_indexing_attempted = True
+    try:
+        turn_count, window_count, embedding_count = persist_transcript_evidence(
+            session_input=session_input,
+            result=result,
+            user_id=str(actor),
+            session_id=session_id,
+            storage_client=actor_storage,
+        )
+        report.evidence_indexing_succeeded = True
+        report.evidence_indexing_message = (
+            f"Transcript evidence indexed: {turn_count} turns, {window_count} windows, "
+            f"{embedding_count} refreshed embeddings."
+        )
+    except Exception as error:
+        report.evidence_indexing_message = f"Note stored, but transcript evidence indexing failed: {error}"
     return report
 
 
@@ -564,6 +598,45 @@ def _stored_message() -> str:
 
 def _masked(text: str) -> str:
     return deidentify_text(text)[0]
+
+
+def persist_transcript_evidence(
+    *,
+    session_input: SessionInput,
+    result: GenerateNoteResponse,
+    user_id: str,
+    session_id: str | None,
+    storage_client: SupabaseStorage,
+) -> tuple[int, int, int]:
+    sanitized_transcript = result.sanitized_input.sources.transcript_text.strip()
+    if not sanitized_transcript:
+        return 0, 0, 0
+    if not session_id:
+        raise SupabaseStorageError("Transcript evidence cannot be stored without a session id.")
+
+    # Local imports avoid a module cycle: transcript storage uses this REST client.
+    from app.services.transcript_storage import parse_transcript_turns, store_transcript_turns
+    from app.services.transcript_windows import index_transcript_windows
+
+    turns = parse_transcript_turns(sanitized_transcript)
+    if not turns:
+        return 0, 0, 0
+    stored_turns = store_transcript_turns(
+        user_id=user_id,
+        counselor_id=user_id,
+        case_id=session_input.case_id,
+        session_id=session_id,
+        turns=turns,
+        storage_client=storage_client,
+    )
+    windows, embedding_count = index_transcript_windows(
+        user_id=user_id,
+        counselor_id=user_id,
+        case_id=session_input.case_id,
+        session_id=session_id,
+        storage_client=storage_client,
+    )
+    return len(stored_turns), len(windows), embedding_count
 
 
 def _grounding_evidence_rows(
