@@ -224,32 +224,46 @@ class CaseListRouteTests(unittest.TestCase):
             self.assertEqual(dashboard.status_code, 200)
             self.assertFalse(supabase_storage._profile_columns_available)
 
-    def test_profile_serverless_entry_point(self) -> None:
+    def test_single_serverless_function_serves_every_case_route(self) -> None:
+        """Vercel Hobby 플랜은 배포당 함수 12개 제한 → 케이스 API는 api/cases/dashboard.py 하나로 처리한다."""
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from api.cases.list import app as list_wrapper
-        from api.cases.profile import app as profile_wrapper
+        from api.cases.dashboard import app as wrapper
 
-        created = TestClient(list_wrapper).post("/api/cases", json={"case_alias": "합성"}, headers=self.headers_a)
-        self.assertEqual(created.status_code, 201)
+        client = TestClient(wrapper)
+        # create (POST /api/cases → ?scope=list)
+        created = client.post("/api/cases/dashboard?scope=list", json={"case_alias": "합성"}, headers=self.headers_a)
+        self.assertEqual(created.status_code, 201, created.text[:200])
         case_id = created.json()["case_id"]
-        client = TestClient(profile_wrapper)
-        for path in (f"/api/cases/{case_id}/profile", f"/api/cases/profile?case_id={case_id}", f"/?case_id={case_id}"):
+        self.assertEqual(client.post("/api/cases", json={"case_alias": "합성2"}, headers=self.headers_a).status_code, 201)
+        # list (rewritten and direct paths)
+        for path in ("/api/cases/dashboard?scope=list", "/api/cases", "/"):
+            response = client.get(path, headers=self.headers_a)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertIn(case_id, [case["case_id"] for case in response.json()["cases"]])
+            self.assertEqual(client.get(path).status_code, 401)
+        # dashboard
+        for path in (f"/api/cases/dashboard?case_id={case_id}", f"/api/cases/{case_id}/dashboard", f"/?case_id={case_id}"):
+            response = client.get(path, headers=self.headers_a)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.json()["case_id"], case_id)
+        # profile (scope=profile) and schedule (scope=schedule / default)
+        for path in (f"/api/cases/dashboard?case_id={case_id}&scope=profile", f"/api/cases/{case_id}/profile"):
             response = client.patch(path, json={"client_age": 40}, headers=self.headers_a)
             self.assertEqual(response.status_code, 200, path)
             self.assertEqual(response.json()["client_age"], 40)
             self.assertEqual(client.patch(path, json={"client_age": 40}).status_code, 401)
-
-    def test_serverless_entry_point_matches_route(self) -> None:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from api.cases.list import app as wrapper
-
-        self.generate(self.headers_a)
-        wrapper_client = TestClient(wrapper)
-        for path in ("/api/cases", "/api/cases/list", "/"):
-            response = wrapper_client.get(path, headers=self.headers_a)
+        for path in (f"/api/cases/dashboard?case_id={case_id}&scope=schedule", f"/api/cases/dashboard?case_id={case_id}", f"/api/cases/{case_id}/schedule"):
+            response = client.patch(path, json={"total_scheduled_session_count": 8}, headers=self.headers_a)
             self.assertEqual(response.status_code, 200, path)
-            self.assertEqual(response.json()["cases"][0]["case_id"], INPUT["case_id"])
-            self.assertEqual(wrapper_client.get(path).status_code, 401)
+            self.assertEqual(response.json()["total_scheduled_session_count"], 8)
+        # validation still fails closed through the scope router
+        self.assertEqual(client.patch(f"/api/cases/dashboard?case_id={case_id}&scope=profile", json={"client_age": 500}, headers=self.headers_a).status_code, 422)
+        self.assertEqual(client.patch(f"/api/cases/dashboard?case_id={case_id}&scope=schedule", json={"total_scheduled_session_count": -1}, headers=self.headers_a).status_code, 422)
+
+    def test_deployment_stays_within_vercel_function_limit(self) -> None:
+        api_dir = Path(__file__).resolve().parent.parent / "api"
+        functions = sorted(str(path.relative_to(api_dir)) for path in api_dir.rglob("*.py"))
+        self.assertLessEqual(len(functions), 12, f"Vercel Hobby allows 12 serverless functions; found {len(functions)}: {functions}")
 
 
 if __name__ == "__main__":
