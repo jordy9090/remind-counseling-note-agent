@@ -652,15 +652,17 @@ export interface CaseDashboardExport {
   created_at: string | null
 }
 
-export interface CaseDashboardResponse {
+export interface CaseDashboardResponse extends ClientProfileFields {
   case_id: string
   case_alias: string | null
   status: string
+  created_at: string | null
   total_session_count: number
   first_consultation_date: string | null
   latest_consultation_date: string | null
   total_scheduled_session_count: number | null
   next_scheduled_date: string | null
+  presenting_problem: string | null
   sessions: CaseDashboardSession[]
   documents: CaseDashboardDocument[]
   exports: CaseDashboardExport[]
@@ -669,4 +671,63 @@ export interface CaseDashboardResponse {
 export interface CaseScheduleUpdateRequest {
   total_scheduled_session_count?: number | null
   next_scheduled_date?: string | null
+}
+
+/** 내담자 프로필 (cases 테이블 선택 컬럼). */
+export interface ClientProfileFields {
+  client_age: number | null
+  client_gender: string | null
+  client_occupation: string | null
+  marital_status: string | null
+  family_composition: string | null
+  client_phone: string | null
+  client_email: string | null
+  client_notes: string | null
+}
+
+export interface CaseCreateRequest extends Partial<ClientProfileFields> {
+  case_id?: string | null
+  case_alias: string
+}
+
+export interface CaseProfileUpdateRequest extends Partial<ClientProfileFields> {
+  case_alias?: string
+  status?: string
+}
+
+export interface RecentDocumentItem {
+  document_id: string
+  case_id: string
+  case_alias: string | null
+  document_type: string
+  title: string
+  status: string
+  session_number: number | null
+  updated_at: string | null
+}
+
+export interface CaseListItem extends ClientProfileFields {
+  case_id: string
+  case_alias: string | null
+  status: string
+  created_at: string | null
+  updated_at: string | null
+  total_session_count: number
+  latest_session_number: number | null
+  first_consultation_date: string | null
+  latest_consultation_date: string | null
+  total_scheduled_session_count: number | null
+  next_scheduled_date: string | null
+  transcript_completed_count: number
+  confirmed_note_count: number
+  draft_note_count: number
+  document_count: number
+  export_count: number
+  temporary_draft_count: number
+}
+
+export interface CaseListResponse {
+  cases: CaseListItem[]
+  total_count: number
+  recent_documents: RecentDocumentItem[]
 }

@@ -415,20 +415,133 @@ class CaseDashboardExport(BaseModel):
     created_at: str | None = None
 
 
-class CaseDashboardResponse(BaseModel):
-    """Aggregated per-case view: sessions, dates, and generated documents."""
+class ClientProfileFields(BaseModel):
+    """내담자 프로필 (cases 테이블의 선택 컬럼). 모두 선택값이며 저장 시 RLS 소유자 범위에서만 읽힌다."""
+
+    client_age: int | None = Field(default=None, ge=0, le=150)
+    client_gender: str | None = Field(default=None, max_length=20)
+    client_occupation: str | None = Field(default=None, max_length=100)
+    marital_status: str | None = Field(default=None, max_length=30)
+    family_composition: str | None = Field(default=None, max_length=50)
+    client_phone: str | None = Field(default=None, max_length=40)
+    client_email: str | None = Field(default=None, max_length=120)
+    client_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "client_gender", "client_occupation", "marital_status", "family_composition",
+        "client_phone", "client_email", "client_notes",
+    )
+    @classmethod
+    def _blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+
+class CaseCreateRequest(ClientProfileFields):
+    """새 내담자(케이스) 생성. case_id를 생략하면 서버가 생성한다."""
+
+    case_id: str | None = Field(default=None, max_length=80)
+    case_alias: str = Field(min_length=1, max_length=100)
+
+    @field_validator("case_alias")
+    @classmethod
+    def _strip_alias(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("이름(가명)을 입력해주세요.")
+        return value
+
+    @field_validator("case_id")
+    @classmethod
+    def _validate_case_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if not all(ch.isalnum() or ch in "-_." for ch in value):
+            raise ValueError("케이스 ID는 영문·숫자·-_.만 사용할 수 있습니다.")
+        return value
+
+
+class CaseProfileUpdateRequest(ClientProfileFields):
+    """내담자 프로필·이름·상태 수정 (설정한 필드만 반영)."""
+
+    case_alias: str | None = Field(default=None, min_length=1, max_length=100)
+    status: str | None = Field(default=None, max_length=30)
+
+    @field_validator("case_alias", "status")
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("빈 값으로 수정할 수 없습니다.")
+        return value
+
+
+class CaseDashboardResponse(ClientProfileFields):
+    """Aggregated per-case view: profile, sessions, dates, and generated documents."""
 
     case_id: str
     case_alias: str | None = None
     status: str = "active"
+    created_at: str | None = None
     total_session_count: int = 0
     first_consultation_date: str | None = None
     latest_consultation_date: str | None = None
     total_scheduled_session_count: int | None = None
     next_scheduled_date: str | None = None
+    presenting_problem: str | None = None
     sessions: list[CaseDashboardSession] = Field(default_factory=list)
     documents: list[CaseDashboardDocument] = Field(default_factory=list)
     exports: list[CaseDashboardExport] = Field(default_factory=list)
+
+
+class CaseListItem(ClientProfileFields):
+    """One owned case with profile summary and aggregate counts for the case list screen."""
+
+    case_id: str
+    case_alias: str | None = None
+    status: str = "active"
+    created_at: str | None = None
+    updated_at: str | None = None
+    total_session_count: int = 0
+    latest_session_number: int | None = None
+    first_consultation_date: str | None = None
+    latest_consultation_date: str | None = None
+    total_scheduled_session_count: int | None = None
+    next_scheduled_date: str | None = None
+    transcript_completed_count: int = 0
+    confirmed_note_count: int = 0
+    draft_note_count: int = 0
+    document_count: int = 0
+    export_count: int = 0
+    temporary_draft_count: int = 0
+
+
+class RecentDocumentItem(BaseModel):
+    """최근 작업한 문서 (generated_notes 기준, 사용자 소유 케이스 전체)."""
+
+    document_id: str
+    case_id: str
+    case_alias: str | None = None
+    document_type: str
+    title: str = ""
+    status: str = "draft"
+    session_number: int | None = None
+    updated_at: str | None = None
+
+
+class CaseListResponse(BaseModel):
+    """All cases owned by the authenticated user, most recently active first."""
+
+    cases: list[CaseListItem] = Field(default_factory=list)
+    total_count: int = 0
+    recent_documents: list[RecentDocumentItem] = Field(default_factory=list)
 
 
 class CaseScheduleUpdateRequest(BaseModel):
