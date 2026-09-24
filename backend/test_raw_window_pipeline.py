@@ -190,7 +190,10 @@ class RawWindowPipelineTests(unittest.TestCase):
             )
             original_hash = storage.transcript_windows[0]["content_hash"]
             original_embedding = storage.transcript_windows[0]["embedding"]
-            storage.transcript_turns[2]["sanitized_text"] = "edited raw turn 2"
+            original_text = storage.transcript_turns[2]["sanitized_text"]
+            edited_text = "alter raw turn 2"
+            self.assertEqual(len(edited_text), len(original_text))
+            storage.transcript_turns[2]["sanitized_text"] = edited_text
             transcript_windows.index_transcript_windows(
                 user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
             )
@@ -198,7 +201,7 @@ class RawWindowPipelineTests(unittest.TestCase):
             self.assertNotEqual(storage.transcript_windows[0]["embedding"], original_embedding)
             self.assertEqual(len(provider.inputs), 2)
 
-            storage.transcript_turns[2]["sanitized_text"] = "second edit turn 2"
+            storage.transcript_turns[2]["sanitized_text"] = "final raw turn 2"
             provider.failure = RuntimeError("synthetic embedding failure")
             with self.assertRaisesRegex(RuntimeError, "synthetic embedding failure"):
                 transcript_windows.index_transcript_windows(
