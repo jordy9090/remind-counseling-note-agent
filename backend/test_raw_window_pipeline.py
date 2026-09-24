@@ -28,6 +28,70 @@ def window(window_id, session_id, start, end, score, session_number=1):
     )
 
 
+class WindowStorage:
+    def __init__(self, turns):
+        self.transcript_turns = [turn.model_dump(mode="json") for turn in turns]
+        self.transcript_windows = []
+
+    def select(self, table, query):
+        rows = list(getattr(self, table))
+        for key, condition in query.items():
+            if key in {"select", "order", "limit"}:
+                continue
+            if str(condition).startswith("eq."):
+                rows = [row for row in rows if str(row.get(key) or "") == str(condition)[3:]]
+        if query.get("order") == "turn_index.asc":
+            rows.sort(key=lambda row: row["turn_index"])
+        return rows[: int(query.get("limit") or len(rows))]
+
+    def maybe_single(self, table, query):
+        rows = self.select(table, query)
+        return rows[0] if rows else None
+
+    def upsert(self, table, rows, *, on_conflict):
+        target = getattr(self, table)
+        keys = on_conflict.split(",")
+        stored = []
+        for incoming in rows:
+            existing = next((row for row in target if all(row.get(key) == incoming.get(key) for key in keys)), None)
+            if existing is None:
+                existing = {"id": f"{table}-{len(target) + 1}", **incoming}
+                target.append(existing)
+            else:
+                existing.update(incoming)
+            stored.append(dict(existing))
+        return stored
+
+    def update(self, table, values, *, query, return_representation=True):
+        updated = []
+        for row in getattr(self, table):
+            if all(str(row.get(key) or "") == str(condition)[3:] for key, condition in query.items()):
+                row.update(values)
+                updated.append(dict(row))
+        return updated if return_representation else []
+
+    def delete(self, table, *, query, return_representation=False):
+        target = getattr(self, table)
+        deleted, kept = [], []
+        for row in target:
+            matches = all(str(row.get(key) or "") == str(condition)[3:] for key, condition in query.items())
+            (deleted if matches else kept).append(row)
+        setattr(self, table, kept)
+        return deleted if return_representation else []
+
+
+class Provider:
+    def __init__(self):
+        self.inputs = []
+        self.failure = None
+
+    def embed(self, texts):
+        self.inputs.extend(texts)
+        if self.failure:
+            raise self.failure
+        return [[float(len(self.inputs)), 0.0] for _ in texts]
+
+
 class RawWindowPipelineTests(unittest.TestCase):
     def test_deterministic_windows_overlap_and_terminal_coverage(self):
         windows = build_transcript_windows(make_turns(8))
@@ -80,6 +144,72 @@ class RawWindowPipelineTests(unittest.TestCase):
             self.assertEqual(provider.inputs, [row["window_text"]])
             self.assertFalse(ensure_transcript_window_embedding(row))
             self.assertEqual(len(provider.inputs), 1)
+
+    def test_reindex_removes_windows_with_obsolete_boundaries(self):
+        storage = WindowStorage(make_turns(8))
+        provider = Provider()
+        with patch.object(transcript_windows, "get_embedding_provider", return_value=provider):
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+            self.assertEqual(
+                [(row["start_turn_index"], row["end_turn_index"]) for row in storage.transcript_windows],
+                [(0, 5), (2, 7)],
+            )
+            storage.transcript_turns = [turn.model_dump(mode="json") for turn in make_turns(3)]
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        self.assertEqual(
+            [(row["start_turn_index"], row["end_turn_index"]) for row in storage.transcript_windows],
+            [(0, 2)],
+        )
+
+    def test_unchanged_hash_and_model_reuse_existing_embedding(self):
+        storage = WindowStorage(make_turns(6))
+        provider = Provider()
+        with patch.object(transcript_windows, "get_embedding_provider", return_value=provider):
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+            first_embedding = list(storage.transcript_windows[0]["embedding"])
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        self.assertEqual(len(provider.inputs), 1)
+        self.assertEqual(storage.transcript_windows[0]["embedding"], first_embedding)
+
+    def test_same_length_text_edit_reembeds_and_failure_leaves_no_stale_embedding(self):
+        storage = WindowStorage(make_turns(6))
+        provider = Provider()
+        with patch.object(transcript_windows, "get_embedding_provider", return_value=provider):
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+            original_hash = storage.transcript_windows[0]["content_hash"]
+            original_embedding = storage.transcript_windows[0]["embedding"]
+            original_text = storage.transcript_turns[2]["sanitized_text"]
+            edited_text = "alter raw turn 2"
+            self.assertEqual(len(edited_text), len(original_text))
+            storage.transcript_turns[2]["sanitized_text"] = edited_text
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+            self.assertNotEqual(storage.transcript_windows[0]["content_hash"], original_hash)
+            self.assertNotEqual(storage.transcript_windows[0]["embedding"], original_embedding)
+            self.assertEqual(len(provider.inputs), 2)
+
+            storage.transcript_turns[2]["sanitized_text"] = "final raw turn 2"
+            provider.failure = RuntimeError("synthetic embedding failure")
+            with self.assertRaisesRegex(RuntimeError, "synthetic embedding failure"):
+                transcript_windows.index_transcript_windows(
+                    user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+                )
+
+        self.assertEqual(len(storage.transcript_windows), 1)
+        self.assertFalse(storage.transcript_windows[0].get("embedding"))
 
     def test_dense_candidate_retrieval_enforces_scope_k_and_order(self):
         rows = [window("w1", "s1", 0, 5, .9).model_dump(), window("w2", "s2", 0, 5, .8, 2).model_dump()]

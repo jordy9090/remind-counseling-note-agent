@@ -233,6 +233,9 @@ class PersistenceReport(BaseModel):
     session_id: str | None = None
     note_id: str | None = None
     message: str = ""
+    evidence_indexing_attempted: bool = False
+    evidence_indexing_succeeded: bool = False
+    evidence_indexing_message: str = ""
 
 
 class ConfirmGeneratedNoteRequest(BaseModel):

@@ -73,21 +73,62 @@ def index_transcript_windows(
         storage_client=client,
     )
     windows = build_transcript_windows(turns, window_size=window_size, stride=stride)
+    existing_rows = client.select("transcript_windows", {
+        "user_id": f"eq.{user_id}", "case_id": f"eq.{case_id}",
+        "session_id": f"eq.{session_id}",
+        "select": "id,user_id,counselor_id,case_id,session_id,start_turn_index,end_turn_index,source_ref,window_text,content_hash,embedding_model,embedding,embedding_updated_at",
+        "limit": 10000,
+    })
+    existing_by_ref = {str(row.get("source_ref") or ""): row for row in existing_rows}
+    unchanged_refs = {
+        window.source_ref
+        for window in windows
+        if _embedding_is_current(existing_by_ref.get(window.source_ref), window)
+    }
+
+    # Delete changed and obsolete rows before writing current windows. This
+    # prevents a stale embedding from surviving a failed refresh.
+    for existing in existing_rows:
+        source_ref = str(existing.get("source_ref") or "")
+        if source_ref not in unchanged_refs:
+            client.delete("transcript_windows", query={
+                "user_id": f"eq.{user_id}", "case_id": f"eq.{case_id}",
+                "session_id": f"eq.{session_id}", "source_ref": f"eq.{source_ref}",
+            })
+
     stored_windows: list[TranscriptWindow] = []
     embedded = 0
     for window in windows:
         row = window.model_dump(mode="json", exclude={"id", "embedding_model"})
+        if window.source_ref in unchanged_refs:
+            previous = existing_by_ref[window.source_ref]
+            row.update({
+                "embedding": previous["embedding"],
+                "embedding_model": previous["embedding_model"],
+                "embedding_updated_at": previous.get("embedding_updated_at"),
+            })
         stored = client.upsert(
             "transcript_windows", [row], on_conflict="session_id,start_turn_index,end_turn_index",
         )
         if not stored:
             raise RuntimeError("Transcript window storage returned no row")
         stored_window = TranscriptWindow.model_validate(stored[0])
-        if ensure_transcript_window_embedding(stored[0], storage_client=client):
+        if window.source_ref in unchanged_refs:
+            stored_window = stored_window.model_copy(update={"embedding_model": settings.embedding_model})
+        elif ensure_transcript_window_embedding(stored[0], storage_client=client):
             embedded += 1
             stored_window = stored_window.model_copy(update={"embedding_model": settings.embedding_model})
         stored_windows.append(stored_window)
     return stored_windows, embedded
+
+
+def _embedding_is_current(existing: dict | None, window: TranscriptWindow) -> bool:
+    return bool(
+        existing
+        and existing.get("content_hash") == window.content_hash
+        and existing.get("embedding_model") == settings.embedding_model
+        and existing.get("embedding")
+    )
 
 
 def ensure_transcript_window_embedding(
