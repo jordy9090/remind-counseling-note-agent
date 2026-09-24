@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -13,9 +14,14 @@ from app.core.config import settings
 from app.schemas.note import (
     CaseDashboardDocument,
     CaseDashboardExport,
+    CaseCreateRequest,
     CaseDashboardResponse,
     CaseDashboardSession,
+    CaseListItem,
+    CaseListResponse,
+    CaseProfileUpdateRequest,
     CaseScheduleUpdateRequest,
+    RecentDocumentItem,
     ConfirmGeneratedNoteRequest,
     ConfirmGeneratedNoteResponse,
     GenerateNoteResponse,
@@ -784,15 +790,77 @@ _NOTE_TYPE_LABELS = {
     "termination_report": "종결 보고서",
 }
 
+# 내담자 프로필 컬럼 (migration 20260918000100). 조회·저장 모두 이 목록만 사용한다.
+PROFILE_COLUMNS = (
+    "client_age",
+    "client_gender",
+    "client_occupation",
+    "marital_status",
+    "family_composition",
+    "client_phone",
+    "client_email",
+    "client_notes",
+)
+_CASE_SELECT = (
+    "id,case_alias,status,user_id,counselor_id,created_at,updated_at,"
+    "total_scheduled_session_count,next_scheduled_date," + ",".join(PROFILE_COLUMNS)
+)
+
+
+_BASE_CASE_SELECT = "id,case_alias,status,user_id,counselor_id,created_at,total_scheduled_session_count,next_scheduled_date"
+# migration 20260918000100이 아직 원격에 적용되지 않은 환경(Preview 등)에서는 프로필 컬럼 없이 조회한다.
+_profile_columns_available: bool | None = None
+
+
+def _is_missing_column_error(error: SupabaseStorageError) -> bool:
+    message = str(error)
+    return "42703" in message or "does not exist" in message or "Could not find" in message
+
+
+def _select_cases(actor_storage: SupabaseStorage, query: dict[str, str | int]) -> list[dict[str, Any]]:
+    """cases 조회. 프로필 컬럼이 없는 스키마면 기본 컬럼으로 한 번 더 시도한다."""
+    global _profile_columns_available
+    if _profile_columns_available is not False:
+        try:
+            rows = actor_storage.select("cases", {**query, "select": _CASE_SELECT})
+            _profile_columns_available = True
+            return rows
+        except SupabaseStorageError as error:
+            if not _is_missing_column_error(error):
+                raise
+            _profile_columns_available = False
+    return actor_storage.select("cases", {**query, "select": _BASE_CASE_SELECT})
+
+
+def _profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    profile: dict[str, Any] = {column: row.get(column) for column in PROFILE_COLUMNS}
+    profile["client_age"] = _as_int(profile.get("client_age"))
+    return profile
+
+
+def _document_title(note_type: str, session_number: int | None) -> str:
+    label = _NOTE_TYPE_LABELS.get(note_type, note_type)
+    return f"{session_number}회기 {label}" if session_number else label
+
+
+def _presenting_problem_text(note_row: dict[str, Any] | None) -> str | None:
+    """확정본 우선으로 주호소(presenting_problem) 문장을 꺼낸다 (대시보드 '주 호소 문제' 카드)."""
+    if not note_row:
+        return None
+    for payload_key in ("confirmed_json", "draft_json"):
+        payload = note_row.get(payload_key)
+        if not isinstance(payload, dict) or not payload:
+            continue
+        section = payload.get("presenting_problem")
+        text = section.get("text") if isinstance(section, dict) else section
+        if isinstance(text, str) and text.strip():
+            return text.strip()[:600]
+    return None
+
 
 def _require_owned_case(actor_storage: SupabaseStorage, case_id: str, actor: str) -> dict[str, Any]:
-    case_row = actor_storage.maybe_single(
-        "cases",
-        {
-            "id": f"eq.{case_id}",
-            "select": "id,case_alias,status,user_id,counselor_id,total_scheduled_session_count,next_scheduled_date",
-        },
-    )
+    rows = _select_cases(actor_storage, {"id": f"eq.{case_id}", "limit": 1})
+    case_row = rows[0] if rows else None
     if not case_row:
         raise SupabaseStorageError("해당 케이스를 찾을 수 없습니다.")
     owner = str(case_row.get("user_id") or case_row.get("counselor_id") or "").strip()
@@ -872,8 +940,7 @@ def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> C
     for note_row in note_rows:
         note_type = str(note_row.get("note_type") or "session_note")
         session_number = session_number_by_id.get(str(note_row.get("session_id") or ""))
-        label = _NOTE_TYPE_LABELS.get(note_type, note_type)
-        title = f"{session_number}회기 {label}" if session_number else label
+        title = _document_title(note_type, session_number)
         documents.append(
             CaseDashboardDocument(
                 document_id=str(note_row.get("id")),
@@ -909,19 +976,229 @@ def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> C
     ]
 
     session_dates = sorted(str(row.get("session_date")) for row in session_rows if row.get("session_date"))
+    # 가장 최근 회기(회기 번호 기준)의 최신 회기 기록에서 주호소 문장을 가져온다.
+    latest_session_note = None
+    for row in reversed(session_rows):  # session_rows는 session_number asc
+        candidate = latest_note_by_session.get(str(row.get("id")))
+        if candidate and str(candidate.get("note_type") or "session_note") == "session_note":
+            latest_session_note = candidate
+            break
     return CaseDashboardResponse(
         case_id=case_id,
         case_alias=case_row.get("case_alias") or None,
         status=str(case_row.get("status") or "active"),
+        created_at=case_row.get("created_at") or None,
         total_session_count=len(session_rows),
         first_consultation_date=session_dates[0] if session_dates else None,
         latest_consultation_date=session_dates[-1] if session_dates else None,
         total_scheduled_session_count=_as_int(case_row.get("total_scheduled_session_count")),
         next_scheduled_date=case_row.get("next_scheduled_date") or None,
+        presenting_problem=_presenting_problem_text(latest_session_note),
         sessions=sessions,
         documents=documents,
         exports=exports,
+        **_profile_from_row(case_row),
     )
+
+
+def create_case(request: CaseCreateRequest, *, actor: str = "server_demo_actor") -> CaseDashboardResponse:
+    """새 내담자(케이스)를 생성한다. 프로필은 소유자 RLS 범위에서만 읽힌다."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; case creation is unavailable.")
+
+    case_id = request.case_id or f"case_{uuid4().hex[:12]}"
+    existing = actor_storage.maybe_single("cases", {"id": f"eq.{case_id}", "select": "id"})
+    if existing:
+        raise SupabaseStorageError("이미 사용 중인 케이스 ID입니다. 다른 ID를 입력해주세요.")
+    now = datetime.now(UTC).isoformat()
+    row = {
+        "id": case_id,
+        "case_alias": request.case_alias,
+        "counselor_id": actor or None,
+        "user_id": actor,
+        "status": "active",
+        "updated_at": now,
+        **{column: getattr(request, column) for column in PROFILE_COLUMNS},
+    }
+    try:
+        actor_storage.insert("cases", [row], return_representation=False)
+    except SupabaseStorageError as error:
+        if _is_missing_column_error(error):
+            raise SupabaseStorageError(
+                "내담자 프로필 컬럼이 아직 준비되지 않았습니다. migration 20260918000100_case_client_profile.sql을 적용해주세요."
+            ) from error
+        raise
+    return fetch_case_dashboard(case_id, actor=actor)
+
+
+def update_case_profile(
+    case_id: str,
+    request: CaseProfileUpdateRequest,
+    *,
+    actor: str = "server_demo_actor",
+) -> CaseDashboardResponse:
+    """내담자 프로필·이름·상태를 수정한다 (설정된 필드만)."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; profile update is unavailable.")
+
+    _require_owned_case(actor_storage, case_id, actor)
+    payload = request.model_dump(exclude_unset=True)
+    if payload:
+        payload["updated_at"] = datetime.now(UTC).isoformat()
+        try:
+            actor_storage.update("cases", payload, query={"id": f"eq.{case_id}"}, return_representation=False)
+        except SupabaseStorageError as error:
+            if _is_missing_column_error(error):
+                raise SupabaseStorageError(
+                    "내담자 프로필 컬럼이 아직 준비되지 않았습니다. migration 20260918000100_case_client_profile.sql을 적용해주세요."
+                ) from error
+            raise
+    return fetch_case_dashboard(case_id, actor=actor)
+
+
+def _latest_timestamp(*values: Any) -> str | None:
+    """ISO 타임스탬프 문자열 중 가장 늦은 것을 돌려준다 (없으면 None)."""
+    candidates = [str(value) for value in values if value]
+    return max(candidates) if candidates else None
+
+
+def aggregate_case_list(
+    case_rows: list[dict[str, Any]],
+    session_rows: list[dict[str, Any]],
+    note_rows: list[dict[str, Any]],
+    export_rows: list[dict[str, Any]],
+    draft_rows: list[dict[str, Any]],
+) -> CaseListResponse:
+    """Pure aggregation: fold sessions/notes/exports/drafts into per-case counts.
+
+    Rows that reference a case the caller does not own are ignored, so a
+    child row can never surface a case that is missing from case_rows.
+    """
+    items: dict[str, CaseListItem] = {}
+    activity: dict[str, str | None] = {}
+    for row in case_rows:
+        case_id = str(row.get("id") or "").strip()
+        if not case_id:
+            continue
+        items[case_id] = CaseListItem(
+            case_id=case_id,
+            case_alias=row.get("case_alias") or None,
+            status=str(row.get("status") or "active"),
+            created_at=row.get("created_at") or None,
+            total_scheduled_session_count=_as_int(row.get("total_scheduled_session_count")),
+            next_scheduled_date=row.get("next_scheduled_date") or None,
+            **_profile_from_row(row),
+        )
+        activity[case_id] = _latest_timestamp(row.get("created_at"), row.get("updated_at"))
+
+    session_dates: dict[str, list[str]] = {}
+    session_number_by_id: dict[str, int | None] = {}
+    for row in session_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.total_session_count += 1
+        number = _as_int(row.get("session_number"))
+        if row.get("id"):
+            session_number_by_id[str(row["id"])] = number
+        if number is not None and (item.latest_session_number is None or number > item.latest_session_number):
+            item.latest_session_number = number
+        if row.get("session_date"):
+            session_dates.setdefault(item.case_id, []).append(str(row["session_date"]))
+        if str(row.get("transcript_status") or "") == "completed":
+            item.transcript_completed_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("created_at"))
+
+    recent: list[RecentDocumentItem] = []
+    for row in note_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.document_count += 1
+        note_type = str(row.get("note_type") or "session_note")
+        if note_type == "session_note":
+            if str(row.get("confirmation_status") or "draft") in {"confirmed", "demo_confirmed"}:
+                item.confirmed_note_count += 1
+            else:
+                item.draft_note_count += 1
+        touched = _latest_timestamp(row.get("created_at"), row.get("updated_at"))
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], touched)
+        if row.get("id"):
+            session_number = session_number_by_id.get(str(row.get("session_id") or ""))
+            recent.append(
+                RecentDocumentItem(
+                    document_id=str(row["id"]),
+                    case_id=item.case_id,
+                    case_alias=item.case_alias,
+                    document_type=note_type,
+                    title=_document_title(note_type, session_number),
+                    status=str(row.get("confirmation_status") or "draft"),
+                    session_number=session_number,
+                    updated_at=touched,
+                )
+            )
+
+    for row in export_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.export_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("created_at"))
+
+    for row in draft_rows:
+        item = items.get(str(row.get("case_id") or ""))
+        if item is None:
+            continue
+        item.temporary_draft_count += 1
+        activity[item.case_id] = _latest_timestamp(activity[item.case_id], row.get("saved_at"))
+
+    for case_id, item in items.items():
+        dates = sorted(session_dates.get(case_id, []))
+        item.first_consultation_date = dates[0] if dates else None
+        item.latest_consultation_date = dates[-1] if dates else None
+        item.updated_at = activity.get(case_id)
+
+    ordered = sorted(items.values(), key=lambda item: item.updated_at or "", reverse=True)
+    recent.sort(key=lambda document: document.updated_at or "", reverse=True)
+    return CaseListResponse(cases=ordered, total_count=len(ordered), recent_documents=recent[:RECENT_DOCUMENT_LIMIT])
+
+
+RECENT_DOCUMENT_LIMIT = 50
+
+
+def list_cases(*, actor: str = "server_demo_actor") -> CaseListResponse:
+    """Return every case the actor owns with session/document/draft counts.
+
+    모든 조회는 사용자 JWT(RLS)로 실행되고 user_id 필터를 한 번 더 건다.
+    """
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; case list is unavailable.")
+
+    owner_filter = {"user_id": f"eq.{actor}"}
+    case_rows = _select_cases(actor_storage, {**owner_filter, "order": "created_at.desc"})
+    if not case_rows:
+        return CaseListResponse()
+    session_rows = actor_storage.select(
+        "sessions",
+        {**owner_filter, "select": "id,case_id,session_number,session_date,transcript_status,created_at"},
+    )
+    note_rows = actor_storage.select(
+        "generated_notes",
+        {**owner_filter, "select": "id,case_id,session_id,note_type,confirmation_status,created_at,updated_at"},
+    )
+    export_rows = actor_storage.select("document_exports", {**owner_filter, "select": "case_id,created_at"})
+    try:
+        draft_rows = actor_storage.select(
+            settings.supabase_drafts_table,
+            {**owner_filter, "select": "case_id,session_number,saved_at"},
+        )
+    except SupabaseStorageError:
+        # 임시저장 테이블은 목록의 부가 정보일 뿐이므로 조회 실패가 목록 자체를 막지 않는다.
+        draft_rows = []
+    return aggregate_case_list(case_rows, session_rows, note_rows, export_rows, draft_rows)
 
 
 def _build_document_export_row(

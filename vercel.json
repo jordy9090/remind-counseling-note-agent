@@ -12,12 +12,20 @@
       "destination": "/api/notes/draft?draft_id=:draft_id"
     },
     {
+      "source": "/api/cases",
+      "destination": "/api/cases/dashboard?scope=list"
+    },
+    {
       "source": "/api/cases/:case_id/dashboard",
       "destination": "/api/cases/dashboard?case_id=:case_id"
     },
     {
       "source": "/api/cases/:case_id/schedule",
-      "destination": "/api/cases/dashboard?case_id=:case_id"
+      "destination": "/api/cases/dashboard?case_id=:case_id&scope=schedule"
+    },
+    {
+      "source": "/api/cases/:case_id/profile",
+      "destination": "/api/cases/dashboard?case_id=:case_id&scope=profile"
     }
   ],
   "functions": {

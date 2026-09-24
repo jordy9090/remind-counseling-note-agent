@@ -1,8 +1,9 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import type { Provider, Session } from '@supabase/supabase-js'
-import { ArrowLeft, Loader2, LogOut, Mail, MailCheck } from 'lucide-react'
+import { ArrowLeft, Loader2, Mail, MailCheck } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
+import { AuthSessionProvider } from '../lib/authSession'
 import LandingPage from '../pages/LandingPage'
 
 // signin/signup/reset: 비로그인 폼. verify: 가입 직후 인증 메일 안내. recovery: 재설정 링크로 돌아온 뒤 새 비밀번호 설정.
@@ -222,22 +223,16 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     </AuthShell>
   }
 
-  return <div className="min-h-screen bg-slate-50">
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-        <Brand compact />
-        <div className="flex min-w-0 items-center gap-3">
-          {session.user.email && <span className="hidden truncate text-xs font-semibold text-slate-500 sm:inline">{session.user.email}</span>}
-          <button className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void signOut()}><LogOut size={14} />로그아웃</button>
-        </div>
-      </div>
-    </header>
-    {message && <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 lg:px-8"><Feedback message={message} /></div>}
-    {children}
-  </div>
+  // 로그인 후: 워크스페이스가 사이드바에서 계정·로그아웃을 직접 그리므로 상단 바 없이 컨텍스트만 제공한다.
+  return <AuthSessionProvider value={{ email: session.user.email || null, signOut, signingOut: submitting }}>
+    <div className="min-h-screen bg-slate-50">
+      {message && <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 lg:px-8"><Feedback message={message} /></div>}
+      {children}
+    </div>
+  </AuthSessionProvider>
 }
 
-function Brand({ compact = false }: { compact?: boolean }) { return <img src="/remind-logo.png" alt="Re:mind" className="object-contain" style={{ height: compact ? 24 : 30, width: compact ? 120 : 150 }} /> }
+function Brand() { return <img src="/remind-logo.png" alt="Re:mind" className="object-contain" style={{ height: 30, width: 150 }} /> }
 function AuthHeading({ title, description }: { title: string; description: string }) { return <div className="mt-10"><h1 className="text-[1.75rem] font-extrabold leading-tight tracking-[-0.025em] text-slate-950">{title}</h1><p className="mt-3 text-sm leading-6 text-slate-500">{description}</p></div> }
 function EmailField({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <label className="block text-sm font-bold text-slate-800">이메일<div className="relative mt-2"><Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-11 pr-3 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" type="email" autoComplete="email" value={value} onChange={(event) => onChange(event.target.value)} placeholder="name@example.com" required /></div></label> }
 function PasswordField({ value, onChange, autoComplete }: { value: string; onChange: (value: string) => void; autoComplete: string }) { return <label className="block text-sm font-bold text-slate-800">비밀번호<input className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" type="password" autoComplete={autoComplete} minLength={8} value={value} onChange={(event) => onChange(event.target.value)} placeholder="8자 이상 입력" required /></label> }
