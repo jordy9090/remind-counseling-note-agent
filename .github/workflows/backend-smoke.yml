@@ -34,9 +34,17 @@ jobs:
         working-directory: backend
         run: uv run python smoke_test.py
 
-      - name: Run serverless wrapper regressions
+      - name: Run required persistence and transcript regressions
         working-directory: backend
-        run: uv run python test_vercel_wrappers.py
+        run: |
+          uv run python -m unittest \
+            test_persistence_workflow \
+            test_auth_guard \
+            test_transcript_storage \
+            test_note_transcript_persistence \
+            test_raw_window_pipeline \
+            test_case_list \
+            test_vercel_wrappers
 
   backend-pdf-export:
     runs-on: ubuntu-latest
