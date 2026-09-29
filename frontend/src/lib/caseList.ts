@@ -199,6 +199,18 @@ export function formatKoreanDate(value: string | null | undefined): string {
   return `${match[1]}년 ${Number(match[2])}월 ${Number(match[3])}일`
 }
 
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
+
+/** "2026-07-02" → "2026년 7월 2일 (목)"; withYear=false → "7월 2일 (목)". Weekday is computed in UTC so the date never shifts. */
+export function formatKoreanDateWithWeekday(value: string | null | undefined, withYear = true): string {
+  if (!value) return '—'
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!match) return value
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]
+  return `${withYear ? `${year}년 ` : ''}${month}월 ${day}일 (${weekday})`
+}
+
 /** 상대 시간: 56분 전 / 3시간 전 / 2일 전 / 그 이후는 날짜 */
 export function relativeTime(value: string | null | undefined, now: Date = new Date()): string {
   if (!value) return ''
