@@ -115,7 +115,9 @@ def index_transcript_windows(
         stored_window = TranscriptWindow.model_validate(stored[0])
         if window.source_ref in unchanged_refs:
             stored_window = stored_window.model_copy(update={"embedding_model": settings.embedding_model})
-        elif ensure_transcript_window_embedding(stored[0], storage_client=client):
+        elif settings.enable_dense_retrieval and ensure_transcript_window_embedding(
+            stored[0], storage_client=client,
+        ):
             embedded += 1
             stored_window = stored_window.model_copy(update={"embedding_model": settings.embedding_model})
         stored_windows.append(stored_window)
@@ -136,6 +138,8 @@ def ensure_transcript_window_embedding(
     *,
     storage_client: SupabaseStorage | None = None,
 ) -> bool:
+    if not settings.enable_dense_retrieval:
+        return False
     client = storage_client or storage
     existing = client.maybe_single("transcript_windows", {
         "user_id": f'eq.{window["user_id"]}', "case_id": f'eq.{window["case_id"]}',

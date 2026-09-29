@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.core.config import settings
 from app.schemas.evidence import RetrievedTranscriptWindow, StoredTranscriptTurn
 from app.services import raw_evidence_retrieval, transcript_windows
 from app.services.raw_evidence_retrieval import build_candidate_regions, retrieve_transcript_window_candidates
@@ -137,7 +138,9 @@ class RawWindowPipelineTests(unittest.TestCase):
             def embed(self, texts): self.inputs.extend(texts); return [[0.1, 0.2]]
 
         storage, provider = Storage(), Provider()
-        with patch.object(transcript_windows, "storage", storage), patch.object(
+        with patch.object(settings, "enable_dense_retrieval", True), patch.object(
+            transcript_windows, "storage", storage,
+        ), patch.object(
             transcript_windows, "get_embedding_provider", return_value=provider,
         ):
             self.assertTrue(ensure_transcript_window_embedding(row))
@@ -148,7 +151,9 @@ class RawWindowPipelineTests(unittest.TestCase):
     def test_reindex_removes_windows_with_obsolete_boundaries(self):
         storage = WindowStorage(make_turns(8))
         provider = Provider()
-        with patch.object(transcript_windows, "get_embedding_provider", return_value=provider):
+        with patch.object(settings, "enable_dense_retrieval", True), patch.object(
+            transcript_windows, "get_embedding_provider", return_value=provider,
+        ):
             transcript_windows.index_transcript_windows(
                 user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
             )
@@ -169,7 +174,9 @@ class RawWindowPipelineTests(unittest.TestCase):
     def test_unchanged_hash_and_model_reuse_existing_embedding(self):
         storage = WindowStorage(make_turns(6))
         provider = Provider()
-        with patch.object(transcript_windows, "get_embedding_provider", return_value=provider):
+        with patch.object(settings, "enable_dense_retrieval", True), patch.object(
+            transcript_windows, "get_embedding_provider", return_value=provider,
+        ):
             transcript_windows.index_transcript_windows(
                 user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
             )
@@ -184,7 +191,9 @@ class RawWindowPipelineTests(unittest.TestCase):
     def test_same_length_text_edit_reembeds_and_failure_leaves_no_stale_embedding(self):
         storage = WindowStorage(make_turns(6))
         provider = Provider()
-        with patch.object(transcript_windows, "get_embedding_provider", return_value=provider):
+        with patch.object(settings, "enable_dense_retrieval", True), patch.object(
+            transcript_windows, "get_embedding_provider", return_value=provider,
+        ):
             transcript_windows.index_transcript_windows(
                 user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
             )
@@ -210,6 +219,106 @@ class RawWindowPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(storage.transcript_windows), 1)
         self.assertFalse(storage.transcript_windows[0].get("embedding"))
+
+    def test_dense_disabled_with_api_key_stores_windows_without_embedding_calls(self):
+        storage = WindowStorage(make_turns(6))
+        with patch.object(settings, "enable_dense_retrieval", False), patch.object(
+            settings, "openai_api_key", "synthetic-configured-key"
+        ), patch.object(
+            transcript_windows, "get_embedding_provider",
+            side_effect=AssertionError("embedding provider must not be reached while dense retrieval is disabled"),
+        ) as get_provider:
+            windows, embedding_count = transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(embedding_count, 0)
+        get_provider.assert_not_called()
+        self.assertFalse(storage.transcript_windows[0].get("embedding"))
+        self.assertFalse(storage.transcript_windows[0].get("embedding_model"))
+
+    def test_changed_text_clears_stale_embedding_when_dense_retrieval_is_disabled(self):
+        storage = WindowStorage(make_turns(6))
+        provider = Provider()
+        with patch.object(settings, "enable_dense_retrieval", True), patch.object(
+            transcript_windows, "get_embedding_provider", return_value=provider,
+        ):
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        original_hash = storage.transcript_windows[0]["content_hash"]
+        original_embedding = list(storage.transcript_windows[0]["embedding"])
+        original_text = storage.transcript_turns[2]["sanitized_text"]
+        edited_text = "alter raw turn 2"
+        self.assertEqual(len(edited_text), len(original_text))
+        storage.transcript_turns[2]["sanitized_text"] = edited_text
+
+        with patch.object(settings, "enable_dense_retrieval", False), patch.object(
+            settings, "openai_api_key", "synthetic-configured-key"
+        ), patch.object(
+            transcript_windows, "get_embedding_provider",
+            side_effect=AssertionError("embedding provider must not be reached while dense retrieval is disabled"),
+        ) as get_provider:
+            windows, embedding_count = transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(embedding_count, 0)
+        get_provider.assert_not_called()
+        self.assertNotEqual(storage.transcript_windows[0]["content_hash"], original_hash)
+        self.assertNotEqual(storage.transcript_windows[0].get("embedding"), original_embedding)
+        self.assertFalse(storage.transcript_windows[0].get("embedding"))
+        self.assertFalse(storage.transcript_windows[0].get("embedding_model"))
+
+    def test_resaved_transcript_expands_latest_text_only_inside_requested_scope(self):
+        storage = WindowStorage(make_turns(6))
+        with patch.object(settings, "enable_dense_retrieval", False):
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        latest_turns = make_turns(3)
+        for turn in latest_turns:
+            turn.sanitized_text = f"latest raw turn {turn.turn_index}"
+        storage.transcript_turns = [turn.model_dump(mode="json") for turn in latest_turns]
+        with patch.object(settings, "enable_dense_retrieval", False):
+            transcript_windows.index_transcript_windows(
+                user_id="u", counselor_id="u", case_id="c", session_id="s", storage_client=storage,
+            )
+
+        current = storage.transcript_windows[0]
+        candidate = RetrievedTranscriptWindow(
+            window_id=current["id"], session_id="s", session_number=1,
+            start_turn_index=current["start_turn_index"], end_turn_index=current["end_turn_index"],
+            source_ref=current["source_ref"], window_text=current["window_text"], similarity_score=0.9,
+        )
+        regions = build_candidate_regions(
+            windows=[candidate], user_id="u", case_id="c", context_expansion=0, storage_client=storage,
+        )
+        self.assertEqual(len(regions), 1)
+        self.assertEqual(regions[0].region_text.splitlines(), [
+            "[client] latest raw turn 0",
+            "[counselor] latest raw turn 1",
+            "[client] latest raw turn 2",
+        ])
+        self.assertNotIn("exact raw turn", regions[0].region_text)
+        self.assertEqual(
+            build_candidate_regions(
+                windows=[candidate], user_id="u", case_id="other-case",
+                context_expansion=0, storage_client=storage,
+            ),
+            [],
+        )
+        self.assertEqual(
+            build_candidate_regions(
+                windows=[candidate], user_id="other-user", case_id="c",
+                context_expansion=0, storage_client=storage,
+            ),
+            [],
+        )
 
     def test_dense_candidate_retrieval_enforces_scope_k_and_order(self):
         rows = [window("w1", "s1", 0, 5, .9).model_dump(), window("w2", "s2", 0, 5, .8, 2).model_dump()]
