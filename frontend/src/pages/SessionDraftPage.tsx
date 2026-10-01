@@ -73,7 +73,7 @@ import DocumentArchivePage from '../components/documents/DocumentArchivePage'
 import SettingsPage from '../components/settings/SettingsPage'
 import FinalDocumentEditor from '../components/final-document/FinalDocumentEditor'
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
-import SessionRecordModal, { type SessionTime } from '../components/session-input/SessionRecordModal'
+import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
 import ClientListPage from './ClientListPage'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
@@ -500,7 +500,7 @@ export default function SessionDraftPage({
     const audios = selected.filter((file) => AUDIO_UPLOAD_EXTENSIONS.has(getFileExtension(file.name)))
     setError(null)
     if (audios.length && !audioConsent) {
-      setError('음성 파일을 올리려면 아래 음성 업로드 동의를 먼저 체크해주세요.')
+      setError('음성 파일을 올리려면 음성 업로드 동의가 필요합니다.')
       return
     }
     if (documents.length) void uploadDocumentFiles(toFileList(documents))
@@ -1530,7 +1530,7 @@ export default function SessionDraftPage({
           ? (inputReturnScreen === 'home' ? 'home' : inputReturnScreen === 'documents' ? 'documents' : 'clients')
           : 'clients'
   const isWorkflowScreen = currentScreen === 'summary_draft' || currentScreen === 'document_transform' || currentScreen === 'final_document'
-  const backgroundScreen: AppScreen = currentScreen === 'session_input' ? inputReturnScreen : currentScreen
+  const backgroundScreen: AppScreen = currentScreen
   const clientDisplayName = getClientDisplayName(form) || '내담자'
   const selectedCaseItem = selectedCaseId ? caseList.find((item) => item.case_id === selectedCaseId) || null : null
 
@@ -1551,6 +1551,19 @@ export default function SessionDraftPage({
       />
 
       <div className={`min-h-screen ${isSidebarCollapsed ? 'md:pl-[64px]' : 'md:pl-[253px]'}`}>
+        {currentScreen === 'session_input' && (
+          <WorkflowHeader
+            clientName={clientDisplayName}
+            sessionNumber={form.session_number}
+            isSavingDraft={false}
+            showTemporarySave={false}
+            hideActions
+            title={`${clientDisplayName} · ${form.session_number}회기 입력`}
+            onBack={closeSessionInput}
+            onTemporarySave={handleTemporarySave}
+            onRestore={() => undefined}
+          />
+        )}
         {isWorkflowScreen && (
           <WorkflowHeader
             clientName={clientDisplayName}
@@ -1642,6 +1655,24 @@ export default function SessionDraftPage({
           <DocumentArchivePage documents={recentDocuments} loading={isCaseListLoading} onOpenDocument={openDocument} />
         )}
         {backgroundScreen === 'settings' && <SettingsPage />}
+
+        {currentScreen === 'session_input' && (
+          <SessionInputPage
+            form={form}
+            sessionTime={sessionTime}
+            materials={materials}
+            audioCapabilities={audioCapabilities}
+            error={error}
+            isLoading={isLoading}
+            uploadLimitLabel={DOCUMENT_UPLOAD_LIMIT_LABEL}
+            onChangeSessionTime={setSessionTime}
+            onUpdateField={updateField}
+            onUploadFiles={uploadFiles}
+            onOpenMaterial={openMaterialPreview}
+            onRemoveMaterial={removeMaterial}
+            onSubmit={() => void handleSubmit()}
+          />
+        )}
 
         {isWorkflowScreen && (
           <div className={currentScreen === 'document_transform' ? 'px-0 py-0' : 'mx-auto w-full max-w-[1240px] px-4 py-5 md:px-6'}>
@@ -1736,34 +1767,6 @@ export default function SessionDraftPage({
         )}
       </div>
 
-      {currentScreen === 'session_input' && (
-        <SessionRecordModal
-          clientName={clientDisplayName}
-          form={form}
-          sessionTime={sessionTime}
-          materials={materials}
-          audioCapabilities={audioCapabilities}
-          checklistItems={checklistItems}
-          visibleSectionIds={visibleSectionIds}
-          rememberChecklist={rememberChecklist}
-          error={error}
-          isLoading={isLoading}
-          uploadLimitLabel={DOCUMENT_UPLOAD_LIMIT_LABEL}
-          onChangeSessionTime={setSessionTime}
-          onUpdateField={updateField}
-          onUploadFiles={uploadFiles}
-          onOpenMaterial={openMaterialPreview}
-          onRemoveMaterial={removeMaterial}
-          onToggleChecklist={toggleChecklistItem}
-          onAddCustomItem={addCustomChecklistItem}
-          onRemoveCustomItem={removeCustomChecklistItem}
-          onToggleRememberChecklist={setRememberChecklist}
-          onBack={inputReturnScreen === 'summary_draft' ? null : () => { closeSessionInput(); if (!selectedCaseItem) setPickerOpen(true) }}
-          onClose={closeSessionInput}
-          onSubmit={() => void handleSubmit()}
-        />
-      )}
-
       {pickerOpen && (
         <ClientPickerModal
           cases={caseList}
@@ -1820,12 +1823,14 @@ function WorkflowHeader({
   sessionNumber,
   isSavingDraft,
   showTemporarySave,
+  hideActions = false,
   title,
   onBack,
   onTemporarySave,
   onRestore,
 }: {
   clientName: string
+  hideActions?: boolean
   title?: string
   sessionNumber: number
   isSavingDraft: boolean
@@ -1843,7 +1848,7 @@ function WorkflowHeader({
           <span className="text-grey-300">|</span>
           <span className="font-extrabold text-grey-900">{title || `${clientName} · ${sessionNumber}회기`}</span>
         </button>
-        <div className="workflow-actions">
+        {!hideActions && <div className="workflow-actions">
           <button type="button" onClick={onRestore} className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-grey-500 hover:bg-white">
             이전 작업 불러오기
           </button>
@@ -1853,7 +1858,7 @@ function WorkflowHeader({
               {isSavingDraft ? '저장중' : '임시저장'}
             </GhostButton>
           )}
-        </div>
+        </div>}
       </div>
     </header>
   )

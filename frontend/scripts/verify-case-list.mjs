@@ -127,7 +127,7 @@ const item = (overrides) => ({
   assert.match(page, /createCase\(payload\)/, 'client creation must call the create API')
   assert.match(page, /updateCaseProfile\(clientModal\.caseId, payload\)/, 'profile edit must call the profile API')
   assert.match(page, /<GeneratingOverlay active=\{isLoading\} \/>/, 'generation overlay must reflect loading state')
-  assert.match(page, /onStartSession=\{startSessionForCase\}/, 'client detail must open the session record modal')
+  assert.match(page, /onStartSession=\{startSessionForCase\}/, 'client detail must open the session input page')
   assert.match(page, /onOpenNote=\{restoreNote\}/, 'dashboard must open stored notes through the existing restore flow')
   assert.match(page, /onOpenDraft=\{restoreTemporary\}/, 'dashboard must open temporary drafts through the existing restore flow')
   console.log('page/client wiring: passed')
