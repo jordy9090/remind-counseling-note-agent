@@ -443,9 +443,9 @@ def _parse_json_object(raw: Any) -> dict[str, Any] | None:
 def _stored_session_input(session: dict[str, Any]) -> tuple[InputSources | None, bool]:
     """Return (sources, is_original) for a stored session; never raises for legacy/malformed rows.
 
-    raw_input_text holds the unmasked original only when it was written with SAVE_ORIGINAL_INPUT=1,
-    which marks the payload with "masked": false. Older raw_input_text payloads are masked copies and
-    carry no marker, so they are ignored in favor of sanitized_input_text.
+    raw_input_text holds the input as entered when its payload is marked "masked": false (the default
+    since SAVE_ORIGINAL_INPUT is on). Rows saved earlier have no such payload, so they fall back to
+    sanitized_input_text.
     """
     try:
         original = _parse_json_object(session.get("raw_input_text"))
@@ -595,7 +595,7 @@ def _raw_input_text(session_input: SessionInput) -> str:
 
 
 def _original_input_text(session_input: SessionInput) -> str:
-    """Unmasked session input for SAVE_ORIGINAL_INPUT=1. "masked": false marks it as the original."""
+    """Session input as entered (the default). "masked": false marks it as the original."""
     payload = {
         "masked": False,
         "counselor_memo": session_input.counselor_memo,
@@ -657,8 +657,7 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
 def _stored_message() -> str:
     if settings.save_original_input:
         return (
-            "Generated note was stored in Supabase with the UNMASKED original session input in raw_input_text "
-            "because SAVE_ORIGINAL_INPUT=true. Enable only under an approved consent and retention policy."
+            "Generated note was stored in Supabase with the session input as entered in raw_input_text."
         )
     if settings.save_raw_input:
         return (

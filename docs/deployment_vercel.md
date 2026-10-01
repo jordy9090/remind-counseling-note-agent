@@ -46,7 +46,6 @@ REMIND_ALLOW_LOCAL_BYPASS=0
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SAVE_RAW_INPUT=0
 ```
 
 Frontend build variables:

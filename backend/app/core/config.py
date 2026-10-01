@@ -41,9 +41,9 @@ class Settings(BaseSettings):
     enable_rag: bool = False
     enable_case_memory: bool = False
     save_raw_input: bool = False
-    # Opt-in: store the counselor's session input WITHOUT masking in sessions.raw_input_text so the
-    # owner can reopen the original text. Off by default; enable only under an approved data policy.
-    save_original_input: bool = False
+    # Store the counselor's session input as entered in sessions.raw_input_text so the owner can
+    # reopen the original text. On by default; SAVE_ORIGINAL_INPUT=0 turns it off.
+    save_original_input: bool = True
     enable_dense_retrieval: bool = False
     # PR4 is opt-in. False preserves the existing production generation path.
     enable_raw_region_grounding: bool = False

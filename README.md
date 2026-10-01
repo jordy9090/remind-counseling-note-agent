@@ -59,7 +59,6 @@ $env:ENABLE_REAL_USER_AUTH = "1"
 $env:ENABLE_PERSISTENCE = "0"
 $env:ENABLE_RAG = "0"
 $env:ENABLE_CASE_MEMORY = "0"
-$env:SAVE_RAW_INPUT = "0"
 uv run uvicorn app.main:app --reload
 ```
 

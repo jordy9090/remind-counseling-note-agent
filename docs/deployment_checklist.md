@@ -10,8 +10,7 @@
 - [ ] `ALLOW_LEGACY_PREVIEW_TOKEN=0` and `REMIND_ALLOW_LOCAL_BYPASS=0` in production.
 - [ ] Browser environment contains only Supabase URL and publishable key.
 - [ ] Service-role and OpenAI keys exist only in server environment variables.
-- [ ] `SAVE_RAW_INPUT=0` and `ENABLE_CASE_MEMORY=0` remain set until the corresponding data policy
-      is approved.
+- [ ] `ENABLE_CASE_MEMORY=0` remains set until the corresponding data policy is approved.
 - [ ] The deployment uses synthetic counseling material for rehearsal.
 
 ## Required server variables
@@ -24,7 +23,6 @@ REMIND_ALLOW_LOCAL_BYPASS=0
 SUPABASE_URL
 SUPABASE_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY
-SAVE_RAW_INPUT=0
 ```
 
 Generation and retrieval variables are optional and must match the selected runtime:
