@@ -38,6 +38,7 @@ from app.schemas.note import (
 )
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues
+from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
 from app.services.session_materials import separate_session_materials
 from app.services.supabase_storage import _storage_for_actor
@@ -386,18 +387,22 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     summary = llm.invoke(prompt)
     quality_issues = summary_quality_issues(summary)
     if quality_issues:
+        repair_outline = summary.model_dump(mode="json")
+        for field_name in quality_issues:
+            # Repeating the rejected dialogue dump anchors the model to copying it again.
+            repair_outline[field_name]["text"] = "원문에서 의미를 새로 요약할 항목. 이전 발췌문을 재사용하지 마세요."
         summary = llm.invoke(
             prompt
             + "\n\n아래 초안은 요약 형식 검사를 통과하지 못했습니다. 원래 입력과 근거만 사용하여 한 번 다시 작성하세요."
             + " 사실, 화자, source_refs와 불확실성을 유지하고 문제가 없는 항목은 유지하세요."
             + " 새로운 개입·변화·계획을 보충하지 마세요. 검사 사유는 출력에 포함하지 마세요."
             + "\n항목별 수정 사유:\n" + _json(quality_issues)
-            + "\n수정할 초안:\n" + _json(summary)
+            + "\n유지할 항목과 재작성 대상(반려된 대사 나열은 제거됨):\n" + _json(repair_outline)
         )
         if summary_quality_issues(summary):
             raise SummaryQualityError()
     _normalize_summary_refs(summary, sanitized, case_context)
-    if not re.search(r"(상담자\s*성찰|상담자의\s*(?:내적|정서적)\s*(?:반응|경험)|역전이)", sanitized.sources.counselor_memo):
+    if not has_documented_counselor_reflection(sanitized.sources.counselor_memo):
         summary.reflection = SummarySection(
             text="[상담사 확인 필요]", evidence_type="counselor_input",
             source_refs=[], requires_review=True,
@@ -1093,6 +1098,12 @@ def _build_summary_prompt(
 ) -> str:
     requested_section_ids = requested_section_ids or []
     case_context = case_context or []
+    # Raw session material is supplied once. Repeated extraction lists encourage
+    # structured-output models to copy utterances into intervention/response fields.
+    evidence_index = [
+        {"field": item.field, "evidence_type": item.evidence_type, "source_refs": item.source_refs}
+        for item in evidence_mapped.items
+    ]
     return f"""
 Generate an editable Korean counseling session summary draft.
 Role: Korean counseling documentation drafting assistant.
@@ -1108,6 +1119,8 @@ Task: draft editable text, not final clinical judgment.
 - session_content: 주요 사건과 감정, 회기 중 탐색의 흐름을 3–5개의 간결한 문장으로 통합하세요.
   입력에서 확인되는 개입 → 내담자 반응 → 여전히 남은 어려움을 연결하되, 없는 단계는 만들지 마세요.
   상담자의 질문을 내담자의 발화나 경험으로 섞지 마세요.
+  누가 누구의 반응을 살폈는지 주체와 대상을 보존하세요.
+  이미 회기에서 수행한 탐색을 다음 회기의 계획으로 바꾸지 마세요.
 - counselor_intervention: 실제 상담자가 한 질문·반영·탐색의 대상과 내용을 1–3문장으로 요약하세요.
   질문을 그대로 나열하거나 실제로 하지 않은 기법·효과를 추가하지 마세요.
 - client_response: 개입에 대한 내담자의 표현·반응과 남은 어려움을 1–3문장으로 정리하세요.
@@ -1115,6 +1128,9 @@ Task: draft editable text, not final clinical judgment.
 - next_plan: 입력에서 확인되는 다음 회기 계획만 1–2문장으로 기록하세요.
   상담자의 제안은 "제안함"으로, 명시적으로 합의한 계획만 "하기로 함"으로 구분하세요.
 - reflection: 상담자가 직접 기록한 성찰만 정리하고, 없으면 상담사 확인 필요로 남기세요.
+  성찰이라는 제목이 없어도 상담자 메모의 직접적인 자기보고는 보존하세요.
+입력에 명시된 반대 근거·남은 어려움·제한 사항을 생략해 뜻을 바꾸지 마세요.
+예: 상대의 실제 반응과 예상의 차이, 관계 사이의 차이, 여전히 남은 감정, 별도 과제 미합의.
 Each section must include evidence_type and source_refs.
 Source precedence:
 1. current-session counselor-confirmed input
@@ -1140,11 +1156,8 @@ Counselor-selected session topic, if provided: {session_topic or "not provided"}
 Sanitized input:
 {_json(sanitized)}
 
-Structured case data:
-{_json(structured)}
-
-Evidence mapped data:
-{_json(evidence_mapped)}
+Evidence reference index (reference metadata only; summarize the original material above):
+{_json(evidence_index)}
 
 Retrieved case context:
 {_json(case_context)}

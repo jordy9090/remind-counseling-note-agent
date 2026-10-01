@@ -5,9 +5,10 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app.core.config import settings
-from app.graph.nodes import generate_summary
+from app.graph.nodes import generate_summary, _build_summary_prompt
 from app.schemas.note import (
     EvidenceMappedData,
+    EvidenceMappedItem,
     InputSources,
     SanitizedInput,
     SessionInfo,
@@ -127,6 +128,8 @@ class SummaryQualityTests(unittest.TestCase):
         self.assertIn("항목별 수정 사유", repair_prompt)
         self.assertIn("session_content", repair_prompt)
         self.assertIn("새로운 개입·변화·계획을 보충하지 마세요", repair_prompt)
+        outline = repair_prompt.split("유지할 항목과 재작성 대상", 1)[1]
+        self.assertNotIn(rejected.session_content.text, outline)
         self.assertEqual(repaired.session_content.text, result.session_content.text)
         self.assertIn("transcript_text", result.session_content.source_refs)
 
@@ -144,6 +147,36 @@ class SummaryQualityTests(unittest.TestCase):
         self.assertNotIn("어떤 생각", str(caught.exception))
         self.assertNotIn("시험", str(caught.exception))
         self.assertIn("입력 자료는 유지", str(caught.exception))
+
+    def test_summary_prompt_keeps_sources_without_repeating_extracted_dialogue(self) -> None:
+        state = _state()
+        state["evidence_mapped_data"].items = [EvidenceMappedItem(
+            field="client_response", content="SYNTHETIC-EXTRACTION-COPY", evidence_type="direct",
+            source_refs=["transcript.turn_2"],
+        )]
+        prompt = _build_summary_prompt(state["sanitized_input"], state["structured_case_data"], state["evidence_mapped_data"])
+        self.assertNotIn("SYNTHETIC-EXTRACTION-COPY", prompt)
+        self.assertIn("transcript.turn_2", prompt)
+        self.assertEqual(1, prompt.count("빠뜨린 내용이 있을까 걱정돼요."))
+
+    def test_recorded_counselor_wish_survives_without_a_reflection_heading(self) -> None:
+        state = _state()
+        state["sanitized_input"].sources.counselor_memo = (
+            "답답하지 않다고 바로 안심시켜주고 싶은 마음이 들었고, 침묵에 대해 해명하고 싶은 마음도 들었음."
+        )
+        summary = _summary()
+        summary.reflection = SummarySection(
+            text="상담자는 바로 안심시키고 침묵을 해명하고 싶은 마음이 들었다고 기록함.",
+            evidence_type="counselor_input", source_refs=["counselor_memo"], requires_review=True,
+        )
+        llm = Mock()
+        llm.invoke.return_value = summary
+        with patch.object(settings, "use_stub", False), patch.object(settings, "openai_api_key", "synthetic-key"), patch(
+            "app.graph.nodes.get_structured_llm", return_value=llm
+        ):
+            result = generate_summary(state)["session_summary_draft"]
+        self.assertEqual(summary.reflection.text, result.reflection.text)
+        self.assertIn("counselor_memo", result.reflection.source_refs)
 
 
 if __name__ == "__main__":

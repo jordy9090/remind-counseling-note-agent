@@ -201,6 +201,11 @@ def _documented_counselor_reaction(quote: str) -> bool:
     return bool(re.search(r"싶.{0,30}(?:조급|초조|불안|답답|부담|느낌|마음).{0,20}(?:있었|느꼈|알아차렸|들었)", quote))
 
 
+def has_documented_counselor_reflection(memo: str) -> bool:
+    """Recognize recorded counselor reactions even without a dedicated heading."""
+    return any(_documented_counselor_reaction(line.strip()) for line in memo.splitlines() if line.strip())
+
+
 def _quote_in_client_speech(quote: str, memo: str) -> bool:
     """Keep a quoted substring's client speaker attribution when the label was omitted."""
     offset = 0
