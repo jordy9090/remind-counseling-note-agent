@@ -104,62 +104,67 @@ export default function FinalDocumentEditor({
   }
 
   return (
-    <section className="rm-card overflow-hidden" aria-label={title}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-grey-200 px-5 py-4 md:px-6">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-xl font-extrabold text-grey-900">{title}</h1>
-          {editedAt && <span className="text-sm text-grey-400">{formatEditedDate(editedAt)}</span>}
+    // overflow-clip keeps the rounded corners without making the card a scroll container, which
+    // would stop the title bar and toolbar from sticking to the viewport.
+    <section className="rm-card overflow-clip" aria-label={title}>
+      {/* Title, download status, and toolbar stay pinned under the page header while the body scrolls. */}
+      <div className="z-20 rounded-t-[15px] bg-white md:sticky md:top-[var(--workflow-header-height,0px)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-grey-200 px-5 py-4 md:px-6">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-xl font-extrabold text-grey-900">{title}</h1>
+            {editedAt && <span className="text-sm text-grey-400">{formatEditedDate(editedAt)}</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onDownload('docx')}
+              disabled={isExporting}
+              className="inline-flex h-11 items-center gap-1.5 rounded-[10px] border border-grey-200 bg-white px-4 text-sm font-bold text-grey-700 hover:bg-grey-100 disabled:opacity-50"
+            >
+              Word
+            </button>
+            <button
+              type="button"
+              onClick={() => onDownload('pdf')}
+              disabled={isExporting || !pdfAvailable}
+              title={pdfAvailable ? undefined : 'PDF 변환을 사용할 수 없는 환경입니다. Word로 다운받아주세요.'}
+              className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500 disabled:bg-grey-100 disabled:text-grey-400"
+            >
+              {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              PDF로 다운받기
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onDownload('docx')}
-            disabled={isExporting}
-            className="inline-flex h-11 items-center gap-1.5 rounded-[10px] border border-grey-200 bg-white px-4 text-sm font-bold text-grey-700 hover:bg-grey-100 disabled:opacity-50"
-          >
-            Word
-          </button>
-          <button
-            type="button"
-            onClick={() => onDownload('pdf')}
-            disabled={isExporting || !pdfAvailable}
-            title={pdfAvailable ? undefined : 'PDF 변환을 사용할 수 없는 환경입니다. Word로 다운받아주세요.'}
-            className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500 disabled:bg-grey-100 disabled:text-grey-400"
-          >
-            {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            PDF로 다운받기
-          </button>
-        </div>
-      </div>
-      {(exportStatus || exportError) && (
-        <p role={exportError ? 'alert' : 'status'} className={`border-b border-grey-200 px-5 py-2 text-xs font-semibold md:px-6 ${exportError ? 'text-danger-500' : 'text-success-500'}`}>
-          {exportError || exportStatus}
-        </p>
-      )}
+        {(exportStatus || exportError) && (
+          <p role={exportError ? 'alert' : 'status'} className={`border-b border-grey-200 px-5 py-2 text-xs font-semibold md:px-6 ${exportError ? 'text-danger-500' : 'text-success-500'}`}>
+            {exportError || exportStatus}
+          </p>
+        )}
 
-      <div role="toolbar" aria-label="문서 서식" className="flex flex-wrap items-center gap-1 border-b border-grey-200 px-4 py-2 md:px-5">
-        <ToolGroup>
-          <ToolButton icon={Bold} label="굵게" />
-          <ToolButton icon={Italic} label="기울임" />
-          <ToolButton icon={Underline} label="밑줄" />
-        </ToolGroup>
-        <ToolGroup>
-          <ToolButton icon={Baseline} label="글자 색" />
-          <ToolButton icon={Highlighter} label="형광펜" />
-        </ToolGroup>
-        <ToolGroup>
-          <ToolButton icon={AlignLeft} label="왼쪽 정렬" />
-          <ToolButton icon={AlignCenter} label="가운데 정렬" />
-          <ToolButton icon={AlignRight} label="오른쪽 정렬" />
-        </ToolGroup>
-        <ToolGroup>
-          <ToolButton icon={List} label="글머리 기호" onApply={() => applyList('bullet')} />
-          <ToolButton icon={ListOrdered} label="번호 매기기" onApply={() => applyList('numbered')} />
-        </ToolGroup>
-        <ToolGroup last>
-          <ToolButton icon={ImageIcon} label="이미지" />
-          <ToolButton icon={Link2} label="링크" />
-        </ToolGroup>
+        <div role="toolbar" aria-label="문서 서식" className="flex flex-wrap items-center gap-1 border-b border-grey-200 px-4 py-2 md:px-5">
+          <ToolGroup>
+            <ToolButton icon={Bold} label="굵게" />
+            <ToolButton icon={Italic} label="기울임" />
+            <ToolButton icon={Underline} label="밑줄" />
+          </ToolGroup>
+          <ToolGroup>
+            <ToolButton icon={Baseline} label="글자 색" />
+            <ToolButton icon={Highlighter} label="형광펜" />
+          </ToolGroup>
+          <ToolGroup>
+            <ToolButton icon={AlignLeft} label="왼쪽 정렬" />
+            <ToolButton icon={AlignCenter} label="가운데 정렬" />
+            <ToolButton icon={AlignRight} label="오른쪽 정렬" />
+          </ToolGroup>
+          <ToolGroup>
+            <ToolButton icon={List} label="글머리 기호" onApply={() => applyList('bullet')} />
+            <ToolButton icon={ListOrdered} label="번호 매기기" onApply={() => applyList('numbered')} />
+          </ToolGroup>
+          <ToolGroup last>
+            <ToolButton icon={ImageIcon} label="이미지" />
+            <ToolButton icon={Link2} label="링크" />
+          </ToolGroup>
+        </div>
       </div>
 
       <div
