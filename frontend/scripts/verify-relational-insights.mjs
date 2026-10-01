@@ -9,10 +9,12 @@ const { outputText } = ts.transpileModule(source, {
 const { readRelationalInsights, formatRelationalSupervisionMemo } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 const valid = {
   status: 'generated', lens: 'psychodynamic_relational', notices: [],
+  supervision_memo: 'A tentative possibility remains to be checked against the recorded interaction.',
   cards: [{
     id: 'synthetic-card', focus: 'relationship_pattern', observation: 'Synthetic observation',
     hypothesis: 'Synthetic possibility', alternative_explanation: 'Synthetic alternative',
     counterevidence_or_missing: 'Synthetic missing context', supervision_questions: ['Synthetic question?'],
+    brief_text: 'A tentative possibility remains to be checked against the recorded interaction.',
     evidence: [{ source_ref: 'transcript_text', quote: 'Synthetic quote' }],
     theory_source_ids: ['synthetic-source'], requires_review: true,
   }],
@@ -32,6 +34,8 @@ for (const malformed of [
   { ...valid, cards: [{ ...valid.cards[0], evidence: [null] }] },
   { ...valid, cards: [{ ...valid.cards[0], supervision_questions: {} }] },
   { ...valid, cards: [{ ...valid.cards[0], observation: {} }] },
+  { ...valid, cards: [{ ...valid.cards[0], brief_text: 42 }] },
+  { ...valid, supervision_memo: [] },
   { ...valid, cards: [{ ...valid.cards[0], requires_review: false }] },
   { ...valid, theory_sources: [{ ...valid.theory_sources[0], title: {} }] },
   { ...valid, theory_sources: [{ ...valid.theory_sources[0], limitations: [] }] },
@@ -47,26 +51,33 @@ assert.equal(formatRelationalSupervisionMemo(undefined, originalMemo), originalM
 assert.equal(formatRelationalSupervisionMemo({ ...valid, status: 'demo' }, originalMemo), originalMemo, 'demo hypotheses never become a session memo')
 for (const status of ['unavailable', 'insufficient_evidence']) {
   const memo = formatRelationalSupervisionMemo({ ...valid, status }, originalMemo)
-  assert.ok(memo.startsWith(originalMemo), 'existing reflection is preserved when analysis is unavailable')
-  assert.ok(memo.includes('보류'), 'failed analysis explicitly abstains')
-  assert.ok(!memo.includes('Synthetic possibility'), 'non-generated payloads must not surface hypotheses')
+  assert.equal(memo, originalMemo, 'failed analysis preserves reflection without technical messages in the clinical body')
 }
-assert.ok(formatRelationalSupervisionMemo({}, originalMemo).startsWith(originalMemo))
+assert.equal(formatRelationalSupervisionMemo({}, originalMemo), originalMemo)
+const originalData = structuredClone(valid)
 const generatedMemo = formatRelationalSupervisionMemo(valid, originalMemo)
-assert.ok(generatedMemo.startsWith(`${originalMemo}\n\n`))
-for (const expected of [
-  '관찰: Synthetic observation', '잠정 가설: Synthetic possibility',
-  '대안 설명: Synthetic alternative', '반대 근거·미확인: Synthetic missing context',
-  '수퍼비전 질문: Synthetic question?', '축어록: “Synthetic quote”',
-  '[1] Synthetic source', 'https://example.org',
-]) assert.ok(generatedMemo.includes(expected), `memo must preserve ${expected}`)
+assert.equal(generatedMemo, valid.supervision_memo, 'the existing memo shows only server-authored compact prose')
+for (const hidden of ['Synthetic observation', 'Synthetic quote', 'Synthetic source', 'https://example.org', '관찰:', '참고 문헌']) {
+  assert.ok(!generatedMemo.includes(hidden), 'review metadata must not be serialized into the editable memo')
+}
+assert.deepEqual(valid, originalData, 'rendering must retain the original evidence, questions and source metadata')
+assert.equal(formatRelationalSupervisionMemo({ ...valid, supervision_memo: '' }, originalMemo), originalMemo)
+const legacy = structuredClone(valid)
+delete legacy.supervision_memo
+delete legacy.cards[0].brief_text
+assert.deepEqual(readRelationalInsights(legacy), legacy, 'older metadata remains readable without compact fields')
+assert.equal(formatRelationalSupervisionMemo(legacy, originalMemo), originalMemo, 'older verbose cards are not expanded into the note')
+assert.equal(formatRelationalSupervisionMemo({ ...valid, supervision_memo: 'Unconnected replacement text.' }, originalMemo), originalMemo, 'stale compact text must not bypass its accepted cards')
+const fallbackReflection = `${valid.supervision_memo}\n\n${originalMemo}`
+assert.equal(formatRelationalSupervisionMemo({ ...valid, supervision_memo: fallbackReflection }, originalMemo), fallbackReflection, 'server-preserved recorded reflection stays intact')
 
-const excessive = structuredClone(valid)
-excessive.cards = Array.from({ length: 6 }, (_, index) => ({ ...valid.cards[0], id: `synthetic-${index}`, observation: `Observation ${index}` }))
-const cappedMemo = formatRelationalSupervisionMemo(excessive, '')
-assert.ok(cappedMemo.includes('Observation 3'))
-assert.ok(!cappedMemo.includes('Observation 4'), 'at most four cards enter the existing memo')
-assert.equal(cappedMemo.split('https://example.org').length - 1, 1, 'shared theory references are listed once')
+const twoCards = structuredClone(valid)
+twoCards.cards.push({ ...valid.cards[0], id: 'counselor-card', focus: 'counselor_reflection', brief_text: 'Consider how the recorded wish to reassure shaped the next question.' })
+twoCards.supervision_memo = `${valid.supervision_memo}\n\n${twoCards.cards[1].brief_text}`
+assert.equal(formatRelationalSupervisionMemo(twoCards, originalMemo), twoCards.supervision_memo, 'both the tentative hypothesis and counselor reflection survive without truncation')
+twoCards.cards[1].brief_text = ''
+twoCards.supervision_memo = fallbackReflection
+assert.equal(formatRelationalSupervisionMemo(twoCards, originalMemo), fallbackReflection, 'a legacy card without compact prose must not suppress the server-preserved reflection')
 
 for (const invalidEvidence of [
   { ...valid, cards: [{ ...valid.cards[0], evidence: [] }] },
@@ -75,7 +86,6 @@ for (const invalidEvidence of [
   { ...valid, theory_sources: [{ ...valid.theory_sources[0], url: 'javascript:alert(1)' }] },
 ]) {
   const memo = formatRelationalSupervisionMemo(invalidEvidence, originalMemo)
-  assert.ok(memo.includes('보류'), 'unconnected session or theory evidence must trigger abstention')
-  assert.ok(!memo.includes('Synthetic possibility'))
+  assert.equal(memo, originalMemo, 'unconnected session or theory evidence must preserve the original reflection')
 }
 console.log('Relational insight restoration and existing-memo content checks passed.')

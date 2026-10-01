@@ -16,6 +16,7 @@ def insights_fixture() -> RelationalInsights:
         "status": "generated", "lens": "psychodynamic_relational",
         "cards": [{
             "id": "synthetic-card", "focus": "intervention_response",
+            "brief_text": "산책 경험의 의미를 살펴볼 수 있으나 다른 상황 변화의 영향은 아직 확인되지 않음.",
             "observation": "내담자는 산책한 뒤 편안함을 보고함.",
             "hypothesis": "산책 경험의 의미를 더 탐색할 가능성이 있음.",
             "alternative_explanation": "산책 외의 다른 상황 변화가 영향을 주었을 수 있음.",
@@ -30,6 +31,7 @@ def insights_fixture() -> RelationalInsights:
             "locator": "Test-only", "principle": "Reflect on the client's account.",
             "concepts": ["intervention_response"], "limitations": "Synthetic test source.",
         }], "notices": [],
+        "supervision_memo": "산책 경험의 의미를 살펴볼 수 있으나 다른 상황 변화의 영향은 아직 확인되지 않음.",
     })
 
 

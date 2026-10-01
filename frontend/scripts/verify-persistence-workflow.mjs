@@ -120,7 +120,9 @@ console.log('Temporary request allowlist, nested caches, applied input, edited r
 
 {
   const insights = { status: 'generated', lens: 'psychodynamic_relational', notices: [],
+    supervision_memo: 'The recorded wish to reassure may have shaped the next question; its influence remains uncertain.',
     cards: [{ id: 'synthetic', focus: 'counselor_reflection', observation: 'Recorded wish to reassure.',
+      brief_text: 'The recorded wish to reassure may have shaped the next question; its influence remains uncertain.',
       hypothesis: 'A tentative relational hypothesis.', alternative_explanation: 'An ordinary wish to comfort.',
       counterevidence_or_missing: 'No causal effect is established.', requires_review: true,
       supervision_questions: ['What shaped the next intervention?'],
@@ -131,12 +133,17 @@ console.log('Temporary request allowlist, nested caches, applied input, edited r
   const draft = { reflection: { text: 'Counselor reflection.' }, relational_insights: insights }
   const bases = [{ id: 'supervision_memo', title: '슈퍼비전 메모', content: '', visible: true }]
   const reopened = workflow.restoreStoredSections(draft, bases, false)
-  assert(reopened[0].content.includes('잠정 가설'))
-  assert(reopened[0].content.includes('Counselor reflection.'))
-  const confirmed = workflow.confirmedPayload(draft, reopened)
-  assert.equal(confirmed.relational_insights, undefined)
-  assert.equal(confirmed.reflection.text, reopened[0].content, 'explicit confirmation preserves tentative labels')
-  assert.deepEqual(workflow.restoreStoredSections(confirmed, bases, true), reopened)
+  assert.equal(reopened[0].content, insights.supervision_memo, 'generated drafts restore compact prose without serializing metadata')
+  for (const counselorText of ['Counselor revised this hypothesis after review.', '']) {
+    const edited = [{ ...reopened[0], content: counselorText }]
+    const confirmed = workflow.confirmedPayload(draft, edited)
+    assert.equal(confirmed.relational_insights, undefined, 'AI provenance stays in draft_json, separate from the confirmed clinical text')
+    assert.equal(confirmed.reflection.text, counselorText)
+    const storedRecord = { ...record(confirmed), draft_json: draft }
+    assert.deepEqual(workflow.restoreStoredSections(workflow.recordPayload(storedRecord), bases, true), edited, 'saved counselor edits, including intentional empty text, must win over regenerated prose')
+    assert.deepEqual(workflow.noteFromRecord(storedRecord).relational_insights, insights, 'reopening a confirmed record retains its separate draft evidence and bibliography')
+    assert.deepEqual(workflow.restoreStoredSections({ ...draft, workspace_sections: edited }, bases, false), edited, 'temporary workspace edits must win over the original compact draft')
+  }
   const savedInsights = temporaryDraftPayload({ form: {}, result: { relational_insights: insights } })
   assert.deepEqual(savedInsights.result.relational_insights, insights)
   assert.deepEqual(temporaryDraftPayload(savedInsights), savedInsights)

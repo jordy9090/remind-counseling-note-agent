@@ -1,46 +1,121 @@
 [
   {
-    "id": "bacp_supervision_reflection_2018",
-    "title": "Ethical Framework for the Counselling Professions (2018)",
-    "organization": "British Association for Counselling and Psychotherapy (BACP)",
-    "url": "https://www.bacp.co.uk/ethical-framework",
-    "locator": "Good practice 32, 54, 60–64; 2018 framework, operative on 2026-10-02; 2026 framework becomes mandatory on 2026-11-03",
-    "principle": "수퍼비전은 사례 관리에 더해 상담자와 내담자의 관계 및 상담이 내담자에게 미친 영향을 깊이 성찰하는 과정이다. 상담자가 의도한 개입과 내담자가 실제로 경험한 반응을 함께 검토하고, 상담자의 관점과 개인적 반응을 돌아볼 여지를 둔다. 내담자가 상담 관계를 어떻게 경험하는지는 내담자의 표현을 통해 확인한다.",
-    "concepts": ["here_and_now", "intervention_response", "counselor_reflection"],
-    "keywords": ["상담자", "선생님", "침묵", "서운", "표정", "반응", "눈치", "개입", "관계", "역전이", "성찰"],
-    "limitations": "전문가 수퍼비전 지침이며 AI 판단의 타당성을 보증하지 않는다. 문헌은 성찰 질문의 근거이고 내담자 가설의 증거는 아니다. 상담자의 내적 반응은 직접 작성한 메모가 있을 때만 관찰 자료로 다룬다."
+    "id": "kca_ethics_cultural_context_2024",
+    "title": "한국상담학회 윤리강령",
+    "organization": "한국상담학회",
+    "url": "https://www.counselors.or.kr/portal/service/kca_ethic_rule",
+    "locator": "2024-10-26 시행 개정본; 제1조⑤, 제8조④, 제24조③–④, 제25조⑤–⑥; 2026-10-02 확인",
+    "principle": "상담자는 자신의 전문적 활동을 성찰하고 자신의 가치가 내담자에게 미치는 영향을 살핀다. 내담자의 어려움을 이해할 때 사회경제적·문화적 경험을 고려하고 편견에 따른 병리화를 경계한다. 수련감독에서도 다양성이 관계와 이해에 미치는 영향을 다룬다. 적용 시 개인의 관계 기대와 실제 생활 조건을 함께 검토하되, 한국인이라는 이유만으로 위계·체면·가족 의무를 추정하지 않는다. 그러한 맥락은 해당 내담자의 기록으로 확인하거나 확인할 질문으로 남긴다.",
+    "concepts": [
+      "relationship_pattern",
+      "here_and_now",
+      "counselor_reflection"
+    ],
+    "keywords": [
+      "문화",
+      "맥락",
+      "가치",
+      "다양성",
+      "직장",
+      "동료",
+      "가족",
+      "부탁",
+      "거절",
+      "관계",
+      "성찰",
+      "환경",
+      "업무"
+    ],
+    "limitations": "국내 학회의 공식 윤리 규범이며 특정 사례개념화 기법이나 AI 수퍼비전 표준은 아니다. 문화·현실 조건을 질문으로 검토하는 것은 이 원칙의 제품 적용이다. 개별 내담자의 동기·성격·관계 패턴을 입증하거나 한국인 전체의 특성을 규정하는 근거로 사용할 수 없다. 학회의 AI 기능 승인이나 임상 효과를 의미하지 않는다."
   },
   {
-    "id": "ccrt_relationship_sequence_2020",
-    "title": "Core Interpersonal Patterns in Complex Trauma and the Process of Change in Psychodynamic Therapy: A Case Comparison Study",
-    "organization": "Van Nieuwenhove & Meganck; Frontiers in Psychology (2020)",
-    "url": "https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2020.00122/full",
-    "locator": "Materials and Methods — CCRT method; Discussion — limitations; DOI: 10.3389/fpsyg.2020.00122",
-    "principle": "CCRT는 관계 장면을 내담자의 바람, 내담자가 지각한 상대의 반응, 이에 대한 자신의 정서·행동 반응으로 살펴본다. 반복을 검토하려면 여러 장면을 비교하고 차이와 예외도 보존해야 한다. 상담실 밖의 관계와 상담자와의 상호작용에서 유사성이 관찰되면 연결 가능성을 탐색할 수 있다. 상대에 대한 내담자의 지각은 상대의 실제 의도를 독립적으로 확인한 사실과 구분한다.",
-    "concepts": ["relationship_pattern", "here_and_now"],
-    "keywords": ["바람", "원하", "관계", "거절", "부탁", "도움", "미안", "죄책감", "서운", "반복", "인정", "버림", "상대", "전이"],
-    "limitations": "세 사례를 다룬 연구로 일반화에 한계가 있다. 관계 장면을 정리하는 참고 틀로 사용하며, 외상·성격·어린 시절 원인이나 전이를 확정하지 않는다. 단일 장면만으로 반복 패턴을 단정하거나 정식 CCRT 평가로 표시하지 않는다."
+    "id": "kcpa_ethics_reflective_practice",
+    "title": "한국상담심리학회 상담심리사 윤리강령",
+    "organization": "한국상담심리학회",
+    "url": "https://krcpa.or.kr/user/sub02_9.asp",
+    "locator": "공식 웹 게시본; 1.가.3·5, 1.나.1, 3.다.2–3; 2026-10-02 확인",
+    "principle": "상담심리사는 자신의 편견과 역량의 한계를 점검하고 신념·가치가 상담에 미치는 영향을 자각한다. 내담자의 문화적 배경을 이해하려 노력하면서 자신의 문화적 정체성과 가치가 상담 과정에 주는 영향도 살핀다. 이 원칙을 회기 검토에 적용하여, 상담자가 직접 기록한 감정이나 반응 욕구가 질문과 개입 선택에 어떤 영향을 주었는지 성찰할 수 있다. 상담자가 하고 싶었던 반응과 실제로 수행한 개입, 그 뒤 내담자가 표현한 경험은 구분한다.",
+    "concepts": [
+      "counselor_reflection",
+      "intervention_response",
+      "here_and_now"
+    ],
+    "keywords": [
+      "상담자",
+      "선생님",
+      "성찰",
+      "마음",
+      "싶었",
+      "안심",
+      "해명",
+      "감정",
+      "가치",
+      "반응",
+      "질문",
+      "개입",
+      "침묵"
+    ],
+    "limitations": "국내 학회의 공식 윤리 규범이다. 기록된 내적 반응을 회기 검토와 연결하는 것은 제품의 적용 방식이며 윤리강령에 정해진 요약 양식은 아니다. 상담자의 내면이나 역전이를 기록 없이 만들어내거나 상담자의 역량을 판정할 수 없다. 한국심리학회 전체의 단일 상담 표준 또는 AI 승인으로 표시하지 않는다."
   },
   {
-    "id": "alliance_rupture_repair_2018",
-    "title": "Alliance rupture repair: A meta-analysis",
-    "organization": "Eubanks, Muran & Safran; Psychotherapy (2018), PubMed",
-    "url": "https://pubmed.ncbi.nlm.nih.gov/30335462/",
-    "locator": "Abstract; Psychotherapy 55(4):508–519; DOI: 10.1037/pst0000185",
-    "principle": "작업동맹의 균열은 상담 목표에 대한 불일치, 과제에 대한 협력 저하, 정서적 유대의 긴장으로 나타날 수 있다. 균열의 회복과 긍정적 치료 결과 사이에는 연구상 연관성이 보고되었다. 따라서 관계의 긴장 신호와 상담자의 대응, 그 뒤 내담자가 보인 반응을 각각 검토할 이유가 있다. 불편감을 말한 것, 상담자가 탐색을 시도한 것, 실제로 관계가 회복된 것은 구분한다.",
-    "concepts": ["here_and_now", "intervention_response"],
-    "keywords": ["침묵", "서운", "불편", "눈치", "표정", "이해", "협력", "목표", "괜찮", "반응", "회복", "긴장", "불만"],
-    "limitations": "연관성은 인과관계나 개별 사례의 회복을 입증하지 않는다. 같은 논문에서 균열 회복 훈련·수퍼비전의 치료 결과 효과는 유의하지 않았다. 이 문헌으로 AI 기능의 임상 효과를 주장할 수 없다."
+    "id": "korean_experienced_supervision_2014",
+    "title": "숙련된 수퍼바이저의 수퍼비전 수행에 관한 질적 연구",
+    "organization": "소수연·장성숙; 한국상담심리학회, 한국심리학회지: 상담 및 심리치료 26(2), 193–222 (2014)",
+    "url": "https://www.accesson.kr/kcpa/assets/pdf/20772/journal-26-2-193.pdf",
+    "locator": "원문 p.193 연구방법 요약; pp.203–205 영역 2 및 표 4; pp.211–212 수퍼비전·상담의 구분과 사례에 따른 이론 적용",
+    "principle": "국내 숙련 수퍼바이저 10명의 면담을 분석한 연구에서는 사례 이해, 실제 개입, 상담 중 알아차림, 상담자 개인의 반응을 주요 검토 내용으로 다뤘다. 이를 참고하여 회기에서는 내담자의 말과 상담자 개입을 구체적 장면에서 함께 살피고, 관계에 대한 이해는 실제 자료와 연결해 잠정적으로 제안한다. 상담자의 개인적 반응은 해당 상담을 이해하는 범위에서 검토하며, 수퍼비전과 상담자 개인상담을 혼동하지 않는다. 사례와 상담자의 접근을 고려할 필요가 있다.",
+    "concepts": [
+      "relationship_pattern",
+      "here_and_now",
+      "intervention_response",
+      "counselor_reflection"
+    ],
+    "keywords": [
+      "사례",
+      "이해",
+      "관계",
+      "개입",
+      "반응",
+      "질문",
+      "반복",
+      "기대",
+      "말하",
+      "표현",
+      "알아차림",
+      "성찰",
+      "수퍼비전",
+      "슈퍼비전"
+    ],
+    "limitations": "국내 참여자 10명의 경험을 분석한 질적 연구이며 학회의 공식 수행 규정이나 특정 기법의 효과 검증이 아니다. 정신역동 관점을 모든 사례에 적용하라는 권고가 아니다. 문헌은 검토 항목의 참고이고 개별 관계 가설의 증거는 현재 회기 자료에서 찾아야 한다. 단일 장면의 유사성만으로 반복 패턴이나 원인을 확정할 수 없다."
   },
   {
-    "id": "alliance_client_therapist_perspectives_2020",
-    "title": "Can we agree we just had a rupture? Patient-therapist congruence on ruptures and its effects on outcome in brief relational therapy versus cognitive-behavioral therapy",
-    "organization": "Zilcha-Mano, Eubanks, Bloch-Elkouby & Muran; Journal of Counseling Psychology (2020), PubMed",
-    "url": "https://pubmed.ncbi.nlm.nih.gov/31855026/",
-    "locator": "Abstract; Journal of Counseling Psychology 67(3):315–325; DOI: 10.1037/cou0000400",
-    "principle": "162개 상담자·내담자 쌍의 반복 측정 연구에서 양측의 관계 균열 평가는 시간에 따라 상당한 일치를 보였으나, 상담자는 내담자보다 균열을 더 많이 감지하는 경향도 보였다. 상담자의 해석과 내담자의 경험은 동일한 것으로 가정하지 않는다. 관계 긴장이 의심되는 장면에서는 각각의 관점과 확인되지 않은 부분을 분리해 검토할 필요가 있다.",
-    "concepts": ["here_and_now", "counselor_reflection", "intervention_response"],
-    "keywords": ["상담자", "선생님", "다르게", "생각", "느낌", "서운", "눈치", "추측", "반응", "의도", "해석"],
-    "limitations": "특정 치료 조건의 연구이며 한 회기의 문장만으로 관계 균열을 판정하는 도구가 아니다. 문헌은 확인 질문을 돕는 참고 근거이고, 이 내담자나 상담자의 내적 상태를 증명하지 않는다."
+    "id": "korean_supervision_qualitative_metasummary_2022",
+    "title": "한국 상담자의 발달과 관련된 수퍼비전 요소에 대한 질적 메타요약",
+    "organization": "조은실·이지영·차윤지·백인규·양은주; 한국상담심리학회, 한국심리학회지: 상담 및 심리치료 34(2), 259–285 (2022)",
+    "url": "https://www.accesson.kr/kcpa/assets/pdf/17212/journal-34-2-259.pdf",
+    "locator": "원문 p.259 초록, p.264 연구물 선정, p.270 표 5의 축약진술문 20·21·22·24, pp.279–280 제한점",
+    "principle": "국내 질적 연구 9편을 종합한 연구에서 사례의 통합적 이해, 구체적 개입 학습, 상담자와 내담자 사이의 상호작용 및 상담자의 영향에 대한 인식, 상담자 자기성찰이 수퍼비전의 주요 내용으로 나타났다. 이를 참고하여 회기 메모는 이론 이름이나 평가를 나열하기보다 실제 장면을 다시 검토할 수 있는 구체적 질문을 제안한다. 상담자의 해석과 내담자가 표현한 경험을 구분하고, 개입 뒤 표현의 변화와 남은 어려움을 함께 살펴본다.",
+    "concepts": [
+      "here_and_now",
+      "intervention_response",
+      "counselor_reflection",
+      "relationship_pattern"
+    ],
+    "keywords": [
+      "상담자",
+      "내담자",
+      "개입",
+      "질문",
+      "반응",
+      "관계",
+      "침묵",
+      "서운",
+      "성찰",
+      "이해",
+      "수퍼비전",
+      "슈퍼비전",
+      "변화"
+    ],
+    "limitations": "국내 질적 연구의 종합이며 치료 효과를 검증한 양적 메타분석이 아니다. 수퍼비전 관계에 관한 결과를 특정 상담 관계에 그대로 옮길 수 없다. 연구물 선정 및 상담자 발달 단계 구분의 한계가 있다. 구체적 질문과 잠정적 해석은 제품 적용이며 이 문헌이나 학회가 AI 성능을 보증하지 않는다."
   }
 ]

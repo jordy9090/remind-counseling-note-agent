@@ -11,9 +11,9 @@ def _fields(names: str) -> dict[str, Any]:
 # Mirrored by frontend/src/lib/temporaryDraft.ts; round-trip fixtures cover both boundaries.
 _STRINGS = ["scalar"]
 _INSIGHTS = {
-    **_fields("status lens"), "notices": _STRINGS,
+    **_fields("status lens supervision_memo"), "notices": _STRINGS,
     "cards": [{
-        **_fields("id focus observation hypothesis alternative_explanation counterevidence_or_missing requires_review"),
+        **_fields("id focus brief_text observation hypothesis alternative_explanation counterevidence_or_missing requires_review"),
         "supervision_questions": _STRINGS, "theory_source_ids": _STRINGS,
         "evidence": [_fields("source_ref quote")],
     }],

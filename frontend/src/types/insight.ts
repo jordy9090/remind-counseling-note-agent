@@ -24,6 +24,7 @@ export interface RelationalInsightCard {
   hypothesis: string
   alternative_explanation: string
   counterevidence_or_missing: string
+  brief_text?: string
   supervision_questions: string[]
   evidence: Array<{ source_ref: string; quote: string }>
   theory_source_ids: string[]
@@ -36,4 +37,5 @@ export interface RelationalInsights {
   cards: RelationalInsightCard[]
   theory_sources: TheorySource[]
   notices: string[]
+  supervision_memo?: string
 }

@@ -933,10 +933,7 @@ export default function SessionDraftPage({
       setLoading: setIsLoading,
       generate: () => isLocalGroundingDemo && groundingDemoNote && !devGroundingDemo?.liveGeneration
         ? Promise.resolve(groundingDemoNote)
-        : generateNoteDraft(
-          { ...form, persist: !isLocalGroundingDemo },
-          { localDemo: isLocalGroundingDemo && Boolean(devGroundingDemo?.liveGeneration) },
-        ),
+        : generateNoteDraft({ ...form, persist: !isLocalGroundingDemo }),
       onSuccess: showGeneratedDraft,
       onError: (requestError) => {
         setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')

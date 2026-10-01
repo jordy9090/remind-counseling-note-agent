@@ -15,13 +15,13 @@ class SummaryQualityError(ValueError):
 
 # These are rejection ceilings, not required lengths. Sparse evidence stays short.
 SECTION_LIMITS = {
-    "presenting_problem": (450, 4),
-    "session_theme": (350, 3),
-    "session_content": (1400, 8),
-    "counselor_intervention": (800, 5),
-    "client_response": (800, 5),
-    "reflection": (800, 5),
-    "next_plan": (600, 4),
+    "presenting_problem": (200, 2),
+    "session_theme": (160, 2),
+    "session_content": (600, 5),
+    "counselor_intervention": (350, 3),
+    "client_response": (350, 3),
+    "reflection": (350, 3),
+    "next_plan": (250, 2),
 }
 SPEAKER_LABEL = re.compile(
     r"(?:^|\n|(?<=[.!?])\s+)(?:[-*]\s*)?"

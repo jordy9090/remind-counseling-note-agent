@@ -94,11 +94,19 @@ class SummaryQualityTests(unittest.TestCase):
         self.assertIn("client_response", summary_quality_issues(summary))
 
     def test_excessive_length_or_sentence_count_is_rejected(self) -> None:
-        for text in ("걱정을 표현함. " * 9, "걱정" * 701):
+        for text in ("걱정을 표현함. " * 6, "걱정" * 301):
             with self.subTest(length=len(text)):
                 summary = _summary()
                 summary.session_content.text = text
                 self.assertIn("session_content", summary_quality_issues(summary))
+
+    def test_length_targets_are_not_hard_cuts_or_minimums(self) -> None:
+        summary = _summary()
+        summary.session_content.text = "준비 과정을 돌아보며 " * 25 + "걱정이 남아 있음을 표현함."
+        original = summary.session_content.text
+        self.assertGreater(len(original), 240)
+        self.assertEqual({}, summary_quality_issues(summary))
+        self.assertEqual(original, summary.session_content.text)
 
     def test_valid_summary_uses_one_call_and_preserves_source_reference(self) -> None:
         llm = Mock()

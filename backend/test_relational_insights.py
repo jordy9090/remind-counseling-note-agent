@@ -46,6 +46,7 @@ def _corpus() -> list[dict]:
 def _card(**updates) -> InsightCard:
     values = dict(
         id="relationship-1", focus="relationship_pattern",
+        brief_text="상대의 부정적 평가를 예상하며 표현을 주저했을 가능성이 있음. 다만 실제 상대 반응은 확인되지 않아 발언 기회 등 상황적 맥락도 살펴볼 필요가 있음.",
         observation="내담자는 모임에서 의견을 말하지 않았으며 다른 사람의 평가를 걱정했다고 표현함.",
         hypothesis="다른 사람에게 받아들여지고 싶은 소망과 부정적 반응에 대한 예상이 표현을 주저하게 하는 데 함께 작용했을 가능성이 있음.",
         alternative_explanation="모임의 대화 속도나 발언 기회가 부족했던 상황적 설명도 검토할 수 있음.",
@@ -96,6 +97,87 @@ class RelationalInsightsTests(unittest.TestCase):
         self.assertEqual("insufficient_evidence", result.status)
         self.assertEqual([], result.cards)
         self.assertEqual([], result.theory_sources)
+
+    def test_compact_memo_keeps_uncertainty_and_counterevidence_with_metadata_separate(self) -> None:
+        card = _card()
+        result, _ = self._generate([card])
+        self.assertEqual(card.brief_text, result.supervision_memo)
+        self.assertIn("가능성", result.supervision_memo)
+        self.assertIn("실제 상대 반응은 확인되지", result.supervision_memo)
+        self.assertEqual(card.evidence, result.cards[0].evidence)
+        self.assertEqual(card.alternative_explanation, result.cards[0].alternative_explanation)
+        self.assertNotIn(card.evidence[0].quote, result.supervision_memo)
+        self.assertNotIn(result.theory_sources[0].url, result.supervision_memo)
+
+    def test_unusable_brief_cannot_be_presented_even_when_review_metadata_is_valid(self) -> None:
+        for brief in (
+            "가설: 타인의 평가에 대한 걱정이 표현을 막았을 가능성이 있으며 실제 반응은 확인되지 않음.",
+            "타인의 평가에 대한 걱정이 표현을 막았을 가능성. RO와 RS를 구분하여 보아야 함.",
+            "타인의 평가에 대한 걱정이 표현을 막았을 가능성. https://example.org/source 참고.",
+            "내담자는 타인의 부정적 평가 때문에 자신의 의견을 말하지 못하는 관계 유형임.",
+        ):
+            with self.subTest(brief=brief):
+                result, _ = self._generate([_card(brief_text=brief)])
+                self.assertEqual([], result.cards)
+                self.assertEqual("", result.supervision_memo)
+
+    def test_legacy_brief_falls_back_to_recorded_reflection_without_dumping_metadata(self) -> None:
+        sanitized, summary = _input(), _summary()
+        sanitized.sources.counselor_memo += " 상담자 성찰: 나는 질문을 서두르고 싶은 느낌을 알아차렸음."
+        summary.reflection = SummarySection(
+            text="상담자는 질문을 서두르고 싶은 마음이 질문 선택에 미쳤을지 돌아볼 필요가 있다고 기록함.",
+            evidence_type="counselor_input", source_refs=["counselor_memo"], requires_review=True,
+        )
+        llm = Mock()
+        llm.invoke.return_value = RelationalInsightDraft(cards=[_card(brief_text="")])
+        with patch("app.services.relational_insights.get_structured_llm", return_value=llm):
+            result = generate_relational_insights(sanitized, summary)
+        self.assertEqual(summary.reflection.text, result.supervision_memo)
+        self.assertEqual(1, len(result.cards))
+
+    def test_short_embedded_phrase_does_not_discard_grounded_brief_but_long_quote_does(self) -> None:
+        brief = "상대가 자신을 “별로라고 볼까” 걱정하며 표현을 주저했을 가능성이 있음. 다만 실제 상대 반응은 아직 확인되지 않아 상황적 맥락도 살펴볼 필요가 있음."
+        result, _ = self._generate([_card(brief_text=brief)])
+        self.assertEqual(brief, result.supervision_memo)
+        self.assertEqual(_card().evidence, result.cards[0].evidence)
+        dialogue = "“모임에서 다른 의견이 있었지만 말하지 않았어요. 사람들이 저를 이상하게 볼까 걱정했어요.”라는 말에서 표현을 주저했을 가능성을 살펴볼 필요가 있음."
+        result, _ = self._generate([_card(brief_text=dialogue)])
+        self.assertEqual([], result.cards)
+
+    def test_recorded_reflection_is_appended_only_when_no_reflection_brief_exists(self) -> None:
+        sanitized, summary = _input(), _summary()
+        quote = "상담자 성찰: 나는 질문을 서두르고 싶은 느낌을 알아차렸음."
+        sanitized.sources.counselor_memo += " " + quote
+        summary.reflection = SummarySection(
+            text="상담자는 질문을 서두르고 싶은 마음을 알아차렸다고 기록함.",
+            evidence_type="counselor_input", source_refs=["counselor_memo"], requires_review=True,
+        )
+        relational = _card()
+        reflection = _card(
+            id="reflection", focus="counselor_reflection",
+            brief_text="상담자는 질문을 서두르고 싶은 마음을 알아차렸음. 이 마음이 질문의 속도와 선택에 어떤 영향을 주었는지 검토할 수 있음.",
+            evidence=[InsightEvidence(source_ref="counselor_memo", quote=quote)],
+        )
+        for cards, expected in (
+            ([relational], relational.brief_text + "\n\n" + summary.reflection.text),
+            ([relational, reflection], relational.brief_text + "\n\n" + reflection.brief_text),
+        ):
+            with self.subTest(count=len(cards)):
+                llm = Mock()
+                llm.invoke.return_value = RelationalInsightDraft(cards=cards)
+                with patch("app.services.relational_insights.get_structured_llm", return_value=llm):
+                    result = generate_relational_insights(sanitized, summary)
+                self.assertEqual(expected, result.supervision_memo)
+
+    def test_one_integrated_card_does_not_crowd_out_recorded_counselor_reflection(self) -> None:
+        sanitized = _input()
+        quote = "상담자 성찰: 나는 질문을 서두르고 싶은 느낌을 알아차렸음."
+        sanitized.sources.counselor_memo += " " + quote
+        result, _ = self._generate([
+            _card(), _card(id="another-perspective", focus="here_and_now"),
+            _card(id="reflection", focus="counselor_reflection", evidence=[InsightEvidence(source_ref="counselor_memo", quote=quote)]),
+        ], sanitized)
+        self.assertEqual(["relationship-1", "reflection"], [card.id for card in result.cards])
 
     def test_generated_summary_is_not_used_as_an_insight_generation_anchor(self) -> None:
         summary = _summary()

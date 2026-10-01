@@ -6,9 +6,9 @@ type Shape = 'scalar' | { [key: string]: Shape } | [Shape]
 const fields = (names: string): Record<string, Shape> => Object.fromEntries(names.split(' ').map(name => [name, 'scalar']))
 const strings: Shape = ['scalar']
 const insights: Shape = {
-  ...fields('status lens'), notices: strings,
+  ...fields('status lens supervision_memo'), notices: strings,
   cards: [{
-    ...fields('id focus observation hypothesis alternative_explanation counterevidence_or_missing requires_review'),
+    ...fields('id focus observation hypothesis alternative_explanation counterevidence_or_missing brief_text requires_review'),
     supervision_questions: strings, theory_source_ids: strings, evidence: [fields('source_ref quote')],
   }],
   theory_sources: [{

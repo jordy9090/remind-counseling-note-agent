@@ -53,7 +53,6 @@ client.interceptors.request.use(async (config) => {
 
 export const generateNoteDraft = async (
   input: SessionInput,
-  options: { localDemo?: boolean } = {},
 ): Promise<NoteDraftResponse> => {
   try {
     const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
@@ -72,7 +71,7 @@ export const generateNoteDraft = async (
       target_document_type: input.target_document_type || 'session_note',
       insight_lens: 'psychodynamic_relational',
       persist: Boolean(input.persist),
-    }, { timeout: import.meta.env.DEV && options.localDemo ? 240000 : 90000 })
+    }, { timeout: 310000 })
     return toNoteDraftResponse(response.data)
   } catch (error) {
     throw normalizeApiError(error, '회기요약 초안을 생성하지 못했습니다.')

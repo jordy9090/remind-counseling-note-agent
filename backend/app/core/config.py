@@ -15,8 +15,9 @@ class Settings(BaseSettings):
     # OPENAI_API_KEY 가 없어도 앱이 뜨도록 Optional 처리.
     # 키가 없으면 스텁(샘플 응답) 모드로 동작한다.
     openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-5.4"
     openai_reasoning_effort: Optional[str] = None
+    openai_timeout_seconds: float = Field(default=60, gt=0, le=90)
     relational_insight_timeout_seconds: float = Field(default=60, ge=1, le=90)
 
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)

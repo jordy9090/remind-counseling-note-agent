@@ -46,6 +46,7 @@ jobs:
             test_case_list \
             test_vercel_wrappers \
             test_summary_quality \
+            test_source_refs \
             test_summary_generation_routes \
             test_relational_insights \
             test_relational_integration \
