@@ -76,8 +76,9 @@ PR #19's sanitized transcript evidence storage is separate and unchanged.
 - Unreadable linked confirmation status permits temporary edit restoration but disables
   confirmation until the original record can be verified.
 - Note detail restores the de-identified session input saved at generation time (transcript, memo, previous/test
-  summaries, nonverbal notes) so the 첨부 자료 tab is populated. Original uploads, per-file names, and unmasked text
-  are not stored (`SAVE_RAW_INPUT=false`); legacy or malformed stored input restores as empty.
+  summaries, nonverbal notes) so the 첨부 자료 tab is populated. Original uploads and per-file names are not stored.
+  Unmasked text is stored and returned (`session_input_is_original: true`) only for sessions generated with
+  `SAVE_ORIGINAL_INPUT=1`; otherwise the de-identified copy is returned. Legacy or malformed stored input restores as empty.
 - Evidence previews and source verification caches are not restored. Recheck sources before
   treating restored assertions as verified. Edited report content is retained.
 - Existing generation writes are not transactional; partial-write behavior is unchanged.

@@ -291,9 +291,11 @@ class GeneratedNoteRecord(BaseModel):
     draft_json: dict[str, Any]
     confirmed_json: dict[str, Any]
     confirmation_status: str
-    # De-identified session input stored at generation time (sessions.sanitized_input_text).
-    # None for sessions without a readable stored input.
+    # Session input stored at generation time. The unmasked original when the session was saved with
+    # SAVE_ORIGINAL_INPUT=1 (session_input_is_original=True); otherwise the de-identified copy from
+    # sessions.sanitized_input_text. None for sessions without a readable stored input.
     session_input: InputSources | None = None
+    session_input_is_original: bool = False
 
 
 class TemporaryDraftSaveRequest(BaseModel):

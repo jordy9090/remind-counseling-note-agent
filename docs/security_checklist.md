@@ -21,6 +21,10 @@ deployment settings separately.
 - `SAVE_RAW_INPUT=0` must remain the default.
 - With `SAVE_RAW_INPUT=0`, `sessions.raw_input_text` is stored as `NULL`; only sanitized input and metadata are persisted.
 - `SAVE_RAW_INPUT=1` is for synthetic/demo data or explicitly approved test cases only.
+- `SAVE_ORIGINAL_INPUT=0` must remain the default. `SAVE_ORIGINAL_INPUT=1` stores unmasked counseling text
+  (names, contacts, institutions) in `sessions.raw_input_text` under the owner's RLS scope. Enable it only
+  with an approved consent, retention, and deletion policy. Rows written while it was on keep the original
+  until they are overwritten by a regeneration or deleted.
 - Uploaded PDF/DOCX/TXT files are streamed to temporary files for extraction and deleted after the request. Do not add raw upload persistence without authentication, access control, retention, and deletion policy review.
 - Scanned PDF OCR is not supported in the MVP. Do not route image-only clinical records to third-party OCR services without a reviewed data processing agreement.
 - Do not store real audio in this MVP.

@@ -1446,7 +1446,9 @@ export default function SessionDraftPage({
       const info = isObject(record.draft_json.session_info) ? record.draft_json.session_info : {}
       const restoredInput = sessionInputFromRecord(record)
       const inputNote = hasRestoredInput(restoredInput)
-        ? ' 저장된 회기 입력(개인정보 비식별 처리본)도 첨부 자료에 불러왔습니다.'
+        ? record.session_input_is_original
+          ? ' 저장된 회기 입력 원문도 첨부 자료에 불러왔습니다.'
+          : ' 저장된 회기 입력(개인정보 비식별 처리본)도 첨부 자료에 불러왔습니다.'
         : ' 이 회기에는 저장된 입력 자료가 없습니다.'
       const nextForm: SessionInput = {
         ...initialForm, case_id: record.case_id, session_number: record.session_number, session_date: record.session_date,

@@ -385,8 +385,10 @@ export interface GeneratedNoteRecord {
   draft_json: Record<string, unknown>
   confirmed_json: Record<string, unknown>
   confirmation_status: string
-  /** De-identified session input stored at generation time; null when unavailable. */
+  /** Session input stored at generation time; null when unavailable. */
   session_input?: StoredSessionInput | null
+  /** True when session_input is the unmasked original (saved with SAVE_ORIGINAL_INPUT=1). */
+  session_input_is_original?: boolean
 }
 
 export interface StoredSessionInput {
