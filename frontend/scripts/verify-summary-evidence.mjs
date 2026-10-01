@@ -7,6 +7,10 @@ const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 })
 const { summarySectionEvidence, riskInformation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const relationalSource = ts.transpileModule(fs.readFileSync('src/lib/relationalInsights.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+}).outputText
+const { formatRelationalSupervisionMemo } = await import(`data:text/javascript;base64,${Buffer.from(relationalSource).toString('base64')}`)
 const section = (text, refs, review = false, type = 'direct') => ({
   text, source_refs: refs, requires_review: review, evidence_type: type,
 })
@@ -17,6 +21,7 @@ const note = { full_response: {
     counselor_intervention: section('Paraphrased intervention', ['transcript.turn_1']),
     client_response: section('Paraphrased response', ['transcript.turn_2']),
     next_plan: section('A tentative plan', ['counselor_memo'], true, 'model_inference'),
+    reflection: section('Synthetic counselor reflection', ['counselor_memo'], true, 'counselor_input'),
   },
   sanitized_input: { sources: { transcript_text: 'Counselor: Synthetic question\nClient: Synthetic response', counselor_memo: 'Synthetic session memo' } },
   evidence_mapped_data: { items: Array.from({ length: 12 }, () => ({ content: 'Unrelated extracted item', source_refs: ['counselor_memo'] })) },
@@ -97,8 +102,8 @@ const sectionSource = parsedPage.statements.filter(statement => (
 const sectionJs = ts.transpileModule(sectionSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText
-const buildDocumentSections = new Function('summarySectionEvidence', 'riskInformation', 'buildGroundingReviewItems', 'sessionThemeText', `${sectionJs}\nreturn buildDocumentSections`)(
-  summarySectionEvidence, riskInformation, () => [], () => 'Synthetic theme',
+const buildDocumentSections = new Function('summarySectionEvidence', 'riskInformation', 'buildGroundingReviewItems', 'sessionThemeText', 'formatRelationalSupervisionMemo', `${sectionJs}\nreturn buildDocumentSections`)(
+  summarySectionEvidence, riskInformation, () => [], () => 'Synthetic theme', formatRelationalSupervisionMemo,
 )
 const renderedNote = { ...note, session_summary: note.full_response.session_summary_draft.session_content.text,
   evidence_check: [{ claim: 'Unrelated extraction', source_type: 'previous_summary', source_excerpt: 'Old context', confidence: 'high' }] }
