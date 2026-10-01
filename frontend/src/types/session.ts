@@ -385,6 +385,18 @@ export interface GeneratedNoteRecord {
   draft_json: Record<string, unknown>
   confirmed_json: Record<string, unknown>
   confirmation_status: string
+  /** De-identified session input stored at generation time; null when unavailable. */
+  session_input?: StoredSessionInput | null
+}
+
+export interface StoredSessionInput {
+  counselor_memo: string
+  transcript_text: string
+  previous_session_summary: string
+  counseling_goal: string
+  psychological_test_summary: string
+  key_issue_tags: string[]
+  nonverbal_notes: string
 }
 
 export interface RecomposeNoteRequest {

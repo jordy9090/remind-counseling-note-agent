@@ -26,6 +26,7 @@ from app.schemas.note import (
     ConfirmGeneratedNoteResponse,
     GenerateNoteResponse,
     GeneratedNoteRecord,
+    InputSources,
     PersistenceReport,
     SessionInput,
     SupervisionReportDraft,
@@ -410,7 +411,7 @@ def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
     if not getattr(actor_storage, "configured", settings.supabase_configured):
         raise NoteConfirmationError(503, "저장소 연결을 확인할 수 없습니다.")
     note = _fetch_generated_note(note_id, actor=actor, actor_storage=actor_storage)
-    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
+    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage, include_input=True)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
     return GeneratedNoteRecord(
@@ -423,7 +424,21 @@ def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
         draft_json=note.get("draft_json") or {},
         confirmed_json=note.get("confirmed_json") or {},
         confirmation_status=str(note.get("confirmation_status") or "draft"),
+        session_input=_stored_session_input(session),
     )
+
+
+def _stored_session_input(session: dict[str, Any]) -> InputSources | None:
+    """Parse the de-identified sources saved with the session; never raises for legacy/malformed rows."""
+    raw = session.get("sanitized_input_text")
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+        sources = payload.get("sources") if isinstance(payload, dict) else None
+        return InputSources(**sources) if isinstance(sources, dict) else None
+    except (ValueError, TypeError):
+        return None
 
 
 def _fetch_generated_note(
@@ -452,14 +467,16 @@ def _fetch_session_for_note(
     *,
     actor: str,
     actor_storage: SupabaseStorage,
+    include_input: bool = False,
 ) -> dict[str, Any]:
     session_id = str(note.get("session_id") or "")
+    columns = "id,case_id,session_number,session_date,session_title,user_id"
     session = actor_storage.maybe_single(
         "sessions",
         {
             "id": f"eq.{session_id}",
             "user_id": f"eq.{actor}",
-            "select": "id,case_id,session_number,session_date,session_title,user_id",
+            "select": f"{columns},sanitized_input_text" if include_input else columns,
         },
     )
     if session is None:

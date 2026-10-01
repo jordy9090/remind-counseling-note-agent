@@ -61,6 +61,22 @@ console.log('Confirmed string/object/sections values and intentional empty strin
   console.log('Restore -> edit -> reconfirm; missing/empty/malformed distinctions and AI immutability: passed')
 }
 
+{
+  const stored = { counselor_memo: 'Stored memo', transcript_text: 'Stored transcript', previous_session_summary: '',
+    counseling_goal: 'Goal', psychological_test_summary: 'Test', key_issue_tags: ['a', 1], nonverbal_notes: 'Notes' }
+  const restored = workflow.sessionInputFromRecord({ ...record({}), session_input: stored })
+  assert.deepEqual(restored, { ...stored, key_issue_tags: ['a'] })
+  assert.equal(workflow.hasRestoredInput(restored), true)
+  for (const missing of [undefined, null, 'broken', { transcript_text: 5 }]) {
+    const empty = workflow.sessionInputFromRecord({ ...record({}), session_input: missing })
+    assert.equal(empty.transcript_text, '')
+    assert.equal(empty.counselor_memo, '')
+    assert.deepEqual(empty.key_issue_tags, [])
+    assert.equal(workflow.hasRestoredInput(empty), false)
+  }
+  console.log('Stored session input restore (present, missing, malformed): passed')
+}
+
 const { temporaryDraftPayload } = await loadModule('temporaryDraft')
 const fixture = JSON.parse(fs.readFileSync('scripts/fixtures/temporary-draft.json', 'utf8'))
 const originalFixture = structuredClone(fixture)

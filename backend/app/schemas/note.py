@@ -291,6 +291,9 @@ class GeneratedNoteRecord(BaseModel):
     draft_json: dict[str, Any]
     confirmed_json: dict[str, Any]
     confirmation_status: str
+    # De-identified session input stored at generation time (sessions.sanitized_input_text).
+    # None for sessions without a readable stored input.
+    session_input: InputSources | None = None
 
 
 class TemporaryDraftSaveRequest(BaseModel):
