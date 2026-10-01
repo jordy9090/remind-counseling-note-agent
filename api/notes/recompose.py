@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.note import RecomposeNoteRequest, RecomposeNoteResponse  # noqa: E402
 from app.services.recompose_cache import recompose_note_with_cache  # noqa: E402
+from app.services.summary_quality import SummaryQualityError  # noqa: E402
 
 app = FastAPI(title="Re:mind Note Recompose API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -30,6 +31,8 @@ async def recompose_note_draft(
 ) -> RecomposeNoteResponse:
     try:
         return recompose_note_with_cache(request, actor=actor)
+    except SummaryQualityError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(
             status_code=500,

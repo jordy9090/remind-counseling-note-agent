@@ -37,6 +37,7 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
+from app.services.summary_quality import SummaryQualityError, summary_quality_issues
 from app.services.deidentification import deidentify_sources, render_counselor_text
 from app.services.supabase_storage import _storage_for_actor
 from app.services.grounded_generation import (
@@ -379,7 +380,20 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         case_context,
         template_context,
     )
-    summary = get_structured_llm(SessionSummaryDraft).invoke(prompt)
+    llm = get_structured_llm(SessionSummaryDraft)
+    summary = llm.invoke(prompt)
+    quality_issues = summary_quality_issues(summary)
+    if quality_issues:
+        summary = llm.invoke(
+            prompt
+            + "\n\n아래 초안은 요약 형식 검사를 통과하지 못했습니다. 원래 입력과 근거만 사용하여 한 번 다시 작성하세요."
+            + " 사실, 화자, source_refs와 불확실성을 유지하고 문제가 없는 항목은 유지하세요."
+            + " 새로운 개입·변화·계획을 보충하지 마세요. 검사 사유는 출력에 포함하지 마세요."
+            + "\n항목별 수정 사유:\n" + _json(quality_issues)
+            + "\n수정할 초안:\n" + _json(summary)
+        )
+        if summary_quality_issues(summary):
+            raise SummaryQualityError()
     _normalize_summary_refs(summary, sanitized, case_context)
     if not re.search(r"(상담자\s*성찰|상담자의\s*(?:내적|정서적)\s*(?:반응|경험)|역전이)", sanitized.sources.counselor_memo):
         summary.reflection = SummarySection(
@@ -1035,6 +1049,10 @@ You are generating structured counseling documentation data for Re:mind V1.
 Role: documentation assistant for a counselor, not a clinician and not a supervisor.
 Task: extract and structure only what is supported by allowed sources.
 Language: write every content field in natural Korean; preserve direct Korean client quotations in Korean.
+화자 구분: 상담자의 질문·반영·확인은 counselor_interventions에, 그에 대한 내담자의 표현과 반응은
+client_responses에 분리하세요. 화자를 확정할 수 없으면 추정 배정하지 말고 needs_review로 표시하세요.
+session_content에는 주요 사건과 회기에서 다룬 흐름을 간결한 3인칭 기록체로 정리하세요.
+발화를 그대로 모아 붙이지 마세요. 직접 인용이 필요한 핵심 발화는 key_client_utterances에 따로 보존하세요.
 Output schema: return only fields allowed by the Pydantic schema.
 Source precedence:
 1. current-session counselor-confirmed input
@@ -1077,6 +1095,24 @@ def _build_summary_prompt(
 Generate an editable Korean counseling session summary draft.
 Role: Korean counseling documentation drafting assistant.
 Task: draft editable text, not final clinical judgment.
+작성 형식: 상담사가 읽는 회기 기록입니다. 대화 상대에게 말하듯 작성하지 말고
+"내담자는 …을 표현함", "상담자는 …을 탐색함"과 같은 간결한 3인칭 기록체로 작성하세요.
+축어록을 발췌·연결하거나 화자 표지를 붙인 대화문으로 출력하지 마세요.
+의미를 재서술하고 반복 발화는 압축하세요. 핵심 의미를 보존하는 짧은 인용은 기록 문장 안에만 넣을 수 있습니다.
+아래 문장 수는 충분한 근거가 있을 때의 목표입니다. 자료가 적으면 짧게 쓰고 분량을 채우기 위해 사실을 보충하지 마세요.
+항목별 역할:
+- presenting_problem: 이번 회기에 가져온 사건과 어려움 1–2문장. 회기 전체 주제와 구분하세요.
+- session_theme: 회기에서 반복되거나 연결되어 다룬 핵심 주제 1문장. 진단·사례개념화를 새로 만들지 마세요.
+- session_content: 주요 사건과 감정, 회기 중 탐색의 흐름을 3–5개의 간결한 문장으로 통합하세요.
+  입력에서 확인되는 개입 → 내담자 반응 → 여전히 남은 어려움을 연결하되, 없는 단계는 만들지 마세요.
+  상담자의 질문을 내담자의 발화나 경험으로 섞지 마세요.
+- counselor_intervention: 실제 상담자가 한 질문·반영·탐색의 대상과 내용을 1–3문장으로 요약하세요.
+  질문을 그대로 나열하거나 실제로 하지 않은 기법·효과를 추가하지 마세요.
+- client_response: 개입에 대한 내담자의 표현·반응과 남은 어려움을 1–3문장으로 정리하세요.
+  단순 동의나 발화를 통찰·호전·목표 달성으로 확대 해석하지 마세요.
+- next_plan: 입력에서 확인되는 다음 회기 계획만 1–2문장으로 기록하세요.
+  상담자의 제안은 "제안함"으로, 명시적으로 합의한 계획만 "하기로 함"으로 구분하세요.
+- reflection: 상담자가 직접 기록한 성찰만 정리하고, 없으면 상담사 확인 필요로 남기세요.
 Each section must include evidence_type and source_refs.
 Source precedence:
 1. current-session counselor-confirmed input

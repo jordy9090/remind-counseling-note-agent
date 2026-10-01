@@ -45,6 +45,8 @@ jobs:
             test_raw_window_pipeline \
             test_case_list \
             test_vercel_wrappers \
+            test_summary_quality \
+            test_summary_generation_routes \
             test_document_rich_text
 
   backend-pdf-export:
@@ -118,6 +120,7 @@ jobs:
         run: |
           pnpm verify:material-workflow
           pnpm verify:audio-transcript-workflow
+          pnpm verify:summary-evidence
 
       - name: Build frontend
         working-directory: frontend

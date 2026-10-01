@@ -313,6 +313,8 @@ export interface ConfirmGeneratedNoteResponse {
 export type EvidenceSourceType =
   | 'transcript'
   | 'counselor_memo'
+  | 'counselor_input'
+  | 'psychological_test'
   | 'previous_summary'
   | 'retrieved_context'
   | 'template_context'

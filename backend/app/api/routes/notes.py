@@ -7,7 +7,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.security import require_preview_access
-from app.core.config import settings
 from app.graph.graph import run_note_pipeline
 from app.graph.supervision_report import run_supervision_report_pipeline
 from app.schemas.note import (
@@ -26,6 +25,7 @@ from app.schemas.note import (
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
+from app.services.summary_quality import SummaryQualityError
 from app.services.supabase_storage import (
     NoteConfirmationError,
     confirm_generated_note,
@@ -77,6 +77,8 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
     """Regenerate a note draft for the selected checklist configuration."""
     try:
         return recompose_note_with_cache(request, actor=actor)
+    except SummaryQualityError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(
@@ -123,23 +125,19 @@ async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> l
 
 
 def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:
+    """Generate once and persist only success; retain the helper name for wrappers.
+
+    Explicit demo mode still runs the configured stub. A failed real generation
+    must never switch shared settings or replace a user's record with demo text.
+    """
     try:
         result = run_note_pipeline(session_input, actor=actor)
-        result.persistence_report = persist_generated_note(session_input, result, actor=actor)
-        return result
+    except SummaryQualityError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception as error:
-        traceback.print_exc()
-        original_use_stub = settings.use_stub
-        try:
-            settings.use_stub = True
-            result = run_note_pipeline(session_input, actor=actor)
-            result.persistence_report = persist_generated_note(session_input, result, actor=actor)
-            return result
-        except Exception:
-            traceback.print_exc()
-            raise HTTPException(
-                status_code=500,
-                detail=f"회기요약 생성 중 오류가 발생했습니다: {str(error)}",
-            )
-        finally:
-            settings.use_stub = original_use_stub
+        raise HTTPException(
+            status_code=502,
+            detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
+        ) from error
+    result.persistence_report = persist_generated_note(session_input, result, actor=actor)
+    return result

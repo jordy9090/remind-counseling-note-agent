@@ -87,6 +87,7 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
+import { riskInformation, summarySectionEvidence } from '../lib/summaryEvidence'
 import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord, sessionThemeText } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
 import {
@@ -179,6 +180,8 @@ type MaterialModalMode =
 
 type SourceBadgeKind =
   | 'memo'
+  | 'counselor_input'
+  | 'psychological_test'
   | 'transcript'
   | 'previous'
   | 'case_memory'
@@ -3428,7 +3431,7 @@ function buildDocumentSections(
     content,
     id,
     title,
-    baseEvidence = findEvidenceForSection(content, evidenceItems),
+    baseEvidence,
     forceBadges = [],
     toggleable = true,
   }: {
@@ -3439,9 +3442,19 @@ function buildDocumentSections(
     title: string
     toggleable?: boolean
   }): DraftSection => {
-    const compactEvidence = baseEvidence.map(toCompactEvidence)
-    const sourceBadges = buildSourceBadges(baseEvidence, forceBadges)
-    const confidence = buildSectionConfidence(baseEvidence)
+    const finalEvidence = summarySectionEvidence(result, id)
+    const sectionEvidence = baseEvidence ?? finalEvidence?.evidence ?? findEvidenceForSection(content, evidenceItems)
+    const reviewRequired = baseEvidence === undefined && finalEvidence?.requiresReview
+    const compactEvidence = sectionEvidence.map((item) => {
+      const compact = toCompactEvidence(item)
+      return { ...compact, needsReview: Boolean(reviewRequired) || compact.needsReview }
+    })
+    const sourceBadges = buildSourceBadges(sectionEvidence, [
+      ...forceBadges,
+      ...(reviewRequired ? ['needs_review' as const] : []),
+      ...(baseEvidence === undefined && finalEvidence?.inferred ? ['ai' as const] : []),
+    ])
+    const confidence = buildSectionConfidence(sectionEvidence)
 
     return {
       id,
@@ -3488,7 +3501,7 @@ function buildDocumentSections(
       id: 'session_content',
       title: '상담 내용',
       content: result.session_summary || '생성된 상담 내용 요약이 없습니다.',
-      baseEvidence: evidenceItems.length ? evidenceItems : [],
+      baseEvidence: result.full_response ? undefined : evidenceItems,
     }),
     makeSection({
       id: 'counselor_intervention',
@@ -3499,7 +3512,7 @@ function buildDocumentSections(
       id: 'client_response',
       title: '내담자 반응',
       content: result.client_response || '내담자 반응을 상담사가 확인해 주세요.',
-      forceBadges: ['needs_review'],
+      forceBadges: result.full_response ? [] : ['needs_review'],
     }),
     makeSection({
       id: 'next_plan',
@@ -3520,9 +3533,8 @@ function buildDocumentSections(
     makeSection({
       id: 'risk_signal',
       title: '위험 신호',
-      content: '입력 자료에서 직접 확인된 위험 신호는 없습니다. 필요 시 상담사가 별도로 확인해 주세요.',
-      baseEvidence: [],
-      forceBadges: ['ai', 'needs_review'],
+      content: riskInformation(result).text,
+      forceBadges: ['needs_review'],
     }),
     makeSection({
       id: 'supervision_memo',
@@ -4161,6 +4173,8 @@ const textareaClass =
 const sourceTypeToBadge: Record<EvidenceSourceType, SourceBadgeKind> = {
   transcript: 'transcript',
   counselor_memo: 'memo',
+  counselor_input: 'counselor_input',
+  psychological_test: 'psychological_test',
   previous_summary: 'previous',
   retrieved_context: 'case_memory',
   template_context: 'template',
@@ -4171,6 +4185,8 @@ const sourceTypeToBadge: Record<EvidenceSourceType, SourceBadgeKind> = {
 const sourceTypeLabel: Record<EvidenceSourceType, string> = {
   transcript: '축어록/STT',
   counselor_memo: '상담사 메모',
+  counselor_input: '상담사 입력',
+  psychological_test: '심리검사 요약',
   previous_summary: '이전 회기 요약',
   retrieved_context: '저장된 이전 회기',
   template_context: '문서 양식 KB',
@@ -4180,6 +4196,8 @@ const sourceTypeLabel: Record<EvidenceSourceType, string> = {
 
 const sourceBadgeMeta: Record<SourceBadgeKind, { className: string; label: string }> = {
   memo: { label: '메모 기반', className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  counselor_input: { label: '상담사 입력 기반', className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  psychological_test: { label: '심리검사 요약 기반', className: 'bg-violet-50 text-violet-700 ring-violet-200' },
   transcript: { label: '축어록 기반', className: 'bg-blue-50 text-blue-700 ring-blue-200' },
   previous: { label: '이전 회기 기반', className: 'bg-sky-50 text-sky-700 ring-sky-200' },
   case_memory: { label: '저장 회기 기반', className: 'bg-cyan-50 text-cyan-700 ring-cyan-200' },
