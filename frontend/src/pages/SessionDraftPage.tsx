@@ -85,7 +85,7 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
-import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord } from '../lib/persistenceWorkflow'
+import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord, sessionThemeText } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
 import {
   customChecklistId,
@@ -3411,6 +3411,10 @@ function buildDocumentSections(
     }
   }
 
+  // Without a counselor-entered topic the section shows the generated theme, matched against
+  // the generated evidence like the other AI-drafted sections.
+  const hasCounselorTopic = Boolean(sessionTopic.trim())
+  const sessionTheme = sessionThemeText(sessionTopic, result)
   const sessionThemeEvidence: EvidenceCheckItem[] = form.counselor_memo
     ? [
         {
@@ -3431,8 +3435,8 @@ function buildDocumentSections(
     makeSection({
       id: 'session_theme',
       title: '회기 주제',
-      content: sessionTopic || '회기 주제를 입력해 주세요.',
-      baseEvidence: sessionThemeEvidence,
+      content: sessionTheme || '회기 주제를 입력해 주세요.',
+      baseEvidence: hasCounselorTopic ? sessionThemeEvidence : undefined,
     }),
     makeSection({
       id: 'session_content',
