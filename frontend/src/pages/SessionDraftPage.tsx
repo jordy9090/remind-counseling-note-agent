@@ -71,6 +71,7 @@ import ClientFormModal, { type ClientFormInitial } from '../components/clients/C
 import ClientPickerModal from '../components/clients/ClientPickerModal'
 import DocumentArchivePage from '../components/documents/DocumentArchivePage'
 import SettingsPage from '../components/settings/SettingsPage'
+import FinalDocumentEditor from '../components/final-document/FinalDocumentEditor'
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionRecordModal, { type SessionTime } from '../components/session-input/SessionRecordModal'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
@@ -356,6 +357,8 @@ export default function SessionDraftPage({
   const [isExportingDocument, setIsExportingDocument] = useState(false)
   const [documentExportError, setDocumentExportError] = useState<string | null>(null)
   const [documentExportStatus, setDocumentExportStatus] = useState<string | null>(null)
+  // Local last-edited time shown as "YYYY.MM.DD 수정됨" on the final document card.
+  const [finalDocumentEditedAt, setFinalDocumentEditedAt] = useState<Date | null>(null)
   const [documentCapabilities, setDocumentCapabilities] = useState<DocumentCapabilitiesResponse | null>(null)
   const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
@@ -1164,6 +1167,7 @@ export default function SessionDraftPage({
     setFinalDocumentError(null)
     setDocumentExportError(null)
     setDocumentExportStatus(null)
+    setFinalDocumentEditedAt(new Date())
     await refreshDocumentCapabilities()
 
     if (documentType === 'supervision_report') {
@@ -1228,6 +1232,7 @@ export default function SessionDraftPage({
     if (!editingSupervisionBlockId) return
     const blockId = editingSupervisionBlockId
     const nextText = editingSupervisionText
+    setFinalDocumentEditedAt(new Date())
     setSupervisionReportDraft((current) => {
       if (!current) return current
       return {
@@ -1551,7 +1556,8 @@ export default function SessionDraftPage({
             clientName={clientDisplayName}
             sessionNumber={form.session_number}
             isSavingDraft={isSavingDraft}
-            showTemporarySave={currentScreen === 'summary_draft'}
+            showTemporarySave={currentScreen === 'summary_draft' || currentScreen === 'final_document'}
+            title={currentScreen === 'final_document' ? `${clientDisplayName} · ${form.session_number}회기 ${finalDocumentMeta[finalDocumentType].title}` : undefined}
             onBack={currentScreen === 'summary_draft' ? leaveWorkflow : () => setCurrentScreen(currentScreen === 'final_document' ? 'document_transform' : 'summary_draft')}
             onTemporarySave={handleTemporarySave}
             onRestore={() => {
@@ -1683,74 +1689,48 @@ export default function SessionDraftPage({
             )}
 
             {currentScreen === 'final_document' && result && (
-              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
-                <section className="min-w-0">
-                  {finalDocumentType === 'supervision_report' ? (
-                    <SupervisionReportWorkspace
-                      editingBlockId={editingSupervisionBlockId}
-                      editingText={editingSupervisionText}
-                      error={finalDocumentError}
-                      expandedEvidenceId={expandedSupervisionEvidenceId}
-                      isLoading={isGeneratingFinalDocument}
-                      report={supervisionReportDraft}
-                      onBeginEdit={beginEditSupervisionBlock}
-                      onChangeEditingText={setEditingSupervisionText}
-                      onCommitEdit={commitEditSupervisionBlock}
-                      onToggleEvidence={setExpandedSupervisionEvidenceId}
-                    />
-                  ) : (
-                    <FinalDocumentWorkspace
-                      documentType={finalDocumentType}
-                      form={form}
-                      sections={finalDocumentSections}
-                      selectedGroundingClaimId={selectedGroundingClaimId}
-                      selectedGroundingItem={selectedFinalGroundingItem}
-                      onCloseGrounding={() => setSelectedGroundingClaimId(null)}
-                      onSelectGrounding={setSelectedGroundingClaimId}
-                      onChangeSectionContent={(sectionId, content) =>
-                        setFinalDocumentSections((current) =>
-                          current.map((section) => (
-                            section.id === sectionId
-                              ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
-                              : section
-                          )),
-                        )
-                      }
-                    />
-                  )}
-                </section>
-                {finalDocumentType === 'supervision_report' && supervisionReportDraft ? (
-                  <SupervisionReviewPanel
-                    aiReview={supervisionReportDraft.aiReview}
-                    capabilities={documentCapabilities}
-                    capabilitiesError={documentCapabilitiesError}
-                    draftSaveMessage={null}
-                    exportError={documentExportError}
-                    exportStatus={documentExportStatus}
-                    isExporting={isExportingDocument}
-                    isSavingDraft={isSavingDraft}
-                    onBack={() => setCurrentScreen('document_transform')}
-                    onDownload={handleDownloadDocument}
-                    onTemporarySave={handleTemporarySave}
+              <FinalDocumentEditor
+                title={`${form.session_number}회기 ${finalDocumentMeta[finalDocumentType].title}`}
+                editedAt={finalDocumentEditedAt}
+                capabilities={documentCapabilities}
+                isExporting={isExportingDocument}
+                exportStatus={documentExportStatus}
+                exportError={documentExportError || documentCapabilitiesError}
+                onDownload={(format) => void handleDownloadDocument(format)}
+              >
+                {finalDocumentType === 'supervision_report' ? (
+                  <SupervisionReportWorkspace
+                    editingBlockId={editingSupervisionBlockId}
+                    editingText={editingSupervisionText}
+                    error={finalDocumentError}
+                    expandedEvidenceId={expandedSupervisionEvidenceId}
+                    isLoading={isGeneratingFinalDocument}
+                    report={supervisionReportDraft}
+                    onBeginEdit={beginEditSupervisionBlock}
+                    onChangeEditingText={setEditingSupervisionText}
+                    onCommitEdit={commitEditSupervisionBlock}
+                    onToggleEvidence={setExpandedSupervisionEvidenceId}
                   />
                 ) : (
-                  <FinalReviewPanel
-                    documentType={finalDocumentType}
-                    capabilities={documentCapabilities}
-                    capabilitiesError={documentCapabilitiesError}
-                    draftSaveMessage={null}
-                    exportError={documentExportError}
-                    exportStatus={documentExportStatus}
-                    isExporting={isExportingDocument}
-                    isSavingDraft={isSavingDraft}
-                    missingItems={result?.missing_items || []}
-                    warnings={result?.warnings || []}
-                    onBack={() => setCurrentScreen('document_transform')}
-                    onDownload={handleDownloadDocument}
-                    onTemporarySave={handleTemporarySave}
+                  <FinalDocumentWorkspace
+                    sections={finalDocumentSections}
+                    selectedGroundingClaimId={selectedGroundingClaimId}
+                    selectedGroundingItem={selectedFinalGroundingItem}
+                    onCloseGrounding={() => setSelectedGroundingClaimId(null)}
+                    onSelectGrounding={setSelectedGroundingClaimId}
+                    onChangeSectionContent={(sectionId, content) => {
+                      setFinalDocumentEditedAt(new Date())
+                      setFinalDocumentSections((current) =>
+                        current.map((section) => (
+                          section.id === sectionId
+                            ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
+                            : section
+                        )),
+                      )
+                    }}
                   />
                 )}
-              </div>
+              </FinalDocumentEditor>
             )}
           </div>
         )}
@@ -1840,11 +1820,13 @@ function WorkflowHeader({
   sessionNumber,
   isSavingDraft,
   showTemporarySave,
+  title,
   onBack,
   onTemporarySave,
   onRestore,
 }: {
   clientName: string
+  title?: string
   sessionNumber: number
   isSavingDraft: boolean
   showTemporarySave: boolean
@@ -1859,7 +1841,7 @@ function WorkflowHeader({
           <ChevronLeft className="h-5 w-5" />
           <span>뒤로가기</span>
           <span className="text-grey-300">|</span>
-          <span className="font-extrabold text-grey-900">{clientName} · {sessionNumber}회기</span>
+          <span className="font-extrabold text-grey-900">{title || `${clientName} · ${sessionNumber}회기`}</span>
         </button>
         <div className="workflow-actions">
           <button type="button" onClick={onRestore} className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-grey-500 hover:bg-white">
@@ -2284,8 +2266,6 @@ function DocumentTransformWorkspace({
 }
 
 function FinalDocumentWorkspace({
-  documentType,
-  form,
   onChangeSectionContent,
   onCloseGrounding,
   onSelectGrounding,
@@ -2293,8 +2273,6 @@ function FinalDocumentWorkspace({
   selectedGroundingItem,
   sections,
 }: {
-  documentType: FinalDocumentType
-  form: SessionInput
   onChangeSectionContent: (sectionId: string, content: string) => void
   onCloseGrounding: () => void
   onSelectGrounding: (claimId: string) => void
@@ -2302,68 +2280,34 @@ function FinalDocumentWorkspace({
   selectedGroundingItem: GroundingReviewItem | null
   sections: FinalDocumentSection[]
 }) {
-  const documentMeta = finalDocumentMeta[documentType]
-
   return (
-    <section className="rounded-[7px] border border-slate-200 bg-white shadow-sm">
-      <div className="rounded-t-[7px] bg-blue-600 px-4 py-3 text-white">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-normal">{documentMeta.title}</h1>
-            <p className="mt-1.5 text-xs font-bold text-blue-50">
-              내담자: {getClientDisplayName(form)} / 회기:{form.session_number}회기 / 날짜:{form.session_date}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="px-4 py-3">
-        <p className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-slate-600">
-          <Info className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-          아래 내용은 최종 파일에 그대로 반영됩니다.
-        </p>
-      </div>
-
-      <div className="space-y-0 px-4 pb-5">
-        {sections.map((section) => {
-          const SectionIcon = getFinalDocumentSectionIcon(section.title)
-
-          return (
-            <section key={section.id} className="border-b border-[#c7d0df] py-5 last:border-b-0">
-              <label htmlFor={`final-section-${section.id}`} className="flex items-center gap-1.5 pb-2 text-base font-bold text-blue-700">
-                <SectionIcon className="h-4 w-4 shrink-0" />
-                {section.title}
-              </label>
-              <textarea
-                id={`final-section-${section.id}`}
-                value={section.content}
-                onChange={(event) => onChangeSectionContent(section.id, event.target.value)}
-                className="mt-3 min-h-[110px] w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-              <GroundingEvidenceReview
-                items={section.groundingItems}
-                onSelect={onSelectGrounding}
-                renderedText={section.content}
-                selectedClaimId={selectedGroundingClaimId}
-              />
-            </section>
-          )
-        })}
-        {!sections.length && (
-          <p className="py-10 text-center text-sm font-semibold text-slate-500">표시할 최종문서 섹션이 없습니다.</p>
-        )}
-      </div>
+    <div className="text-grey-900">
+      {sections.map((section, index) => (
+        <section key={section.id} className={index ? 'mt-7' : ''}>
+          <label htmlFor={`final-section-${section.id}`} className="block text-[15px] font-bold text-grey-900">
+            {section.title}
+          </label>
+          <textarea
+            id={`final-section-${section.id}`}
+            value={section.content}
+            onChange={(event) => onChangeSectionContent(section.id, event.target.value)}
+            rows={Math.max(2, section.content.split('\n').length)}
+            className="mt-2 w-full resize-none rounded-[6px] border border-transparent bg-transparent px-1.5 py-1 text-sm leading-7 text-grey-800 outline-none [field-sizing:content] hover:bg-grey-100/60 focus:border-primary-100 focus:bg-white"
+          />
+          <GroundingEvidenceReview
+            items={section.groundingItems}
+            onSelect={onSelectGrounding}
+            renderedText={section.content}
+            selectedClaimId={selectedGroundingClaimId}
+          />
+        </section>
+      ))}
+      {!sections.length && (
+        <p className="py-10 text-center text-sm font-semibold text-grey-500">표시할 최종문서 섹션이 없습니다.</p>
+      )}
       {selectedGroundingItem ? <EvidenceDrawer item={selectedGroundingItem} onClose={onCloseGrounding} /> : null}
-    </section>
+    </div>
   )
-}
-
-function getFinalDocumentSectionIcon(title: string): LucideIcon {
-  if (title.includes('심리검사')) return ClipboardCheck
-  if (title.includes('강점') || title.includes('자원')) return PenLine
-  if (title.includes('상담자') || title.includes('개입')) return Edit3
-  if (title.includes('내용') || title.includes('계획') || title.includes('요청')) return FileText
-  return Bookmark
 }
 
 function SupervisionReportWorkspace({
@@ -2391,7 +2335,7 @@ function SupervisionReportWorkspace({
 }) {
   if (isLoading) {
     return (
-      <div className="flex min-h-[420px] items-center justify-center rounded-[8px] border border-slate-200 bg-white shadow-sm">
+      <div className="flex min-h-[420px] items-center justify-center">
         <div className="text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-700" />
           <p className="mt-4 text-sm font-bold text-slate-900">개인상담 사례 수퍼비전 보고서 초안을 생성 중입니다.</p>
@@ -2421,12 +2365,12 @@ function SupervisionReportWorkspace({
   const editableSections = report.sections.filter((section) => section.level !== 1)
 
   return (
-    <div className="overflow-x-auto rounded-[8px] bg-slate-200/70 px-3 py-6 sm:px-6">
-      <section className="mx-auto min-h-[1120px] w-full max-w-[794px] bg-white px-5 py-7 text-slate-950 shadow-[0_10px_35px_rgba(15,23,42,0.16)] sm:px-10 sm:py-10">
+    <div className="overflow-x-auto">
+      <section className="w-full text-slate-950">
         <div className="mb-3 text-[11px] font-semibold text-slate-500">
           <span>내담자: {cleanSupervisionText(report.meta.clientAlias)} · {report.meta.sessionNumber}회기 · {formatCompactDate(report.meta.reportDate)}</span>
         </div>
-        <h1 className="border-2 border-slate-900 px-3 py-4 text-center text-xl font-extrabold tracking-tight sm:text-2xl">{report.title}</h1>
+        <h2 className="text-[15px] font-bold text-grey-900">{report.title}</h2>
 
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[620px] border-collapse text-[12px] sm:text-[13px]">
@@ -2656,69 +2600,6 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   )
 }
 
-function SupervisionReviewPanel({
-  aiReview,
-  capabilities,
-  capabilitiesError,
-  draftSaveMessage,
-  exportError,
-  exportStatus,
-  isExporting,
-  isSavingDraft,
-  onBack,
-  onDownload,
-  onTemporarySave,
-}: {
-  aiReview: SupervisionAiReviewPanel
-  capabilities: DocumentCapabilitiesResponse | null
-  capabilitiesError: string | null
-  draftSaveMessage: string | null
-  exportError: string | null
-  exportStatus: string | null
-  isExporting: boolean
-  isSavingDraft: boolean
-  onBack: () => void
-  onDownload: (format: DocumentExportFormat) => void
-  onTemporarySave: () => void
-}) {
-  return (
-    <aside className="review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div>
-        <p className="text-lg font-extrabold text-slate-950">문서 작업</p>
-        <button
-          type="button"
-          onClick={onBack}
-          className="mt-4 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          이전 단계
-        </button>
-      </div>
-
-      <div className="mt-auto space-y-3 pt-8">
-        {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
-        <button
-          type="button"
-          onClick={onTemporarySave}
-          disabled={isSavingDraft}
-          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-slate-400 bg-white px-3 text-sm font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
-        >
-          {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {isSavingDraft ? '저장중' : '임시저장'}
-        </button>
-        <DownloadControls
-          capabilities={capabilities}
-          capabilitiesError={capabilitiesError}
-          error={exportError}
-          isExporting={isExporting}
-          status={exportStatus}
-          onDownload={onDownload}
-        />
-      </div>
-    </aside>
-  )
-}
-
 function SupervisionReviewGroup({
   emptyLabel = '현재 표시할 항목이 없습니다.',
   items,
@@ -2846,175 +2727,6 @@ function RetrievalMiniSection({
           </li>
         ))}
       </ul>
-    </section>
-  )
-}
-
-function FinalReviewPanel({
-  documentType,
-  capabilities,
-  capabilitiesError,
-  draftSaveMessage,
-  exportError,
-  exportStatus,
-  isExporting,
-  isSavingDraft,
-  missingItems,
-  onBack,
-  onDownload,
-  onTemporarySave,
-  warnings,
-}: {
-  documentType: FinalDocumentType
-  capabilities: DocumentCapabilitiesResponse | null
-  capabilitiesError: string | null
-  draftSaveMessage: string | null
-  exportError: string | null
-  exportStatus: string | null
-  isExporting: boolean
-  isSavingDraft: boolean
-  missingItems: string[]
-  onBack: () => void
-  onDownload: (format: DocumentExportFormat) => void
-  onTemporarySave: () => void
-  warnings: string[]
-}) {
-  return (
-    <aside className="review-panel-compact flex flex-col rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div>
-        <div className="flex items-center gap-2">
-          <Workflow className="h-4 w-4 text-blue-700" />
-          <p className="text-lg font-extrabold text-slate-950">AI 검토</p>
-        </div>
-        <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
-          {finalDocumentMeta[documentType].title}에서 상담사 확인이 필요한 항목입니다.
-        </p>
-        <button
-          type="button"
-          onClick={onBack}
-          className="mt-4 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          이전 단계
-        </button>
-      </div>
-
-      <FinalReviewCard
-        title="수정 필요"
-        items={['상담 목표 표현 구체화 필요', '내담자 반응 서술 보완 권장', '다음 회기 계획 구체화 필요']}
-      />
-      <FinalReviewCard
-        title="누락 가능"
-        items={
-          missingItems.length
-            ? missingItems.slice(0, 3)
-            : ['과제 수행 여부 추가 확인 필요', '감정 변화 정도 보완 필요', '상담자 개입 내용 추가 기록 권장']
-        }
-      />
-      <FinalReviewCard
-        title="근거 확인"
-        items={
-          warnings.length
-            ? warnings.slice(0, 3)
-            : ['요약 문장의 원문 근거 확인 필요', '해석 표현의 근거 보강 필요', '이전 회기와의 연결 근거 확인 필요']
-        }
-      />
-
-      <div className="mt-auto space-y-3 pt-8">
-        {draftSaveMessage && <p className="text-xs font-semibold text-slate-500">{draftSaveMessage}</p>}
-        <button
-          type="button"
-          onClick={onTemporarySave}
-          disabled={isSavingDraft}
-          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-slate-400 bg-white px-3 text-sm font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
-        >
-          {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {isSavingDraft ? '저장중' : '임시저장'}
-        </button>
-        <DownloadControls
-          capabilities={capabilities}
-          capabilitiesError={capabilitiesError}
-          error={exportError}
-          isExporting={isExporting}
-          status={exportStatus}
-          onDownload={onDownload}
-        />
-      </div>
-    </aside>
-  )
-}
-
-function DownloadControls({
-  capabilities,
-  capabilitiesError,
-  error,
-  isExporting,
-  onDownload,
-  status,
-}: {
-  capabilities: DocumentCapabilitiesResponse | null
-  capabilitiesError: string | null
-  error: string | null
-  isExporting: boolean
-  onDownload: (format: DocumentExportFormat) => void
-  status: string | null
-}) {
-  const pdfUnavailableReason = !capabilities
-    ? '문서 내보내기 지원 상태를 확인한 뒤 PDF를 사용할 수 있습니다.'
-    : capabilities.pdf.available === false
-      ? capabilityReasonToKorean(capabilities.pdf.reason)
-      : capabilitiesError
-        ? '문서 내보내기 지원 상태를 확인하지 못해 PDF 다운로드를 비활성화했습니다.'
-        : null
-  const pdfDisabled = isExporting || Boolean(pdfUnavailableReason)
-
-  return (
-    <div className="rounded-[8px] border border-slate-200 bg-slate-50 p-3">
-      <div className="flex items-center gap-2 text-sm font-extrabold text-slate-950">
-        <Download className="h-4 w-4 text-blue-700" />
-        다운로드
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => onDownload('docx')}
-          disabled={isExporting}
-          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-blue-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-        >
-          {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-          Word(.docx)
-        </button>
-        <button
-          type="button"
-          onClick={() => onDownload('pdf')}
-          disabled={pdfDisabled}
-          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-blue-600 bg-white px-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
-        >
-          {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
-          PDF(.pdf)
-        </button>
-      </div>
-      {pdfUnavailableReason && <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">{pdfUnavailableReason}</p>}
-      {status && <p className="mt-2 text-xs font-semibold text-emerald-700">{status}</p>}
-      {error && <p className="mt-2 text-xs font-semibold leading-5 text-red-700">{error}</p>}
-    </div>
-  )
-}
-
-function FinalReviewCard({ items, title }: { items: string[]; title: string }) {
-  return (
-    <section className="mt-4">
-      <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
-        <Info className="h-3.5 w-3.5 shrink-0 text-slate-900" />
-        {title}
-      </h3>
-      <div className="mt-2 rounded-[8px] border border-slate-200 bg-white p-3 shadow-sm">
-        <ul className="space-y-1 text-xs font-semibold leading-5 text-slate-900">
-          {(items.length ? items : ['현재 표시할 항목이 없습니다.']).map((item) => (
-            <li key={item}>· {item}</li>
-          ))}
-        </ul>
-      </div>
     </section>
   )
 }
