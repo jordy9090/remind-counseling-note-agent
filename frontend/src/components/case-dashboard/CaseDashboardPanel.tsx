@@ -49,7 +49,8 @@ interface CaseDashboardPanelProps {
   refreshKey?: number
   onBack: () => void
   onOpenNote: (noteId: string) => void
-  onOpenDraft: (draftId: string) => void
+  /** sessionExists is true when the draft belongs to an already stored session. */
+  onOpenDraft: (draftId: string, sessionExists?: boolean) => void
   onStartSession: (input: StartSessionInput) => void
   onEditProfile: (dashboard: CaseDashboardResponse) => void
 }
@@ -441,12 +442,12 @@ function SessionCard({ group, exports, checked, onToggleChecked, onOpenNote, onO
   checked: boolean
   onToggleChecked: () => void
   onOpenNote: (noteId: string) => void
-  onOpenDraft: (draftId: string) => void
+  onOpenDraft: (draftId: string, sessionExists?: boolean) => void
 }) {
   const openable = Boolean(group.latestNote || group.drafts.length)
   const open = () => {
     if (group.latestNote) onOpenNote(group.latestNote.document_id)
-    else if (group.drafts.length) onOpenDraft(group.drafts[0].draft_id)
+    else if (group.drafts.length) onOpenDraft(group.drafts[0].draft_id, Boolean(group.session))
   }
   const transcript: TileState = group.session?.transcript_status === 'completed' ? 'done' : 'none'
   const note: TileState = exportDone(exports, group.sessionNumber, 'session_note') || isConfirmedStatus(group.latestNote?.status)

@@ -377,6 +377,9 @@ export default function SessionDraftPage({
   const [pickerOpen, setPickerOpen] = useState(false)
   // 새 회기 기록 모달을 닫을 때 돌아갈 화면
   const [inputReturnScreen, setInputReturnScreen] = useState<AppScreen>('home')
+  // 'new': a session that does not exist yet. 'existing': re-summarizing a stored session, which
+  // overwrites that session's record. The input page labels the two differently.
+  const [inputMode, setInputMode] = useState<'new' | 'existing'>('new')
   // UI-only: 상담 시간(백엔드 필드 없음). 저장·요약 생성에는 쓰이지 않는다.
   const [sessionTime, setSessionTime] = useState<SessionTime>({ start: '', end: '' })
   const [customChecklistItems, setCustomChecklistItems] = useState<ChecklistItem[]>(() => (
@@ -905,7 +908,7 @@ export default function SessionDraftPage({
       setError('업로드한 자료가 아직 회기 입력에 반영되지 않았습니다. 자료에 반영할 항목을 선택해주세요.')
       return
     }
-    if (result && !window.confirm('새 초안을 생성하면 현재 화면의 편집 내용이 교체됩니다. 계속할까요?')) return
+    if (result && !window.confirm(`저장된 ${form.session_number}회기 요약이 새 요약으로 교체되고, 현재 화면의 편집 내용이 사라집니다. 계속할까요?`)) return
     setHasSubmitted(true)
     setError(null)
     setPersistenceError(null)
@@ -978,6 +981,7 @@ export default function SessionDraftPage({
   }
 
   const goBackToInput = () => {
+    setInputMode('existing')
     setInputReturnScreen('summary_draft')
     setCurrentScreen('session_input')
     setExpandedEvidenceId(null)
@@ -1014,6 +1018,7 @@ export default function SessionDraftPage({
     if (!sameSession && (hasUsableNoteInput || result || materials.length)
       && !window.confirm('현재 화면의 작성 내용을 비우고 이 내담자의 새 회기를 시작합니다. 저장하지 않은 변경사항은 사라집니다. 계속할까요?')) return
     if (!sameSession) {
+      setInputMode('new')
       setForm({ ...initialForm, case_id: caseId, client_alias: caseAlias || '', session_number: sessionNumber })
       setSessionTopic('')
       setSessionTime({ start: '', end: '' })
@@ -1351,7 +1356,8 @@ export default function SessionDraftPage({
     setMaterialModal(null)
   }
 
-  const restoreTemporary = (draftId: string) => {
+  /** sessionExists: the draft belongs to a session that is already stored (re-summarizing overwrites it). */
+  const restoreTemporary = (draftId: string, sessionExists = false) => {
     if (!allowRestore()) return
     void runPersistence(async () => {
       const draft = temporaryDraftPayload(await loadTemporaryDraft(draftId))
@@ -1426,7 +1432,10 @@ export default function SessionDraftPage({
       setStoredNote(record)
       setConfirmedFingerprint(confirmedSections ? sectionFingerprint(confirmedSections) : null)
       setSavedDraft({ id: draftId, caseId: draft.case_id, sessionNumber: draft.session_number })
-      if (!restoredNote) setInputReturnScreen(selectedCaseId ? 'client_detail' : 'home')
+      if (!restoredNote) {
+        setInputReturnScreen(selectedCaseId ? 'client_detail' : 'home')
+        setInputMode(sessionExists ? 'existing' : 'new')
+      }
       setCurrentScreen(restoredNote
         ? draft.screen === 'final_document' && (finalType === 'supervision_report' ? Boolean(report) : finalSections.length > 0)
           ? 'final_document' : 'summary_draft'
@@ -1566,7 +1575,7 @@ export default function SessionDraftPage({
             isSavingDraft={false}
             showTemporarySave={false}
             hideActions
-            title={`${clientDisplayName} · ${form.session_number}회기 입력`}
+            title={`${clientDisplayName} · ${form.session_number}회기 ${inputMode === 'existing' ? '다시 요약' : '입력'}`}
             onBack={closeSessionInput}
             onTemporarySave={handleTemporarySave}
             onRestore={() => undefined}
@@ -1666,6 +1675,7 @@ export default function SessionDraftPage({
 
         {currentScreen === 'session_input' && (
           <SessionInputPage
+            mode={inputMode}
             form={form}
             sessionTime={sessionTime}
             materials={materials}
