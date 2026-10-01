@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import { AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, Clock, FileText, Loader2, Plus, Sparkles, Upload, X } from 'lucide-react'
 
 import ModalShell from '../app-shell/ModalShell'
@@ -70,6 +70,50 @@ export default function SessionRecordModal({
 }) {
   const [customDraft, setCustomDraft] = useState('')
   const [audioConsent, setAudioConsent] = useState(false)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  // dragenter/dragleave fire for every child element, so count them instead of toggling.
+  const dragDepth = useRef(0)
+
+  useEffect(() => {
+    // A file dropped outside the upload area would make the browser navigate to it and lose the form.
+    const blockFileNavigation = (event: globalThis.DragEvent) => {
+      if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
+    }
+    window.addEventListener('dragover', blockFileNavigation)
+    window.addEventListener('drop', blockFileNavigation)
+    return () => {
+      window.removeEventListener('dragover', blockFileNavigation)
+      window.removeEventListener('drop', blockFileNavigation)
+    }
+  }, [])
+
+  const hasDraggedFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
+  const dropZoneHandlers = {
+    onDragEnter: (event: DragEvent) => {
+      if (!hasDraggedFiles(event) || isLoading) return
+      event.preventDefault()
+      dragDepth.current += 1
+      setIsDraggingFiles(true)
+    },
+    onDragOver: (event: DragEvent) => {
+      if (!hasDraggedFiles(event) || isLoading) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+    },
+    onDragLeave: (event: DragEvent) => {
+      if (!hasDraggedFiles(event)) return
+      dragDepth.current = Math.max(0, dragDepth.current - 1)
+      if (dragDepth.current === 0) setIsDraggingFiles(false)
+    },
+    onDrop: (event: DragEvent) => {
+      if (!hasDraggedFiles(event)) return
+      event.preventDefault()
+      dragDepth.current = 0
+      setIsDraggingFiles(false)
+      if (isLoading || !event.dataTransfer.files.length) return
+      onUploadFiles(event.dataTransfer.files, audioConsent)
+    },
+  }
   const selected = checklistItems.filter((item) => visibleSectionIds.has(item.id))
   const selectedIds = new Set(selected.map((item) => item.id))
   const recommended = [
@@ -121,22 +165,22 @@ export default function SessionRecordModal({
           </div>
         </div>
 
-        <div>
+        <div {...dropZoneHandlers} data-dragging={isDraggingFiles || undefined}>
           <span className="rm-label">자료 업로드</span>
           {materials.length === 0 ? (
-            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed border-primary-100 bg-white px-4 py-10 text-center hover:bg-primary-50/40">
-              <Upload className="h-7 w-7 text-grey-700" strokeWidth={1.5} />
-              <span className="text-sm font-semibold text-grey-800">클릭하여 파일을 선택해주세요.</span>
+            <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed px-4 py-10 text-center ${isDraggingFiles ? 'border-primary-400 bg-primary-50' : 'border-primary-100 bg-white hover:bg-primary-50/40'}`}>
+              <Upload className={`h-7 w-7 ${isDraggingFiles ? 'text-primary-400' : 'text-grey-700'}`} strokeWidth={1.5} />
+              <span className="text-sm font-semibold text-grey-800">{isDraggingFiles ? '여기에 놓으면 업로드됩니다.' : '파일을 끌어다 놓거나 클릭하여 파일을 선택해주세요.'}</span>
               <span className="text-xs text-grey-500">STT 자료, 검사 결과 PDF, 워드 파일, 음성(mp3·m4a·wav) · 최대 {uploadLimitLabel}</span>
               <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { onUploadFiles(event.target.files, audioConsent); event.target.value = '' }} />
             </label>
           ) : (
-            <div className="rounded-[12px] border border-primary-100 p-3">
+            <div className={`rounded-[12px] border p-3 ${isDraggingFiles ? 'border-dashed border-primary-400 bg-primary-50' : 'border-primary-100'}`}>
               <ul className="space-y-2">
                 {materials.map((material) => <MaterialItem key={material.id} material={material} onOpen={onOpenMaterial} onRemove={onRemoveMaterial} transcriptionAvailable={Boolean(audioCapabilities?.transcription.available)} />)}
               </ul>
               <label className="mt-3 flex h-11 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-primary-400 text-sm font-bold text-primary-400 hover:bg-primary-50">
-                <Plus className="h-4 w-4" />자료 추가하기
+                <Plus className="h-4 w-4" />{isDraggingFiles ? '여기에 놓으면 추가됩니다' : '자료 추가하기'}
                 <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { onUploadFiles(event.target.files, audioConsent); event.target.value = '' }} />
               </label>
             </div>
