@@ -7,7 +7,7 @@ const fields = (names: string): Record<string, Shape> => Object.fromEntries(name
 const strings: Shape = ['scalar']
 const section = fields('id title content visible')
 const block: Shape = {
-  ...fields('id type text aiGenerated demoValue reviewStatus label evidenceStatus'),
+  ...fields('id type text textHtml aiGenerated demoValue reviewStatus label evidenceStatus'),
   rows: [{ '*': 'scalar' }], speakerTurns: [fields('turnId speaker text silenceSeconds')],
   evidenceIds: strings, warnings: strings, guidance: strings, missingInputs: strings,
 }
@@ -23,7 +23,7 @@ const shape: Shape = {
     appliedTargets: strings,
   }],
   draft_sections: [section],
-  final_document_sections: [fields('id title content contentKind')],
+  final_document_sections: [fields('id title content contentHtml contentKind')],
   result: {
     ...fields('case_id session_number session_summary main_issue counselor_intervention client_response next_plan workspace_note_id'),
     missing_items: strings, warnings: strings,

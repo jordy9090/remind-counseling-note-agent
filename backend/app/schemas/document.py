@@ -9,6 +9,8 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 DocumentExportFormat = Literal["docx", "pdf", "hwpx"]
 DocumentExportType = Literal["session_note", "supervision_report", "termination_report"]
 DocumentBlockType = Literal["paragraph", "table", "transcript", "reflection_box", "placeholder"]
+# Upper bound for the formatted-text markup of one section or block.
+RICH_TEXT_MAX_LENGTH = 200_000
 
 
 class DocumentFormatCapability(BaseModel):
@@ -44,6 +46,12 @@ class DocumentContentBlock(BaseModel):
     id: str = ""
     type: DocumentBlockType = "paragraph"
     text: str | None = None
+    # Formatted version of ``text`` from the editor (limited HTML). Parsed, never passed through.
+    text_html: str | None = Field(
+        default=None,
+        max_length=RICH_TEXT_MAX_LENGTH,
+        validation_alias=AliasChoices("text_html", "textHtml"),
+    )
     rows: list[dict[str, Any]] = Field(default_factory=list)
     speaker_turns: list[DocumentTranscriptTurn] = Field(
         default_factory=list,
@@ -61,6 +69,12 @@ class DocumentSection(BaseModel):
     id: str
     title: str
     content: str | list[str] | None = None
+    # Formatted version of ``content`` from the editor (limited HTML). Parsed, never passed through.
+    content_html: str | None = Field(
+        default=None,
+        max_length=RICH_TEXT_MAX_LENGTH,
+        validation_alias=AliasChoices("content_html", "contentHtml"),
+    )
     content_blocks: list[DocumentContentBlock] = Field(
         default_factory=list,
         validation_alias=AliasChoices("content_blocks", "contentBlocks"),

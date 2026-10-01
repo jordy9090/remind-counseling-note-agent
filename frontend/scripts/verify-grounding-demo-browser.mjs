@@ -190,15 +190,15 @@ try {
   await closeEvidence(cdp)
 
   await navigate(cdp, `${new URL(pageUrl).origin}/?grounding-demo=1&screen=final`, '상담일지')
-  const unsupportedInExport = await cdp.evaluate(`(() => [...document.querySelectorAll('textarea[id^="final-section-"]')]
-    .some((node) => node.value.includes('자기표현 불안이 완전히 해소되었다')))()`)
+  const unsupportedInExport = await cdp.evaluate(`(() => [...document.querySelectorAll('[role="textbox"][id^="final-section-"]')]
+    .some((node) => node.textContent.includes('자기표현 불안이 완전히 해소되었다')))()`)
   if (unsupportedInExport) throw new Error('Unsupported review claim leaked into generated document body')
   await clickClaim(cdp, 'C1')
   await waitFor(async () => await cdp.evaluate(`Boolean(document.querySelector('[aria-label="근거 원문"]'))`))
   await closeEvidence(cdp)
   const drawerClosed = await cdp.evaluate(`(() => ({
     drawer: Boolean(document.querySelector('[aria-label="근거 원문"]')),
-    editor: Boolean(document.querySelector('textarea[id^="final-section-"]')),
+    editor: Boolean(document.querySelector('[role="textbox"][id^="final-section-"]')),
   }))()`)
   if (drawerClosed.drawer || !drawerClosed.editor) throw new Error('Document drawer did not close back to the full editor')
 

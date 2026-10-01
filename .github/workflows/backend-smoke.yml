@@ -44,7 +44,8 @@ jobs:
             test_note_transcript_persistence \
             test_raw_window_pipeline \
             test_case_list \
-            test_vercel_wrappers
+            test_vercel_wrappers \
+            test_document_rich_text
 
   backend-pdf-export:
     runs-on: ubuntu-latest

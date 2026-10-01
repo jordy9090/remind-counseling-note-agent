@@ -6,7 +6,7 @@ import os
 import re
 import unicodedata
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -15,6 +15,7 @@ from typing import Iterable
 from urllib.parse import quote
 
 from app.schemas.document import DocumentContentBlock, DocumentExportRequest, DocumentSection
+from app.services.rich_text import RichParagraph, parse_rich_text
 
 
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -170,6 +171,8 @@ class DocxDocumentExporter(DocumentExporter):
             if doc_section.content_blocks:
                 for block in doc_section.content_blocks:
                     add_block_to_docx(document, block, font_name)
+            elif (rich := section_rich_paragraphs(doc_section)) is not None:
+                add_rich_paragraphs_to_docx(document, rich, font_name)
             else:
                 add_content_to_docx(document, doc_section.content, font_name)
 
@@ -315,6 +318,7 @@ def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
     """Render a Korean-capable PDF without native system libraries."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.fonts import addMapping
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
@@ -324,6 +328,12 @@ def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
 
     font_name = "HYSMyeongJo-Medium"
     pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    # The built-in Korean CID fonts have a single weight and no italic. Bold text switches to the
+    # Gothic face so emphasis stays visible; italic text keeps the regular face.
+    bold_font_name = "HYGothic-Medium"
+    pdfmetrics.registerFont(UnicodeCIDFont(bold_font_name))
+    for bold, italic in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        addMapping(font_name, bold, italic, bold_font_name if bold else font_name)
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
@@ -370,6 +380,8 @@ def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
         if section.content_blocks:
             for block in section.content_blocks:
                 story.extend(_reportlab_block(block, body, label_style))
+        elif (rich := section_rich_paragraphs(section)) is not None:
+            story.extend(_reportlab_rich(rich, body))
         elif isinstance(section.content, list):
             for item in section.content:
                 story.append(Paragraph(f"• {html.escape(str(item))}", body))
@@ -412,10 +424,65 @@ def _reportlab_block(block: DocumentContentBlock, body, label_style) -> list[obj
         speaker = {"client": "내담자", "counselor": "상담자", "other": "기타"}.get(turn.speaker, "기타")
         silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds else ""
         elements.append(Paragraph(f"<b>{speaker}:</b> {html.escape(turn.text)}{silence}", body))
-    if block.text and block.text.strip() != SUPERVISION_PLACEHOLDER:
+    rich = block_rich_paragraphs(block)
+    if rich is not None:
+        elements.extend(_reportlab_rich(rich, body))
+    elif block.text and block.text.strip() != SUPERVISION_PLACEHOLDER:
         elements.append(Paragraph(html.escape(block.text).replace("\n", "<br/>"), body))
     elements.append(Spacer(1, 2))
     return elements
+
+
+def _reportlab_rich(paragraphs: list[RichParagraph], body) -> list[object]:
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph, Spacer
+
+    alignments = {"center": TA_CENTER, "right": TA_RIGHT}
+    elements: list[object] = []
+    for index, paragraph in enumerate(paragraphs):
+        if not paragraph.text.strip():
+            elements.append(Spacer(1, body.leading))
+            continue
+        style = ParagraphStyle(
+            "KoreanRichBody",
+            parent=body,
+            alignment=alignments.get(paragraph.align, TA_LEFT),
+            # Consecutive lines of one body stay as tight as the single-paragraph plain rendering.
+            spaceBefore=body.spaceBefore if index == 0 else 0,
+            spaceAfter=0,
+        )
+        elements.append(Paragraph(_list_prefix(paragraph) + _reportlab_markup(paragraph), style))
+    return elements
+
+
+def _reportlab_markup(paragraph: RichParagraph) -> str:
+    parts: list[str] = []
+    for run in paragraph.runs:
+        text = html.escape(run.text)
+        if not text:
+            continue
+        if run.color or run.highlight:
+            attributes = (f' color="#{run.color}"' if run.color else "") + (
+                f' backColor="#{run.highlight}"' if run.highlight else ""
+            )
+            text = f"<font{attributes}>{text}</font>"
+        if run.underline:
+            text = f"<u>{text}</u>"
+        if run.italic:
+            text = f"<i>{text}</i>"
+        if run.bold:
+            text = f"<b>{text}</b>"
+        parts.append(text)
+    return "".join(parts)
+
+
+def _list_prefix(paragraph: RichParagraph) -> str:
+    if paragraph.list_kind == "bullet":
+        return "• "
+    if paragraph.list_kind == "number":
+        return f"{paragraph.number or 1}. "
+    return ""
 
 
 def humanize_metadata_key(key: str) -> str:
@@ -452,6 +519,8 @@ def section_has_content(section: DocumentSection) -> bool:
         return True
     if isinstance(section.content, list) and any(str(item).strip() for item in section.content):
         return True
+    if section_rich_paragraphs(section) is not None:
+        return True
     return any(block_has_content(block) for block in section.content_blocks)
 
 
@@ -460,7 +529,109 @@ def block_has_content(block: DocumentContentBlock) -> bool:
         return True
     if block.rows:
         return True
+    if block_rich_paragraphs(block) is not None:
+        return True
     return any(turn.text.strip() for turn in block.speaker_turns)
+
+
+_TEXT_BULLET_PREFIX = re.compile(r"^\s*[-*•]\s+")
+_TEXT_NUMBER_PREFIX = re.compile(r"^\s*(\d+)[.)]\s+")
+
+
+def section_rich_paragraphs(section: DocumentSection) -> list[RichParagraph] | None:
+    """Formatted body of a section, or None when the section carries no formatted text."""
+    paragraphs = _rich_paragraphs(section.content_html)
+    if paragraphs is not None and isinstance(section.content, list):
+        # List-kind sections export every line as a bullet, formatted or not.
+        for paragraph in paragraphs:
+            if paragraph.list_kind is None and paragraph.text.strip():
+                paragraph.list_kind = "bullet"
+    return paragraphs
+
+
+def block_rich_paragraphs(block: DocumentContentBlock) -> list[RichParagraph] | None:
+    """Formatted text of a text block. Tables and transcripts are always exported from their data."""
+    if block.type in {"table", "transcript"}:
+        return None
+    return _rich_paragraphs(block.text_html)
+
+
+def _rich_paragraphs(markup: str | None) -> list[RichParagraph] | None:
+    paragraphs = parse_rich_text(markup)
+    text = "\n".join(paragraph.text for paragraph in paragraphs).strip()
+    if not text or text == SUPERVISION_PLACEHOLDER:
+        return None
+    return [_with_typed_list_prefix(paragraph) for paragraph in paragraphs]
+
+
+def _with_typed_list_prefix(paragraph: RichParagraph) -> RichParagraph:
+    """Treat a typed "• " or "1. " line prefix as a list item, as the plain-text export does."""
+    if paragraph.list_kind is not None:
+        return paragraph
+    text = paragraph.text
+    bullet = _TEXT_BULLET_PREFIX.match(text)
+    number = None if bullet else _TEXT_NUMBER_PREFIX.match(text)
+    match = bullet or number
+    if not match or not text[match.end():].strip():
+        return paragraph
+    remaining = match.end()
+    runs = []
+    for run in paragraph.runs:
+        if remaining >= len(run.text):
+            remaining -= len(run.text)
+            continue
+        runs.append(replace(run, text=run.text[remaining:]) if remaining else run)
+        remaining = 0
+    return RichParagraph(
+        runs=runs,
+        align=paragraph.align,
+        list_kind="bullet" if bullet else "number",
+        number=None if bullet else int(number.group(1)),
+    )
+
+
+def add_rich_paragraphs_to_docx(container, paragraphs: list[RichParagraph], font_name: str, first_paragraph=None) -> None:
+    """Write formatted paragraphs into a document or table cell."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import RGBColor
+
+    alignments = {"center": WD_ALIGN_PARAGRAPH.CENTER, "right": WD_ALIGN_PARAGRAPH.RIGHT}
+    for index, rich in enumerate(paragraphs):
+        paragraph = first_paragraph if index == 0 and first_paragraph is not None else container.add_paragraph()
+        if rich.list_kind == "bullet":
+            paragraph.style = "List Bullet"
+        if rich.align in alignments:
+            paragraph.alignment = alignments[rich.align]
+        if rich.list_kind == "number":
+            # A literal number keeps the counselor's numbering; Word's list style would keep
+            # counting across separate lists.
+            set_run_font(paragraph.add_run(f"{rich.number or 1}. "), font_name)
+        for piece in rich.runs:
+            if not piece.text:
+                continue
+            run = paragraph.add_run(piece.text)
+            if piece.bold:
+                run.bold = True
+            if piece.italic:
+                run.italic = True
+            if piece.underline:
+                run.underline = True
+            if piece.color:
+                run.font.color.rgb = RGBColor.from_string(piece.color)
+            set_run_font(run, font_name)
+            if piece.highlight:
+                shade_run(run, piece.highlight)
+
+
+def shade_run(run, fill: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:val"), "clear")
+    shading.set(qn("w:color"), "auto")
+    shading.set(qn("w:fill"), fill)
+    run._element.get_or_add_rPr().append(shading)
 
 
 def add_content_to_docx(document, content: str | list[str] | None, font_name: str) -> None:
@@ -508,14 +679,22 @@ def add_block_to_docx(document, block: DocumentContentBlock, font_name: str) -> 
             silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds is not None else ""
             add_docx_text_line(document, f"{index}. {label}: {turn.text}{silence}", font_name)
         return
+    rich = block_rich_paragraphs(block)
     if block.type == "reflection_box":
         table = document.add_table(rows=1, cols=1)
         table.style = "Table Grid"
         shade_cell(table.cell(0, 0), "F3F4F6")
+        if rich is not None:
+            cell = table.cell(0, 0)
+            add_rich_paragraphs_to_docx(cell, rich, font_name, first_paragraph=cell.paragraphs[0])
+            return
         table.cell(0, 0).text = clean_export_text(block.text or "")
         for paragraph in table.cell(0, 0).paragraphs:
             for run in paragraph.runs:
                 set_run_font(run, font_name)
+        return
+    if rich is not None:
+        add_rich_paragraphs_to_docx(document, rich, font_name)
         return
     add_content_to_docx(document, block.text or "", font_name)
 
@@ -683,9 +862,11 @@ def render_sections_html(sections: Iterable[DocumentSection]) -> str:
     rendered = []
     for section in sections:
         heading_tag = "h2" if section.level <= 2 else "h3"
+        rich = None if section.content_blocks else section_rich_paragraphs(section)
         body = (
             "".join(render_block_html(block) for block in section.content_blocks)
             if section.content_blocks
+            else render_rich_html(rich) if rich is not None
             else render_content_html(section.content)
         )
         rendered.append(
@@ -740,9 +921,45 @@ def render_block_html(block: DocumentContentBlock) -> str:
                 "</div>"
             )
         return f"{label_html}<div class=\"transcript\">{''.join(turns)}</div>"
+    rich = block_rich_paragraphs(block)
+    text_html = render_rich_html(rich) if rich is not None else render_content_html(block.text or "")
     if block.type == "reflection_box":
-        return f"{label_html}<div class=\"reflection-box\">{render_content_html(block.text or '')}</div>"
-    return label_html + render_content_html(block.text or "")
+        return f"{label_html}<div class=\"reflection-box\">{text_html}</div>"
+    return label_html + text_html
+
+
+def render_rich_html(paragraphs: list[RichParagraph]) -> str:
+    """Render formatted paragraphs for the HTML-based PDF. Only this function's own tags are emitted."""
+    parts: list[str] = []
+    for paragraph in paragraphs:
+        if not paragraph.text.strip():
+            parts.append("<div class=\"blank-line\"></div>")
+            continue
+        inline = "".join(_rich_run_html(run) for run in paragraph.runs)
+        align = f' style="text-align:{paragraph.align}"' if paragraph.align in {"center", "right"} else ""
+        if paragraph.list_kind == "bullet":
+            parts.append(f"<ul><li{align}>{inline}</li></ul>")
+        else:
+            parts.append(f"<p{align}>{escape_text(_list_prefix(paragraph))}{inline}</p>")
+    return "\n".join(parts)
+
+
+def _rich_run_html(run) -> str:
+    text = escape_text(run.text)
+    if not text:
+        return ""
+    styles = ([f"color:#{run.color}"] if run.color else []) + (
+        [f"background-color:#{run.highlight}"] if run.highlight else []
+    )
+    if styles:
+        text = f'<span style="{";".join(styles)}">{text}</span>'
+    if run.underline:
+        text = f"<u>{text}</u>"
+    if run.italic:
+        text = f"<em>{text}</em>"
+    if run.bold:
+        text = f"<strong>{text}</strong>"
+    return text
 
 
 def escape_text(value: object) -> str:
