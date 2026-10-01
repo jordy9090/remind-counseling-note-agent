@@ -180,7 +180,7 @@ Note persistence also requires request `persist=true`; report persistence requir
 The confirm API validates an already-saved note before updating its confirmed JSON.
 
 `ENABLE_CASE_MEMORY` controls memory indexing during confirmation; it is not a global switch blocking
-reads of existing memory. `SAVE_RAW_INPUT` controls only the session raw field.
+reads of existing memory. `SAVE_ORIGINAL_INPUT` (default on) controls only the session raw field.
 The Temporary Draft API and recompose disk cache are separate paths, not blocked by the same flag.
 
 Original document/audio uploads use temporary files during the request and clean them up. Retention of

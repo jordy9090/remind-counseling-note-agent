@@ -96,7 +96,7 @@ Accepted input aliases:
 - `session_no` is also accepted for `session_number`.
 - `document_type` is also accepted for `target_document_type`.
 - `persist=true` stores the generated note only when `ENABLE_PERSISTENCE=1` and Supabase credentials are configured.
-- `SAVE_RAW_INPUT=0` makes `sessions.raw_input_text` null; it does not disable temporary draft or cache storage. See the Data Model for storage-specific conditions.
+- `sessions.raw_input_text` stores the session input as entered by default (`SAVE_ORIGINAL_INPUT=0` disables it); this flag does not affect temporary draft or cache storage. See the Data Model for storage-specific conditions.
 - With `ENABLE_REAL_USER_AUTH=1`, protected endpoints require `Authorization: Bearer <Supabase access token>`. The `X-Remind-Preview-Token` path is available only when `ALLOW_LEGACY_PREVIEW_TOKEN=1` is explicitly enabled for a synthetic-data demo.
 - `POST /api/notes/confirm` accepts only `note_id`, `confirmed_note`, `counselor_edited`, and `create_case_memory`; case/session/counselor identity is derived from stored rows and the server actor.
 - `ENABLE_CASE_MEMORY=0` is the default. Confirmed note memory chunks are written only when persistence and case-memory indexing are explicitly enabled.

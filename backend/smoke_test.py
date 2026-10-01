@@ -1101,8 +1101,17 @@ def main() -> None:
             GenerateNoteResponse(**data),
             user_id="test-user-id",
         )
-        assert session_row["raw_input_text"] is None
+        # Default: the session input is stored as entered.
+        assert json.loads(session_row["raw_input_text"])["masked"] is False
         assert session_row["sanitized_input_text"]
+        # SAVE_ORIGINAL_INPUT=0 falls back to the SAVE_RAW_INPUT behavior.
+        settings.save_original_input = False
+        off_session_row = _build_session_row(
+            SessionInput(**payload),
+            GenerateNoteResponse(**data),
+            user_id="test-user-id",
+        )
+        assert off_session_row["raw_input_text"] is None
         settings.save_raw_input = True
         raw_session_row = _build_session_row(
             SessionInput(**payload),
@@ -1111,6 +1120,7 @@ def main() -> None:
         )
         assert raw_session_row["raw_input_text"]
         settings.save_raw_input = False
+        settings.save_original_input = True
 
         pii_payload = {
             **payload,

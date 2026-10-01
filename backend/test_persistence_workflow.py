@@ -300,18 +300,20 @@ class PersistenceWorkflowTests(unittest.TestCase):
                 "counselor_edited": True, "create_case_memory": False,
             })
         self.assertTrue(selects and all("sanitized_input_text" not in select for select in selects))
-        # Legacy or malformed stored input never breaks the record read.
+        # Legacy rows have no raw_input_text; a missing or malformed sanitized copy never breaks the read.
+        self.store.tables["sessions"][0]["raw_input_text"] = None
         for broken in (None, "", "not json", json.dumps({"sources": "x"}), json.dumps({"sources": {"transcript_text": 1}})):
             self.store.tables["sessions"][0]["sanitized_input_text"] = broken
             response = self.client.get(url, headers=self.headers)
             self.assertEqual(response.status_code, 200, repr(broken))
             self.assertIsNone(response.json()["session_input"], repr(broken))
 
-    def test_original_input_is_stored_and_restored_only_when_opted_in(self):
+    def test_session_input_is_stored_as_entered_by_default(self):
         sensitive = {**INPUT, "counselor_memo": "보호자 연락처 010-1234-5678 로 안내함.",
                      "transcript_text": "내담자: 한빛고등학교에 다녀요."}
-        # Default: nothing unmasked is stored, and the record returns the de-identified copy.
-        note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
+        # SAVE_ORIGINAL_INPUT=0: nothing is stored as entered, and the record returns the sanitized copy.
+        with patch.object(settings, "save_original_input", False):
+            note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
         row = self.store.tables["sessions"][0]
         self.assertIsNone(row["raw_input_text"])
         record = self.client.get(f"/api/notes/records/{note_id}", headers=self.headers).json()
@@ -319,16 +321,17 @@ class PersistenceWorkflowTests(unittest.TestCase):
         self.assertNotIn("010-1234-5678", json.dumps(record, ensure_ascii=False))
         self.assertIn("[PHONE]", record["session_input"]["counselor_memo"])
 
-        # A masked SAVE_RAW_INPUT payload (no marker) is never presented as the original.
-        with patch.object(settings, "save_raw_input", True):
+        # A SAVE_RAW_INPUT payload (no marker) is never presented as the original.
+        with patch.object(settings, "save_original_input", False), patch.object(settings, "save_raw_input", True):
             note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
         self.assertNotIn("010-1234-5678", row["raw_input_text"])
         record = self.client.get(f"/api/notes/records/{note_id}", headers=self.headers).json()
         self.assertFalse(record["session_input_is_original"])
 
-        # Opt-in: the original is stored for the owner; the sanitized copy stays masked for retrieval/evidence.
-        with patch.object(settings, "save_original_input", True):
-            note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
+        # Default: the input is stored as entered for the owner; the sanitized copy used for
+        # retrieval/evidence is unchanged.
+        self.assertTrue(settings.save_original_input)
+        note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
         self.assertIn("010-1234-5678", row["raw_input_text"])
         self.assertNotIn("010-1234-5678", row["sanitized_input_text"])
         url = f"/api/notes/records/{note_id}"
