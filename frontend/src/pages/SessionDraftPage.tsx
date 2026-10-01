@@ -1857,8 +1857,23 @@ function WorkflowHeader({
   onTemporarySave: () => void
   onRestore: () => void
 }) {
+  const headerRef = useRef<HTMLElement>(null)
+  // Publish the header height so sticky content below (the final document toolbar) pins right under it.
+  useEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const root = document.documentElement
+    const publish = () => root.style.setProperty('--workflow-header-height', `${header.offsetHeight}px`)
+    publish()
+    const observer = new ResizeObserver(publish)
+    observer.observe(header)
+    return () => {
+      observer.disconnect()
+      root.style.removeProperty('--workflow-header-height')
+    }
+  }, [])
   return (
-    <header className="sticky top-0 z-30 bg-[#f5f7fb]/95 backdrop-blur">
+    <header ref={headerRef} className="sticky top-0 z-30 bg-[#f5f7fb]/95 backdrop-blur">
       <div className="mx-auto flex w-full max-w-[1240px] flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-6">
         <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-lg text-grey-500 hover:text-grey-900">
           <ChevronLeft className="h-5 w-5" />
