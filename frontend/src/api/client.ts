@@ -67,6 +67,7 @@ export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftR
       key_issue_tags: input.key_issue_tags || [],
       nonverbal_notes: input.nonverbal_notes || '',
       target_document_type: input.target_document_type || 'session_note',
+      insight_lens: 'psychodynamic_relational',
       persist: Boolean(input.persist),
     })
     return toNoteDraftResponse(response.data)
@@ -278,6 +279,7 @@ function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftRespo
         : []),
     ]),
     grounding: fullResponse.grounding,
+    relational_insights: fullResponse.relational_insights,
     full_response: fullResponse,
   }
 }

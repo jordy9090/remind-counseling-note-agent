@@ -1,3 +1,5 @@
+import type { InsightLens, RelationalInsights } from './insight'
+
 export type EvidenceType =
   | 'direct'
   | 'inferred'
@@ -24,6 +26,7 @@ export interface SessionInput {
   key_issue_tags?: string[]
   nonverbal_notes?: string
   target_document_type?: TargetDocumentType
+  insight_lens?: InsightLens
   persist?: boolean
 }
 
@@ -267,6 +270,7 @@ export interface GroundedGenerationResult {
 }
 
 export interface GenerateNoteResponse {
+  relational_insights?: RelationalInsights | null
   structured_case_data: StructuredCaseData
   evidence_mapped_data: EvidenceMappedData
   session_summary_draft: SessionSummaryDraft
@@ -330,6 +334,7 @@ export interface EvidenceCheckItem {
 }
 
 export interface NoteDraftResponse {
+  relational_insights?: RelationalInsights | null
   case_id: string
   session_number: number
   session_summary: string

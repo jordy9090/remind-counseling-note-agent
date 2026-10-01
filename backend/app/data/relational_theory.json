@@ -1,0 +1,46 @@
+[
+  {
+    "id": "bacp_supervision_reflection_2018",
+    "title": "Ethical Framework for the Counselling Professions (2018)",
+    "organization": "British Association for Counselling and Psychotherapy (BACP)",
+    "url": "https://www.bacp.co.uk/ethical-framework",
+    "locator": "Good practice 32, 54, 60–64; 2018 framework, operative on 2026-10-02; 2026 framework becomes mandatory on 2026-11-03",
+    "principle": "수퍼비전은 사례 관리에 더해 상담자와 내담자의 관계 및 상담이 내담자에게 미친 영향을 깊이 성찰하는 과정이다. 상담자가 의도한 개입과 내담자가 실제로 경험한 반응을 함께 검토하고, 상담자의 관점과 개인적 반응을 돌아볼 여지를 둔다. 내담자가 상담 관계를 어떻게 경험하는지는 내담자의 표현을 통해 확인한다.",
+    "concepts": ["here_and_now", "intervention_response", "counselor_reflection"],
+    "keywords": ["상담자", "선생님", "침묵", "서운", "표정", "반응", "눈치", "개입", "관계", "역전이", "성찰"],
+    "limitations": "전문가 수퍼비전 지침이며 AI 판단의 타당성을 보증하지 않는다. 문헌은 성찰 질문의 근거이고 내담자 가설의 증거는 아니다. 상담자의 내적 반응은 직접 작성한 메모가 있을 때만 관찰 자료로 다룬다."
+  },
+  {
+    "id": "ccrt_relationship_sequence_2020",
+    "title": "Core Interpersonal Patterns in Complex Trauma and the Process of Change in Psychodynamic Therapy: A Case Comparison Study",
+    "organization": "Van Nieuwenhove & Meganck; Frontiers in Psychology (2020)",
+    "url": "https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2020.00122/full",
+    "locator": "Materials and Methods — CCRT method; Discussion — limitations; DOI: 10.3389/fpsyg.2020.00122",
+    "principle": "CCRT는 관계 장면을 내담자의 바람, 내담자가 지각한 상대의 반응, 이에 대한 자신의 정서·행동 반응으로 살펴본다. 반복을 검토하려면 여러 장면을 비교하고 차이와 예외도 보존해야 한다. 상담실 밖의 관계와 상담자와의 상호작용에서 유사성이 관찰되면 연결 가능성을 탐색할 수 있다. 상대에 대한 내담자의 지각은 상대의 실제 의도를 독립적으로 확인한 사실과 구분한다.",
+    "concepts": ["relationship_pattern", "here_and_now"],
+    "keywords": ["바람", "원하", "관계", "거절", "부탁", "도움", "미안", "죄책감", "서운", "반복", "인정", "버림", "상대", "전이"],
+    "limitations": "세 사례를 다룬 연구로 일반화에 한계가 있다. 관계 장면을 정리하는 참고 틀로 사용하며, 외상·성격·어린 시절 원인이나 전이를 확정하지 않는다. 단일 장면만으로 반복 패턴을 단정하거나 정식 CCRT 평가로 표시하지 않는다."
+  },
+  {
+    "id": "alliance_rupture_repair_2018",
+    "title": "Alliance rupture repair: A meta-analysis",
+    "organization": "Eubanks, Muran & Safran; Psychotherapy (2018), PubMed",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/30335462/",
+    "locator": "Abstract; Psychotherapy 55(4):508–519; DOI: 10.1037/pst0000185",
+    "principle": "작업동맹의 균열은 상담 목표에 대한 불일치, 과제에 대한 협력 저하, 정서적 유대의 긴장으로 나타날 수 있다. 균열의 회복과 긍정적 치료 결과 사이에는 연구상 연관성이 보고되었다. 따라서 관계의 긴장 신호와 상담자의 대응, 그 뒤 내담자가 보인 반응을 각각 검토할 이유가 있다. 불편감을 말한 것, 상담자가 탐색을 시도한 것, 실제로 관계가 회복된 것은 구분한다.",
+    "concepts": ["here_and_now", "intervention_response"],
+    "keywords": ["침묵", "서운", "불편", "눈치", "표정", "이해", "협력", "목표", "괜찮", "반응", "회복", "긴장", "불만"],
+    "limitations": "연관성은 인과관계나 개별 사례의 회복을 입증하지 않는다. 같은 논문에서 균열 회복 훈련·수퍼비전의 치료 결과 효과는 유의하지 않았다. 이 문헌으로 AI 기능의 임상 효과를 주장할 수 없다."
+  },
+  {
+    "id": "alliance_client_therapist_perspectives_2020",
+    "title": "Can we agree we just had a rupture? Patient-therapist congruence on ruptures and its effects on outcome in brief relational therapy versus cognitive-behavioral therapy",
+    "organization": "Zilcha-Mano, Eubanks, Bloch-Elkouby & Muran; Journal of Counseling Psychology (2020), PubMed",
+    "url": "https://pubmed.ncbi.nlm.nih.gov/31855026/",
+    "locator": "Abstract; Journal of Counseling Psychology 67(3):315–325; DOI: 10.1037/cou0000400",
+    "principle": "162개 상담자·내담자 쌍의 반복 측정 연구에서 양측의 관계 균열 평가는 시간에 따라 상당한 일치를 보였으나, 상담자는 내담자보다 균열을 더 많이 감지하는 경향도 보였다. 상담자의 해석과 내담자의 경험은 동일한 것으로 가정하지 않는다. 관계 긴장이 의심되는 장면에서는 각각의 관점과 확인되지 않은 부분을 분리해 검토할 필요가 있다.",
+    "concepts": ["here_and_now", "counselor_reflection", "intervention_response"],
+    "keywords": ["상담자", "선생님", "다르게", "생각", "느낌", "서운", "눈치", "추측", "반응", "의도", "해석"],
+    "limitations": "특정 치료 조건의 연구이며 한 회기의 문장만으로 관계 균열을 판정하는 도구가 아니다. 문헌은 확인 질문을 돕는 참고 근거이고, 이 내담자나 상담자의 내적 상태를 증명하지 않는다."
+  }
+]

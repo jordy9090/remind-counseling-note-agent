@@ -47,6 +47,9 @@ jobs:
             test_vercel_wrappers \
             test_summary_quality \
             test_summary_generation_routes \
+            test_relational_insights \
+            test_relational_integration \
+            test_session_materials \
             test_document_rich_text
 
   backend-pdf-export:
@@ -121,6 +124,7 @@ jobs:
           pnpm verify:material-workflow
           pnpm verify:audio-transcript-workflow
           pnpm verify:summary-evidence
+          pnpm verify:relational-insights
 
       - name: Build frontend
         working-directory: frontend

@@ -10,6 +10,17 @@ def _fields(names: str) -> dict[str, Any]:
 
 # Mirrored by frontend/src/lib/temporaryDraft.ts; round-trip fixtures cover both boundaries.
 _STRINGS = ["scalar"]
+_INSIGHTS = {
+    **_fields("status lens"), "notices": _STRINGS,
+    "cards": [{
+        **_fields("id focus observation hypothesis alternative_explanation counterevidence_or_missing requires_review"),
+        "supervision_questions": _STRINGS, "theory_source_ids": _STRINGS,
+        "evidence": [_fields("source_ref quote")],
+    }],
+    "theory_sources": [{
+        **_fields("id title organization url locator principle limitations"), "concepts": _STRINGS,
+    }],
+}
 _BLOCK = {
     **_fields("id type text textHtml aiGenerated demoValue reviewStatus label evidenceStatus"),
     "rows": [{"*": "scalar"}], "speakerTurns": [_fields("turnId speaker text silenceSeconds")],
@@ -19,7 +30,7 @@ _SHAPE = {
     **_fields("draft_id saved_at case_id session_number session_date counselor_name screen session_topic is_deidentified final_document_type"),
     "selected_previous_session_ids": _STRINGS, "visible_section_ids": _STRINGS,
     "form": {
-        **_fields("case_id client_alias session_number session_date counselor_name counselor_memo transcript_text previous_session_summary counseling_goal psychological_test_summary nonverbal_notes target_document_type persist"),
+        **_fields("case_id client_alias session_number session_date counselor_name counselor_memo transcript_text previous_session_summary counseling_goal psychological_test_summary nonverbal_notes target_document_type persist insight_lens"),
         "key_issue_tags": _STRINGS,
     },
     "attachments": [{
@@ -29,6 +40,7 @@ _SHAPE = {
     "draft_sections": [_fields("id title content visible")],
     "final_document_sections": [_fields("id title content contentHtml contentKind")],
     "result": {
+        "relational_insights": _INSIGHTS,
         **_fields("case_id session_number session_summary main_issue counselor_intervention client_response next_plan workspace_note_id"),
         "missing_items": _STRINGS, "warnings": _STRINGS,
     },

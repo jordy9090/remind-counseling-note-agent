@@ -14,7 +14,8 @@ class TranscriptStorageError(RuntimeError):
 
 
 TRANSCRIPT_SPEAKER_PATTERN = re.compile(
-    r"^\s*(?P<label>Cl|Client|내담자|C|Counselor|상담자)\s*:\s*(?P<text>.*)$",
+    r"^\s*(?:(?P<turn_marker>[A-Za-z]+\d+|\d+)[.)]?[ \t]+)?"
+    r"(?P<label>Cl|Client|내담자|C|Counselor|상담자|상담사)\s*[:：]\s*(?P<text>.*)$",
     re.IGNORECASE,
 )
 
@@ -29,7 +30,9 @@ def parse_transcript_turns(transcript_text: str) -> list[TranscriptTurn]:
         match = TRANSCRIPT_SPEAKER_PATTERN.match(stripped)
         if match:
             label = match.group("label").lower()
-            text = match.group("text").strip()
+            # Labelled source IDs are part of the exact evidence text. Preserve
+            # the complete original line so quote spans still contain A01, etc.
+            text = stripped if match.group("turn_marker") else match.group("text").strip()
             if label in {"cl", "client", "내담자"}:
                 speaker_role = "client"
             else:

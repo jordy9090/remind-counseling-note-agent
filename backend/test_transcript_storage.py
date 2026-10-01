@@ -114,6 +114,32 @@ class TranscriptStorageTests(unittest.TestCase):
             "[counselor] 네. 제가 어머니 역할을 해볼게요.",
         ])
 
+    def test_memo_case_turn_markers_and_speakers_survive_evidence_storage(self):
+        from app.services.session_materials import separate_session_materials
+
+        fixture = Path(__file__).parent / "evaluation_cases" / "relational_memo_a.txt"
+        materials = separate_session_materials(fixture.read_text(encoding="utf-8"), "")
+        expected_lines = [line for line in materials.transcript_text.splitlines() if line.strip()]
+        turns = parse_transcript_turns(materials.transcript_text)
+        self.assertEqual(32, len(turns))
+        self.assertEqual(["counselor", "client"] * 16, [turn.speaker_role for turn in turns])
+        self.assertEqual(expected_lines, [turn.sanitized_text for turn in turns])
+        stored = store_transcript_turns(
+            user_id=self.corpus["user_id"], counselor_id=self.corpus["counselor_id"],
+            case_id=self.corpus["case_id"], session_id=self.corpus["session_id"], turns=turns,
+        )
+        self.assertEqual(expected_lines, [turn.sanitized_text for turn in stored])
+        self.assertEqual(
+            "\n".join(f"[{turn.speaker_role}] {line}" for turn, line in zip(turns, expected_lines)),
+            build_transcript_span_text(stored, 0, 31),
+        )
+
+    def test_numbered_lines_without_explicit_roles_remain_unknown(self):
+        lines = ["A01 화자를 알 수 없는 문장", "A02 상담사： 어떤 마음인가요?", "03 내담자: 서운했어요."]
+        turns = parse_transcript_turns("\n".join(lines))
+        self.assertEqual(["unknown", "counselor", "client"], [turn.speaker_role for turn in turns])
+        self.assertEqual(lines, [turn.sanitized_text for turn in turns])
+
     def test_missing_turn_raises(self):
         turns = [turn for turn in self.turns() if turn.turn_index != 4]
         with self.assertRaisesRegex(ValueError, "Missing transcript turns"):

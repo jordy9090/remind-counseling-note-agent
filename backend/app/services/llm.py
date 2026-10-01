@@ -4,16 +4,18 @@ from pydantic import BaseModel
 from app.core.config import settings
 
 
-def get_llm() -> ChatOpenAI:
+def get_llm(*, timeout: float | None = None, max_retries: int = 2) -> ChatOpenAI:
     """기본 ChatOpenAI 인스턴스"""
     return ChatOpenAI(
         model=settings.openai_model,
         api_key=settings.openai_api_key,
         temperature=0.3,
+        timeout=timeout,
+        max_retries=max_retries,
     )
 
 
-def get_structured_llm(schema: type[BaseModel]):
+def get_structured_llm(schema: type[BaseModel], *, timeout: float | None = None, max_retries: int = 2):
     """Pydantic 스키마를 강제하는 structured output LLM"""
-    llm = get_llm()
+    llm = get_llm(timeout=timeout, max_retries=max_retries)
     return llm.with_structured_output(schema)

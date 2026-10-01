@@ -166,6 +166,8 @@ class PersistenceWorkflowTests(unittest.TestCase):
         confirmed = {**draft["draft_json"], "session_content": {"text": edited},
                      "sections": {"session_content": edited},
                      "workspace_sections": [{"id": "session_content", "title": "상담 내용", "content": edited, "visible": True}]}
+        confirmed.pop("insight_lens", None)
+        confirmed.pop("relational_insights", None)
         response = self.client.post("/api/notes/confirm", headers=self.headers, json={
             "note_id": note_id, "confirmed_note": confirmed, "counselor_edited": True, "create_case_memory": False,
         })

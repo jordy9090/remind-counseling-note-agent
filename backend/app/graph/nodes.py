@@ -39,6 +39,7 @@ from app.schemas.note import (
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues
 from app.services.deidentification import deidentify_sources, render_counselor_text
+from app.services.session_materials import separate_session_materials
 from app.services.supabase_storage import _storage_for_actor
 from app.services.grounded_generation import (
     assemble_grounding_context,
@@ -73,10 +74,11 @@ NEXT_PLAN_RE = re.compile(r"(다음\s*회기|추후|다음에는|검토하기로
 def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     """Detect sensitive candidates and normalize input sources."""
     session_input: SessionInput = state["session_input"]
+    materials = separate_session_materials(session_input.counselor_memo, session_input.transcript_text)
     masked_sources, sensitive_candidates = deidentify_sources(
         {
-            "counselor_memo": session_input.counselor_memo.strip(),
-            "transcript_text": session_input.transcript_text.strip(),
+            "counselor_memo": materials.counselor_memo.strip(),
+            "transcript_text": materials.transcript_text.strip(),
             "previous_session_summary": session_input.previous_session_summary.strip(),
             "counseling_goal": session_input.counseling_goal.strip(),
             "psychological_test_summary": session_input.psychological_test_summary.strip(),

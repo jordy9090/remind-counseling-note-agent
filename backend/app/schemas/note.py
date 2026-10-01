@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.grounding import GroundedGenerationResult
+from app.schemas.insight import RelationalInsights
 
 
 EvidenceType = Literal[
@@ -48,6 +49,7 @@ class SessionInput(BaseModel):
         validation_alias=AliasChoices("target_document_type", "document_type"),
     )
     persist: bool = False
+    insight_lens: Literal["none", "psychodynamic_relational"] = "psychodynamic_relational"
 
 
 class SensitiveInfoCandidate(BaseModel):
@@ -277,6 +279,7 @@ class GenerateNoteResponse(BaseModel):
     )
     persistence_report: PersistenceReport = Field(default_factory=PersistenceReport)
     stub: bool = False
+    relational_insights: RelationalInsights | None = None
 
 
 class GeneratedNoteRecord(BaseModel):

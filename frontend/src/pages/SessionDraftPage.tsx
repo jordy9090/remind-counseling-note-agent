@@ -88,6 +88,7 @@ import {
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
 import { riskInformation, summarySectionEvidence } from '../lib/summaryEvidence'
+import { formatRelationalSupervisionMemo } from '../lib/relationalInsights'
 import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord, sessionThemeText } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
 import {
@@ -3539,7 +3540,11 @@ function buildDocumentSections(
     makeSection({
       id: 'supervision_memo',
       title: '슈퍼비전 메모',
-      content: '슈퍼비전 메모는 상담사가 직접 작성하거나 확정해야 합니다.',
+      content: formatRelationalSupervisionMemo(
+        result.relational_insights,
+        result.full_response?.session_summary_draft.reflection.text
+          || '슈퍼비전 메모는 상담사가 직접 작성하거나 확정해야 합니다.',
+      ),
       baseEvidence: [],
       forceBadges: ['ai', 'needs_review'],
     }),
