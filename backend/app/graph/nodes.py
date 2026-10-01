@@ -462,7 +462,7 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
-    """Mark risky draft sections for counselor review and allow one re-verification pass."""
+    """Mark risky sections for review without re-verifying unchanged draft text."""
     if state.get("revision_attempted"):
         return {"revision_needs_reverify": False}
     verification: VerificationReport = state["verification_report"]
@@ -485,7 +485,7 @@ def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
         "session_summary_draft": summary,
         "initial_verification_report": verification.model_copy(deep=True),
         "revision_attempted": True,
-        "revision_needs_reverify": True,
+        "revision_needs_reverify": False,
         "revision_reason": "Unsupported or risky claims were marked for counselor review.",
     }
 

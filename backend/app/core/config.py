@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -15,6 +16,8 @@ class Settings(BaseSettings):
     # 키가 없으면 스텁(샘플 응답) 모드로 동작한다.
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
+    openai_reasoning_effort: Optional[str] = None
+    relational_insight_timeout_seconds: float = Field(default=60, ge=1, le=90)
 
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)
     use_stub: bool = False

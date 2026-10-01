@@ -115,13 +115,12 @@ def _session_sources(sanitized: SanitizedInput) -> dict[str, str]:
 def build_relational_insight_prompt(
     sources: dict[str, str], summary: SessionSummaryDraft, theory_sources: list[TheorySource],
 ) -> str:
-    summary_context = {
-        name: getattr(summary, name).text
-        for name in ("session_theme", "session_content", "counselor_intervention", "client_response")
-    }
     return f"""상담사가 검토할 정신역동·관계적 회기 이해와 수퍼비전 질문 초안을 작성하세요.
 관찰과 잠정 가설을 분리하고, 읽을수록 원문을 더 잘 살펴보게 하는 1~4개의 카드만 만드세요.
 자료가 충분하지 않으면 cards=[]로 반환하세요. 모든 초점을 채울 필요가 없습니다.
+아래 현재 회기 원문을 처음부터 읽어 판단하세요. 이론 이름을 붙이거나 내용을 재진술하는 데 그치지 말고,
+어떤 기대가 어떤 자기표현을 어렵게 하고 상담자와의 상호작용에서 어떻게 드러나는지 설명하세요.
+구체적인 상담 장면과 상담자 자기성찰이 기록되어 있으면 이를 우선 다루고 일상 관계 설명만 반복하지 마세요.
 
 필수 계약:
 - observation: 이번 자료에서 직접 확인되는 사건·표현·상호작용만 1~2문장으로 통합하세요.
@@ -131,15 +130,23 @@ def build_relational_insight_prompt(
 - 관계 패턴은 소망(W) / 상대 반응에 대한 기대·지각(RO) / 자신의 반응(RS)을 구분하세요.
   예상·상상된 상대 반응을 실제 상대 행동으로 바꾸지 마세요. 단일 장면을 반복 패턴으로 확정하지 마세요.
 - here_and_now: 일상 관계와 상담관계의 닮은 점은 가설입니다. 다를 가능성도 함께 쓰세요.
+  내담자가 두 관계의 차이를 직접 구분했다면 그 내용을 보존하세요. 비슷한 행동이 같은 의미를 뜻하지는 않습니다.
   상담자 침묵의 의도, 내담자 전이, 관계 손상이나 회복을 관찰 없이 확정하지 마세요.
 - intervention_response: 실제 개입 뒤 표현과 아직 남은 어려움을 구분하세요.
+  실제 질문·반영 하나와 그 뒤 내담자의 구체적 표현을 짝지어 다루세요. 서로 떨어진 대사를 원인·결과로 묶지 마세요.
   말한 순서가 인과관계나 호전의 증거는 아닙니다. 단순 동의는 통찰·효과가 아닙니다.
 - counselor_reflection: 상담자의 감정·역전이는 counselor_memo에 직접 기록된 경우에만 다루세요.
+  기록된 감정·행동 욕구가 있다면 별도 카드에서 그 인용을 근거로 질문의 방향·속도·반응 선택에 미쳤을 가능성을 탐색하세요.
+  느꼈거나 하고 싶었던 반응과 실제로 수행한 개입은 구분하세요. 그 영향은 기록된 사실이 아니라 검토할 가설입니다.
   기록되지 않은 상담자의 느낌과 동기, 회기 틀·권력·문화 요인은 사실로 쓰지 말고 질문으로 남기세요.
-- alternative_explanation: 같은 자료에 맞는 다른 설명 하나를 구체적으로 제시하세요.
+- alternative_explanation: 같은 관찰을 다른 과정으로 설명하는 경쟁 가설 하나를 쓰세요.
+  본 가설의 말바꾸기·추가 원인·목표를 적지 말고, 관계 기대 외의 현재 상황이나 상담자의 실제 행동으로도 설명되는지 검토하세요.
+  다른 설명 역시 단정하지 말고, 두 설명을 구분하려면 무엇을 확인할지 질문에 연결하세요.
 - counterevidence_or_missing: 가설과 맞지 않는 실제 자료 또는 아직 없는 자료를 명확히 구분하세요.
+  먼저 원문에 명시된 부정·차이·잔여 어려움을 찾으세요. 이미 기록된 말·개입·자기성찰을 '없음'으로 쓰지 마세요.
   반증을 찾지 못했으면 어떤 반례·맥락·다른 회기 자료가 필요한지 적고 사실을 만들지 마세요.
 - supervision_questions: 상담자가 관찰·자기 성찰·다음 검증에 사용할 열린 질문 1~3개를 쓰세요.
+  각 질문을 해당 장면·실제 개입·기록된 상담자 반응 중 하나에 연결하세요. '더 탐색하려면?' 같은 일반론은 피하세요.
 - evidence: 현재 회기 자료의 source_ref와 그 자료에 연속하여 존재하는 원문 quote를 연결하세요.
   quote는 8~450자로 그대로 복사하세요. 요약문, 이론문서, 이전 회기 요약은 회기 증거가 아닙니다.
   상담자 메모의 해석은 '상담자 메모에 …으로 기록됨'처럼 작성하고 내담자 사실로 바꾸지 마세요.
@@ -150,9 +157,6 @@ def build_relational_insight_prompt(
 
 현재 회기 근거 자료:
 {json.dumps(sources, ensure_ascii=False)}
-
-읽기 방향을 돕는 요약(원문 인용의 근거로 사용 금지):
-{json.dumps(summary_context, ensure_ascii=False)}
 
 검색된 이론 자료(출처 ID와 적용 한계를 유지):
 {json.dumps([source.model_dump() for source in theory_sources], ensure_ascii=False)}
@@ -232,7 +236,7 @@ def generate_relational_insights(sanitized: SanitizedInput, summary: SessionSumm
         theories = retrieve_theory_sources(sanitized, summary)
         if not theories:
             return RelationalInsights(status="unavailable", notices=["검토된 이론 자료를 불러오지 못해 회기 인사이트를 생성하지 않았습니다."])
-        raw = get_structured_llm(RelationalInsightDraft, timeout=20, max_retries=0).invoke(
+        raw = get_structured_llm(RelationalInsightDraft, timeout=settings.relational_insight_timeout_seconds, max_retries=0).invoke(
             build_relational_insight_prompt(sources, summary, theories)
         )
         draft = raw if isinstance(raw, RelationalInsightDraft) else RelationalInsightDraft.model_validate(raw)

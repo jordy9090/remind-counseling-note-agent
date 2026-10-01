@@ -159,7 +159,9 @@ type FinalDocumentType = 'session_note' | 'supervision_report' | 'termination_re
 export type DevGroundingDemoData = {
   form: SessionInput
   note: NoteDraftResponse
-  supervisionReport: SupervisionReportDraft
+  supervisionReport?: SupervisionReportDraft
+  sessionTopic?: string
+  liveGeneration?: boolean
 }
 type MaterialModalMode =
   | 'add'
@@ -292,9 +294,10 @@ export default function SessionDraftPage({
   const groundingDemoForm = devGroundingDemo?.form ?? initialForm
   const groundingDemoNote = devGroundingDemo?.note ?? null
   const groundingDemoSupervisionReport = devGroundingDemo?.supervisionReport ?? null
+  const groundingDemoTopic = devGroundingDemo?.sessionTopic ?? ''
   const [currentScreen, setCurrentScreen] = useState<AppScreen>(localGroundingDemoScreen)
   const [form, setForm] = useState<SessionInput>(isLocalGroundingDemo ? groundingDemoForm : initialForm)
-  const [sessionTopic, setSessionTopic] = useState(isLocalGroundingDemo ? '부모 갈등 상황에서 자기표현 연습' : '')
+  const [sessionTopic, setSessionTopic] = useState(isLocalGroundingDemo ? groundingDemoTopic : '')
   const [finalDocumentType, setFinalDocumentType] = useState<FinalDocumentType>(
     localGroundingDemoView === 'supervision' ? 'supervision_report' : 'session_note',
   )
@@ -310,7 +313,7 @@ export default function SessionDraftPage({
   const [result, setResult] = useState<NoteDraftResponse | null>(isLocalGroundingDemo ? groundingDemoNote : null)
   const [draftSections, setDraftSections] = useState<DraftSection[]>(() => (
     isLocalGroundingDemo && groundingDemoNote
-      ? buildDocumentSections(groundingDemoNote, groundingDemoForm, '부모 갈등 상황에서 자기표현 연습', defaultVisibleSectionIds)
+      ? buildDocumentSections(groundingDemoNote, groundingDemoForm, groundingDemoTopic, defaultVisibleSectionIds)
         .map((section) => localGroundingDemoStale
           ? { ...section, groundingItems: markGroundingItemsStale(section.groundingItems) }
           : section)
@@ -320,7 +323,7 @@ export default function SessionDraftPage({
     localGroundingDemoScreen === 'final_document' && groundingDemoNote
       ? buildFinalDocumentSections(
           'session_note',
-          buildDocumentSections(groundingDemoNote, groundingDemoForm, '부모 갈등 상황에서 자기표현 연습', defaultVisibleSectionIds),
+          buildDocumentSections(groundingDemoNote, groundingDemoForm, groundingDemoTopic, defaultVisibleSectionIds),
           [],
         ).map((section) => localGroundingDemoStale
           ? { ...section, groundingItems: markGroundingItemsStale(section.groundingItems) }
@@ -928,9 +931,12 @@ export default function SessionDraftPage({
 
     await runDraftGeneration({
       setLoading: setIsLoading,
-      generate: () => isLocalGroundingDemo && groundingDemoNote
+      generate: () => isLocalGroundingDemo && groundingDemoNote && !devGroundingDemo?.liveGeneration
         ? Promise.resolve(groundingDemoNote)
-        : generateNoteDraft({ ...form, persist: true }),
+        : generateNoteDraft(
+          { ...form, persist: !isLocalGroundingDemo },
+          { localDemo: isLocalGroundingDemo && Boolean(devGroundingDemo?.liveGeneration) },
+        ),
       onSuccess: showGeneratedDraft,
       onError: (requestError) => {
         setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')

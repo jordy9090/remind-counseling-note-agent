@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from app.core.config import settings
 from app.schemas.insight import InsightCard, InsightEvidence, RelationalInsightDraft
 from app.schemas.note import InputSources, SanitizedInput, SessionInfo, SessionSummaryDraft, SummarySection
-from app.services.relational_insights import generate_relational_insights, retrieve_theory_sources
+from app.services.relational_insights import build_relational_insight_prompt, generate_relational_insights, retrieve_theory_sources
 
 
 def _input() -> SanitizedInput:
@@ -96,6 +96,16 @@ class RelationalInsightsTests(unittest.TestCase):
         self.assertEqual("insufficient_evidence", result.status)
         self.assertEqual([], result.cards)
         self.assertEqual([], result.theory_sources)
+
+    def test_generated_summary_is_not_used_as_an_insight_generation_anchor(self) -> None:
+        summary = _summary()
+        marker = "UNSUPPORTED_GENERATED_SUMMARY_CLAIM"
+        for field in ("session_theme", "session_content", "counselor_intervention", "client_response"):
+            setattr(summary, field, SummarySection(text=marker, evidence_type="needs_review"))
+        sources = {"transcript_text": "상담자: 어떤 점이 달랐나요?\n내담자: 두 관계가 같지는 않아요."}
+        prompt = build_relational_insight_prompt(sources, summary, [])
+        self.assertNotIn(marker, prompt)
+        self.assertIn("두 관계가 같지는 않아요.", prompt)
 
     def test_quote_from_wrong_source_is_removed(self) -> None:
         card = _card(evidence=[InsightEvidence(source_ref="counselor_memo", quote="모임에서 다른 의견이 있었지만 말하지 않았어요.")])
@@ -232,6 +242,16 @@ class RelationalInsightsTests(unittest.TestCase):
         self.assertEqual("unavailable", result.status)
         self.assertNotIn("SENSITIVE_PROVIDER_DETAIL", result.model_dump_json())
         self.assertEqual(before, (sanitized.model_dump(), summary.model_dump()))
+
+    def test_configured_insight_timeout_is_forwarded_without_retries(self) -> None:
+        llm = Mock()
+        llm.invoke.return_value = RelationalInsightDraft(cards=[_card()])
+        with patch.object(settings, "relational_insight_timeout_seconds", 60), patch(
+            "app.services.relational_insights.get_structured_llm", return_value=llm,
+        ) as factory:
+            result = generate_relational_insights(_input(), _summary())
+        self.assertEqual("generated", result.status)
+        factory.assert_called_once_with(RelationalInsightDraft, timeout=60, max_retries=0)
 
     def test_malformed_model_output_never_becomes_a_live_insight(self) -> None:
         llm = Mock()

@@ -58,3 +58,4 @@ Thumbs.db
 .venv-dev/
 *.docx
 supabase/.temp/
+frontend/src/fixtures/dev/local-live-result.json

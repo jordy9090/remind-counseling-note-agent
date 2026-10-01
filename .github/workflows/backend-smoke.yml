@@ -49,6 +49,8 @@ jobs:
             test_summary_generation_routes \
             test_relational_insights \
             test_relational_integration \
+            test_llm_model_settings \
+            test_revision_routing \
             test_session_materials \
             test_document_rich_text
 
