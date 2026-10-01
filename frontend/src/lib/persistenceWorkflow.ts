@@ -114,6 +114,16 @@ export function noteFromRecord(record: GeneratedNoteRecord): NoteDraftResponse {
   }
 }
 
+/**
+ * Text for the 회기 주제 section: the counselor's own topic when one is given, otherwise the
+ * theme the generation step drafted from the session input.
+ */
+export function sessionThemeText(counselorTopic: string, result: NoteDraftResponse): string {
+  if (counselorTopic.trim()) return counselorTopic
+  const generated = result.full_response?.session_summary_draft?.session_theme?.text
+  return typeof generated === 'string' ? generated.trim() : ''
+}
+
 type RestoredInputFields = {
   counselor_memo: string
   transcript_text: string
