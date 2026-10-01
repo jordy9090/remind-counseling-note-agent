@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Mic, PenLine, Plus, Upload, X } from 'lucide-react'
 
 import { PrimaryButton } from '../app-shell/ui'
@@ -14,7 +14,21 @@ const ACCEPT = '.pdf,.docx,.txt,.mp3,.m4a,.wav,application/pdf,application/vnd.o
 const AUDIO_EXTENSION = /\.(mp3|m4a|wav)$/i
 const AUDIO_CONSENT_MESSAGE = '음성 파일은 자동 축어록 생성을 위해 임시 처리되며 원본은 저장하지 않습니다.\n상담 음성 업로드에 필요한 동의를 확인하셨나요?'
 
-const fieldClass = 'h-11 w-full rounded-[10px] border border-grey-200 bg-grey-100 px-3 text-sm text-grey-800 outline-none focus:border-primary-400 focus:bg-white'
+const fieldClass = 'h-11 w-full cursor-pointer rounded-[10px] border border-grey-200 bg-grey-100 px-3 text-sm text-grey-800 outline-none focus:border-primary-400 focus:bg-white'
+
+/**
+ * Open the native date/time picker when any part of the box is clicked, not only the small icon.
+ * Typing still works; browsers without showPicker keep their default behavior.
+ */
+function openNativePicker(event: MouseEvent<HTMLInputElement>) {
+  const input = event.currentTarget
+  if (input.disabled || typeof input.showPicker !== 'function') return
+  try {
+    input.showPicker()
+  } catch {
+    // showPicker can throw without a user gesture or in cross-origin frames; fall back to the default.
+  }
+}
 
 function toFileList(files: File[]): FileList {
   const transfer = new DataTransfer()
@@ -129,10 +143,10 @@ export default function SessionInputPage({
         <div className="mt-5">
           <p className="rm-label">상담 일시</p>
           <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_130px_12px_130px]">
-            <input type="date" aria-label="상담 날짜" className={fieldClass} value={form.session_date} onChange={(event) => onUpdateField('session_date', event.target.value)} />
-            <input type="time" aria-label="상담 시작 시간" className={`${fieldClass} text-center`} value={sessionTime.start} onChange={(event) => onChangeSessionTime({ ...sessionTime, start: event.target.value })} />
+            <input type="date" aria-label="상담 날짜" className={fieldClass} onClick={openNativePicker} value={form.session_date} onChange={(event) => onUpdateField('session_date', event.target.value)} />
+            <input type="time" aria-label="상담 시작 시간" className={`${fieldClass} text-center`} onClick={openNativePicker} value={sessionTime.start} onChange={(event) => onChangeSessionTime({ ...sessionTime, start: event.target.value })} />
             <span className="hidden text-center text-sm text-grey-400 sm:block">~</span>
-            <input type="time" aria-label="상담 종료 시간" className={`${fieldClass} text-center`} value={sessionTime.end} onChange={(event) => onChangeSessionTime({ ...sessionTime, end: event.target.value })} />
+            <input type="time" aria-label="상담 종료 시간" className={`${fieldClass} text-center`} onClick={openNativePicker} value={sessionTime.end} onChange={(event) => onChangeSessionTime({ ...sessionTime, end: event.target.value })} />
           </div>
         </div>
 
