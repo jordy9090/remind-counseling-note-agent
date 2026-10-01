@@ -75,17 +75,18 @@ export default function HomeDashboardPage({
           </div>
           <div className="mt-3 overflow-x-auto">
             <table className="rm-table w-full min-w-[420px]">
-              <thead><tr><th>이름</th><th>날짜</th><th className="text-right">상태</th></tr></thead>
+              <thead><tr><th>이름</th><th>날짜</th><th>회기</th><th className="text-right">상태</th></tr></thead>
               <tbody>
                 {schedule.map((row) => (
                   <tr key={row.case_id} className="cursor-pointer hover:bg-grey-100/60" onClick={() => onOpenClient(row.case_id)}>
                     <td className="font-semibold text-grey-800">{row.name}</td>
                     <td>{row.date.replace(/-/g, '.')}</td>
+                    <td>{row.sessionNumber}회기</td>
                     <td className="text-right"><ScheduleChip label={row.status.label} tone={row.status.tone} /></td>
                   </tr>
                 ))}
                 {!schedule.length && (
-                  <tr><td colSpan={3} className="py-8 text-center text-sm text-grey-500">{loading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : '등록된 상담 예정일이 없습니다. 내담자 페이지에서 일정을 추가해보세요.'}</td></tr>
+                  <tr><td colSpan={4} className="py-8 text-center text-sm text-grey-500">{loading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : '등록된 상담 예정일이 없습니다. 내담자 페이지에서 일정을 추가해보세요.'}</td></tr>
                 )}
               </tbody>
             </table>
