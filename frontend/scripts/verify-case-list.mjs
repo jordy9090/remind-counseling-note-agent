@@ -101,6 +101,21 @@ const item = (overrides) => ({
   console.log('error messages: passed')
 }
 
+{
+  const rows = lib.buildScheduleRows([
+    item({ case_id: 'UPCOMING', case_alias: '가', latest_session_number: 2, latest_consultation_date: '2026-07-01', next_scheduled_date: '2026-07-08' }),
+    item({ case_id: 'FIRST', case_alias: '나', next_scheduled_date: '2026-07-05' }),
+    item({ case_id: 'HELD', case_alias: '다', latest_session_number: 3, latest_consultation_date: '2026-06-29', next_scheduled_date: '2026-06-29' }),
+    item({ case_id: 'NONE', case_alias: '라', latest_session_number: 4 }),
+  ], '2026-07-05')
+  assert.deepEqual(rows.map((r) => [r.case_id, r.sessionNumber, r.status.label]), [
+    ['HELD', 3, '완료'],
+    ['FIRST', 1, '진행 중'],
+    ['UPCOMING', 3, '진행 전'],
+  ], 'schedule rows: sorted by date, next session number unless already held on that date')
+  console.log('home schedule rows with session numbers: passed')
+}
+
 // Static wiring checks against the page and client.
 {
   const page = fs.readFileSync('src/pages/SessionDraftPage.tsx', 'utf8')

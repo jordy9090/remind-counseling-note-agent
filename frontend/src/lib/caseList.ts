@@ -241,7 +241,21 @@ export interface ScheduleRow {
   case_id: string
   name: string
   date: string
+  /** Session number the scheduled date refers to. */
+  sessionNumber: number
   status: { label: string; tone: ScheduleTone }
+}
+
+/**
+ * Session number for a case's scheduled date: the next session, unless a session was already
+ * recorded on or after that date (then the date belongs to the latest recorded session).
+ */
+export function scheduledSessionNumber(item: Pick<CaseListItem, 'latest_session_number' | 'latest_consultation_date' | 'next_scheduled_date'>): number {
+  const latest = item.latest_session_number || 0
+  const scheduled = (item.next_scheduled_date || '').slice(0, 10)
+  const lastHeld = (item.latest_consultation_date || '').slice(0, 10)
+  if (latest > 0 && scheduled && lastHeld && lastHeld >= scheduled) return latest
+  return latest + 1
 }
 
 /** 홈 "나의 상담 일정": 다음 예정일이 있는 케이스를 날짜순으로. */
@@ -252,6 +266,7 @@ export function buildScheduleRows(cases: CaseListItem[], today?: string): Schedu
       case_id: item.case_id,
       name: caseDisplayName(item),
       date: String(item.next_scheduled_date).slice(0, 10),
+      sessionNumber: scheduledSessionNumber(item),
       status: scheduleStatus(item.next_scheduled_date, today),
     }))
     .sort((a, b) => a.date.localeCompare(b.date))
