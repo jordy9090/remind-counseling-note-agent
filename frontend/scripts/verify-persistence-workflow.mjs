@@ -77,6 +77,17 @@ console.log('Confirmed string/object/sections values and intentional empty strin
   console.log('Stored session input restore (present, missing, malformed): passed')
 }
 
+{
+  const generated = (text) => ({ full_response: { session_summary_draft: { session_theme: { text } } } })
+  assert.equal(workflow.sessionThemeText('', generated(' AI drafted theme ')), 'AI drafted theme')
+  assert.equal(workflow.sessionThemeText('Counselor topic', generated('AI drafted theme')), 'Counselor topic')
+  // A restored record has no generation response, and a malformed theme must not reach the section.
+  for (const result of [{}, { full_response: {} }, generated(undefined), generated(7)]) {
+    assert.equal(workflow.sessionThemeText('  ', result), '')
+  }
+  console.log('Session theme falls back to the generated theme, counselor topic wins: passed')
+}
+
 const { temporaryDraftPayload } = await loadModule('temporaryDraft')
 const fixture = JSON.parse(fs.readFileSync('scripts/fixtures/temporary-draft.json', 'utf8'))
 const originalFixture = structuredClone(fixture)
