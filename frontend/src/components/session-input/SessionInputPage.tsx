@@ -42,6 +42,7 @@ function toFileList(files: File[]): FileList {
  * to the transcript input automatically. In-browser recording is not implemented yet.
  */
 export default function SessionInputPage({
+  mode,
   form,
   sessionTime,
   materials,
@@ -56,6 +57,8 @@ export default function SessionInputPage({
   onRemoveMaterial,
   onSubmit,
 }: {
+  /** 'existing' re-summarizes a stored session and overwrites its record. */
+  mode: 'new' | 'existing'
   form: SessionInput
   sessionTime: SessionTime
   materials: UploadedMaterial[]
@@ -138,7 +141,12 @@ export default function SessionInputPage({
   return (
     <section aria-label="새 회기 입력" className="mx-auto w-full max-w-[658px] px-4 pb-10 pt-2">
       <div className="rm-card p-5">
-        <h1 className="text-base font-bold text-grey-900">새 회기 시작</h1>
+        <h1 className="text-base font-bold text-grey-900">{mode === 'existing' ? `${form.session_number}회기 다시 요약하기` : '새 회기 시작'}</h1>
+        {mode === 'existing' && (
+          <p role="note" className="mt-2 rounded-[10px] bg-primary-50 px-3 py-2 text-xs leading-5 text-grey-700">
+            저장된 {form.session_number}회기 기록을 새 요약으로 바꿉니다. 다음 회기를 새로 만들려면 내담자 화면의 "새 회기 기록"을 눌러주세요.
+          </p>
+        )}
 
         <div className="mt-5">
           <p className="rm-label">상담 일시</p>
@@ -208,7 +216,7 @@ export default function SessionInputPage({
       )}
 
       <PrimaryButton className="mt-4 h-[52px] w-full rounded-[12px] text-[15px]" disabled={!canSubmit} loading={isLoading} onClick={onSubmit}>
-        <PenLine className="h-5 w-5" />AI 요약 생성하기
+        <PenLine className="h-5 w-5" />{mode === 'existing' ? `${form.session_number}회기 요약 다시 생성하기` : 'AI 요약 생성하기'}
       </PrimaryButton>
       {blockedReason && !isLoading && <p className="mt-2 text-center text-xs text-grey-500">{blockedReason}</p>}
     </section>
