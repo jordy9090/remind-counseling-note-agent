@@ -72,6 +72,8 @@ import ClientPickerModal from '../components/clients/ClientPickerModal'
 import DocumentArchivePage from '../components/documents/DocumentArchivePage'
 import SettingsPage from '../components/settings/SettingsPage'
 import FinalDocumentEditor from '../components/final-document/FinalDocumentEditor'
+import RichTextField from '../components/final-document/RichTextField'
+import { hasRichFormatting, plainTextToRichHtml, sanitizeRichHtml } from '../lib/richText'
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
@@ -218,6 +220,8 @@ interface FinalDocumentSection {
   id: string
   title: string
   content: string
+  /** Formatted version of `content` once the counselor edits the section in the final document. */
+  contentHtml?: string
   contentKind: 'paragraph' | 'list'
   groundingItems: GroundingReviewItem[]
 }
@@ -353,6 +357,8 @@ export default function SessionDraftPage({
   )
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
+  // Formatted markup of the block being edited; null for tables, transcripts, and untouched text.
+  const [editingSupervisionHtml, setEditingSupervisionHtml] = useState<string | null>(null)
   const [expandedSupervisionEvidenceId, setExpandedSupervisionEvidenceId] = useState<string | null>(null)
   const [isExportingDocument, setIsExportingDocument] = useState(false)
   const [documentExportError, setDocumentExportError] = useState<string | null>(null)
@@ -1231,12 +1237,14 @@ export default function SessionDraftPage({
   const beginEditSupervisionBlock = (block: SupervisionContentBlock) => {
     setEditingSupervisionBlockId(block.id)
     setEditingSupervisionText(supervisionBlockToEditableText(block))
+    setEditingSupervisionHtml(isFormattableSupervisionBlock(block) ? block.textHtml ?? null : null)
   }
 
   const commitEditSupervisionBlock = () => {
     if (!editingSupervisionBlockId) return
     const blockId = editingSupervisionBlockId
     const nextText = editingSupervisionText
+    const nextHtml = editingSupervisionHtml
     setFinalDocumentEditedAt(new Date())
     setSupervisionReportDraft((current) => {
       if (!current) return current
@@ -1245,13 +1253,14 @@ export default function SessionDraftPage({
         sections: current.sections.map((section) => ({
           ...section,
           contentBlocks: section.contentBlocks.map((block) =>
-            block.id === blockId ? updateSupervisionBlockFromText(block, nextText) : block,
+            block.id === blockId ? updateSupervisionBlockFromText(block, nextText, nextHtml) : block,
           ),
         })),
       }
     })
     setEditingSupervisionBlockId(null)
     setEditingSupervisionText('')
+    setEditingSupervisionHtml(null)
   }
 
   const runPersistence = async (operation: () => Promise<void>) => {
@@ -1298,7 +1307,7 @@ export default function SessionDraftPage({
           ...supervisionReportDraft,
           sections: supervisionReportDraft.sections.map((section) => ({ ...section,
             contentBlocks: section.contentBlocks.map((block) => block.id === editingSupervisionBlockId
-              ? updateSupervisionBlockFromText(block, editingSupervisionText) : block),
+              ? updateSupervisionBlockFromText(block, editingSupervisionText, editingSupervisionHtml) : block),
           })),
         } : supervisionReportDraft,
       }))
@@ -1513,6 +1522,7 @@ export default function SessionDraftPage({
       const request = buildDocumentExportRequest({
         documentType: finalDocumentType,
         editingSupervisionBlockId,
+        editingSupervisionHtml,
         editingSupervisionText,
         finalDocumentSections,
         form,
@@ -1750,13 +1760,17 @@ export default function SessionDraftPage({
                 {finalDocumentType === 'supervision_report' ? (
                   <SupervisionReportWorkspace
                     editingBlockId={editingSupervisionBlockId}
+                    editingHtml={editingSupervisionHtml}
                     editingText={editingSupervisionText}
                     error={finalDocumentError}
                     expandedEvidenceId={expandedSupervisionEvidenceId}
                     isLoading={isGeneratingFinalDocument}
                     report={supervisionReportDraft}
                     onBeginEdit={beginEditSupervisionBlock}
-                    onChangeEditingText={setEditingSupervisionText}
+                    onChangeEditingText={(text, html) => {
+                      setEditingSupervisionText(text)
+                      setEditingSupervisionHtml(html ?? null)
+                    }}
                     onCommitEdit={commitEditSupervisionBlock}
                     onToggleEvidence={setExpandedSupervisionEvidenceId}
                   />
@@ -1767,12 +1781,14 @@ export default function SessionDraftPage({
                     selectedGroundingItem={selectedFinalGroundingItem}
                     onCloseGrounding={() => setSelectedGroundingClaimId(null)}
                     onSelectGrounding={setSelectedGroundingClaimId}
-                    onChangeSectionContent={(sectionId, content) => {
+                    onChangeSectionContent={(sectionId, contentHtml, content) => {
                       setFinalDocumentEditedAt(new Date())
                       setFinalDocumentSections((current) =>
                         current.map((section) => (
                           section.id === sectionId
-                            ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
+                            // Formatting alone does not change the claims, so evidence stays as it was.
+                            ? { ...section, content, contentHtml, groundingItems: content === section.content
+                                ? section.groundingItems : markGroundingItemsStale(section.groundingItems) }
                             : section
                         )),
                       )
@@ -2311,7 +2327,7 @@ function FinalDocumentWorkspace({
   selectedGroundingItem,
   sections,
 }: {
-  onChangeSectionContent: (sectionId: string, content: string) => void
+  onChangeSectionContent: (sectionId: string, contentHtml: string, content: string) => void
   onCloseGrounding: () => void
   onSelectGrounding: (claimId: string) => void
   selectedGroundingClaimId: string | null
@@ -2322,15 +2338,15 @@ function FinalDocumentWorkspace({
     <div className="text-grey-900">
       {sections.map((section, index) => (
         <section key={section.id} className={index ? 'mt-7' : ''}>
-          <label htmlFor={`final-section-${section.id}`} className="block text-[15px] font-bold text-grey-900">
+          <h2 id={`final-section-title-${section.id}`} className="block text-[15px] font-bold text-grey-900">
             {section.title}
-          </label>
-          <textarea
+          </h2>
+          <RichTextField
             id={`final-section-${section.id}`}
-            value={section.content}
-            onChange={(event) => onChangeSectionContent(section.id, event.target.value)}
-            rows={Math.max(2, section.content.split('\n').length)}
-            className="mt-2 w-full resize-none rounded-[6px] border border-transparent bg-transparent px-1.5 py-1 text-sm leading-7 text-grey-800 outline-none [field-sizing:content] hover:bg-grey-100/60 focus:border-primary-100 focus:bg-white"
+            ariaLabelledBy={`final-section-title-${section.id}`}
+            html={section.contentHtml ?? plainTextToRichHtml(section.content)}
+            onChange={(html, text) => onChangeSectionContent(section.id, html, text)}
+            className="rm-rich-text mt-2 min-h-[56px] w-full rounded-[6px] border border-transparent bg-transparent px-1.5 py-1 text-sm leading-7 text-grey-800 outline-none hover:bg-grey-100/60 focus:border-primary-100 focus:bg-white"
           />
           <GroundingEvidenceReview
             items={section.groundingItems}
@@ -2350,6 +2366,7 @@ function FinalDocumentWorkspace({
 
 function SupervisionReportWorkspace({
   editingBlockId,
+  editingHtml,
   editingText,
   error,
   expandedEvidenceId,
@@ -2361,12 +2378,13 @@ function SupervisionReportWorkspace({
   report,
 }: {
   editingBlockId: string | null
+  editingHtml: string | null
   editingText: string
   error: string | null
   expandedEvidenceId: string | null
   isLoading: boolean
   onBeginEdit: (block: SupervisionContentBlock) => void
-  onChangeEditingText: (value: string) => void
+  onChangeEditingText: (value: string, html?: string) => void
   onCommitEdit: () => void
   onToggleEvidence: (blockId: string | null) => void
   report: SupervisionReportDraft | null
@@ -2444,6 +2462,7 @@ function SupervisionReportWorkspace({
           <SupervisionReportSectionView
             key={section.id}
             editingBlockId={editingBlockId}
+            editingHtml={editingHtml}
             editingText={editingText}
             evidenceIndex={report.evidenceIndex}
             expandedEvidenceId={expandedEvidenceId}
@@ -2465,6 +2484,7 @@ function SupervisionReportWorkspace({
 
 function SupervisionReportSectionView({
   editingBlockId,
+  editingHtml,
   editingText,
   evidenceIndex,
   expandedEvidenceId,
@@ -2475,11 +2495,12 @@ function SupervisionReportSectionView({
   section,
 }: {
   editingBlockId: string | null
+  editingHtml: string | null
   editingText: string
   evidenceIndex: SupervisionReportDraft['evidenceIndex']
   expandedEvidenceId: string | null
   onBeginEdit: (block: SupervisionContentBlock) => void
-  onChangeEditingText: (value: string) => void
+  onChangeEditingText: (value: string, html?: string) => void
   onCommitEdit: () => void
   onToggleEvidence: (blockId: string | null) => void
   section: SupervisionReportSection
@@ -2511,6 +2532,7 @@ function SupervisionReportSectionView({
             key={block.id}
             block={block}
             editing={editingBlockId === block.id}
+            editingHtml={editingHtml}
             editingText={editingText}
             evidenceIndex={evidenceIndex}
             evidenceOpen={expandedEvidenceId === block.id}
@@ -2528,6 +2550,7 @@ function SupervisionReportSectionView({
 function SupervisionContentBlockView({
   block,
   editing,
+  editingHtml,
   editingText,
   evidenceIndex,
   evidenceOpen,
@@ -2538,11 +2561,12 @@ function SupervisionContentBlockView({
 }: {
   block: SupervisionContentBlock
   editing: boolean
+  editingHtml: string | null
   editingText: string
   evidenceIndex: SupervisionReportDraft['evidenceIndex']
   evidenceOpen: boolean
   onBeginEdit: (block: SupervisionContentBlock) => void
-  onChangeEditingText: (value: string) => void
+  onChangeEditingText: (value: string, html?: string) => void
   onCommitEdit: () => void
   onToggleEvidence: () => void
 }) {
@@ -2552,7 +2576,22 @@ function SupervisionContentBlockView({
         {block.label && <span className="mr-1 text-[12px] font-extrabold text-slate-800">{block.label}</span>}
       </div>}
 
-      {editing ? (
+      {editing && isFormattableSupervisionBlock(block) ? (
+        <RichTextField
+          autoFocus
+          ariaLabel={block.label || '보고서 본문'}
+          html={editingHtml ?? plainTextToRichHtml(editingText)}
+          onChange={(html, text) => onChangeEditingText(text, html)}
+          onBlur={onCommitEdit}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+              event.preventDefault()
+              onCommitEdit()
+            }
+          }}
+          className="rm-rich-text min-h-[120px] w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-[13px] leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+      ) : editing ? (
         <textarea
           autoFocus
           value={editingText}
@@ -2623,16 +2662,23 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
     )
   }
 
+  // Text blocks use the regular weight so bold from the toolbar is visible.
+  const formattedHtml = isFormattableSupervisionBlock(block) && block.textHtml ? sanitizeRichHtml(block.textHtml) : ''
+
   if (block.type === 'reflection_box') {
-    return (
-      <div className="border border-slate-500 bg-slate-50 px-3 py-2 text-[13px] font-semibold leading-6 text-slate-900">
+    return formattedHtml ? (
+      <div className="rm-rich-text border border-slate-500 bg-slate-50 px-3 py-2 text-[13px] leading-6 text-slate-900" dangerouslySetInnerHTML={{ __html: formattedHtml }} />
+    ) : (
+      <div className="border border-slate-500 bg-slate-50 px-3 py-2 text-[13px] leading-6 text-slate-900">
         {cleanSupervisionText(block.text)}
       </div>
     )
   }
 
-  return (
-    <p className="min-h-6 whitespace-pre-wrap text-[13px] font-semibold leading-6 text-slate-900">
+  return formattedHtml ? (
+    <div className="rm-rich-text min-h-6 text-[13px] leading-6 text-slate-900" dangerouslySetInnerHTML={{ __html: formattedHtml }} />
+  ) : (
+    <p className="min-h-6 whitespace-pre-wrap text-[13px] leading-6 text-slate-900">
       {cleanSupervisionText(block.text)}
     </p>
   )
@@ -3652,7 +3698,12 @@ function cleanSupervisionText(value: string | null | undefined): string {
   return text.trim() === PLACEHOLDER_TEXT ? '' : text
 }
 
-function updateSupervisionBlockFromText(block: SupervisionContentBlock, text: string): SupervisionContentBlock {
+/** Text blocks take toolbar formatting; tables and transcripts are edited as structured plain text. */
+function isFormattableSupervisionBlock(block: SupervisionContentBlock): boolean {
+  return block.type !== 'table' && block.type !== 'transcript'
+}
+
+function updateSupervisionBlockFromText(block: SupervisionContentBlock, text: string, html: string | null = null): SupervisionContentBlock {
   if (block.type === 'table') {
     return {
       ...block,
@@ -3672,6 +3723,8 @@ function updateSupervisionBlockFromText(block: SupervisionContentBlock, text: st
   return {
     ...block,
     text,
+    // No markup means the text was not touched in this edit; keep what the block already had.
+    textHtml: html === null ? block.textHtml : hasRichFormatting(html) ? html : undefined,
     reviewStatus: 'edited',
   }
 }
@@ -3741,6 +3794,7 @@ function capabilityReasonToKorean(reason?: string | null): string {
 function buildDocumentExportRequest({
   documentType,
   editingSupervisionBlockId,
+  editingSupervisionHtml,
   editingSupervisionText,
   finalDocumentSections,
   form,
@@ -3749,6 +3803,7 @@ function buildDocumentExportRequest({
 }: {
   documentType: FinalDocumentType
   editingSupervisionBlockId: string | null
+  editingSupervisionHtml: string | null
   editingSupervisionText: string
   finalDocumentSections: FinalDocumentSection[]
   form: SessionInput
@@ -3763,6 +3818,7 @@ function buildDocumentExportRequest({
       supervisionReportDraft,
       editingSupervisionBlockId,
       editingSupervisionText,
+      editingSupervisionHtml,
     )
 
     return {
@@ -3805,6 +3861,8 @@ function buildGeneralExportSections(sections: FinalDocumentSection[]): DocumentE
       id: section.id,
       title: section.title,
       content: section.contentKind === 'list' ? splitEditableList(section.content) : section.content,
+      // Sent only when there is formatting, so unformatted documents export exactly as before.
+      content_html: hasRichFormatting(section.contentHtml) ? section.contentHtml : undefined,
       level: 2,
     }))
 }
@@ -3818,6 +3876,7 @@ function buildSupervisionExportSections(report: SupervisionReportDraft): Documen
           id: block.id,
           type: block.type,
           text: block.text || null,
+          text_html: isFormattableSupervisionBlock(block) && hasRichFormatting(block.textHtml) ? block.textHtml : undefined,
           rows: block.rows || [],
           speaker_turns: block.speakerTurns?.map((turn) => ({
             turn_id: turn.turnId,
@@ -3849,6 +3908,7 @@ function applyPendingSupervisionEdit(
   report: SupervisionReportDraft,
   editingBlockId: string | null,
   editingText: string,
+  editingHtml: string | null,
 ): SupervisionReportDraft {
   if (!editingBlockId) return report
 
@@ -3857,7 +3917,7 @@ function applyPendingSupervisionEdit(
     sections: report.sections.map((section) => ({
       ...section,
       contentBlocks: section.contentBlocks.map((block) =>
-        block.id === editingBlockId ? updateSupervisionBlockFromText(block, editingText) : block,
+        block.id === editingBlockId ? updateSupervisionBlockFromText(block, editingText, editingHtml) : block,
       ),
     })),
   }

@@ -264,6 +264,8 @@ POST /api/documents/export
 
 Generates a downloadable file from the counselor's latest final-document draft. The frontend sends only visible, non-empty sections. For supervision reports, `contentBlocks` preserve paragraph, table, transcript, and reflection box structure.
 
+Formatted text is optional: a section may carry `content_html` and a text block `text_html` next to the plain `content`/`text`. It is a limited HTML fragment from the editor (bold, italic, underline, text color, highlight, alignment, lists; at most 200,000 characters). The server parses it into paragraphs and runs and never passes markup through; tables and transcripts ignore it. DOCX keeps all of this formatting. The ReportLab PDF fallback used on Vercel keeps underline, color, highlight, alignment, and lists, shows bold in the Gothic face, and has no italic.
+
 AI review fields such as `missing_items`, warnings, unsupported claims, and human-review prompts remain screen-only review data. They are not automatically included in exported document metadata.
 
 ### Request

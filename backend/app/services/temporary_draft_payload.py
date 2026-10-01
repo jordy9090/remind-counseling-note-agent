@@ -11,7 +11,7 @@ def _fields(names: str) -> dict[str, Any]:
 # Mirrored by frontend/src/lib/temporaryDraft.ts; round-trip fixtures cover both boundaries.
 _STRINGS = ["scalar"]
 _BLOCK = {
-    **_fields("id type text aiGenerated demoValue reviewStatus label evidenceStatus"),
+    **_fields("id type text textHtml aiGenerated demoValue reviewStatus label evidenceStatus"),
     "rows": [{"*": "scalar"}], "speakerTurns": [_fields("turnId speaker text silenceSeconds")],
     "evidenceIds": _STRINGS, "warnings": _STRINGS, "guidance": _STRINGS, "missingInputs": _STRINGS,
 }
@@ -27,7 +27,7 @@ _SHAPE = {
         "appliedTargets": _STRINGS,
     }],
     "draft_sections": [_fields("id title content visible")],
-    "final_document_sections": [_fields("id title content contentKind")],
+    "final_document_sections": [_fields("id title content contentHtml contentKind")],
     "result": {
         **_fields("case_id session_number session_summary main_issue counselor_intervention client_response next_plan workspace_note_id"),
         "missing_items": _STRINGS, "warnings": _STRINGS,

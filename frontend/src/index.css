@@ -316,6 +316,10 @@ body {
 .app-shell { word-break: keep-all; overflow-wrap: anywhere; background: #f5f7fb; }
 .app-shell-home { background: radial-gradient(circle at 12% 8%, #dbe7ff 0, transparent 34%), radial-gradient(circle at 92% 90%, #e3ecff 0, transparent 30%), #f5f7fb; }
 .rm-card { background: #fff; border: 1px solid rgba(37, 99, 235, 0.21); border-radius: 16px; }
+/* Formatted text in the final document: Tailwind's reset removes list markers. */
+.rm-rich-text { white-space: pre-wrap; }
+.rm-rich-text ul { list-style: disc; padding-left: 1.5em; }
+.rm-rich-text ol { list-style: decimal; padding-left: 1.5em; }
 .rm-modal { background: #fff; border: 1px solid #e5e7eb; border-radius: 24px; padding: 24px; display: flex; flex-direction: column; gap: 24px; box-shadow: 0 24px 60px rgba(17, 24, 39, 0.18); }
 :where(.rm-input) { width: 100%; height: 44px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; padding: 0 14px; font-size: 14px; color: #111827; outline: none; }
 .rm-input:focus { border-color: #2563eb; box-shadow: 0 0 0 4px #dce7ff; }

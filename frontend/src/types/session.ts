@@ -429,6 +429,8 @@ export interface SupervisionContentBlock {
   id: string
   type: SupervisionContentBlockType
   text?: string
+  /** Formatted version of `text` from the final document editor (sanitized markup). */
+  textHtml?: string
   rows?: Record<string, string>[]
   speakerTurns?: SupervisionSpeakerTurn[]
   evidenceIds: string[]
@@ -533,6 +535,7 @@ export interface DocumentExportContentBlock {
   id: string
   type: SupervisionContentBlockType
   text?: string | null
+  text_html?: string | null
   rows?: Record<string, unknown>[]
   speaker_turns?: DocumentExportTranscriptTurn[]
   speakerTurns?: DocumentExportTranscriptTurn[]
@@ -544,6 +547,7 @@ export interface DocumentExportSection {
   id: string
   title: string
   content?: string | string[] | null
+  content_html?: string | null
   content_blocks?: DocumentExportContentBlock[]
   contentBlocks?: DocumentExportContentBlock[]
   level?: number

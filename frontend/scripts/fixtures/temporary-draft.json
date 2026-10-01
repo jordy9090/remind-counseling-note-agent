@@ -21,7 +21,7 @@
   }],
   "draft_sections": [{"id": "session_content", "title": "Counselor section", "content": "Counselor summary edit", "visible": true,
     "evidence": [{"excerpt": "SYNTHETIC-RAW-CACHE"}], "groundingItems": [{"source": {"text": "SYNTHETIC-RAW-CACHE"}}]}],
-  "final_document_sections": [{"id": "final", "title": "Final", "content": "Final document edit", "contentKind": "paragraph", "groundingItems": [{"text": "SYNTHETIC-RAW-CACHE"}]}],
+  "final_document_sections": [{"id": "final", "title": "Final", "content": "Final document edit", "contentHtml": "<div><b>Final</b> document edit</div>", "contentKind": "paragraph", "groundingItems": [{"text": "SYNTHETIC-RAW-CACHE"}]}],
   "result": {"case_id": "SYNTHETIC-CACHE-BOUNDARY", "session_number": 1, "session_summary": "AI summary", "main_issue": "AI issue",
     "counselor_intervention": "AI intervention", "client_response": "AI response", "next_plan": "AI plan", "workspace_note_id": "synthetic-note",
     "missing_items": [], "warnings": ["Counselor review required"], "evidence_check": [{"source_excerpt": "SYNTHETIC-RAW-CACHE"}],
@@ -31,7 +31,7 @@
     "reportId": "synthetic-report", "caseId": "SYNTHETIC-CACHE-BOUNDARY", "reportType": "personal_counseling_supervision", "title": "Edited report",
     "meta": {"clientAlias": "Synthetic client", "sessionNumber": 1, "reportDate": "2026-09-11", "counselorName": "Synthetic counselor", "institution": "Synthetic institution"},
     "sections": [{"id": "report-section", "title": "Edited report section", "level": 1, "status": "partial", "contentBlocks": [
-      {"id": "report-block", "type": "transcript", "text": "Counselor report edit", "rows": [{"column": "Edited table cell", "cache": {"text": "SYNTHETIC-RAW-CACHE"}}],
+      {"id": "report-block", "type": "transcript", "text": "Counselor report edit", "textHtml": "<div><u>Counselor</u> report edit</div>", "rows": [{"column": "Edited table cell", "cache": {"text": "SYNTHETIC-RAW-CACHE"}}],
         "speakerTurns": [{"turnId": "turn-1", "speaker": "client", "text": "Counselor-selected report excerpt", "silenceSeconds": 3, "segments": [{"text": "SYNTHETIC-RAW-CACHE"}]}],
         "evidenceIds": ["evidence-1"], "aiGenerated": false, "demoValue": false, "reviewStatus": "edited", "segments": [{"text": "SYNTHETIC-RAW-CACHE"}]}
     ]}],
