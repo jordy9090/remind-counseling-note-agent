@@ -276,6 +276,74 @@ class PersistenceWorkflowTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 401, url)
         self.assertEqual(self.store.calls, [])
 
+    def test_record_detail_returns_stored_session_input_to_the_owner_only(self):
+        note_id = self.generate()["persistence_report"]["note_id"]
+        url = f"/api/notes/records/{note_id}"
+        record = self.client.get(url, headers=self.headers).json()
+        self.assertEqual(record["session_input"]["transcript_text"], INPUT["transcript_text"])
+        self.assertEqual(record["session_input"]["counselor_memo"], INPUT["counselor_memo"])
+        self.assertNotIn("sensitive_info_candidates", record["session_input"])
+        other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+        self.assertEqual(self.client.get(url, headers=other).status_code, 404)
+        # Confirmation does not need the stored input, so it must not request it.
+        selects = []
+        original = self.store.request
+
+        def spy(method, table, **kwargs):
+            if table == "sessions" and method == "GET":
+                selects.append(str((kwargs.get("query") or {}).get("select")))
+            return original(method, table, **kwargs)
+
+        with patch.object(self.store, "request", side_effect=spy):
+            self.client.post("/api/notes/confirm", headers=self.headers, json={
+                "note_id": note_id, "confirmed_note": {"session_content": "상담사 확정"},
+                "counselor_edited": True, "create_case_memory": False,
+            })
+        self.assertTrue(selects and all("sanitized_input_text" not in select for select in selects))
+        # Legacy or malformed stored input never breaks the record read.
+        for broken in (None, "", "not json", json.dumps({"sources": "x"}), json.dumps({"sources": {"transcript_text": 1}})):
+            self.store.tables["sessions"][0]["sanitized_input_text"] = broken
+            response = self.client.get(url, headers=self.headers)
+            self.assertEqual(response.status_code, 200, repr(broken))
+            self.assertIsNone(response.json()["session_input"], repr(broken))
+
+    def test_original_input_is_stored_and_restored_only_when_opted_in(self):
+        sensitive = {**INPUT, "counselor_memo": "보호자 연락처 010-1234-5678 로 안내함.",
+                     "transcript_text": "내담자: 한빛고등학교에 다녀요."}
+        # Default: nothing unmasked is stored, and the record returns the de-identified copy.
+        note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
+        row = self.store.tables["sessions"][0]
+        self.assertIsNone(row["raw_input_text"])
+        record = self.client.get(f"/api/notes/records/{note_id}", headers=self.headers).json()
+        self.assertFalse(record["session_input_is_original"])
+        self.assertNotIn("010-1234-5678", json.dumps(record, ensure_ascii=False))
+        self.assertIn("[PHONE]", record["session_input"]["counselor_memo"])
+
+        # A masked SAVE_RAW_INPUT payload (no marker) is never presented as the original.
+        with patch.object(settings, "save_raw_input", True):
+            note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
+        self.assertNotIn("010-1234-5678", row["raw_input_text"])
+        record = self.client.get(f"/api/notes/records/{note_id}", headers=self.headers).json()
+        self.assertFalse(record["session_input_is_original"])
+
+        # Opt-in: the original is stored for the owner; the sanitized copy stays masked for retrieval/evidence.
+        with patch.object(settings, "save_original_input", True):
+            note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
+        self.assertIn("010-1234-5678", row["raw_input_text"])
+        self.assertNotIn("010-1234-5678", row["sanitized_input_text"])
+        url = f"/api/notes/records/{note_id}"
+        record = self.client.get(url, headers=self.headers).json()
+        self.assertTrue(record["session_input_is_original"])
+        self.assertEqual(record["session_input"]["counselor_memo"], sensitive["counselor_memo"])
+        self.assertEqual(record["session_input"]["transcript_text"], sensitive["transcript_text"])
+        other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+        self.assertEqual(self.client.get(url, headers=other).status_code, 404)
+        # A malformed original falls back to the sanitized copy.
+        row["raw_input_text"] = json.dumps({"masked": False, "transcript_text": 5})
+        record = self.client.get(url, headers=self.headers).json()
+        self.assertFalse(record["session_input_is_original"])
+        self.assertIn("[PHONE]", record["session_input"]["counselor_memo"])
+
     def test_detail_rejects_broken_session_case_chain(self):
         result = self.generate()
         note_id = result["persistence_report"]["note_id"]

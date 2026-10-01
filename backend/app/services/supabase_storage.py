@@ -26,6 +26,7 @@ from app.schemas.note import (
     ConfirmGeneratedNoteResponse,
     GenerateNoteResponse,
     GeneratedNoteRecord,
+    InputSources,
     PersistenceReport,
     SessionInput,
     SupervisionReportDraft,
@@ -410,9 +411,10 @@ def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
     if not getattr(actor_storage, "configured", settings.supabase_configured):
         raise NoteConfirmationError(503, "저장소 연결을 확인할 수 없습니다.")
     note = _fetch_generated_note(note_id, actor=actor, actor_storage=actor_storage)
-    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
+    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage, include_input=True)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
+    stored_input, is_original = _stored_session_input(session)
     return GeneratedNoteRecord(
         note_id=context.note_id,
         case_id=context.case_id,
@@ -423,7 +425,41 @@ def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
         draft_json=note.get("draft_json") or {},
         confirmed_json=note.get("confirmed_json") or {},
         confirmation_status=str(note.get("confirmation_status") or "draft"),
+        session_input=stored_input,
+        session_input_is_original=is_original,
     )
+
+
+def _parse_json_object(raw: Any) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _stored_session_input(session: dict[str, Any]) -> tuple[InputSources | None, bool]:
+    """Return (sources, is_original) for a stored session; never raises for legacy/malformed rows.
+
+    raw_input_text holds the unmasked original only when it was written with SAVE_ORIGINAL_INPUT=1,
+    which marks the payload with "masked": false. Older raw_input_text payloads are masked copies and
+    carry no marker, so they are ignored in favor of sanitized_input_text.
+    """
+    try:
+        original = _parse_json_object(session.get("raw_input_text"))
+        if original is not None and original.get("masked") is False:
+            fields = {key: value for key, value in original.items() if key != "masked"}
+            return InputSources(**fields), True
+    except (ValueError, TypeError):
+        pass
+    try:
+        sanitized = _parse_json_object(session.get("sanitized_input_text"))
+        sources = sanitized.get("sources") if sanitized is not None else None
+        return (InputSources(**sources), False) if isinstance(sources, dict) else (None, False)
+    except (ValueError, TypeError):
+        return None, False
 
 
 def _fetch_generated_note(
@@ -452,14 +488,16 @@ def _fetch_session_for_note(
     *,
     actor: str,
     actor_storage: SupabaseStorage,
+    include_input: bool = False,
 ) -> dict[str, Any]:
     session_id = str(note.get("session_id") or "")
+    columns = "id,case_id,session_number,session_date,session_title,user_id"
     session = actor_storage.maybe_single(
         "sessions",
         {
             "id": f"eq.{session_id}",
             "user_id": f"eq.{actor}",
-            "select": "id,case_id,session_number,session_date,session_title,user_id",
+            "select": f"{columns},sanitized_input_text,raw_input_text" if include_input else columns,
         },
     )
     if session is None:
@@ -556,6 +594,29 @@ def _raw_input_text(session_input: SessionInput) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _original_input_text(session_input: SessionInput) -> str:
+    """Unmasked session input for SAVE_ORIGINAL_INPUT=1. "masked": false marks it as the original."""
+    payload = {
+        "masked": False,
+        "counselor_memo": session_input.counselor_memo,
+        "transcript_text": session_input.transcript_text,
+        "previous_session_summary": session_input.previous_session_summary,
+        "counseling_goal": session_input.counseling_goal,
+        "psychological_test_summary": session_input.psychological_test_summary,
+        "key_issue_tags": session_input.key_issue_tags,
+        "nonverbal_notes": session_input.nonverbal_notes,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _session_raw_input(session_input: SessionInput) -> str | None:
+    if settings.save_original_input:
+        return _original_input_text(session_input)
+    if settings.save_raw_input:
+        return _raw_input_text(session_input)
+    return None
+
+
 def _resolve_case_alias(session_input: SessionInput, existing_case: dict[str, Any] | None) -> str:
     """Store the client alias in cases.case_alias.
 
@@ -585,7 +646,7 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
         "session_date": session_input.session_date or None,
         "session_title": _session_title(session_input),
         "transcript_status": _transcript_status(session_input),
-        "raw_input_text": _raw_input_text(session_input) if settings.save_raw_input else None,
+        "raw_input_text": _session_raw_input(session_input),
         "sanitized_input_text": json.dumps(
             result.sanitized_input.model_dump(mode="json"),
             ensure_ascii=False,
@@ -594,6 +655,11 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
 
 
 def _stored_message() -> str:
+    if settings.save_original_input:
+        return (
+            "Generated note was stored in Supabase with the UNMASKED original session input in raw_input_text "
+            "because SAVE_ORIGINAL_INPUT=true. Enable only under an approved consent and retention policy."
+        )
     if settings.save_raw_input:
         return (
             "Generated note was stored in Supabase with masked raw_input_text because SAVE_RAW_INPUT=true. "

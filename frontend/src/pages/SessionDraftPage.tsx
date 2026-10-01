@@ -85,7 +85,7 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
-import { confirmedPayload, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint } from '../lib/persistenceWorkflow'
+import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
 import {
   customChecklistId,
@@ -1444,10 +1444,18 @@ export default function SessionDraftPage({
       const data = noteFromRecord(record)
       const payload = recordPayload(record)
       const info = isObject(record.draft_json.session_info) ? record.draft_json.session_info : {}
+      const restoredInput = sessionInputFromRecord(record)
+      const inputNote = hasRestoredInput(restoredInput)
+        ? record.session_input_is_original
+          ? ' 저장된 회기 입력 원문도 첨부 자료에 불러왔습니다.'
+          : ' 저장된 회기 입력(개인정보 비식별 처리본)도 첨부 자료에 불러왔습니다.'
+        : ' 이 회기에는 저장된 입력 자료가 없습니다.'
       const nextForm: SessionInput = {
         ...initialForm, case_id: record.case_id, session_number: record.session_number, session_date: record.session_date,
         client_alias: typeof info.client_alias === 'string' ? info.client_alias : '',
         counselor_name: typeof info.counselor_name === 'string' ? info.counselor_name : '',
+        // Stored (de-identified) session input, so the 첨부 자료 tab is not empty after reopening.
+        ...restoredInput,
       }
       const confirmed = isConfirmedRecord(record)
       const theme = readStoredText(payload, 'session_theme') ?? ''
@@ -1473,8 +1481,8 @@ export default function SessionDraftPage({
       setCurrentScreen('summary_draft')
       resetRestoredUi()
       setDraftSaveMessage(confirmed
-        ? '서버에서 상담사 확정본 전체를 불러왔습니다. 원문 입력은 임시저장에서 복원할 수 있습니다.'
-        : '서버에서 AI 초안을 불러왔습니다. 상담사 검토와 확정이 필요합니다.')
+        ? `서버에서 상담사 확정본 전체를 불러왔습니다.${inputNote}`
+        : `서버에서 AI 초안을 불러왔습니다. 상담사 검토와 확정이 필요합니다.${inputNote}`)
     })
   }
 

@@ -15,7 +15,7 @@ Authentication implementation and other upstream changes are taken unchanged fro
 | GET /api/notes/drafts and /drafts/{draft_id} | Lists/restores owned temporary workspaces. |
 | POST /api/notes/generate | Uses persist:true; a successful persistence report and note ID are required for confirmation. |
 | POST /api/notes/confirm | Saves current counselor sections while preserving the original AI draft. |
-| GET /api/notes/records/{note_id} | Returns full draft_json, confirmed_json, and status; dashboard excerpts cannot restore full text. |
+| GET /api/notes/records/{note_id} | Returns full draft_json, confirmed_json, status, and `session_input` (the de-identified sources stored in `sessions.sanitized_input_text`, or null); dashboard excerpts cannot restore full text. |
 
 The detail endpoint reuses note → session → case ownership checks and the authenticated
 Supabase Bearer token. Responses use `Cache-Control: private, no-store`.
@@ -75,7 +75,10 @@ PR #19's sanitized transcript evidence storage is separate and unchanged.
 - Missing tokens fail before persistence requests are sent. Server authorization is unchanged.
 - Unreadable linked confirmation status permits temporary edit restoration but disables
   confirmation until the original record can be verified.
-- Note detail alone does not restore original session input; use the temporary workspace.
+- Note detail restores the de-identified session input saved at generation time (transcript, memo, previous/test
+  summaries, nonverbal notes) so the 첨부 자료 tab is populated. Original uploads and per-file names are not stored.
+  Unmasked text is stored and returned (`session_input_is_original: true`) only for sessions generated with
+  `SAVE_ORIGINAL_INPUT=1`; otherwise the de-identified copy is returned. Legacy or malformed stored input restores as empty.
 - Evidence previews and source verification caches are not restored. Recheck sources before
   treating restored assertions as verified. Edited report content is retained.
 - Existing generation writes are not transactional; partial-write behavior is unchanged.

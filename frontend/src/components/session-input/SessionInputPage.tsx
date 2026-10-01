@@ -171,7 +171,7 @@ export default function SessionInputPage({
             </div>
           )}
           {form.transcript_text.trim() && (
-            <p className="mt-2 text-xs text-grey-500">축어록 {form.transcript_text.replace(/\s/g, '').length.toLocaleString('ko-KR')}자가 회기 입력에 반영되어 있습니다. 파일 항목을 눌러 내용을 확인하거나 수정할 수 있습니다.</p>
+            <p className="mt-2 text-xs text-grey-500">축어록 {form.transcript_text.replace(/\s/g, '').length.toLocaleString('ko-KR')}자가 회기 입력에 반영되어 있습니다.{materials.length > 0 ? ' 파일 항목을 눌러 내용을 확인하거나 수정할 수 있습니다.' : ''}</p>
           )}
         </div>
 

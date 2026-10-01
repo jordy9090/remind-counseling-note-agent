@@ -31,7 +31,8 @@ matching. Not every table has the same composite FKs or parent-check policies.
 | `ENABLE_RAG` (default false) | Retrieval of stored case context/KB. Independent of `ENABLE_PERSISTENCE` |
 | `ENABLE_RAW_REGION_GROUNDING` (default false) | Grounding graph path. Raw retrieval also requires `ENABLE_RAG=1` + dense + pre-existing index |
 | `ENABLE_CASE_MEMORY` (default false) | Memory indexing on confirm. Does not block all reads of existing memory |
-| `SAVE_RAW_INPUT` (default false) | Whether sessions.raw_input_text is saved. Does not block draft JSON/cache |
+| `SAVE_RAW_INPUT` (default false) | Whether sessions.raw_input_text is saved (masked copy). Does not block draft JSON/cache |
+| `SAVE_ORIGINAL_INPUT` (default false) | Stores the **unmasked** session input in sessions.raw_input_text (`"masked": false`) so the owner can reopen the original text. Takes precedence over `SAVE_RAW_INPUT`. The sanitized copy is still stored and still used for retrieval/evidence |
 
 Current UI note/report generation does not request saving and does not call confirm/draft/recompose APIs.
 The owned case list (`GET /api/cases`), client dashboard, record/draft restore, and schedule updates, however, are connected to the DB.

@@ -113,3 +113,36 @@ export function noteFromRecord(record: GeneratedNoteRecord): NoteDraftResponse {
     warnings: ['저장된 기록을 불러왔습니다. 근거 검토 정보는 임시저장 작업에서 확인할 수 있습니다.'],
   }
 }
+
+type RestoredInputFields = {
+  counselor_memo: string
+  transcript_text: string
+  previous_session_summary: string
+  counseling_goal: string
+  psychological_test_summary: string
+  key_issue_tags: string[]
+  nonverbal_notes: string
+}
+
+/**
+ * Session input fields restored from a stored record. The server returns the de-identified
+ * input saved at generation time; anything missing or malformed is restored as empty.
+ */
+export function sessionInputFromRecord(record: GeneratedNoteRecord): RestoredInputFields {
+  const input: Record<string, unknown> = isObject(record.session_input) ? record.session_input : {}
+  const text = (key: string) => (typeof input[key] === 'string' ? input[key] as string : '')
+  return {
+    counselor_memo: text('counselor_memo'),
+    transcript_text: text('transcript_text'),
+    previous_session_summary: text('previous_session_summary'),
+    counseling_goal: text('counseling_goal'),
+    psychological_test_summary: text('psychological_test_summary'),
+    key_issue_tags: Array.isArray(input.key_issue_tags) ? input.key_issue_tags.filter((tag): tag is string => typeof tag === 'string') : [],
+    nonverbal_notes: text('nonverbal_notes'),
+  }
+}
+
+export function hasRestoredInput(fields: RestoredInputFields): boolean {
+  return [fields.counselor_memo, fields.transcript_text, fields.previous_session_summary,
+    fields.psychological_test_summary, fields.nonverbal_notes].some((value) => value.trim().length > 0)
+}
