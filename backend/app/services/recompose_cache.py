@@ -12,7 +12,7 @@ from app.graph.graph import run_note_pipeline
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
 
 
-CACHE_VERSION = "recompose-v3-grounding"
+CACHE_VERSION = "recompose-v4-summary-quality"
 
 
 def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "") -> RecomposeNoteResponse:
@@ -52,6 +52,9 @@ def build_recompose_cache_key(
 ) -> str:
     payload = {
         "version": CACHE_VERSION,
+        "use_stub": settings.use_stub,
+        "model": settings.openai_model,
+        "model_configured": bool(settings.openai_api_key),
         "actor": str(actor or settings.remind_preview_actor),
         "enable_rag": settings.enable_rag,
         "enable_raw_region_grounding": settings.enable_raw_region_grounding,

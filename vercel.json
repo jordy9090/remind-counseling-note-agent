@@ -29,6 +29,9 @@
     }
   ],
   "functions": {
+    "api/notes/generate.py": {
+      "maxDuration": 300
+    },
     "api/materials/documents/extract.py": {
       "maxDuration": 60
     }

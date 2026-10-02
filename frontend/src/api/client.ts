@@ -51,7 +51,9 @@ client.interceptors.request.use(async (config) => {
   return config
 })
 
-export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftResponse> => {
+export const generateNoteDraft = async (
+  input: SessionInput,
+): Promise<NoteDraftResponse> => {
   try {
     const response = await client.post<GenerateNoteResponse>('/api/notes/generate', {
       case_id: input.case_id,
@@ -67,8 +69,9 @@ export const generateNoteDraft = async (input: SessionInput): Promise<NoteDraftR
       key_issue_tags: input.key_issue_tags || [],
       nonverbal_notes: input.nonverbal_notes || '',
       target_document_type: input.target_document_type || 'session_note',
+      insight_lens: 'psychodynamic_relational',
       persist: Boolean(input.persist),
-    })
+    }, { timeout: 310000 })
     return toNoteDraftResponse(response.data)
   } catch (error) {
     throw normalizeApiError(error, '회기요약 초안을 생성하지 못했습니다.')
@@ -249,7 +252,7 @@ function normalizeApiError(error: unknown, fallback: string): Error {
   return error instanceof Error ? error : new Error(fallback)
 }
 
-function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftResponse {
+export function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftResponse {
   const draft = fullResponse.session_summary_draft
   const verification = fullResponse.verification_report
 
@@ -278,6 +281,7 @@ function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDraftRespo
         : []),
     ]),
     grounding: fullResponse.grounding,
+    relational_insights: fullResponse.relational_insights,
     full_response: fullResponse,
   }
 }

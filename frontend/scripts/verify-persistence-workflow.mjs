@@ -3,7 +3,13 @@ import fs from 'node:fs'
 import ts from 'typescript'
 
 async function loadModule(name) {
-  const source = fs.readFileSync(`src/lib/${name}.ts`, 'utf8')
+  let source = fs.readFileSync(`src/lib/${name}.ts`, 'utf8')
+  if (name === 'persistenceWorkflow') {
+    const dependency = ts.transpileModule(fs.readFileSync('src/lib/relationalInsights.ts', 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+    }).outputText
+    source = source.replace("'./relationalInsights'", `'data:text/javascript;base64,${Buffer.from(dependency).toString('base64')}'`)
+  }
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
   })
@@ -111,3 +117,36 @@ assert.equal(block.speakerTurns[0].text, 'Counselor-selected report excerpt')
 assert.deepEqual(temporaryDraftPayload(saved), saved, 'save/read projection must be idempotent')
 assert.deepEqual(fixture, originalFixture, 'saving must not mutate in-memory edits or caches on failure')
 console.log('Temporary request allowlist, nested caches, applied input, edited reports, and non-mutating serialization: passed')
+
+{
+  const insights = { status: 'generated', lens: 'psychodynamic_relational', notices: [],
+    supervision_memo: 'The recorded wish to reassure may have shaped the next question; its influence remains uncertain.',
+    cards: [{ id: 'synthetic', focus: 'counselor_reflection', observation: 'Recorded wish to reassure.',
+      brief_text: 'The recorded wish to reassure may have shaped the next question; its influence remains uncertain.',
+      hypothesis: 'A tentative relational hypothesis.', alternative_explanation: 'An ordinary wish to comfort.',
+      counterevidence_or_missing: 'No causal effect is established.', requires_review: true,
+      supervision_questions: ['What shaped the next intervention?'],
+      evidence: [{ source_ref: 'counselor_memo', quote: 'Synthetic counselor reflection.' }],
+      theory_source_ids: ['synthetic-source'] }],
+    theory_sources: [{ id: 'synthetic-source', title: 'Synthetic reference', organization: 'Test',
+      url: 'https://example.org/synthetic', locator: 'Test', principle: 'Reflection', concepts: [], limitations: 'Test only' }] }
+  const draft = { reflection: { text: 'Counselor reflection.' }, relational_insights: insights }
+  const bases = [{ id: 'supervision_memo', title: '슈퍼비전 메모', content: '', visible: true }]
+  const reopened = workflow.restoreStoredSections(draft, bases, false)
+  assert.equal(reopened[0].content, insights.supervision_memo, 'generated drafts restore compact prose without serializing metadata')
+  for (const counselorText of ['Counselor revised this hypothesis after review.', '']) {
+    const edited = [{ ...reopened[0], content: counselorText }]
+    const confirmed = workflow.confirmedPayload(draft, edited)
+    assert.equal(confirmed.relational_insights, undefined, 'AI provenance stays in draft_json, separate from the confirmed clinical text')
+    assert.equal(confirmed.reflection.text, counselorText)
+    const storedRecord = { ...record(confirmed), draft_json: draft }
+    assert.deepEqual(workflow.restoreStoredSections(workflow.recordPayload(storedRecord), bases, true), edited, 'saved counselor edits, including intentional empty text, must win over regenerated prose')
+    assert.deepEqual(workflow.noteFromRecord(storedRecord).relational_insights, insights, 'reopening a confirmed record retains its separate draft evidence and bibliography')
+    assert.deepEqual(workflow.restoreStoredSections({ ...draft, workspace_sections: edited }, bases, false), edited, 'temporary workspace edits must win over the original compact draft')
+  }
+  const savedInsights = temporaryDraftPayload({ form: {}, result: { relational_insights: insights } })
+  assert.deepEqual(savedInsights.result.relational_insights, insights)
+  assert.deepEqual(temporaryDraftPayload(savedInsights), savedInsights)
+  assert.equal(draft.reflection.text, 'Counselor reflection.', 'draft source must not be mutated')
+  console.log('Insight draft restore, explicit confirmation, and temporary-save metadata round trip: passed')
+}
