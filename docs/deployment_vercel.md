@@ -2,9 +2,6 @@
 
 Vercel deploys the Vite frontend and Python serverless wrappers under `api/`.
 
-For the current deployed commit and its difference from `main`, read the [release handoff](seoyoung_handoff.md).
-Production was promoted from the work branch; do not assume `main` is the released source.
-
 ## Project settings
 
 - Framework preset: Vite
@@ -62,15 +59,9 @@ Do not put `SUPABASE_SERVICE_ROLE_KEY` or `OPENAI_API_KEY` in `VITE_` variables.
 
 ## Optional generation and retrieval
 
-The retrieval flags below illustrate an opt-in configuration, not verified Production values. The
-four-entry local supervision corpus does not require enabling historical case retrieval.
-
 ```env
 OPENAI_API_KEY=sk-proj-your-key
-OPENAI_MODEL=gpt-5.4
-OPENAI_REASONING_EFFORT=low
-OPENAI_TIMEOUT_SECONDS=60
-RELATIONAL_INSIGHT_TIMEOUT_SECONDS=60
+OPENAI_MODEL=gpt-4o-mini
 USE_STUB=0
 
 ENABLE_PERSISTENCE=1
@@ -87,17 +78,10 @@ counseling materials to shared/public deployments.
 
 ## Deploy
 
-Deployment is a separate authorized release action. Promoting a Preview rebuilds it with Production
-environment variables. To verify the same production build before assigning domains, stage it with
-`vercel deploy --prod --skip-domain`, check that deployment, then use `vercel promote <deployment-id>`.
-Record the exact commit, deployment, checks, and previous healthy rollback target.
-
 ```bash
 npx vercel login
 npx vercel pull --yes --environment production
-npx vercel deploy --prod --skip-domain --archive=tgz
-# Verify the returned deployment, then promote that exact ID.
-npx vercel promote <deployment-id>
+npx vercel deploy --prod --archive=tgz
 ```
 
 Run the [deployment checklist](deployment_checklist.md) after deployment.

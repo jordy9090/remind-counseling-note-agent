@@ -15,7 +15,7 @@ From the repository's `backend` directory, using its existing Python environment
 .\.venv\Scripts\python.exe evaluate_relational_insights.py
 ```
 
-Without `--live`, the script loads local fixture files and lists the planned cases with field lengths. It does not load app settings, generate model output, write a report, or assign scores. The October 2 release later completed a real memo-only A run; see the [handoff validation record](seoyoung_handoff.md#5-what-was-actually-validated) for its scope and limitations. That run does not establish completion of the full repeated six-case clinician evaluation. The supplied memo-only path can be checked without printing its contents:
+Without `--live`, the script loads local fixture files and lists the planned cases with field lengths. It does not load app settings, generate model output, write a report, or assign scores. The developer has not run the live evaluation as part of adding this harness. The supplied memo-only path can be checked without printing its contents:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluate_relational_insights.py --case memo_only_a
@@ -38,7 +38,7 @@ Exit code 0 means the mechanical checks completed successfully. Exit code 1 mean
 
 ## Inspect the application
 
-Use the original application workflow. Paste the complete A fixture into the existing counselor-memo field, leave the transcript field empty, and generate the ordinary session summary. Relational analysis runs automatically; up to two compact paragraphs appear in the existing supervision-memo section. Check that provisional understanding and important contrary evidence remain in natural sentences. Detailed observations, alternatives, questions, quotes and source IDs remain internal review metadata in the evaluation report rather than a repeated list in the note body. For sparse input, check that the section refrains from unsupported interpretation. If the insight service is unavailable, check that the ordinary summary remains usable.
+Use the original application workflow. Paste the complete A fixture into the existing counselor-memo field, leave the transcript field empty, and generate the ordinary session summary. Relational analysis runs automatically and its clinician-facing content appears in the existing supervision-memo section. Check the summary and that section for grounded observations, tentative relational understanding, alternatives, missing or contrary evidence, and usable supervision questions. Review current-session evidence and theory-source IDs in the local evaluation report as needed. For sparse input, check that the section refrains from unsupported interpretation. If the insight service is unavailable, check that the ordinary summary remains usable.
 
 For `memo_only_a`, the reviewer must explicitly verify all of the following:
 
