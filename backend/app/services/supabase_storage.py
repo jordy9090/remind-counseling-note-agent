@@ -251,6 +251,10 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         report.session_id = session_id
 
         draft_json = result.session_summary_draft.model_dump(mode="json")
+        draft_json["insight_lens"] = session_input.insight_lens
+        if result.relational_insights is not None:
+            # Reflective hypotheses remain draft metadata, outside confirmed sections and memory.
+            draft_json["relational_insights"] = result.relational_insights.model_dump(mode="json")
         if result.grounding is not None:
             # Claim-to-evidence mapping is additive JSON metadata; canonical source
             # snapshots remain separate evidence_items rows.
@@ -353,6 +357,10 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
+    if "relational_insights" in request.confirmed_note or "insight_lens" in request.confirmed_note:
+        request = request.model_copy(update={"confirmed_note": {
+            key: value for key, value in request.confirmed_note.items() if key not in {"relational_insights", "insight_lens"}
+        }})
     _validate_confirmation_status(note, request.confirmed_note, counselor_edited=request.counselor_edited)
 
     confirmed_at = datetime.now(UTC).isoformat()

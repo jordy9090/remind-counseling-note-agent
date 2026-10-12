@@ -62,6 +62,7 @@ def make_result(sanitized_transcript):
     return SimpleNamespace(
         session_summary_draft=Dumpable({}),
         grounding=None,
+        relational_insights=None,
         evidence_mapped_data=SimpleNamespace(items=[SimpleNamespace(
             evidence_type="transcript",
             source_refs=["transcript.turn_1"],

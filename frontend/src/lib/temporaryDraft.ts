@@ -5,6 +5,16 @@ import type { TemporaryDraftSaveRequest } from '../types/session'
 type Shape = 'scalar' | { [key: string]: Shape } | [Shape]
 const fields = (names: string): Record<string, Shape> => Object.fromEntries(names.split(' ').map(name => [name, 'scalar']))
 const strings: Shape = ['scalar']
+const insights: Shape = {
+  ...fields('status lens supervision_memo'), notices: strings,
+  cards: [{
+    ...fields('id focus observation hypothesis alternative_explanation counterevidence_or_missing brief_text requires_review'),
+    supervision_questions: strings, theory_source_ids: strings, evidence: [fields('source_ref quote')],
+  }],
+  theory_sources: [{
+    ...fields('id title organization url locator principle limitations'), concepts: strings,
+  }],
+}
 const section = fields('id title content visible')
 const block: Shape = {
   ...fields('id type text textHtml aiGenerated demoValue reviewStatus label evidenceStatus'),
@@ -15,7 +25,7 @@ const shape: Shape = {
   ...fields('draft_id saved_at case_id session_number session_date counselor_name screen session_topic is_deidentified final_document_type'),
   selected_previous_session_ids: strings, visible_section_ids: strings,
   form: {
-    ...fields('case_id client_alias session_number session_date counselor_name counselor_memo transcript_text previous_session_summary counseling_goal psychological_test_summary nonverbal_notes target_document_type persist'),
+    ...fields('case_id client_alias session_number session_date counselor_name counselor_memo transcript_text previous_session_summary counseling_goal psychological_test_summary nonverbal_notes target_document_type persist insight_lens'),
     key_issue_tags: strings,
   },
   attachments: [{
@@ -25,6 +35,7 @@ const shape: Shape = {
   draft_sections: [section],
   final_document_sections: [fields('id title content contentHtml contentKind')],
   result: {
+    relational_insights: insights,
     ...fields('case_id session_number session_summary main_issue counselor_intervention client_response next_plan workspace_note_id'),
     missing_items: strings, warnings: strings,
   },

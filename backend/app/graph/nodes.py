@@ -37,7 +37,10 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
+from app.services.summary_quality import SummaryQualityError, summary_quality_issues
+from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
+from app.services.session_materials import separate_session_materials
 from app.services.supabase_storage import _storage_for_actor
 from app.services.grounded_generation import (
     assemble_grounding_context,
@@ -72,10 +75,11 @@ NEXT_PLAN_RE = re.compile(r"(다음\s*회기|추후|다음에는|검토하기로
 def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     """Detect sensitive candidates and normalize input sources."""
     session_input: SessionInput = state["session_input"]
+    materials = separate_session_materials(session_input.counselor_memo, session_input.transcript_text)
     masked_sources, sensitive_candidates = deidentify_sources(
         {
-            "counselor_memo": session_input.counselor_memo.strip(),
-            "transcript_text": session_input.transcript_text.strip(),
+            "counselor_memo": materials.counselor_memo.strip(),
+            "transcript_text": materials.transcript_text.strip(),
             "previous_session_summary": session_input.previous_session_summary.strip(),
             "counseling_goal": session_input.counseling_goal.strip(),
             "psychological_test_summary": session_input.psychological_test_summary.strip(),
@@ -379,9 +383,26 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         case_context,
         template_context,
     )
-    summary = get_structured_llm(SessionSummaryDraft).invoke(prompt)
+    llm = get_structured_llm(SessionSummaryDraft)
+    summary = llm.invoke(prompt)
+    quality_issues = summary_quality_issues(summary)
+    if quality_issues:
+        repair_outline = summary.model_dump(mode="json")
+        for field_name in quality_issues:
+            # Repeating the rejected dialogue dump anchors the model to copying it again.
+            repair_outline[field_name]["text"] = "원문에서 의미를 새로 요약할 항목. 이전 발췌문을 재사용하지 마세요."
+        summary = llm.invoke(
+            prompt
+            + "\n\n아래 초안은 요약 형식 검사를 통과하지 못했습니다. 원래 입력과 근거만 사용하여 한 번 다시 작성하세요."
+            + " 사실, 화자, source_refs와 불확실성을 유지하고 문제가 없는 항목은 유지하세요."
+            + " 새로운 개입·변화·계획을 보충하지 마세요. 검사 사유는 출력에 포함하지 마세요."
+            + "\n항목별 수정 사유:\n" + _json(quality_issues)
+            + "\n유지할 항목과 재작성 대상(반려된 대사 나열은 제거됨):\n" + _json(repair_outline)
+        )
+        if summary_quality_issues(summary):
+            raise SummaryQualityError()
     _normalize_summary_refs(summary, sanitized, case_context)
-    if not re.search(r"(상담자\s*성찰|상담자의\s*(?:내적|정서적)\s*(?:반응|경험)|역전이)", sanitized.sources.counselor_memo):
+    if not has_documented_counselor_reflection(sanitized.sources.counselor_memo):
         summary.reflection = SummarySection(
             text="[상담사 확인 필요]", evidence_type="counselor_input",
             source_refs=[], requires_review=True,
@@ -441,7 +462,7 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
-    """Mark risky draft sections for counselor review and allow one re-verification pass."""
+    """Mark risky sections for review without re-verifying unchanged draft text."""
     if state.get("revision_attempted"):
         return {"revision_needs_reverify": False}
     verification: VerificationReport = state["verification_report"]
@@ -464,7 +485,7 @@ def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
         "session_summary_draft": summary,
         "initial_verification_report": verification.model_copy(deep=True),
         "revision_attempted": True,
-        "revision_needs_reverify": True,
+        "revision_needs_reverify": False,
         "revision_reason": "Unsupported or risky claims were marked for counselor review.",
     }
 
@@ -901,26 +922,26 @@ def _resolve_source_refs(content: str, refs: list[str], catalog: dict[str, str])
         "previous_summary": "previous_session_summary", "previous_session_summary": "previous_session_summary",
         "psychological_test": "psychological_test_summary", "psychological_test_summary": "psychological_test_summary",
         "nonverbal": "nonverbal_notes", "nonverbal_notes": "nonverbal_notes",
+        "sources.transcript_text": "transcript_text", "sources.counselor_memo": "counselor_memo",
+        "sources.previous_session_summary": "previous_session_summary",
+        "sources.counseling_goal": "counseling_goal", "sources.key_issue_tags": "key_issue_tags",
+        "sources.psychological_test_summary": "psychological_test_summary",
+        "sources.nonverbal_notes": "nonverbal_notes",
     }
     for ref in refs:
         normalized = aliases.get(ref.lower())
         if normalized and normalized in catalog:
             resolved.append(normalized)
-    best = sorted(
-        ((ref, _text_similarity(content, text)) for ref, text in catalog.items()),
-        key=lambda pair: pair[1], reverse=True,
-    )
-    granular = [pair for pair in best if pair[0].startswith(("transcript.turn_", "previous_session."))]
-    if granular and granular[0][1] >= 0.08:
-        resolved.insert(0, granular[0][0])
-    if best and best[0][1] >= 0.08:
-        best_ref = best[0][0]
-        # Prefer a granular transcript/prior-session ref when it carries the claim.
-        if best_ref.startswith(("transcript.turn_", "previous_session.")):
-            resolved.insert(0, best_ref)
-        elif not resolved:
-            resolved.append(best_ref)
-    return _unique_strings(resolved)
+    if resolved:
+        return _unique_strings(resolved)
+    # Ref recovery identifies literal source text, not semantic support for a claim.
+    # Shared words must never attach an unrelated speaker turn to a valid memo ref.
+    literal = " ".join(content.split())
+    if len(literal) < 8:
+        return []
+    matches = [ref for ref, text in catalog.items() if literal in " ".join(text.split())]
+    granular = [ref for ref in matches if ref.startswith(("transcript.turn_", "previous_session."))]
+    return granular or matches
 
 
 def _text_similarity(left: str, right: str) -> float:
@@ -943,7 +964,7 @@ def _normalize_summary_refs(
         summary.next_plan,
     ):
         section.source_refs = _resolve_source_refs(section.text, section.source_refs, catalog)
-        section.requires_review = section.requires_review or section.evidence_type in {
+        section.requires_review = section.requires_review or not section.source_refs or section.evidence_type in {
             "inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based",
         }
 
@@ -964,22 +985,12 @@ def _reconcile_verification_claims(
     sanitized: SanitizedInput,
     case_context: list[RetrievedCaseContextItem],
 ) -> None:
-    """Keep verifier findings only when the input catalog cannot support them.
+    """Retain verifier findings until an explicit review resolves their meaning.
 
-    The LLM verifier occasionally labels verbatim counselor input as unsupported
-    despite valid refs in the final draft. This deterministic pass never invents
-    support: it requires measurable overlap with an existing source.
+    Even literal text can be negated, hypothetical, attributed to another speaker,
+    or clinically risky. Lexical overlap cannot safely overturn such a finding.
     """
-    catalog = _source_catalog(sanitized, case_context)
-    remaining: list[ReviewableClaim] = []
-    for item in verification.unsupported_or_risky_claims:
-        refs = _resolve_source_refs(item.claim, [], catalog)
-        supported = [ref for ref in refs if _text_similarity(item.claim, catalog.get(ref, "")) >= 0.08]
-        if supported:
-            verification.grounded_items.append(GroundedItem(claim=item.claim, source_refs=supported))
-        else:
-            remaining.append(item)
-    verification.unsupported_or_risky_claims = remaining
+    return None
 
 
 def _apply_verification_consistency(
@@ -1030,11 +1041,16 @@ def _build_structure_prompt(
     case_context: list[RetrievedCaseContextItem],
     template_context: RetrievedTemplateContext | None,
 ) -> str:
+    source_ref_keys = list(_source_catalog(sanitized, case_context))
     return f"""
 You are generating structured counseling documentation data for Re:mind V1.
 Role: documentation assistant for a counselor, not a clinician and not a supervisor.
 Task: extract and structure only what is supported by allowed sources.
 Language: write every content field in natural Korean; preserve direct Korean client quotations in Korean.
+화자 구분: 상담자의 질문·반영·확인은 counselor_interventions에, 그에 대한 내담자의 표현과 반응은
+client_responses에 분리하세요. 화자를 확정할 수 없으면 추정 배정하지 말고 needs_review로 표시하세요.
+session_content에는 주요 사건과 회기에서 다룬 흐름을 간결한 3인칭 기록체로 정리하세요.
+발화를 그대로 모아 붙이지 마세요. 직접 인용이 필요한 핵심 발화는 key_client_utterances에 따로 보존하세요.
 Output schema: return only fields allowed by the Pydantic schema.
 Source precedence:
 1. current-session counselor-confirmed input
@@ -1043,6 +1059,14 @@ Source precedence:
 4. document-template KB
 5. ethics/privacy/security KB for warnings only
 Required source_refs: every factual claim must cite current input source_refs or retrieved prior-session source_refs.
+Allowed source_refs (canonical identifiers only):
+{_json(source_ref_keys)}
+Choose source_refs exactly from this list; never invent an identifier or leave a supported factual claim uncited.
+For material in sources.counselor_memo use "counselor_memo"; for sources.transcript_text use "transcript_text".
+Use other input field names or retrieved source_refs only when they appear in the allowed list and support the claim.
+The labels A01, A02, or other speaker-turn labels inside the material are not source_refs.
+Do not translate those labels into transcript.turn_N. Prefer the whole-field reference if the precise turn identifier is uncertain.
+If no allowed source supports an item, set evidence_type="needs_review" and source_refs=[] rather than inventing support.
 Prior-session rule: if a claim depends on prior sessions, set evidence_type to prior_context_based and include the stored source_ref.
 Template rule: document template context can identify missing fields and counselor-review fields only.
 Prohibited actions: diagnosis, psychiatric labels, treatment prescriptions, psychological-test interpretation,
@@ -1073,11 +1097,54 @@ def _build_summary_prompt(
 ) -> str:
     requested_section_ids = requested_section_ids or []
     case_context = case_context or []
+    source_ref_keys = list(_source_catalog(sanitized, case_context))
+    # Raw session material is supplied once. Repeated extraction lists encourage
+    # structured-output models to copy utterances into intervention/response fields.
+    evidence_index = [
+        {"field": item.field, "evidence_type": item.evidence_type, "source_refs": item.source_refs}
+        for item in evidence_mapped.items
+    ]
     return f"""
 Generate an editable Korean counseling session summary draft.
 Role: Korean counseling documentation drafting assistant.
 Task: draft editable text, not final clinical judgment.
+작성 형식: 상담사가 읽는 회기 기록입니다. 대화 상대에게 말하듯 작성하지 말고
+"내담자는 …을 표현함", "상담자는 …을 탐색함"과 같은 간결한 3인칭 기록체로 작성하세요.
+축어록을 발췌·연결하거나 화자 표지를 붙인 대화문으로 출력하지 마세요.
+의미를 재서술하고 반복 발화는 압축하세요. 대사 인용, 이론 약어, 소제목, 출처·문헌 목록을 본문에 넣지 마세요.
+아래 문장 수와 글자 수는 충분한 근거가 있을 때의 목표입니다. 자료가 적으면 짧게 쓰고 분량을 채우기 위해 사실을 보충하지 마세요.
+전체 화면은 별도 슈퍼비전 메모를 포함해 약 900~1,200자를 목표로 합니다. 여기서 생성하는 7개 항목은 합계 약 650~850자로 정리하세요.
+한 사실을 여러 항목에서 반복 설명하지 마세요. 각 항목의 역할에 필요한 핵심만 남기되 중요한 불확실성과 반대 근거는 유지하세요.
+항목별 역할:
+- presenting_problem: 이번 회기에 가져온 사건과 어려움 핵심 1문장. 회기 전체 주제와 구분하세요.
+- session_theme: 회기에서 반복되거나 연결되어 다룬 핵심 주제 1문장. 진단·사례개념화를 새로 만들지 마세요.
+- session_content: 사건 → 탐색 → 남은 어려움의 흐름을 3문장, 약 160~240자로 통합하세요.
+  입력에서 확인되는 개입 → 내담자 반응 → 여전히 남은 어려움을 연결하되, 없는 단계는 만들지 마세요.
+  상담자의 질문을 내담자의 발화나 경험으로 섞지 마세요.
+  누가 누구의 반응을 살폈는지 주체와 대상을 보존하세요.
+  이미 회기에서 수행한 탐색을 다음 회기의 계획으로 바꾸지 마세요.
+- counselor_intervention: 실제 상담자가 한 질문·반영·탐색의 대상과 내용을 1–2문장, 약 90~140자로 요약하세요.
+  질문을 그대로 나열하거나 실제로 하지 않은 기법·효과를 추가하지 마세요.
+- client_response: 개입에 대한 내담자의 표현·반응과 남은 어려움을 1–2문장, 약 90~140자로 정리하세요.
+  단순 동의나 발화를 통찰·호전·목표 달성으로 확대 해석하지 마세요.
+- next_plan: 입력에서 확인되는 다음 회기 계획만 1문장, 약 60~90자로 기록하세요.
+  상담자의 제안은 "제안함"으로, 명시적으로 합의한 계획만 "하기로 함"으로 구분하세요.
+- reflection: 상담자가 직접 기록한 성찰만 1–2문장, 약 90~150자로 정리하고, 없으면 상담사 확인 필요로 남기세요.
+  성찰이라는 제목이 없어도 상담자 메모의 직접적인 자기보고는 보존하세요.
+입력에 명시된 반대 근거·남은 어려움·제한 사항을 생략해 뜻을 바꾸지 마세요.
+예: 상대의 실제 반응과 예상의 차이, 관계 사이의 차이, 여전히 남은 감정, 별도 과제 미합의.
+내담자가 상대 반응에 부여한 의미도 원문 수준을 지키세요. 침묵이나 짧은 답장을 내담자가 거절·무시로 경험했다고 새로 해석하지 마세요.
+상대가 지겨워한다고 느꼈다는 표현은 그 지각으로 기록하고, 실제 상대의 의도나 거절 경험으로 강화하지 마세요.
+사건·상대방·그 장면에서 명시된 감정을 함께 확인하고, 다른 장면에서 표현한 감정을 현재 사건의 감정으로 옮기거나 합치지 마세요.
 Each section must include evidence_type and source_refs.
+Allowed source_refs (canonical identifiers only):
+{_json(source_ref_keys)}
+Choose source_refs exactly from this list for each supported section, even when the evidence reference index is empty.
+For material in sources.counselor_memo use "counselor_memo"; for sources.transcript_text use "transcript_text".
+Choose all and only the source fields that actually support the section. Recorded counselor self-reflection must cite "counselor_memo".
+The labels A01, A02, or other speaker-turn labels inside the material are not source_refs.
+Do not translate those labels into transcript.turn_N. Prefer the whole-field reference if the precise turn identifier is uncertain.
+Do not put source identifiers into the section text. If no allowed source supports a section, set evidence_type="needs_review" and source_refs=[].
 Source precedence:
 1. current-session counselor-confirmed input
 2. current-session transcript or memo
@@ -1102,11 +1169,8 @@ Counselor-selected session topic, if provided: {session_topic or "not provided"}
 Sanitized input:
 {_json(sanitized)}
 
-Structured case data:
-{_json(structured)}
-
-Evidence mapped data:
-{_json(evidence_mapped)}
+Evidence reference index (reference metadata only; summarize the original material above):
+{_json(evidence_index)}
 
 Retrieved case context:
 {_json(case_context)}

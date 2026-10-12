@@ -1,4 +1,6 @@
 import type { GeneratedNoteRecord, NoteDraftResponse } from '../types/session'
+import type { RelationalInsights } from '../types/insight'
+import { formatRelationalSupervisionMemo } from './relationalInsights'
 
 export interface StoredSection {
   id: string
@@ -35,6 +37,8 @@ export function confirmedPayload(original: Record<string, unknown>, sections: St
   }
   // Grounding belongs to the AI draft, not to newly edited assertions.
   delete payload.grounding
+  delete payload.relational_insights
+  delete payload.insight_lens
   return {
     ...payload,
     sections: textSections,
@@ -85,6 +89,9 @@ export function restoreStoredSections<T extends StoredSection>(payload: Record<s
   }
   const sections = bases.flatMap((section) => {
     const text = readStoredText(payload, fieldMap[section.id] || section.id)
+    if (!confirmed && section.id === 'supervision_memo' && payload.relational_insights) {
+      return [{ ...section, content: formatRelationalSupervisionMemo(payload.relational_insights, text ?? '') }]
+    }
     if (text !== undefined) return [{ ...section, content: text }]
     return confirmed ? [] : [section]
   })
@@ -111,6 +118,8 @@ export function noteFromRecord(record: GeneratedNoteRecord): NoteDraftResponse {
     evidence_check: [],
     missing_items: [],
     warnings: ['저장된 기록을 불러왔습니다. 근거 검토 정보는 임시저장 작업에서 확인할 수 있습니다.'],
+    relational_insights: isObject(record.draft_json?.relational_insights)
+      ? record.draft_json.relational_insights as unknown as RelationalInsights : undefined,
   }
 }
 
@@ -132,6 +141,7 @@ type RestoredInputFields = {
   psychological_test_summary: string
   key_issue_tags: string[]
   nonverbal_notes: string
+  insight_lens?: 'none' | 'psychodynamic_relational'
 }
 
 /**
@@ -140,6 +150,7 @@ type RestoredInputFields = {
  */
 export function sessionInputFromRecord(record: GeneratedNoteRecord): RestoredInputFields {
   const input: Record<string, unknown> = isObject(record.session_input) ? record.session_input : {}
+  const lens = record.draft_json?.insight_lens
   const text = (key: string) => (typeof input[key] === 'string' ? input[key] as string : '')
   return {
     counselor_memo: text('counselor_memo'),
@@ -149,6 +160,7 @@ export function sessionInputFromRecord(record: GeneratedNoteRecord): RestoredInp
     psychological_test_summary: text('psychological_test_summary'),
     key_issue_tags: Array.isArray(input.key_issue_tags) ? input.key_issue_tags.filter((tag): tag is string => typeof tag === 'string') : [],
     nonverbal_notes: text('nonverbal_notes'),
+    ...(lens === 'none' || lens === 'psychodynamic_relational' ? { insight_lens: lens } : {}),
   }
 }
 

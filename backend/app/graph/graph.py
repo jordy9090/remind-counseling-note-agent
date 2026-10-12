@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
+from app.services.relational_insights import generate_relational_insights
 from app.graph.nodes import (
     assemble_generation_grounding,
     conditional_revision,
@@ -141,6 +142,10 @@ def run_note_pipeline(
     *,
     actor: str = "",
 ) -> GenerateNoteResponse:
+    # Demo output must be explicitly requested; a missing key is a configuration
+    # failure, not permission to generate and store a sample counseling record.
+    if not settings.use_stub and not settings.openai_api_key:
+        raise RuntimeError("AI 회기요약 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.")
     initial_state: NoteGraphState = {
         "session_input": session_input,
         "actor": actor or settings.remind_preview_actor,
@@ -150,6 +155,9 @@ def run_note_pipeline(
     if session_topic:
         initial_state["session_topic"] = session_topic
     state = note_graph.invoke(initial_state)
+    insights = None
+    if session_input.insight_lens == "psychodynamic_relational":
+        insights = generate_relational_insights(state["sanitized_input"], state["session_summary_draft"])
     confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
     return GenerateNoteResponse(
         sanitized_input=state["sanitized_input"],
@@ -167,6 +175,7 @@ def run_note_pipeline(
         retrieval_report=state.get("retrieval_report") or RetrievalReport(),
         grounding=state.get("grounding"),
         stub=bool(state.get("stub", False)),
+        relational_insights=insights,
     )
 
 
