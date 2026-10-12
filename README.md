@@ -2,14 +2,18 @@
 
 Re:mind is a counseling documentation workspace that helps counselors organize post-session materials, review evidence, and prepare drafts of session notes, supervision reports, and termination documents. AI output is a draft for review; counselors retain final responsibility for factual accuracy and clinical judgment.
 
-## Documentation baseline
+## Current release and handoff
 
-The current implementation baseline is `origin/main` at
-`4815b4457af2c5ccbccbafe4e53687229988346c`. Subsequent development plans are not described as current features.
+Start with the [Seoyoung handoff](docs/seoyoung_handoff.md) for the October 2 session-summary release,
+its evidence, setup commands, and follow-up after the counselor demo/interview.
 
-Production information confirmed by the user on 2026-09-09: [remind.ai.kr](https://remind.ai.kr),
-Vercel Production, source `git`, branch `main`, the SHA above, state `READY`.
-This does not confirm remote Supabase migration application or activation of individual feature flags.
+Verified on 2026-10-12: [remind.ai.kr](https://remind.ai.kr) runs commit
+`f2e74b71a406a6a69acbbe062bf8dddeef16c8db` from `codex/fix-session-summary-quality`,
+Vercel deployment `dpl_8p59zhFZ7eEtnDh2AxBn46nBaK7J` (`READY`, Production).
+`origin/main` remains at `e30fe3d58354b47d22b59f59a3003795e120edb6`; [PR #36](https://github.com/jordy9090/remind-counseling-note-agent/pull/36)
+is not merged. Newer handoff documentation does not mean that Production has changed.
+Check the live deployment before releasing from `main`; it currently lacks the six release commits.
+This snapshot does not establish remote migration state or activation of every optional feature flag.
 
 ## Stack
 
@@ -34,13 +38,16 @@ This does not confirm remote Supabase migration application or activation of ind
 5. In the case dashboard, retrieve sessions, documents, and export history saved under an existing case ID,
    and update the planned total session count and next session date.
 
-The current screen's generation request does not request persistence (`persist:false`). The temporary-save
-button only displays a message. Content lives in React memory, so restoration after a refresh is not
-guaranteed. The existence of save, confirm, and recompose APIs does not mean the current UI calls them.
+The ordinary workspace requests generation persistence (`persist:true`); the local DEV demo uses
+`persist:false`. Temporary-save, confirmation, and record-reopen paths are implemented. Successful
+storage still depends on authentication, backend configuration, ownership checks, and the API result;
+unsaved browser edits are not durable. A fresh authenticated Production generation/save/reopen flow
+was not part of the October 2 release smoke check; see the handoff for the exact validation boundary.
 OAuth buttons render only when a provider is enabled in the Supabase project; email auth is the normal path.
 
-Raw-region grounding is OFF by default. Historical transcript turn/window storage and indexing are not
-automatically connected to material input. See [Architecture](docs/architecture.md) for conditions and
+Raw-region grounding is OFF by default. Successful generation persistence also stores transcript turns
+and indexes windows when sanitized transcript text is available; this is distinct from enabling optional
+historical retrieval. See [Architecture](docs/architecture.md) for conditions and
 [Product Runtime Map](docs/product_runtime_map.md) for actual connections.
 
 ## Local setup
@@ -122,6 +129,8 @@ Passing mock/stub tests does not establish remote RLS correctness, real LLM qual
 
 ## Detailed documentation
 
+- [Seoyoung handoff](docs/seoyoung_handoff.md): deployed source versus main, changes, validation, and pending interview feedback
+- [Domestic supervision sources](docs/domestic_supervision_sources.md), [Relational evaluation](docs/relational_insight_evaluation.md)
 - [Architecture](docs/architecture.md): system responsibilities and default/optional paths
 - [Product Runtime Map](docs/product_runtime_map.md): connections from screens to APIs, storage, and tests
 - [Data Model](docs/data_model.md): entities, ownership, persistence conditions, and migration baseline
