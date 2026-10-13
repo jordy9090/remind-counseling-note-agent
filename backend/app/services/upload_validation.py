@@ -87,12 +87,17 @@ async def persist_upload_to_temp(upload: UploadFile, kind: UploadKind) -> Valida
                 if size > max_bytes:
                     raise UploadValidationError(413, "업로드 가능한 파일 크기를 초과했습니다.")
                 temp_file.write(chunk)
-    except Exception:
+    except BaseException:
+        # Cancellation must not leave raw data before the caller owns the file.
         if temp_path is not None:
             cleanup_temp_file(temp_path)
         raise
     finally:
-        await upload.close()
+        try:
+            await upload.close()
+        except BaseException:
+            cleanup_temp_file(temp_path)
+            raise
 
     if size == 0:
         cleanup_temp_file(temp_path)
