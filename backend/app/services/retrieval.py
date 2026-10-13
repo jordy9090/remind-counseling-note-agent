@@ -16,6 +16,7 @@ from app.schemas.note import (
     TargetDocumentType,
 )
 from app.services.embeddings import embed_query
+from app.services.deidentification import deidentify_text
 from app.services.supabase_storage import SupabaseStorage, storage
 
 
@@ -116,8 +117,8 @@ def retrieve_case_context(
                 session_id=session_id,
                 session_number=_as_int(session.get("session_number")),
                 session_date=str(session.get("session_date") or ""),
-                summary=_summary_from_note(note),
-                confirmed_note=note.get("confirmed_json") or {},
+                summary=_mask_text(_summary_from_note(note)),
+                confirmed_note=_mask_content(note.get("confirmed_json") or {}),
                 evidence_items=evidence_by_session.get(session_id, []),
             )
         )
@@ -239,15 +240,15 @@ def chunks_to_case_context(chunks: list[RetrievalChunk]) -> list[RetrievedCaseCo
                 session_id=chunk.session_id,
                 session_number=chunk.session_number,
                 session_date=chunk.session_date,
-                summary=chunk.chunk_text,
+                summary=_mask_text(chunk.chunk_text),
                 confirmed_note={},
                 evidence_items=[
                     RetrievedEvidenceItem(
                         id=chunk.chunk_id,
-                        source_type=chunk.field_type or "case_memory",
+                        source_type=_mask_text(chunk.field_type or "case_memory"),
                         source_ref=chunk.source_ref,
-                        source_text=chunk.chunk_text,
-                        linked_field=chunk.field_type,
+                        source_text=_mask_text(chunk.chunk_text),
+                        linked_field=_mask_text(chunk.field_type),
                     )
                 ],
             )
@@ -465,13 +466,13 @@ def _case_memory_row_to_chunk(row: dict[str, Any]) -> RetrievalChunk:
         session_id=str(row.get("session_id") or "") or None,
         source_note_id=str(row.get("source_note_id") or "") or None,
         source_ref=str(row.get("source_ref") or ""),
-        field_type=str(row.get("field_type") or ""),
-        chunk_text=str(row.get("chunk_text") or ""),
+        field_type=_mask_text(str(row.get("field_type") or "")),
+        chunk_text=_mask_text(str(row.get("chunk_text") or "")),
         session_number=_as_int(row.get("session_number")),
         session_date=str(row.get("session_date") or ""),
         similarity_score=_as_float(row.get("similarity_score")),
         retrieval_method=str(row.get("retrieval_method") or "case_memory_dense"),
-        metadata=metadata if isinstance(metadata, dict) else {},
+        metadata=_mask_content(metadata) if isinstance(metadata, dict) else {},
     )
 
 
@@ -527,10 +528,10 @@ def _evidence_by_session(
         grouped[session_id].append(
             RetrievedEvidenceItem(
                 id=str(row.get("id")) if row.get("id") else None,
-                source_type=str(row.get("source_type") or ""),
+                source_type=_mask_text(str(row.get("source_type") or "")),
                 source_ref=f"stored_evidence:{row.get('id')}" if row.get("id") else str(row.get("source_ref") or ""),
-                source_text=str(row.get("source_text") or ""),
-                linked_field=str(row.get("linked_field") or ""),
+                source_text=_mask_text(str(row.get("source_text") or "")),
+                linked_field=_mask_text(str(row.get("linked_field") or "")),
             )
         )
     return grouped
@@ -552,6 +553,35 @@ def _chunks_for_documents(
             "limit": 100,
         },
     )
+
+
+def _mask_text(text: str) -> str:
+    """Reuse the existing detection policy when stored content re-enters retrieval."""
+    return deidentify_text(text)[0]
+
+
+def _mask_content(value: Any) -> Any:
+    """Copy free-form JSON content without exempting provenance-like nested keys.
+
+    Canonical IDs and citation refs are handled separately by the row adapters.
+    Disambiguate masked keys so two identifiers cannot overwrite clinical content.
+    """
+    if isinstance(value, str):
+        return _mask_text(value)
+    if isinstance(value, list):
+        return [_mask_content(item) for item in value]
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            masked_key = _mask_text(str(key))
+            unique_key = masked_key
+            suffix = 2
+            while unique_key in result:
+                unique_key = f"{masked_key} [{suffix}]"
+                suffix += 1
+            result[unique_key] = _mask_content(item)
+        return result
+    return value
 
 
 def _summary_from_note(note: dict[str, Any]) -> str:

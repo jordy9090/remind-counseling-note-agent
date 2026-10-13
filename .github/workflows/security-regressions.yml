@@ -37,4 +37,5 @@ jobs:
             test_security_embedding_privacy \
             test_security_temporary_files \
             test_security_upload_cancellation \
+            test_security_retrieval_privacy \
             test_security_retrieval_logs -v
