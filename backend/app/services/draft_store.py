@@ -7,6 +7,7 @@ import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 from app.core.config import settings
@@ -20,6 +21,7 @@ from app.services.temporary_draft_payload import temporary_draft_payload
 
 
 SAFE_DRAFT_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+_DRAFT_REPLACE_LOCK = Lock()
 
 
 def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> TemporaryDraftSaveResponse:
@@ -75,15 +77,24 @@ def list_temporary_drafts(*, actor: str, case_id: str | None = None) -> list[Tem
 
 
 def _write_to_disk(record: TemporaryDraftRecord, *, actor: str) -> None:
-    """Persist a draft record to the local filesystem (Supabase 미설정 시 폴백)."""
+    """Persist a local draft without leaving failed staging writes behind."""
     path = _draft_path(record.draft_id, actor=actor)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    temp_path.replace(path)
+    payload = json.dumps(record.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False,
+            prefix=f".{record.draft_id}.", suffix=".tmp", dir=path.parent,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(payload)
+        # Close first, then serialize replacement for Windows compatibility.
+        with _DRAFT_REPLACE_LOCK:
+            temp_path.replace(path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _draft_dir(actor: str) -> Path:

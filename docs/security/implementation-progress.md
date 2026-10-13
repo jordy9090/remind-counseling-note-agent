@@ -132,3 +132,13 @@
 - 최종 `backend/.venv/Scripts/python.exe -m unittest test_security_storage_diagnostics`: 15개 모두 통과. `test_case_list test_case_dashboard test_transcript_storage test_security_access_boundaries`: 60개 통과(후속 오류 유형 수정이 정상 경로를 바꾸지 않아 재실행하지 않음). 구문/diff 검사 통과. 2026-10-13 KST, 합성 응답만 사용, 외부 호출/정리할 원격 데이터 없음.
 - 파일: `supabase_errors.py`, 두 REST 어댑터의 예외 처리와 오류 클래스, 신규 진단 검사, 기존 case-list 오류 fixture 1개, 보안 CI와 진행 기록. 인증 자격 증명 선택은 이 PR에서 변경하지 않는다.
 - 정상 payload 자체나 telemetry가 억제된 예외 context/locals를 의도적으로 수집하는 경우까지 보장하지 않는다. 운영 로그 설정 검증은 별도다. 다음은 초안 저장의 자격 증명·staging 경계 수정이다.
+
+- 제출 완료: Draft PR [#43](https://github.com/jordy9090/remind-counseling-note-agent/pull/43), 코드/HEAD `98c0b1b0f89d83a5ab1cf4d56be35b45b2f2930a`. [보안 CI 38399040115](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/38399040115) 성공(75개). #42 [CI 38398439297](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/38398439297)도 성공(60개).
+
+## PR 8 준비 — 초안 인증·임시 파일 경계
+
+- 브랜치 `codex/security-draft-boundaries-20261013`, 기준 #43. 인증 JWT가 있는 요청은 public key/URL 누락 시 명시적으로 실패하며 서비스 권한이나 로컬 디스크로 대체하지 않는다. 명시적 legacy/local 경로는 유지한다. 로컬 초안 쓰기는 요청별 staging과 `finally` 정리를 사용하며 Windows 교체 충돌을 프로세스 내에서 직렬화한다.
+- 합성 재현에서 직접 서비스 bearer 선택, 실패·중단 후 staging 잔존, 동시 쓰기 충돌을 확인했다. 초기 8개 검사 중 정상 fixture의 잘못된 `counselorMemo` 키도 발견해 기존 allowlist의 `counselor_memo`로 바로잡았다; 이는 제품 결함 수에 포함하지 않는다.
+- 최종 검사: 신규 `test_security_draft_boundaries` 9개 + 기존 A/B draft save/detail/local path/JWT 검사 5개 = 14개 통과(0.676초, 2026-10-13 KST). 구문 검사 통과. 독립 검토에서 부분 쓰기/닫기 실패 정리와 실제 Request의 JWT/public-key/owner 보존을 추가 확인했고 차단 사항 없음. 합성 임시 디렉터리 정리 완료, 원격/유료 호출 0.
+- 파일: `draft_store.py` 파일 쓰기 helper, `supabase_store.py` 자격 증명 선택, 신규 검사, CI와 진행 기록. 자동저장 UI·초안 projection·보존 기간은 변경하지 않았다. 서영님 동일 파일 수정 여부는 unknown이므로 통합 시 이 helper 변경을 대조한다.
+- 한계: 프로세스 강제 종료·OS unlink 실패·여러 프로세스 간 잠금은 보장 범위 밖. 최종 초안의 보존 정책은 승인 대기. 다음 작업은 합성 SDK/검증 오류가 재구성 응답·로그에 노출되는 경계다.

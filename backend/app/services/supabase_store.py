@@ -25,6 +25,10 @@ class DraftStorageError(RuntimeError):
 
 def configured_for(actor: str) -> bool:
     """Return whether this request has credentials suitable for persistence."""
+    if str(getattr(actor, "access_token", "") or "").strip():
+        # An authenticated request must not fall back to service privileges or disk.
+        _credentials(actor)
+        return True
     return bool(
         settings.supabase_url
         and (
@@ -40,7 +44,9 @@ def _public_key() -> str | None:
 
 def _credentials(actor: str) -> tuple[str, str]:
     user_token = str(getattr(actor, "access_token", "") or "").strip()
-    if user_token and _public_key():
+    if user_token:
+        if not settings.supabase_url or not _public_key():
+            raise DraftStorageError("Authenticated draft storage requires a Supabase URL and public key.")
         return str(_public_key()), user_token
     service_key = str(settings.effective_supabase_key or "").strip()
     if service_key:
