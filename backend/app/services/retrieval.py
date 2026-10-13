@@ -572,13 +572,15 @@ def _mask_content(value: Any) -> Any:
         return [_mask_content(item) for item in value]
     if isinstance(value, dict):
         result: dict[str, Any] = {}
+        next_suffix: dict[str, int] = {}
         for key, item in value.items():
             masked_key = _mask_text(str(key))
             unique_key = masked_key
-            suffix = 2
+            suffix = next_suffix.get(masked_key, 2)
             while unique_key in result:
                 unique_key = f"{masked_key} [{suffix}]"
                 suffix += 1
+            next_suffix[masked_key] = suffix
             result[unique_key] = _mask_content(item)
         return result
     return value

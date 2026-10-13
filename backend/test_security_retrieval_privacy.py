@@ -1,6 +1,7 @@
 """Synthetic, offline checks for the case-memory reuse boundary."""
 import copy
 import json
+import sys
 import unittest
 from contextlib import ExitStack
 from unittest.mock import Mock, patch
@@ -108,6 +109,42 @@ class RetrievalPrivacyTests(unittest.TestCase):
         result = self.context()[0].confirmed_note
         self.assertMasked(result)
         self.assertEqual(sorted(result.values()), sorted(content.values()))
+
+    def test_many_colliding_keys_have_bounded_work_and_preserve_values(self):
+        count = 512
+        content = {f"synthetic-{index}@example.invalid": index for index in range(count)}
+        # Count work instead of timing the machine: a generous per-entry budget
+        # tolerates refactoring but rejects repeated scans of all earlier keys.
+        steps = 0
+        def bound_work(frame, event, arg):
+            nonlocal steps
+            if event == "line" and frame.f_code is retrieval._mask_content.__code__:
+                steps += 1
+                if steps > count * 100:
+                    raise AssertionError("Masking exceeded a linear work budget")
+            return bound_work
+        previous_trace = sys.gettrace()
+        try:
+            sys.settrace(bound_work)
+            masked = retrieval._mask_content(content)
+        finally:
+            sys.settrace(previous_trace)
+        self.assertEqual(sorted(masked.values()), list(range(count)))
+        self.assertNotIn("@example.invalid", json.dumps(masked))
+
+    def test_literal_suffix_keys_and_nested_collisions_preserve_all_values(self):
+        token = deidentify_text(EMAIL)[0]
+        content = {token: "literal", f"{token} [2]": "reserved suffix",
+            EMAIL: "first clinical detail", "another@example.invalid": "second clinical detail",
+            "nested": {EMAIL: "nested first", "another@example.invalid": "nested second"}}
+        masked = retrieval._mask_content(content)
+        self.assertEqual(len(masked), len(content))
+        self.assertEqual(masked[token], "literal")
+        self.assertEqual(masked[f"{token} [2]"], "reserved suffix")
+        self.assertEqual(masked[f"{token} [3]"], "first clinical detail")
+        self.assertEqual(masked[f"{token} [4]"], "second clinical detail")
+        self.assertEqual(list(masked["nested"].values()), ["nested first", "nested second"])
+        self.assertEqual(retrieval._mask_content(masked), masked)
 
     def test_recency_and_empty_dense_fallback_mask_both_model_invocations(self):
         for dense in (False, True):
