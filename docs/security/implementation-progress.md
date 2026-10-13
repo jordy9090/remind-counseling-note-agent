@@ -48,6 +48,7 @@
 
 ## PR 2 — 캐시 임시 파일 격리와 실패 정리
 
+- Draft PR: [#38](https://github.com/jordy9090/remind-counseling-note-agent/pull/38), 제출 HEAD `b94fd399d48d830e7fae2aad389569415c589aa8`.
 - 브랜치 `codex/security-cache-temp-20261013`; PR #37 위에 순차 제출한다. 코드 SHA: `fbef1d8d117ecf4d9115cd890babee28ff85937f`.
 - 변경: `backend/app/services/recompose_cache.py`, `backend/test_security_temporary_files.py`, 이 진행 기록.
 - 수정 전: 동일 키 요청들이 같은 임시 파일을 사용했고 교체 실패 시 상담 결과를 담은 임시 파일이 남았다. 수정 후: 요청별 고유 임시 파일을 닫은 뒤 교체하고 일반 성공/예외 경로에서 정리한다. Windows에서 확인한 동시 교체 오류는 프로세스 내 잠금으로 방지했다.
@@ -59,7 +60,11 @@
 
 ## 진행 중 / 승인 대기
 
-- 진행 중: A/B 권한 회귀 테스트, 데이터 목록, 오류·캐시·임시파일 점검, 법률 근거와 문서 공개범위.
+- A/B 권한 회귀 완료: `backend/test_security_access_boundaries.py`, 코드 SHA `0f7d879beb8cd45d1029bfa91965504c4cbaa77b`. `security-runtime/Scripts/python.exe -m unittest test_security_access_boundaries -v` — 22개 통과, 3.859초, exit 0(2026-10-13 KST, backend 실행).
+- 55개 경로·메서드 × 토큰 없음/잘못된 토큰/익명 계정의 165개 거부 검사, 실제 REST 클라이언트의 JWT·공개키 전달, 사례/기록/초안/검색/전사/캐시 A/B 격리, DOCX 실제 ZIP/XML 결과를 검사했다. 테스트 종료 시 임시 파일·모의 데이터 정리, 원격 계정/행 생성 없음.
+- 위 검사는 DB 응답에 소유자 격리를 가정한 모의 전송을 사용한다. 실제 PostgreSQL 정책·FK·RPC·버킷 검증은 아니며 DELETE는 현재 경로의 405만 확인한다. 내보내기는 호출자가 준 본문을 렌더링하며 다른 사용자의 저장 기록을 조회하지 않는 현재 계약을 검사한다.
+- PR 3 준비: 브랜치 `codex/security-access-tests-20261013`; 파일은 신규 테스트와 이 기록뿐. 서영님 동일 파일 수정 여부 unknown, 병합 의존성 #38(순차 검증 기준), 되돌리기 위 테스트 커밋 revert. 제품 코드 변경 없음.
+- 진행 중: 데이터 목록과 법률·문서 공개범위·서영님 통합 점검표의 최종 근거 확인.
 - 서영님 통합 검증: 검토 가능한 PR/브랜치가 아직 식별되지 않아 대기. 독립 작업은 계속 진행.
 - 운영 DB의 실제 RLS, 환경 변수 값, 공급자 계약·지역·보존 설정은 확인하지 않음.
 - 테스트 통과는 운영 배포 완료나 법률 준수 인증을 의미하지 않음.
