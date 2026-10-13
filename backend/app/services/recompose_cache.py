@@ -13,7 +13,8 @@ from app.graph.graph import run_note_pipeline
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
 
 
-CACHE_VERSION = "recompose-v4-summary-quality"
+# Results created before retrieval masking must not bypass the privacy boundary.
+CACHE_VERSION = "recompose-v5-retrieval-privacy"
 _CACHE_REPLACE_LOCK = Lock()
 
 

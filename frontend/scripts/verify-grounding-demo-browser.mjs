@@ -14,13 +14,13 @@ const browser = spawn(edgePath, [
   '--window-size=1440,1100',
   `--remote-debugging-port=${debuggingPort}`,
   `--user-data-dir=${profileDir}`,
-  pageUrl,
+  'about:blank',
 ], { stdio: 'ignore', windowsHide: true })
 
 let socket
 let cdp
 try {
-  const target = await waitForTarget(debuggingPort, pageUrl)
+  const target = await waitForTarget(debuggingPort, 'about:blank')
   socket = new WebSocket(target.webSocketDebuggerUrl)
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true })
@@ -34,30 +34,40 @@ try {
   cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
     exceptions.push(exceptionDetails.exception?.description || exceptionDetails.text)
   })
+  cdp.on('Page.javascriptDialogOpening', () => void cdp.send('Page.handleJavaScriptDialog', { accept: true }))
+  // Always use the checked-in synthetic fixture, never an ignored local live run.
+  cdp.on('Fetch.requestPaused', ({ requestId }) => {
+    void cdp.send('Fetch.fulfillRequest', { requestId, responseCode: 404, body: '' }).catch((error) => {
+      // StrictMode cancels its first fixture request before the second mount.
+      if (!error.message.includes('Invalid InterceptionId')) exceptions.push(error.message)
+    })
+  })
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*/src/fixtures/dev/local-live-result.json' }] })
   await cdp.send('Network.enable')
   await cdp.send('Page.enable')
   await cdp.send('Runtime.enable')
+  await cdp.send('Page.navigate', { url: pageUrl })
 
-  await waitFor(async () => (await cdp.evaluate("document.body?.innerText || ''")).includes('요약 초안'), 30000)
+  await waitFor(async () => (await cdp.evaluate("document.body?.innerText || ''")).includes('AI 회기 요약'), 30000)
   const navigation = await cdp.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')]
-      .find((item) => item.textContent?.replace(/\\s/g, '') === '회기입력')
+      .find((item) => item.textContent?.trim() === '요약 다시하기')
     if (!button) return 'missing'
     button.click()
     return 'clicked'
   })()`)
-  if (navigation !== 'clicked') throw new Error('회기입력 navigation button was not found')
-  await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('요약 초안 생성'))
+  if (navigation !== 'clicked') throw new Error('요약 다시하기 navigation button was not found')
+  await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('요약 다시 생성하기'))
 
   requests.length = 0
   const submitted = await cdp.evaluate(`(() => {
     const button = [...document.querySelectorAll('button')]
-      .find((item) => item.textContent?.includes('요약 초안 생성'))
+      .find((item) => item.textContent?.includes('요약 다시 생성하기'))
     if (!button) return false
     button.click()
     return true
   })()`)
-  if (!submitted) throw new Error('요약 초안 생성 button was not found')
+  if (!submitted) throw new Error('요약 다시 생성하기 button was not found')
 
   try {
     await waitFor(async () => (await cdp.evaluate('document.body.innerText')).includes('근거 2개'))
@@ -156,9 +166,10 @@ try {
   if (!missingState.safeMessage || missingState.leakedId) throw new Error('Missing source did not fail safely')
 
   await closeEvidence(cdp)
+  await cdp.evaluate(`(() => { const button=[...document.querySelectorAll('article button')].find((node)=>node.textContent.trim()==='수정하기'); button?.click() })()`)
   const edited = await cdp.evaluate(`(() => {
     const section = [...document.querySelectorAll('section')].find((node) => node.querySelector('h2')?.textContent?.trim() === '상담 내용')
-    const contentButton = section?.querySelector('button.mt-4')
+    const contentButton = section?.querySelector('button[title="클릭해서 수정"]')
     if (!contentButton) return false
     contentButton.click()
     return true

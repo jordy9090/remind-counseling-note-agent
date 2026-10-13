@@ -1442,8 +1442,8 @@ def persist_supervision_report(
             note_id = str(existing_note["id"])
             actor_storage.update(
                 "generated_notes",
-                {"id": f"eq.{note_id}"},
                 {"draft_json": report_json, "updated_at": datetime.now(UTC).isoformat()},
+                query={"id": f"eq.{note_id}"},
             )
             persistence.note_id = note_id
         else:

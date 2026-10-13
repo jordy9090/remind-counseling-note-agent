@@ -303,6 +303,8 @@ export default function SessionDraftPage({
   )
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
+  const materialsRef = useRef(materials)
+  materialsRef.current = materials
   const objectUrlsRef = useRef<Set<string>>(new Set())
   const [selectedPreviousSessionIds, setSelectedPreviousSessionIds] = useState<string[]>(defaultPreviousSessionIds)
   const [materialModal, setMaterialModal] = useState<MaterialModalMode | null>(null)
@@ -624,16 +626,13 @@ export default function SessionDraftPage({
     setMaterials((prev) => [...nextMaterials, ...prev])
     // 자동 축어록이 가능한 환경이면 바로 전사하고 축어록 입력에 반영한다.
     if (capabilities.transcription.available) {
-      for (const material of nextMaterials) void transcribeAudioMaterial(material.id, material.file, material.expectedSpeakers)
+      for (const material of nextMaterials) void transcribeAudioMaterial(material.id, material.file, material.expectedSpeakers, material.objectUrl)
     }
   }
 
   const removeMaterial = (materialId: string) => {
-    setMaterials((prev) => {
-      const target = prev.find((material) => material.id === materialId)
-      revokeObjectUrl(target?.objectUrl)
-      return prev.filter((item) => item.id !== materialId)
-    })
+    revokeObjectUrl(materialsRef.current.find((material) => material.id === materialId)?.objectUrl)
+    setMaterials((prev) => prev.filter((item) => item.id !== materialId))
     if (selectedMaterialId === materialId) {
       setSelectedMaterialId(null)
     }
@@ -663,10 +662,11 @@ export default function SessionDraftPage({
    * 음성 전사. fileOverride/expectedSpeakersOverride는 업로드 직후 자동 전사(상태가 아직 반영되기 전)용.
    * 전사가 끝나면 축어록·비언어 메모를 회기 입력에 자동 반영한다 (검토는 파일 항목 클릭).
    */
-  const transcribeAudioMaterial = async (materialId: string, fileOverride?: File, expectedSpeakersOverride?: number) => {
+  const transcribeAudioMaterial = async (materialId: string, fileOverride?: File, expectedSpeakersOverride?: number, objectUrlOverride?: string) => {
     const target = materials.find((material) => material.id === materialId)
     const file = fileOverride || target?.file
-    if (!file) return
+    const objectUrl = objectUrlOverride || target?.objectUrl
+    if (!file || !objectUrl || !objectUrlsRef.current.has(objectUrl)) return
     const expectedSpeakers = expectedSpeakersOverride || target?.expectedSpeakers || 2
     setMaterials((prev) =>
       prev.map((material) =>
@@ -683,18 +683,22 @@ export default function SessionDraftPage({
     )
     try {
       const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers)
-      let appliedTranscript = ''
-      let appliedNonverbal = ''
+      // Removed files and replaced workspaces revoke ownership of this URL.
+      if (!objectUrlsRef.current.has(objectUrl)) return
+      const latestTarget = materialsRef.current.find((material) => material.id === materialId && material.objectUrl === objectUrl)
+      // React may defer or replay material updaters. Compute the applied text
+      // before scheduling either state update so both states use the same block.
+      const speakerRoleMap = buildInitialSpeakerRoleMap(transcription.segments, latestTarget?.speakerRoleMap || target?.speakerRoleMap)
+      const appliedTranscript = buildTranscriptText(transcription.segments, speakerRoleMap) || transcription.transcript_text || ''
+      const appliedNonverbal = buildNonverbalNotes(transcription.segments, speakerRoleMap) || transcription.nonverbal_notes || ''
       setMaterials((prev) =>
         prev.map((material) => {
           if (material.id !== materialId) return material
           const transcribed = buildTranscribedAudioMaterial(material, transcription)
-          const speakerRoleMap = transcribed.speakerRoleMap || {}
-          appliedTranscript = buildTranscriptText(transcribed.segments || [], speakerRoleMap) || transcribed.transcriptText || ''
-          appliedNonverbal = buildNonverbalNotes(transcribed.segments || [], speakerRoleMap) || transcribed.nonverbalNotes || ''
           if (!appliedTranscript.trim()) return transcribed
           return {
             ...transcribed,
+            speakerRoleMap,
             transcriptText: appliedTranscript,
             nonverbalNotes: appliedNonverbal,
             appliedTargets: Array.from(new Set([...transcribed.appliedTargets, ...AUDIO_APPLY_TARGETS])),
@@ -714,6 +718,7 @@ export default function SessionDraftPage({
         setDraftSaveMessage(null)
       }
     } catch (err) {
+      if (!objectUrlsRef.current.has(objectUrl)) return
       const message = err instanceof Error ? err.message : '음성 축어록을 생성하지 못했습니다.'
       setMaterials((prev) =>
         prev.map((material) =>

@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       USE_STUB: "1"
+      # Mocked non-stub model tests need a configured key, never a live credential.
+      OPENAI_API_KEY: "synthetic-offline-ci-key"
       ENABLE_RAG: "0"
       ENABLE_PERSISTENCE: "0"
       SAVE_RAW_INPUT: "0"
@@ -28,32 +30,15 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: uv sync --link-mode=copy
+        run: uv sync --locked --link-mode=copy
 
       - name: Run backend smoke test
         working-directory: backend
         run: uv run python smoke_test.py
 
-      - name: Run required persistence and transcript regressions
+      - name: Run all backend and security regressions
         working-directory: backend
-        run: |
-          uv run python -m unittest \
-            test_persistence_workflow \
-            test_auth_guard \
-            test_transcript_storage \
-            test_note_transcript_persistence \
-            test_raw_window_pipeline \
-            test_case_list \
-            test_vercel_wrappers \
-            test_summary_quality \
-            test_source_refs \
-            test_summary_generation_routes \
-            test_relational_insights \
-            test_relational_integration \
-            test_llm_model_settings \
-            test_revision_routing \
-            test_session_materials \
-            test_document_rich_text
+        run: uv run python -m unittest discover -p 'test_*.py' -v
 
   backend-pdf-export:
     runs-on: ubuntu-latest
@@ -91,7 +76,7 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: uv sync --link-mode=copy
+        run: uv sync --locked --link-mode=copy
 
       - name: Run PDF-required backend smoke test
         working-directory: backend
@@ -126,8 +111,13 @@ jobs:
         run: |
           pnpm verify:material-workflow
           pnpm verify:audio-transcript-workflow
+          pnpm verify:grounding-review
+          pnpm verify:counselor-edit
           pnpm verify:summary-evidence
           pnpm verify:relational-insights
+          pnpm verify:persistence-workflow
+          pnpm verify:auth-flow
+          pnpm verify:case-list
 
       - name: Build frontend
         working-directory: frontend

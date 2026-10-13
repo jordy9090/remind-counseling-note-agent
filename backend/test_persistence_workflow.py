@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.config import settings
-from app.services.supabase_storage import SupabaseStorage
+from app.services.supabase_storage import SupabaseStorage, SupabaseStorageError
 from app.services import supabase_store
 
 TOKEN = "synthetic-access-token"
@@ -140,6 +140,60 @@ class PersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text[:200])
         self.assertTrue(response.json()["persistence_report"]["stored"])
         return response.json()
+
+    def test_supervision_repeat_save_updates_the_existing_owned_note(self):
+        generated = self.generate()
+        original_note = json_copy(self.store.tables["generated_notes"][0])
+        payload = {"session_input": {**INPUT, "persist": False}, "persist": True,
+                   "client_alias": "Synthetic first alias"}
+        first = self.client.post("/api/notes/supervision-report", json=payload, headers=self.headers)
+        self.assertEqual(first.status_code, 200, first.text[:200])
+        saved = first.json()["persistence"]
+        self.assertTrue(saved["stored"])
+        self.assertEqual(saved["session_id"], generated["persistence_report"]["session_id"])
+        self.assertEqual(len(self.store.tables["generated_notes"]), 2)
+        payload["client_alias"] = "Synthetic revised alias"
+        with patch.object(self.store, "request", wraps=self.store.request) as requests:
+            second = self.client.post("/api/notes/supervision-report", json=payload, headers=self.headers)
+        self.assertEqual(second.status_code, 200, second.text[:200])
+        self.assertTrue(second.json()["persistence"]["stored"])
+        self.assertEqual(second.json()["persistence"]["note_id"], saved["note_id"])
+        updates = [call for call in requests.call_args_list if call.args == ("PATCH", "generated_notes")]
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].kwargs["actor"], "synthetic-user-a")
+        self.assertEqual(updates[0].kwargs["query"], {"id": f'eq.{saved["note_id"]}'})
+        self.assertEqual(set(updates[0].kwargs["body"]), {"draft_json", "updated_at"})
+        self.assertEqual(updates[0].kwargs["body"]["draft_json"]["meta"]["clientAlias"], payload["client_alias"])
+        self.assertFalse(any(call.args == ("POST", "generated_notes") for call in requests.call_args_list))
+        self.assertEqual(len(self.store.tables["generated_notes"]), 2)
+        self.assertEqual(self.store.tables["generated_notes"][0], original_note)
+        updated = next(row for row in self.store.tables["generated_notes"] if row["id"] == saved["note_id"])
+        self.assertEqual(updated["draft_json"]["meta"]["clientAlias"], payload["client_alias"])
+        self.assertEqual(updated["user_id"], "synthetic-user-a")
+
+    def test_supervision_persistence_uses_the_top_level_request_and_feature_gate(self):
+        for requested, enabled in ((False, True), (True, False), (False, False)):
+            with self.subTest(requested=requested, enabled=enabled), patch.object(settings, "enable_persistence", enabled):
+                response = self.client.post("/api/notes/supervision-report", headers=self.headers,
+                    json={"session_input": {**INPUT, "persist": True}, "persist": requested})
+                self.assertEqual(response.status_code, 200, response.text[:200])
+                self.assertFalse(response.json()["persistence"]["stored"])
+                self.assertEqual(response.json()["persistence"]["requested"], requested)
+                self.assertEqual(response.json()["persistence"]["enabled"], enabled)
+                self.assertEqual(self.store.calls, [])
+
+    def test_supervision_repeat_save_failure_does_not_insert_or_claim_success(self):
+        self.generate()
+        payload = {"session_input": INPUT, "persist": True}
+        first = self.client.post("/api/notes/supervision-report", json=payload, headers=self.headers)
+        self.assertEqual(first.status_code, 200, first.text[:200])
+        before = json_copy(self.store.tables["generated_notes"])
+        with patch.object(SupabaseStorage, "update", side_effect=SupabaseStorageError("Synthetic update failed.")):
+            response = self.client.post("/api/notes/supervision-report", json=payload, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text[:200])
+        self.assertFalse(response.json()["persistence"]["stored"])
+        self.assertIsNone(response.json()["persistence"]["note_id"])
+        self.assertEqual(self.store.tables["generated_notes"], before)
 
     def test_temporary_draft_round_trip_and_owner_isolation(self):
         payload = {"case_id": INPUT["case_id"], "session_number": 1, "form": INPUT,

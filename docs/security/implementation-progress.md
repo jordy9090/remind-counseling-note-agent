@@ -203,3 +203,19 @@
 - 다음 실행 가능한 작업은 서영님 PR의 정확한 SHA/파일을 확보하여 `seoyoung-integration-checklist.md`와 대조하는 통합 검증이다. DB 쪽은 배포 프로젝트/버전/catalog 식별 자료와 동일 버전 격리 환경이 준비되면 제안의 호환성·PostgREST/JWT·동시성 검증을 이어간다. 현재 구현을 다시 실행하거나 기능 담당 영역을 중복 수정할 이유는 없다.
 - 필요한 명시적 승인: **(1)** main 병합과 운영 배포, **(2)** 원격 DB/RLS 변경의 최종 SQL·기존 불일치 행 처리·인덱스/잠금·유지보수 시간·validation/rollback 계획, **(3)** 제품/법률 결정에 따른 보존·삭제 기본값 및 과거 데이터 처리, **(4)** 유료 모델/STT 검사의 비용. 원격 읽기 검증도 식별된 프로젝트와 합의된 메타데이터/집계 범위에서만 수행한다.
 - 남은 위험은 기존 잘못된 관계/점유 키, 실제 계정 직접 전환과 늦은 응답의 통합 동작, 탐지 규칙 밖 개인정보, 운영 telemetry/공급자·백업 설정이다. 현재 확인된 독립 수정과 로컬 검증은 끝났으며, 위 자료·환경·승인·제품/법률 결정이 있어야 다음 단계로 진행할 수 있다. 실데이터·원격 DB 쓰기·main 병합·운영 배포·보존 정책 변경·유료 API 호출은 하지 않았다. 합성 임시 파일과 메모리 DB는 정리했고 재현 런타임/증거만 보존했다.
+
+## 통합·운영 릴리스 위임 — 2026-10-13–14 KST
+
+- 사용자가 후속 지시로 코드 보안 범위의 main 병합·운영 배포·합성 운영 smoke·실패 시 rollback을 명시적으로 위임했다. 위 과거 기록의 매 병합/배포 승인 대기는 이 릴리스에 한해 대체된다. 서영님 미공개 브랜치를 기다리지 않고 독립 수정부터 통합한다. 위험한 DB/기존 행/보존 결정과 유료 API 비용은 별개다.
+- `codex/security-integration-20261013`을 #46 HEAD `b959970`에서 생성했다. 최신 main을 fetch했고 기준 `afd0476bd82dd7809b96fcd64a044325db06e565`는 그대로였다. 누적 26개 파일과 관련 호출을 독립 검토했다. 완료 기준은 전체 관련 회귀, 확인된 차단 결함 수정, 순서 보존 통합, 실제 배포·검증, 정확한 rollback/잔여 의존성 기록이다.
+- 초기 전체 backend discovery 292개 통과, 실패/오류/skip 0. 합성 키·stub과 dotenv 차단, 비-loopback DNS/socket 차단으로 외부 호출 시도 0을 확인했다. PDF-required smoke도 통과했으며 Windows native WeasyPrint 부재 시 지원되는 fallback을 사용했다. Linux native PDF CI는 별도 gate다.
+- 통합 결함 1: 이전 재구성 캐시가 새 마스킹을 건너뛰는 동작을 실제 양쪽 HTTP handler에서 재현했다. 최초 fixture의 필수 source/session 필드 누락을 바로잡은 뒤 유효한 구형 캐시 hit와 원문 canary를 확인했다. 캐시 버전만 올려 재생성하도록 했고 관련 13개 검사 통과. 구형 파일/TTL/보존 정책은 바꾸지 않았다.
+- 통합 결함 2: 기존 수퍼비전 repeat-save의 keyword-only 인자 오류를 실제 HTTP→storage 경로에서 재현했다. 호출 계약만 수정하고 기존 insert/반복 update/원본 불변/actor·query·payload/opt-out/실패 처리 3개 회귀를 추가했다. 전체 persistence 15개 통과. Vercel wrapper의 별도 저장 기능은 추가하지 않았다.
+- 두 수정 후 전체 backend 296개(보안 93개 포함)가 통과했고 skip/외부 호출 시도 0. 후속 PDF-required 전체 smoke도 통과(9.703초). 독립 최종 검토에서 위 backend·CI 수정의 차단 사항 없음. Product CI는 잠긴 의존성·전체 backend discovery·9개 프런트엔드 로컬 검사를 실행하도록 확장했다.
+- 요청된 통합 DB checkpoint로 동일 결합 runner를 다시 실행했다. 2026-10-13 14:56:42–14:56:44 UTC, PostgreSQL 18.6/PGlite 0.5.9, 41/41 그룹 통과. migration 10개/제안/runtime lock hash 불변, 메모리 DB 폐기 완료. 새 결과와 명령은 Git 밖 `security-integration-artifacts/local-combined-security-checkpoint-20261013.json`에 있다. 원격 DB 변경 0.
+- 운영 기준 확인: 기존 `dpl_4GASoXeGR66hBL6FkAvz9s6Fa7Vv` READY와 rollback 가능 상태 확인. health/유효하지 않은 입력의 인증 거부 12/12 통과, 11개 거부 응답이 Supabase auth guard와 일치했다. 모델·저장 호출 없음. 해당 배포의 최근 15분 error/fatal 집계는 반환 그룹 0; 전체 운영 무오류를 주장하지 않는다. 비밀 타입으로 저장된 기능 flag 값은 connector에서 읽을 수 없으며 metadata와 실제 관측 동작을 구분한다.
+- 프런트엔드 기존 검사에서 최신 UI와 맞지 않는 harness를 보정했다. 브라우저에서는 지연 React updater 안의 외부 변수 대입 때문에 오디오 결과가 실제 회기 입력에서 누락되는 기존 결함을 발견했다. 좁은 수정과 회귀를 준비했으며, 독립 검토가 삭제/다른 회기로 이동한 뒤 도착하는 응답의 새 회귀를 찾아 추가 보완 중이다. 검토가 끝나기 전 병합/배포하지 않는다.
+- 통합 방식은 전체 스택 조상을 보존하는 단일 cumulative PR/merge commit이다. 중간 #42만 배포하거나 여러 운영 배포를 만들지 않는다. 상세 순서·rollback·검증/잔여 의존성은 [통합 릴리스 보고서](integration-release-report.md)에 모은다.
+- 오디오 수정 최종 독립 검토 통과: 삭제/새 회기/복원/화면 종료의 URL 수명과 완료 시 최신 화자 역할을 확인했다. 실제 callback의 eager/deferred·최초/기존 파일·삭제/작업공간 교체·지연 오류·화자 변경 9개 조합 통과. 늦은 결과를 무시하며 요청 자체 취소 기능은 추가하지 않았다.
+- 최종 제품 검사: 프런트엔드 로컬 스크립트 9개 통과, grounding 브라우저 6.84초 통과, 실제 로컬 API/합성 저장소의 전체 persistence 브라우저 19.81초 통과(2026-10-13 15:09:54 UTC), 최종 TypeScript/Vite build 28.73초 통과(15:10:04 UTC). 기존 약 637 kB bundle 경고는 남아 있다. 실제 운영 로그인·모델 호출과는 구분한다.
+- 정리: 로컬 서버 종료·메모리 행 폐기 완료. 테스트용 Edge 임시 프로필 9개 삭제는 자동 승인 검토가 `blocked by policy`로 거절했고 구체적 이유는 없었다. 우회 삭제하지 않았으며 정확한 경로는 비공개 로컬 ledger에 보존했다. 원격 계정/행은 생성하지 않았다.

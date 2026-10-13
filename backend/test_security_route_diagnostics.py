@@ -26,7 +26,8 @@ from app.api.routes import notes
 from app.api.security import require_preview_access
 from app.core.config import settings
 from app.main import app as main_app
-from app.schemas.note import RecomposeNoteRequest, StructuredCaseData
+from app.schemas.note import RecomposeNoteRequest, RetrievedCaseContextItem, StructuredCaseData
+from app.services import recompose_cache
 from app.services.summary_quality import SummaryQualityError
 
 
@@ -150,6 +151,40 @@ class RecompositionDiagnosticPrivacyTests(unittest.TestCase):
                 self.assertTrue(second.json()["cache_hit"])
                 self.assertEqual(first.json()["result"], second.json()["result"])
                 self.assertEqual(first.json()["cache_key"], second.json()["cache_key"])
+
+    def test_pre_masking_cache_is_not_reused_after_privacy_upgrade(self) -> None:
+        request = RecomposeNoteRequest.model_validate(PAYLOAD)
+        for index, (app, _) in enumerate(HOSTS):
+            cache_dir = str(Path(self.cache_dir) / str(index))
+            with self.subTest(host=app.title), patch.dict(os.environ, {"RECOMPOSE_CACHE_DIR": cache_dir}), \
+                    patch.object(settings, "use_stub", True):
+                safe = recompose_cache.run_note_pipeline(request.session_input, actor="synthetic-owner")
+                old = safe.model_copy(deep=True)
+                old.retrieved_case_context = [RetrievedCaseContextItem(
+                    source_ref="confirmed:synthetic-previous-session",
+                    session_id="synthetic-previous-session", session_number=1,
+                    summary="synthetic-person@example.invalid",
+                    confirmed_note={"private": "synthetic-person@example.invalid"},
+                )]
+                with patch.object(recompose_cache, "CACHE_VERSION", "recompose-v4-summary-quality"):
+                    old_key = recompose_cache.build_recompose_cache_key(request, actor="synthetic-owner")
+                    recompose_cache._write_cached_result(old_key, old)
+                old_path = Path(cache_dir) / f"{old_key}.json"
+                original_bytes = old_path.read_bytes()
+                with patch.object(recompose_cache, "run_note_pipeline", return_value=safe) as pipeline:
+                    client = TestClient(app)
+                    first = client.post("/api/notes/recompose", json=PAYLOAD)
+                    self.assertEqual(200, first.status_code, first.text)
+                    self.assertFalse(first.json()["cache_hit"])
+                    self.assertNotEqual(old_key, first.json()["cache_key"])
+                    self.assertNotIn("synthetic-person@example.invalid", first.text)
+                    pipeline.assert_called_once()
+                    second = client.post("/api/notes/recompose", json=PAYLOAD)
+                    self.assertEqual(200, second.status_code, second.text)
+                    self.assertTrue(second.json()["cache_hit"])
+                    self.assertEqual(first.json()["result"], second.json()["result"])
+                    pipeline.assert_called_once()
+                self.assertEqual(original_bytes, old_path.read_bytes(), "Invalidation must not delete retained files")
 
     def test_unauthenticated_calls_still_stop_before_generation(self) -> None:
         for app, _ in HOSTS:
