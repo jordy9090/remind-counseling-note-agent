@@ -9,9 +9,10 @@ import path from 'node:path'
 const pageUrl = 'http://127.0.0.1:4174/'
 const apiUrl = 'http://127.0.0.1:8017'
 const caseId = `SYNTHETIC-BROWSER-${Date.now()}`
+const caseAlias = `합성 브라우저 ${Date.now()}`
 const memo = '합성 내담자는 산책한 뒤 마음이 편안해졌다고 말했다.'
 const edited = '상담사가 확인한 최신 합성 문장. 내담자는 산책 후 편안함을 보고했다. '.repeat(12)
-const rawDocument = 'SYNTHETIC-UNAPPLIED-DOCUMENT-CACHE'
+const rawDocument = 'SYNTHETIC-APPLIED-DOCUMENT-INPUT'
 const rawAudioEdit = 'SYNTHETIC-UNAPPLIED-AUDIO-EDIT'
 const appliedAudio = '상담사가 수정하고 회기 입력에 반영한 합성 발화'
 const port = 9500 + process.pid % 400
@@ -62,68 +63,64 @@ try {
   await cdp.send('Fetch.enable', { patterns: [{ urlPattern: `${apiUrl}/api/notes/*` }, { urlPattern: `${apiUrl}/api/audio/*` }] })
   // Seed a synthetic Supabase client session, keeping AuthGate and token client unchanged.
   const seed = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('sb-127-auth-token', JSON.stringify({access_token:'synthetic-access-token',refresh_token:'synthetic-refresh-token',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,user:{id:'synthetic-user-a',aud:'authenticated',role:'authenticated',app_metadata:{},user_metadata:{},created_at:'2026-09-09T00:00:00Z'}}));` })
+  await apiJson('/api/cases', { case_id: caseId, case_alias: caseAlias })
   await cdp.send('Page.reload')
-  await hasText('이전 작업 불러오기')
+  await hasText('새 회기 기록')
   await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: seed.identifier })
-  await click('수정하기')
-  await fill('#modal_case_id', caseId)
-  await fill('#modal_counselor_name', '합성 상담사')
-  await fill('#modal_session_date', '2026-09-09')
-  await click('완료')
-  await click('회기 중 특이사항', true)
-  await fill('#modal_counselor_memo', memo)
-  await click('완료')
-  await click('클릭하여 파일을 선택하거나 직접 입력해주세요.', true)
-  await click('문서 업로드', true)
+  await click('새 회기 기록')
+  await waitFor(async () => cdp.evaluate(`(() => {const button=[...document.querySelectorAll('[aria-label="내담자 선택"] button')].find(node=>node.textContent.includes(${JSON.stringify(caseAlias)})); if(!button)return false; button.click(); return true})()`))
+  await click('다음으로')
+  await fill('[aria-label="상담 날짜"]', '2026-09-09')
+  await fill('[aria-label="새 회기 입력"] textarea', memo)
   await uploadSyntheticFile('input[type=file][accept^=".pdf"]', 'synthetic-private.txt', rawDocument, 'text/plain')
-  await hasText('추출 완료')
-  await click('완료')
-  await click('클릭하여 파일을 선택하거나 직접 입력해주세요.', true)
-  await click('음성 업로드', true)
-  await cdp.evaluate(`document.querySelector('input[type=file][accept^=".mp3"]').closest('section').querySelector('input[type=checkbox]').click()`)
-  await uploadSyntheticFile('input[type=file][accept^=".mp3"]', 'synthetic.wav', 'Synthetic audio bytes', 'audio/wav')
-  await click('완료')
-  await click('축어록 생성')
-  await click('축어록 확인')
-  await fill('textarea:not([readonly])', appliedAudio)
+  await hasText('회기 입력에 반영됨')
+  await uploadSyntheticFile('input[type=file][accept^=".pdf"]', 'synthetic.wav', 'Synthetic audio bytes', 'audio/wav')
+  await waitFor(async () => (await cdp.evaluate(`document.querySelector('[aria-label="새 회기 입력"]').innerText`)).split('회기 입력에 반영됨').length === 3)
+  await click('synthetic.wav', true)
+  await fill('.fixed section textarea:not([readonly])', appliedAudio)
   await click('회기요약 입력에 반영')
   await cdp.evaluate(`document.querySelector('[aria-label="닫기"]')?.click()`)
-  await click('축어록 확인')
-  await fill('textarea:not([readonly])', rawAudioEdit)
+  await click('AI 요약 생성하기')
+  await hasText('AI 초안을 저장했습니다')
+  await hasText('AI 초안 · 검토 필요')
+  assert.equal(JSON.parse(requests.find((r) => r.url.endsWith('/api/notes/generate') && r.method === 'POST').postData).persist, true)
+  // Current input UI requires every material to be applied before generation.
+  // Create an unapplied edit afterward, then return without regenerating.
+  await click('요약 다시하기')
+  await click('synthetic.wav', true)
+  await fill('.fixed section textarea:not([readonly])', rawAudioEdit)
   await cdp.evaluate(`document.querySelector('[aria-label="닫기"]').click()`)
+  await click('뒤로가기', true)
   failDraft = true
   await click('임시저장')
   await hasText('저장소 요청을 완료하지 못했습니다')
-  await click('축어록 확인')
-  assert.equal(await cdp.evaluate(`document.querySelector('textarea:not([readonly])').value`), rawAudioEdit, 'failed save must preserve unapplied in-memory segment edits')
-  await cdp.evaluate(`document.querySelector('[aria-label="닫기"]').click()`)
+  await click('synthetic.wav')
+  assert((await bodyText()).includes(rawAudioEdit), 'failed save must preserve unapplied in-memory segment edits')
   failDraft = false
   const before = requests.filter((r) => r.method === 'POST' && r.url.endsWith('/api/notes/drafts')).length
   await cdp.evaluate(`(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='임시저장'); b.click(); b.click(); })()`)
   await hasText('임시저장 완료')
   assert.equal(requests.filter((r) => r.method === 'POST' && r.url.endsWith('/api/notes/drafts')).length, before + 1, 'duplicate save must be blocked')
   const savedRequest = JSON.parse(requests.filter(r => r.method === 'POST' && r.url.endsWith('/api/notes/drafts')).at(-1).postData)
-  assert(!JSON.stringify(savedRequest).includes(rawDocument))
+  assert(savedRequest.form.transcript_text.includes(rawDocument), 'automatically applied document input must be preserved')
   assert(!JSON.stringify(savedRequest).includes(rawAudioEdit))
   assert(savedRequest.form.transcript_text.includes(appliedAudio))
-  assert(savedRequest.attachments.every(a => a.requiresReattachment && !('segments' in a) && !('lastAppliedTranscriptText' in a)))
+  assert(savedRequest.attachments.every(a => a.requiresReattachment && !('segments' in a) && !('lastAppliedTranscriptText' in a) && !('extractedText' in a)))
   const savedOnServer = await apiJson(`/api/notes/drafts?case_id=${caseId}`)
-  assert(!JSON.stringify(savedOnServer).includes(rawDocument))
+  assert(savedOnServer[0].form.transcript_text.includes(rawDocument))
   assert(!JSON.stringify(savedOnServer).includes(rawAudioEdit))
   assert(savedOnServer[0].form.transcript_text.includes(appliedAudio))
   assert(!(await cdp.evaluate('JSON.stringify(localStorage)')).includes(rawAudioEdit))
   assert(!(await cdp.evaluate('JSON.stringify(localStorage)')).includes(rawDocument))
   await cdp.send('Page.reload')
+  await openStoredSession()
   await hasText('이전 작업 불러오기')
   await click('이전 작업 불러오기')
   await click('저장 목록 조회')
   await click(`임시저장 · ${caseId}`, true)
-  await hasText(memo)
   await hasText('파일을 재첨부해주세요')
-  await hasText('회기 입력에 미반영한 축어록 수정은 복원되지 않았습니다')
-  await cdp.evaluate(`[...document.querySelectorAll('.material-row')].find(row=>row.textContent.includes('축어록/STT')).querySelector('button').click()`)
-  assert((await cdp.evaluate(`document.querySelector('#modal_transcript_text').value`)).includes(appliedAudio), 'applied input must restore in its editor')
-  await click('완료')
+  await hasText('회기 입력에 미반영한 축어록 수정은 복원되지 않습니다')
+  assert((await bodyText()).includes(appliedAudio), 'applied input must restore in its source preview')
   assert(!(await bodyText()).includes(rawAudioEdit))
   assert.equal(await cdp.evaluate(`[...document.querySelectorAll('button')].filter(b=>['축어록 확인','내용 확인','자료에 반영'].includes(b.textContent.trim())).length`), 0)
   assert.equal(await cdp.evaluate(`[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()==='축어록 생성'&&!b.disabled).length`), 0)
@@ -139,11 +136,9 @@ try {
   failDraft = true
   await click('임시저장')
   await hasText('저장소 요청을 완료하지 못했습니다')
+  await click('상담사 메모')
   assert((await bodyText()).includes(memo), 'failed save must preserve input')
   failDraft = false
-  await click('요약 초안 생성')
-  await hasText('AI 초안을 저장했습니다')
-  await hasText('AI 초안 · 검토 필요')
   assert(await cdp.evaluate(`Array.from(document.querySelectorAll('article button')).some(b => b.textContent.trim() === '검토 완료하고 저장')`), 'review action belongs to the summary card')
   assert(await cdp.evaluate(`Array.from(document.querySelectorAll('header button')).some(b => b.textContent.trim() === '이전 작업 불러오기')`), 'restore remains a secondary header action')
   assert.equal(JSON.parse(requests.find((r) => r.url.endsWith('/api/notes/generate') && r.method === 'POST').postData).persist, true)
@@ -160,6 +155,7 @@ try {
   assert.equal(payload.confirmed_note.sections.session_content, edited)
   assert.equal(payload.create_case_memory, false)
   await cdp.send('Page.reload')
+  await openStoredSession()
   await hasText('이전 작업 불러오기')
   await click('이전 작업 불러오기')
   await fill('[aria-label="저장 기록 케이스 ID"]', caseId)
@@ -173,6 +169,7 @@ try {
   await click('임시저장')
   await hasText('임시저장 완료')
   await cdp.send('Page.reload')
+  await openStoredSession()
   await hasText('이전 작업 불러오기')
   await click('이전 작업 불러오기')
   await fill('[aria-label="저장 기록 케이스 ID"]', caseId)
@@ -260,7 +257,8 @@ async function fill(selector, value) {
   await cdp.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)}); const proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto,'value').set.call(e,${JSON.stringify(value)}); e.dispatchEvent(new Event('input',{bubbles:true}));})()`)
 }
 async function editSummary(text) {
-  await cdp.evaluate(`(() => {const section=[...document.querySelectorAll('section')].find(e=>e.querySelector('h2')?.textContent==='상담 내용'); section.querySelector('button.mt-4').click()})()`)
+  await cdp.evaluate(`(() => {const edit=[...document.querySelectorAll('article button')].find(b=>b.textContent.trim()==='수정하기'); edit?.click()})()`)
+  await cdp.evaluate(`(() => {const section=[...document.querySelectorAll('section')].find(e=>e.querySelector('h2')?.textContent==='상담 내용'); section.querySelector('button[title="클릭해서 수정"]').click()})()`)
   await fill('section textarea', text)
   await cdp.evaluate(`document.querySelector('section textarea').blur()`)
 }
@@ -278,12 +276,14 @@ async function apiJson(route, body) {
 }
 async function reopenConfirmed() {
   await cdp.send('Page.reload')
-  await hasText('이전 작업 불러오기')
-  await click('이전 작업 불러오기')
-  await fill('[aria-label="저장 기록 케이스 ID"]', caseId)
-  await click('저장 목록 조회')
-  await click('상담사 검토 완료본 ·', true)
+  await openStoredSession()
   await hasText('서버에서 상담사 확정본 전체를 불러왔습니다')
+}
+async function openStoredSession() {
+  await hasText('새 회기 기록')
+  await click(caseAlias, true)
+  await waitFor(async () => cdp.evaluate(`(() => {const button=document.querySelector('[aria-label="1회기 열기"]'); if(!button || button.disabled)return false; button.click(); return true})()`))
+  await hasText('이전 작업 불러오기')
 }
 
 async function captureScreenshot(cdp, screenshotPath) {

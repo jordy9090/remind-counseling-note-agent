@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http.client import HTTPException
 from typing import Any
 from uuid import uuid4
 from urllib.error import HTTPError, URLError
@@ -34,10 +35,15 @@ from app.schemas.note import (
 )
 from app.services.deidentification import deidentify_text
 from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
+from app.services.supabase_errors import read_error_code
 
 
 class SupabaseStorageError(RuntimeError):
     """Raised when Supabase returns an unsuccessful response."""
+
+    def __init__(self, message: str, *, error_code: str | None = None) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class NoteConfirmationError(RuntimeError):
@@ -182,10 +188,14 @@ class SupabaseStorage:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 payload = response.read().decode("utf-8")
         except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            raise SupabaseStorageError(f"Supabase {error.code}: {detail}") from error
-        except URLError as error:
-            raise SupabaseStorageError(f"Supabase network error: {error}") from error
+            error_code = read_error_code(error)
+            diagnostic = f" ({error_code})" if error_code else ""
+            raise SupabaseStorageError(
+                f"Supabase request failed with HTTP {error.code}{diagnostic}.",
+                error_code=error_code,
+            ) from None
+        except (OSError, HTTPException, UnicodeError):
+            raise SupabaseStorageError("Supabase network request failed.") from None
 
         if not payload:
             return None
@@ -886,8 +896,7 @@ _profile_columns_available: bool | None = None
 
 
 def _is_missing_column_error(error: SupabaseStorageError) -> bool:
-    message = str(error)
-    return "42703" in message or "does not exist" in message or "Could not find" in message
+    return error.error_code in {"42703", "PGRST204"}
 
 
 def _select_cases(actor_storage: SupabaseStorage, query: dict[str, str | int]) -> list[dict[str, Any]]:
@@ -1433,8 +1442,8 @@ def persist_supervision_report(
             note_id = str(existing_note["id"])
             actor_storage.update(
                 "generated_notes",
-                {"id": f"eq.{note_id}"},
                 {"draft_json": report_json, "updated_at": datetime.now(UTC).isoformat()},
+                query={"id": f"eq.{note_id}"},
             )
             persistence.note_id = note_id
         else:

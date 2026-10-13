@@ -162,7 +162,41 @@ assert(pageSource.includes('localGroundingDemoStale'), 'demo fixture must expose
 assert(pageSource.includes('hasSelectedInlineGrounding'), 'selected inline evidence must highlight the rendered summary paragraph')
 assert(pageSource.includes('bg-amber-100 ring-2 ring-amber-300'), 'selected summary paragraph must use the stronger Figma amber state')
 assert(pageSource.includes('? Promise.resolve(groundingDemoNote)'), 'DEV demo submit must resolve the synthetic fixture locally')
-assert(pageSource.includes(': generateNoteDraft({ ...form, persist: true })'), 'normal submit must call the API with AI draft persistence enabled')
+const pageAst = ts.createSourceFile('SessionDraftPage.tsx', pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+let generateCallback
+function findGenerateCallback(node) {
+  if (ts.isCallExpression(node) && node.expression.getText(pageAst) === 'runDraftGeneration') {
+    const options = node.arguments[0]
+    if (options && ts.isObjectLiteralExpression(options)) {
+      const property = options.properties.find((item) => ts.isPropertyAssignment(item) && item.name.getText(pageAst) === 'generate')
+      if (property) generateCallback = property.initializer.getText(pageAst)
+    }
+  }
+  ts.forEachChild(node, findGenerateCallback)
+}
+findGenerateCallback(pageAst)
+assert(generateCallback, 'normal submit must provide the generation callback')
+const invokeGenerate = new Function('isLocalGroundingDemo', 'groundingDemoNote', 'devGroundingDemo', 'generateNoteDraft', 'form', `return (${generateCallback})()`)
+for (const scenario of [
+  { name: 'normal submit', demo: false, live: false, expectedPersist: true },
+  { name: 'offline demo', demo: true, live: false, expectedPersist: null },
+  { name: 'live demo', demo: true, live: true, expectedPersist: false },
+]) {
+  const fixture = { note_id: 'synthetic-grounding-demo' }
+  const requests = []
+  const response = await invokeGenerate(scenario.demo, fixture, { liveGeneration: scenario.live }, async (request) => {
+    requests.push(request)
+    return 'synthetic API response'
+  }, { case_id: 'SYNTHETIC-GENERATION', persist: !scenario.expectedPersist })
+  if (scenario.expectedPersist === null) {
+    assert(requests.length === 0 && response === fixture, 'offline demo must use its fixture without an API request')
+  } else {
+    assert(requests.length === 1, `${scenario.name} must call the API exactly once`)
+    assert(requests[0].persist === scenario.expectedPersist, `${scenario.name} must apply its persistence boundary`)
+    assert(requests[0].case_id === 'SYNTHETIC-GENERATION', `${scenario.name} must preserve session input`)
+    assert(response === 'synthetic API response', `${scenario.name} must return the API result`)
+  }
+}
 
 const loadingTransitions = []
 let mockFailure

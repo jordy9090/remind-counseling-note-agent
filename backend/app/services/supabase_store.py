@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from http.client import HTTPException
 from typing import Any
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
 from app.schemas.note import TemporaryDraftRecord
+from app.services.supabase_errors import read_error_code
 
 
 class DraftStorageError(RuntimeError):
@@ -23,6 +25,10 @@ class DraftStorageError(RuntimeError):
 
 def configured_for(actor: str) -> bool:
     """Return whether this request has credentials suitable for persistence."""
+    if str(getattr(actor, "access_token", "") or "").strip():
+        # An authenticated request must not fall back to service privileges or disk.
+        _credentials(actor)
+        return True
     return bool(
         settings.supabase_url
         and (
@@ -38,7 +44,9 @@ def _public_key() -> str | None:
 
 def _credentials(actor: str) -> tuple[str, str]:
     user_token = str(getattr(actor, "access_token", "") or "").strip()
-    if user_token and _public_key():
+    if user_token:
+        if not settings.supabase_url or not _public_key():
+            raise DraftStorageError("Authenticated draft storage requires a Supabase URL and public key.")
         return str(_public_key()), user_token
     service_key = str(settings.effective_supabase_key or "").strip()
     if service_key:
@@ -74,10 +82,11 @@ def _request(
         with urlopen(request, timeout=10) as response:  # noqa: S310 - configured Supabase HTTPS origin
             payload = response.read().decode("utf-8")
     except HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise DraftStorageError(f"Supabase draft request failed with {error.code}: {detail}") from error
-    except (URLError, TimeoutError) as error:
-        raise DraftStorageError("Supabase draft storage is temporarily unavailable.") from error
+        error_code = read_error_code(error)
+        diagnostic = f" ({error_code})" if error_code else ""
+        raise DraftStorageError(f"Supabase draft request failed with HTTP {error.code}{diagnostic}.") from None
+    except (OSError, HTTPException, UnicodeError):
+        raise DraftStorageError("Supabase draft storage is temporarily unavailable.") from None
     return json.loads(payload) if payload else None
 
 

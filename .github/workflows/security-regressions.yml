@@ -1,0 +1,44 @@
+name: Synthetic security regressions
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'api/**'
+      - '.github/workflows/security-regressions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      USE_STUB: '1'
+      ENABLE_RAG: '0'
+      ENABLE_PERSISTENCE: '0'
+      SAVE_RAW_INPUT: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v5
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: uv sync --locked --link-mode=copy
+      - name: Check synthetic access, diagnostics, logs and temporary files
+        working-directory: backend
+        run: |
+          uv run python -m unittest \
+            test_security_access_boundaries \
+            test_security_embedding_privacy \
+            test_security_temporary_files \
+            test_security_upload_cancellation \
+            test_security_retrieval_privacy \
+            test_security_storage_diagnostics \
+            test_security_draft_boundaries \
+            test_security_route_diagnostics \
+            test_security_retrieval_logs -v
