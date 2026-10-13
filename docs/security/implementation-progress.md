@@ -38,12 +38,24 @@
 
 ## PR 1 — 임베딩 오류의 민감 정보 제거
 
+- Draft PR: [#37](https://github.com/jordy9090/remind-counseling-note-agent/pull/37), 브랜치 `codex/security-access-audit-20261013`, 제출 HEAD `63c958775a1dc4a5f14e4da4bcbe5df2810ff6b5`.
 - Codex 수정 완료: `backend/app/services/embeddings.py`의 HTTP/네트워크/시간초과 오류에서 외부 응답 본문과 이유 문자열을 제거하고 상태 코드만 유지한다. HTTP 오류 스트림을 닫고 일반 traceback에 외부 예외 내용을 연결하지 않는다.
 - 신규 검증: `backend/test_security_embedding_privacy.py`. 성공 응답, 실패 처리, 캐시 내용·복사·만료·크기 제한·비활성화도 검증했다.
 - 독립 코드 검토 완료. 새 테스트 10개와 관련 회귀 25개 통과. main은 PR 준비 시 다시 fetch했고 기준 SHA에서 변경 없음.
 - 서영님과 동일 파일 변경: unknown(검토 가능한 PR 없음). 지시서의 담당 기능과는 분리된 임베딩 전송 경계만 수정했다.
 - 병합 의존성: 없음. 운영 반영: 승인 대기. 되돌리기: 코드 커밋 `fb888c6769ab636d73dcc84caae48a9e0a21843d`를 revert. 보존 기본값·모델·DB 정책 변경 없음.
 - 남은 위험: 다른 서비스의 오류 처리, 실제 운영 로그 설정, 외부 공급자의 보존 설정은 이 수정으로 검증되지 않는다.
+
+## PR 2 — 캐시 임시 파일 격리와 실패 정리
+
+- 브랜치 `codex/security-cache-temp-20261013`; PR #37 위에 순차 제출한다. 코드 SHA: `fbef1d8d117ecf4d9115cd890babee28ff85937f`.
+- 변경: `backend/app/services/recompose_cache.py`, `backend/test_security_temporary_files.py`, 이 진행 기록.
+- 수정 전: 동일 키 요청들이 같은 임시 파일을 사용했고 교체 실패 시 상담 결과를 담은 임시 파일이 남았다. 수정 후: 요청별 고유 임시 파일을 닫은 뒤 교체하고 일반 성공/예외 경로에서 정리한다. Windows에서 확인한 동시 교체 오류는 프로세스 내 잠금으로 방지했다.
+- 합성 검증: `security-runtime/Scripts/python.exe -m unittest test_security_temporary_files -q` — 10개 통과(2026-10-13 KST). 별도로 `test_summary_generation_routes` 4개 통과. 성공/실패/동시 쓰기, A/B 키 분리, 업로드 크기·서명·중단 정리를 확인했다. 초기 검사에서 결함 2개를 재현했으며, 테스트 fixture 누락 1개는 검사 환경 문제로 수정했다.
+- 로컬 검사 환경: 기본 Python의 FastAPI/Starlette 조합으로 앱 import가 실패해 저장소 밖 `security-runtime`에 uv.lock의 FastAPI 0.136.1, Starlette 1.0.0, python-docx 1.2.0을 설치했다. 의존성 파일·전역 패키지·운영 환경 변경 없음.
+- 독립 검토 완료. 일반 임시 디렉터리는 테스트 종료 시 정리됐고 원격 데이터·유료 추론을 사용하지 않았다.
+- 서영님 동일 파일 수정 여부: unknown. 기능 구현 경로는 수정하지 않았다. 병합 의존성: #37. 되돌리기: 코드 SHA를 revert.
+- 한계: 강제 프로세스 종료, 파일 시스템 정리 실패, 여러 프로세스의 동시 교체는 보장하지 않는다. 최종 JSON 캐시의 보존 기간과 평문 내용은 기존 동작 그대로이며 보존 정책 결정이 필요하다. 병합·운영 반영은 승인 대기.
 
 ## 진행 중 / 승인 대기
 
