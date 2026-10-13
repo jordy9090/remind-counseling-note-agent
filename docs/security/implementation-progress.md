@@ -219,3 +219,17 @@
 - 오디오 수정 최종 독립 검토 통과: 삭제/새 회기/복원/화면 종료의 URL 수명과 완료 시 최신 화자 역할을 확인했다. 실제 callback의 eager/deferred·최초/기존 파일·삭제/작업공간 교체·지연 오류·화자 변경 9개 조합 통과. 늦은 결과를 무시하며 요청 자체 취소 기능은 추가하지 않았다.
 - 최종 제품 검사: 프런트엔드 로컬 스크립트 9개 통과, grounding 브라우저 6.84초 통과, 실제 로컬 API/합성 저장소의 전체 persistence 브라우저 19.81초 통과(2026-10-13 15:09:54 UTC), 최종 TypeScript/Vite build 28.73초 통과(15:10:04 UTC). 기존 약 637 kB bundle 경고는 남아 있다. 실제 운영 로그인·모델 호출과는 구분한다.
 - 정리: 로컬 서버 종료·메모리 행 폐기 완료. 테스트용 Edge 임시 프로필 9개 삭제는 자동 승인 검토가 `blocked by policy`로 거절했고 구체적 이유는 없었다. 우회 삭제하지 않았으며 정확한 경로는 비공개 로컬 ledger에 보존했다. 원격 계정/행은 생성하지 않았다.
+
+## 통합 병합 및 운영 검증 — 2026-10-14 KST
+
+- 검증 후보 `573797de589760771ea40ceccbddb3eca7e3248b`, PR #47. 후보 Product CI `38420257034`의 backend 296개·Linux PDF smoke/수퍼비전 8개·프런트엔드 9개/build와 Security CI `38420257066`의 93개 통과를 실제 로그로 확인했다. Preview `dpl_AJuqN5KQoJBzLDquzDV672sR41hc` READY 확인 후 병합했다.
+- Vercel의 Python 3.12와 CI 3.11 차이를 확인해 별도 3.12.13 환경에서 전체 296개와 PDF-required smoke를 추가 실행했다. Windows 하드링크 오류로 `jsonpointer` 설치가 불완전했던 첫 실행은 실패로 보존했다. 복사 방식 재설치 후 296개(10.267초), smoke(9.937초) 모두 통과, 외부 통신 시도 0. 코드/lock 변경은 없다.
+- main 재fetch 결과 기준 `afd0476` 그대로였고 rollback 대상 `dpl_4GASoXeGR66hBL6FkAvz9s6Fa7Vv` READY/eligible를 확인했다. 2026-10-14 00:26:05 KST, expected-head guard와 merge commit 방식으로 #47 병합. 실제 main `bfcdea73d84fb29e99820fa201f4e32d977b846c`, tree `8dd9122b3993c36c4db95e9a22dd05b7d3fbf6b0`가 검증 후보와 정확히 일치한다.
+- #37–#46의 정확한 HEAD 10개 모두 main 조상임을 확인했다. #37은 GitHub가 간접 병합 처리했고 #38–#46은 포함 확인 후 closed 처리했다. 기존 스택 브랜치와 순서를 보존했으며 재병합하지 않았다.
+- main Product CI `38422031411` 실제 로그: backend 296개(3.529초), Linux PDF-required smoke와 수퍼비전 8개(0.644초), 프런트엔드 9개/build(3.59초) 모두 통과. 운영은 기존 Git 연동 배포 `dpl_FqEXtN3ZXa8CyjWtsd3WKn1atz3W` 한 건으로 진행하며 수동 중복 배포하지 않았다.
+- 최종 증거는 `codex/security-release-evidence-20261014` 별도 브랜치에 보존하며 문서만으로 추가 운영 배포하지 않는다.
+- 2026-10-14 00:30:12.992 KST, 운영 `dpl_FqEXtN3ZXa8CyjWtsd3WKn1atz3W` READY. 실제 source `bfcdea73d84fb29e99820fa201f4e32d977b846c`, target production, `remind.ai.kr`/기존 Vercel 도메인 alias를 provider metadata에서 확인했다.
+- 배포 후 00:30:55 KST까지 health·인증 경계 12/12 통과(11개 Supabase guard 일치, 합성 토큰 반사 없음), homepage/현재 JS/CSS 모두 200·올바른 content type. 새 배포의 00:30:12 이후 약 1분 범위 error/fatal와 합성 토큰 검색 집계 모두 반환 그룹 0. 전 기간 무오류/무누출을 뜻하지 않는다. 승인된 운영 합성 인증 계정이 없어 로그인 후 저장·복원·내보내기·사용자 간 격리는 실제 운영에서 미검증이다.
+- 관측한 릴리스 회귀가 없어 rollback은 실행하지 않았다. 정상 배포 목록에서 이전 `dpl_4GASoXeGR66hBL6FkAvz9s6Fa7Vv` READY/rollback candidate 재확인. 별도 rollback-only 목록은 403 권한 오류였고 권장 fallback용 Vercel CLI는 설치되어 있지 않았다. eligibility metadata와 실제 rollback 실행 권한 검증은 구분한다.
+- 완료: 기존 10개 보안 PR 통합, 확인된 통합 결함 3개 수정, 전체 관련 회귀·독립 검토·격리 PostgreSQL·운영 인증 거부 검사, 실제 운영 릴리스. 운영 DB/RLS·고객 행·보존 정책·환경 변수 변경과 유료 API 사용 0.
+- 재개 지점: [통합 릴리스 보고서](integration-release-report.md)의 실제 SHA·배포·CI·rollback·한계를 사용한다. 다음 작업은 서영님 정확한 PR/SHA를 받아 기존 체크리스트와 통합 대조하거나 승인된 운영 합성 계정으로 미검증 인증 성공 경로만 확인하는 것이다. 원격 SQL/기존 불일치 행 처리/잠금·validation·rollback 계획, 보존·삭제 제품/법률 결정, 유료 모델/STT 비용은 각각 별도 확정·승인이 필요하다. 완료 검사 반복이나 미공개 기능 중복 구현은 하지 않는다.
