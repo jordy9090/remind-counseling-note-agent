@@ -211,7 +211,7 @@ class CaseListRouteTests(unittest.TestCase):
         def missing_columns(method, table, **kwargs):
             select = str((kwargs.get("query") or {}).get("select") or "")
             if table == "cases" and method == "GET" and "client_age" in select:
-                raise supabase_storage.SupabaseStorageError('Supabase 400: {"code":"42703","message":"column cases.client_age does not exist"}')
+                raise supabase_storage.SupabaseStorageError("Supabase request failed with HTTP 400 (42703).", error_code="42703")
             return original(method, table, **kwargs)
 
         with patch.object(self.store, "request", side_effect=missing_columns), \

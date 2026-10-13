@@ -120,3 +120,15 @@
 - 조회 수정 관련 회귀: `test_source_refs test_grounded_generation test_security_access_boundaries` 46개 중 44개 통과. 기존 claim-support 2개는 API 키가 없으면 mock에 도달하지 않는 stub 설정 때문에 실패했다. 합성 키와 소켓 차단을 명시하여 그 2개만 재검사했고 모두 통과(0.003초); 원인·수정은 테스트 환경이며 제품 코드 변경은 없다.
 - 독립 최종 검토: 차단 사항 없음. 검토자가 기존 식별 패턴 8종과 정상 dense 결과의 구조화·요약 호출도 별도 합성 검사했다. 보장 범위는 기존 탐지 패턴이며 모든 개인정보 제거를 뜻하지 않는다. raw transcript/KB 및 비정상 provenance 필드는 이번 패치 범위 밖이다. 인용/저장 원본 보존, RAG 비활성 정상 제어 확인. 보안 CI에 새 검사 7개를 추가했다.
 - 조회 수정 되돌리기: 이 범위의 코드 커밋 revert. DB·보존 정책 변경 없음. 다음 작업은 이미 합성 재현한 저장소 오류 경계다.
+
+## PR 6 — 저장된 기록 재사용 마스킹
+
+- Draft PR [#42](https://github.com/jordy9090/remind-counseling-note-agent/pull/42), 코드/HEAD `bc17da0a6c75bd0e7f0742826a8f397d859b66ab`, 기준 #41. 위 조회 검사와 독립 검토 완료. 원본을 바꾸지 않고 기존 마스킹 함수를 재사용하며 서영님 새 기능을 구현하지 않는다.
+
+## PR 7 준비 — 저장소 오류 진단의 원문 노출 제거
+
+- 브랜치 `codex/security-storage-diagnostics-20261013`, 기준 #42. 두 Supabase REST 어댑터에서 HTTP 상태와 고정 허용 목록의 구조화 코드만 보존한다. 본문·reason·기본 traceback 연결을 노출하지 않으며 오류 스트림을 닫는다. 프로필 컬럼 fallback은 `42703`/`PGRST204`로 유지한다.
+- 초기 합성 검사 12개는 수정 전 실패 하위 사례 41개/오류 4개, 정상 제어 2개 통과; 수정 후 12개 통과. 독립 검토가 실제 `HTTPResponse.begin()`의 잘못된 상태 줄이 빠져나오는 문제를 찾아, 응답 읽기/디코딩 실패까지 3개 추가 검사로 재현했다(수정 전 어댑터 하위 사례 오류 6개).
+- 최종 `backend/.venv/Scripts/python.exe -m unittest test_security_storage_diagnostics`: 15개 모두 통과. `test_case_list test_case_dashboard test_transcript_storage test_security_access_boundaries`: 60개 통과(후속 오류 유형 수정이 정상 경로를 바꾸지 않아 재실행하지 않음). 구문/diff 검사 통과. 2026-10-13 KST, 합성 응답만 사용, 외부 호출/정리할 원격 데이터 없음.
+- 파일: `supabase_errors.py`, 두 REST 어댑터의 예외 처리와 오류 클래스, 신규 진단 검사, 기존 case-list 오류 fixture 1개, 보안 CI와 진행 기록. 인증 자격 증명 선택은 이 PR에서 변경하지 않는다.
+- 정상 payload 자체나 telemetry가 억제된 예외 context/locals를 의도적으로 수집하는 경우까지 보장하지 않는다. 운영 로그 설정 검증은 별도다. 다음은 초안 저장의 자격 증명·staging 경계 수정이다.
