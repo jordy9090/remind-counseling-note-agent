@@ -142,3 +142,12 @@
 - 최종 검사: 신규 `test_security_draft_boundaries` 9개 + 기존 A/B draft save/detail/local path/JWT 검사 5개 = 14개 통과(0.676초, 2026-10-13 KST). 구문 검사 통과. 독립 검토에서 부분 쓰기/닫기 실패 정리와 실제 Request의 JWT/public-key/owner 보존을 추가 확인했고 차단 사항 없음. 합성 임시 디렉터리 정리 완료, 원격/유료 호출 0.
 - 파일: `draft_store.py` 파일 쓰기 helper, `supabase_store.py` 자격 증명 선택, 신규 검사, CI와 진행 기록. 자동저장 UI·초안 projection·보존 기간은 변경하지 않았다. 서영님 동일 파일 수정 여부는 unknown이므로 통합 시 이 helper 변경을 대조한다.
 - 한계: 프로세스 강제 종료·OS unlink 실패·여러 프로세스 간 잠금은 보장 범위 밖. 최종 초안의 보존 정책은 승인 대기. 다음 작업은 합성 SDK/검증 오류가 재구성 응답·로그에 노출되는 경계다.
+
+- 제출 완료: Draft PR [#44](https://github.com/jordy9090/remind-counseling-note-agent/pull/44), 코드/HEAD `deddab79d07bfc519f270e78f4b0968c81c41b4e`, 기준 #43.
+
+## PR 9 준비 — 재구성 실패 응답·로그
+
+- 브랜치 `codex/security-recompose-diagnostics-20261013`, 기준 #44. Main/Vercel 두 recompose handler의 일반 오류 응답을 고정 한국어 문구로 바꾸고 예외 연결을 억제한다. Main의 원문 traceback 출력을 제거한다. SDK 오류와 모델 출력 ValidationError가 실제 pipeline/cache를 거쳐 도달하는 경계만 수정했다.
+- 수정 전 새 검사 6개 중 개인정보 보호 검사 3개가 6개 호스트 하위 사례에서 실패했고 정상 제어 3개는 통과. 수정 후 `test_security_route_diagnostics test_summary_generation_routes test_security_temporary_files.RecomposeFileSafetyTests` 16개 통과. 실제 HTTP·pipeline·cache, 실패 캐시 없음, 성공 재사용, 품질 오류 502, 미인증 401을 확인했다. 구문 검사 통과. 2026-10-13 KST; 외부 모델/네트워크 차단, 합성 임시 디렉터리 정리 완료.
+- 독립 최종 검토에서 차단 사항 없음. 파일은 두 handler와 신규 검사·CI·진행 기록이다. confirmation/supervision sibling도 확인했지만 같은 민감 오류가 도달하는 추가 경로는 입증되지 않아 기능 구현을 확장하지 않았다. 운영 telemetry의 별도 예외 수집 설정은 미검증이다.
+- 다음 단계: DB 제안 결합 검증, 최종 변경 범위 보안 검사, CI 상태와 남은 승인/의존성 체크포인트 정리. 원격 DB·RLS·보존·운영 변경 없음.

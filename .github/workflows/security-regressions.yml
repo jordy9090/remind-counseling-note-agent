@@ -40,4 +40,5 @@ jobs:
             test_security_retrieval_privacy \
             test_security_storage_diagnostics \
             test_security_draft_boundaries \
+            test_security_route_diagnostics \
             test_security_retrieval_logs -v

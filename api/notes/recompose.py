@@ -33,8 +33,8 @@ async def recompose_note_draft(
         return recompose_note_with_cache(request, actor=actor)
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
-    except Exception as error:
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"요약초안 재구성 중 오류가 발생했습니다: {str(error)}",
-        ) from error
+            detail="요약초안 재구성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        ) from None
