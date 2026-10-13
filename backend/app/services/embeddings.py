@@ -63,10 +63,12 @@ class OpenAIEmbeddingProvider:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            raise EmbeddingError(f"OpenAI embeddings failed with HTTP {error.code}: {detail}") from error
-        except URLError as error:
-            raise EmbeddingError(f"OpenAI embeddings network error: {error}") from error
+            # Upstream bodies and reason strings may contain submitted text.
+            status_code = error.code
+            error.close()
+            raise EmbeddingError(f"OpenAI embeddings failed with HTTP {status_code}.") from None
+        except (URLError, TimeoutError):
+            raise EmbeddingError("OpenAI embeddings network request failed.") from None
 
         rows = sorted(payload.get("data", []), key=lambda row: row.get("index", 0))
         embeddings = [row.get("embedding", []) for row in rows]
