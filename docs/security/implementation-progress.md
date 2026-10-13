@@ -69,22 +69,33 @@
 
 ## PR 4 — 근거 문서와 보안 회귀 CI
 
+- Draft PR: [#40](https://github.com/jordy9090/remind-counseling-note-agent/pull/40), 제출 HEAD `782cdb3cc073223f5489e58bb72cfac9cf7baadb`.
 - 브랜치 `codex/security-evidence-20261013`, 구현·문서 SHA `f5840c6129d26abcf4d2ae88011fff2cabad0c8d`.
 - 요구한 문서 5종 작성: 데이터/권한/보존·운영자/공급자 목록, 법률/윤리 요구사항, 문서 독자별 공개 범위, 서영님 통합 점검표, 이 진행 기록. 법령 시행일·공식 윤리 규정·바우처 지침의 적용 범위를 원문 근거와 미결정 항목으로 구분했다.
 - `backend/test_security_retrieval_logs.py`: `security-runtime/Scripts/python.exe -m unittest test_security_retrieval_logs -v` — 3개 통과, 0.044초(2026-10-13 KST). 검색 원문 대신 해시·길이·허용 메타데이터만 삽입하며 로그 실패 시 원문을 출력하지 않는 경로를 검증했다. 식별자/source_ref 자체의 비식별화는 별도 문제다.
-- `.github/workflows/security-regressions.yml`: PR의 backend/api 변경 시 새 보안 검사 45개를 실행하도록 구성했다. 기존 CI는 main 대상 PR에만 적용되므로 이 워크플로는 순차 PR에서도 실행된다. 원격 실행 결과는 아래에 추가한다.
+- `.github/workflows/security-regressions.yml`: PR의 backend/api 변경 시 새 보안 검사 45개를 실행하도록 구성했다. 기존 CI는 main 대상 PR에만 적용되므로 이 워크플로는 순차 PR에서도 실행된다. Ubuntu/Python 3.11의 [실행 38392250602](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/38392250602)가 성공했고 의존성 설치·45개 검사 단계 모두 성공했다.
 - 독립 코드/문서 검토에서 차단 사항 없음. 비공개 원문·실데이터·공격 재현 상세를 공개 저장소에 게시하지 않았다. 공개 저장소 여부를 각 PR 제출 전에 재확인했다.
 - 서영님 동일 파일 수정 여부 unknown. 병합 의존성 #39. 되돌리기: `f5840c6`와 후속 문서 커밋을 revert. 제품 코드·원격 데이터·보존 기본값 변경 없음.
 
 ## 현재 완료·한계·승인 대기
 
 - Codex 수정: 임베딩 오류의 본문/이유 노출 제거, 캐시 쓰기 임시 파일 격리·정리.
-- Codex 로컬 검증: 새 보안 검사 45개 + 관련 회귀 29개 = 74개 통과. 165개 게스트 하위 검사는 22개 A/B 검사에 포함되며 별도 테스트 수로 중복 합산하지 않았다.
+- PR #40까지의 Codex 로컬 검증: 새 보안 검사 45개 + 관련 회귀 29개 = 74개 통과. 165개 게스트 하위 검사는 22개 A/B 검사에 포함되며 별도 테스트 수로 중복 합산하지 않았다.
 - 운영 메타데이터: 2026-10-13 20:35:45 KST Vercel 운영 배포 `dpl_4GASoXeGR66hBL6FkAvz9s6Fa7Vv`, READY, main `afd0476bd82dd7809b96fcd64a044325db06e565`, region `iad1`. 운영 반영 없음. Re:mind와 연결되는 Supabase 프로젝트/지역은 명확히 식별되지 않았다.
-- CI: PR #37 Product CI 실행 38389311116 성공, Vercel 상태 성공. PR #38/#39의 Vercel preview 상태는 마지막 조회 시 pending. Preview 자동 빌드는 운영 승격과 구분한다.
+- CI: PR #37 Product CI 실행 38389311116 성공. #40 신규 보안 CI 성공. #37–#40의 Vercel preview 상태 성공. Preview 자동 빌드는 운영 승격과 구분한다.
 - 민감한 DB 관계 소유권 검토와 ROLLBACK으로 끝나는 제한적 정책 제안은 공개 Git 밖 보안 스캔 산출물에 보관했다. psql/Docker/Supabase 로컬 실행 도구가 없어 실제 DB 재현·정책 적용 검증은 수행하지 못했다. 원격 RLS 수정은 승인 대상이다.
 - 제품/법률 결정 필요: 원본·초안·캐시·파생물·백업 보존/삭제 기준, 문서 수신자별 허용 필드, 공급자 계약·국외 처리·운영자 접근. 종단간 암호화·운영자 열람 불가·법률 준수를 주장할 근거는 없다.
-- 진행 중: 남은 대형 생성/프런트엔드 경계의 추가 소스 확인, 비공개 스캔 보고서 마감, 새 CI 결과 확인.
+- 추가 소스 확인 완료. 마스킹 담당 구현과 겹치는 경계의 비공개 합성 검증 2건도 통과했으며, 상세 실패 재현은 보안 스캔 산출물로만 보관했다. 공개 체크리스트에 검증 범위를 추가하고 직접 기능 수정은 하지 않았다.
 - 서영님 통합 검증: 검토 가능한 PR/브랜치가 아직 식별되지 않아 대기. 독립 작업은 계속 진행.
-- 운영 DB의 실제 RLS, 환경 변수 값, 공급자 계약·지역·보존 설정은 확인하지 않음.
+- 운영 DB의 실제 RLS, 환경 변수 값, 공급자 계약·보존 설정 및 Vercel 메타데이터 외의 처리 지역은 확인하지 않음.
 - 테스트 통과는 운영 배포 완료나 법률 준수 인증을 의미하지 않음.
+
+## PR 5 — 비동기 업로드 취소 시 원본 임시 파일 정리
+
+- 브랜치 `codex/security-upload-cleanup-20261013`, 코드 SHA `4449cf57416be9b3b044084e008cc10f1d955da5`.
+- 파일: `backend/app/services/upload_validation.py`, 신규 `backend/test_security_upload_cancellation.py`, 보안 CI 목록, 진행 기록과 통합 점검표. 읽기/닫기 중 취소 및 닫기 실패에서 애플리케이션 임시 파일을 정리하고 예외를 그대로 전달한다. 성공 시에는 기존처럼 호출자에게 파일 소유권을 넘긴다.
+- 실행 환경: 기존 `backend/.venv/Scripts/python.exe`, Python 3.11.15 / FastAPI 0.136.1 / Starlette 1.0.0. `-m unittest test_security_upload_cancellation -v`: 수정 전 8개 중 실패 6개·성공 2개, 수정 후 8개 모두 통과(0.749초).
+- 관련 회귀: `-m unittest test_security_temporary_files.UploadCleanupTests -v` 4개 통과(0.149초); `-m unittest test_vercel_wrappers.TestVercelWrappers.test_material_extract_endpoint_requires_token_and_extracts_txt test_vercel_wrappers.TestVercelWrappers.test_material_extract_uses_supabase_bearer_identity -v` 2개 통과(0.104초). 모든 검사 2026-10-13 KST, 합성 파일 정리 완료.
+- 새 검사 8개를 CI에 추가하여 보안 검사 총 53개. 관련 기존 회귀는 중복 실행을 제외하고 총 31개이며, 비공개 경계 검증 2건은 이 합계와 별도다.
+- 독립 최종 소스 검토에서 차단 사항 없음. 서영님 동일 파일 수정 여부 unknown; 기능 구현은 수정하지 않았다. 병합 의존성 #40. 되돌리기: 코드 SHA revert.
+- 한계: 파일 삭제 자체의 실패, 강제 프로세스 종료, 프레임워크 내부 spooling/스냅샷은 검증 범위 밖이다. 보존 기간·기본값·원격 정책·운영 배포 변경 없음.

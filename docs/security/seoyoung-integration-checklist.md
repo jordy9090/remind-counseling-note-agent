@@ -9,6 +9,7 @@ Ownership: Seo-young implements Guest Quick Summary, login handoff/autosave, mas
 1. Record feature PR, exact SHA, base SHA and changed paths. Compare against independent security PRs; mark overlapping implementation files **yes/no/unknown** and identify merge order. For overlapping production modules, report the failing interface/test and coordinate a patch instead of implementing the feature twice.
 2. Use synthetic counselors A/B, separate browser contexts and uniquely identified cases/sessions/drafts. Use markers such as `SYNTHETIC_RAW_A`, `SYNTHETIC_MASKED_A`, `SYNTHETIC_PRIVATE_REFLECTION_A`, `SYNTHETIC_THIRD_PARTY_B` and addresses ending in `.invalid`. They must not derive from real people or interviews.
 3. Stub LLM/STT/embedding calls and record only synthetic requests in the test harness. Run against isolated local resources first. Mocked PostgREST/JWT tests do not verify hosted RLS, deployment configuration or provider contracts. Any remote DB/RLS change, real-data access, retention-policy change, Production deployment or main merge requires approval.
+4. Include direct authenticated-account replacement events and late responses from the previous account, as well as ordinary logout/login. For masking, exercise edited confirmed notes reused through every prior-session retrieval fallback, in addition to newly entered material. Keep private failure reproductions outside this public repository until coordinated remediation.
 
 ## Test matrix
 
