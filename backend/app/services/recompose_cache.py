@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from threading import Lock
 
 from app.core.config import settings
 from app.graph.graph import run_note_pipeline
@@ -13,6 +14,7 @@ from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, Recompo
 
 
 CACHE_VERSION = "recompose-v4-summary-quality"
+_CACHE_REPLACE_LOCK = Lock()
 
 
 def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "") -> RecomposeNoteResponse:
@@ -91,12 +93,23 @@ def _read_cached_result(cache_key: str) -> GenerateNoteResponse | None:
 def _write_cached_result(cache_key: str, result: GenerateNoteResponse) -> None:
     path = _cache_path(cache_key)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    temp_path.replace(path)
+    payload = json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    temp_path: Path | None = None
+    try:
+        # Separate staging files prevent concurrent requests sharing a partial result.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False,
+            prefix=f".{cache_key}.", suffix=".tmp", dir=path.parent,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(payload)
+        # Close before replacement so the same path also works on Windows.
+        # Windows can reject simultaneous replacement of the same destination.
+        with _CACHE_REPLACE_LOCK:
+            temp_path.replace(path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _cache_dir() -> Path:
