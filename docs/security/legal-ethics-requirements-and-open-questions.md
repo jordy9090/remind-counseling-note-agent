@@ -1,5 +1,7 @@
 # Legal and ethics requirements and open questions
 
+This is the 2026-10-13 decision-register snapshot. The [2026-10-14 follow-through](security-followthrough-report.md) adds the second association's distinct retention rule, precise voucher/access-log/permission-history sources, current provider contracts and new production evidence. It also records the user's later code-release delegation; earlier per-merge/per-deployment approval gates below are historical. No product retention schedule or legal clearance has been adopted.
+
 Review date: **2026-10-13, Asia/Seoul**. Code baseline inspected: `afd0476bd82dd7809b96fcd64a044325db06e565`; independent security changes are tracked in [implementation-progress.md](implementation-progress.md).
 
 This is an engineering evidence and decision register, not a legal opinion, compliance certification, authorization to use real counseling material, or a statement about Production settings. `Verified` identifies the specific source or local behavior inspected; it does not establish that all requirements are satisfied. `Gap` identifies missing evidence or a control; `Unknown` requires an owner, contract, operational record, or expert decision.

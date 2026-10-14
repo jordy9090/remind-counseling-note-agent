@@ -26,6 +26,8 @@ from app.schemas.note import (
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
+from app.schemas.storage_policy import NoteStoragePolicy
+from app.services.storage_policy import note_storage_policy
 from app.services.supabase_storage import (
     NoteConfirmationError,
     confirm_generated_note,
@@ -36,6 +38,14 @@ from app.services.supabase_storage import (
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 PreviewActor = Annotated[str, Depends(require_preview_access)]
+
+
+@router.get("/storage-policy", response_model=NoteStoragePolicy)
+async def get_note_storage_policy(actor: PreviewActor, response: Response) -> NoteStoragePolicy:
+    """Describe this runtime's new-save behavior without reading existing records."""
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization"
+    return note_storage_policy()
 
 
 @router.post("/generate", response_model=GenerateNoteResponse)

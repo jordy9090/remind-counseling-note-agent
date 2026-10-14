@@ -27,7 +27,8 @@ class SyntheticStorage:
     def __init__(self):
         self.tables = {
             "sessions": [{"id": SESSION, "session_number": 1, "session_date": "2026-10-13"}],
-            "generated_notes": [{"session_id": SESSION, "confirmed_json": {
+            "generated_notes": [{"id": NOTE, "user_id": "synthetic-owner", "case_id": "synthetic-case",
+                "session_id": SESSION, "confirmation_status": "confirmed", "confirmed_json": {
                 "sections": {"session_content": TEXT},
                 "nested": [{"source_ref": EMAIL, "id": PHONE, "metadata": {EMAIL: TEXT}}],
                 "score": 0.75, "visible": True, "empty": None,
@@ -98,6 +99,7 @@ class RetrievalPrivacyTests(unittest.TestCase):
 
     def test_draft_summary_fallback_is_masked(self):
         self.client.tables["generated_notes"][0] = {"session_id": SESSION,
+            "user_id": "synthetic-owner", "case_id": "synthetic-case",
             "confirmed_json": {}, "draft_json": {"session_content": {"text": TEXT}}}
         item = self.context()[0]
         self.assertMasked(item.summary)
@@ -172,7 +174,7 @@ class RetrievalPrivacyTests(unittest.TestCase):
 
     def test_legacy_dense_content_and_grounded_prompt_are_masked(self):
         self.client.rows = [{"chunk_id": NOTE, "session_id": SESSION, "source_note_id": NOTE,
-            "source_ref": REF, "chunk_text": TEXT, "field_type": EMAIL,
+            "source_ref": REF, "chunk_text": TEXT, "field_type": "session_content",
             "session_number": 1, "session_date": "2026-10-13", "similarity_score": 0.75,
             "metadata": {"nested": [{"source_refs": [EMAIL], PHONE: TEXT}], "count": 2}}]
         original = copy.deepcopy(self.client.rows)
