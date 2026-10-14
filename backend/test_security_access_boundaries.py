@@ -194,7 +194,8 @@ class OfflineTransport:
                 for part in reversed(query["order"].split(",")):
                     field, direction = part.split(".")[:2]
                     result.sort(key=lambda row: str(row.get(field, "")), reverse=direction == "desc")
-            return self.response(result[:int(query.get("limit", len(result)))])
+            offset = int(query.get("offset", 0))
+            return self.response(result[offset:offset + int(query.get("limit", len(result)))])
         if method == "PATCH":
             result = []
             for row in rows:

@@ -1757,6 +1757,7 @@ class FakeConfirmationStorage:
         self.generated_notes = [
             {
                 "id": self.note_id,
+                "user_id": "test-preview-actor",
                 "case_id": self.case_id,
                 "session_id": self.session_id,
                 "note_type": "session_note",

@@ -495,6 +495,7 @@ class TestVercelWrappers(unittest.TestCase):
                     "generated_notes": [
                         {
                             "id": "note-b",
+                            "case_id": "CASE-SHARED",
                             "session_id": "session-b",
                             "user_id": "user-b",
                             "note_type": "session_note",

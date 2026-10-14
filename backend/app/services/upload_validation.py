@@ -99,27 +99,24 @@ async def persist_upload_to_temp(upload: UploadFile, kind: UploadKind) -> Valida
             cleanup_temp_file(temp_path)
             raise
 
-    if size == 0:
-        cleanup_temp_file(temp_path)
-        raise UploadValidationError(400, "빈 파일은 업로드할 수 없습니다.")
-
-    if not signature_matches(temp_path, suffix, kind):
-        cleanup_temp_file(temp_path)
-        raise UploadValidationError(415, "파일 내용이 허용된 형식과 일치하지 않습니다.")
-    if kind == "document" and suffix == ".docx":
-        try:
+    try:
+        if size == 0:
+            raise UploadValidationError(400, "빈 파일은 업로드할 수 없습니다.")
+        if not signature_matches(temp_path, suffix, kind):
+            raise UploadValidationError(415, "파일 내용이 허용된 형식과 일치하지 않습니다.")
+        if kind == "document" and suffix == ".docx":
             validate_docx_archive_limits(temp_path)
-        except UploadValidationError:
-            cleanup_temp_file(temp_path)
-            raise
-
-    return ValidatedUpload(
-        filename=filename,
-        media_type=media_type,
-        suffix=suffix,
-        size_bytes=size,
-        temp_path=temp_path,
-    )
+        return ValidatedUpload(
+            filename=filename,
+            media_type=media_type,
+            suffix=suffix,
+            size_bytes=size,
+            temp_path=temp_path,
+        )
+    except BaseException:
+        # The caller owns the raw file only after every validation step succeeds.
+        cleanup_temp_file(temp_path)
+        raise
 
 
 def cleanup_temp_file(path: Path | None) -> None:

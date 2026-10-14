@@ -219,3 +219,31 @@
 - 오디오 수정 최종 독립 검토 통과: 삭제/새 회기/복원/화면 종료의 URL 수명과 완료 시 최신 화자 역할을 확인했다. 실제 callback의 eager/deferred·최초/기존 파일·삭제/작업공간 교체·지연 오류·화자 변경 9개 조합 통과. 늦은 결과를 무시하며 요청 자체 취소 기능은 추가하지 않았다.
 - 최종 제품 검사: 프런트엔드 로컬 스크립트 9개 통과, grounding 브라우저 6.84초 통과, 실제 로컬 API/합성 저장소의 전체 persistence 브라우저 19.81초 통과(2026-10-13 15:09:54 UTC), 최종 TypeScript/Vite build 28.73초 통과(15:10:04 UTC). 기존 약 637 kB bundle 경고는 남아 있다. 실제 운영 로그인·모델 호출과는 구분한다.
 - 정리: 로컬 서버 종료·메모리 행 폐기 완료. 테스트용 Edge 임시 프로필 9개 삭제는 자동 승인 검토가 `blocked by policy`로 거절했고 구체적 이유는 없었다. 우회 삭제하지 않았으며 정확한 경로는 비공개 로컬 ledger에 보존했다. 원격 계정/행은 생성하지 않았다.
+
+## 통합 병합 및 운영 검증 — 2026-10-14 KST
+
+- 검증 후보 `573797de589760771ea40ceccbddb3eca7e3248b`, PR #47. 후보 Product CI `38420257034`의 backend 296개·Linux PDF smoke/수퍼비전 8개·프런트엔드 9개/build와 Security CI `38420257066`의 93개 통과를 실제 로그로 확인했다. Preview `dpl_AJuqN5KQoJBzLDquzDV672sR41hc` READY 확인 후 병합했다.
+- Vercel의 Python 3.12와 CI 3.11 차이를 확인해 별도 3.12.13 환경에서 전체 296개와 PDF-required smoke를 추가 실행했다. Windows 하드링크 오류로 `jsonpointer` 설치가 불완전했던 첫 실행은 실패로 보존했다. 복사 방식 재설치 후 296개(10.267초), smoke(9.937초) 모두 통과, 외부 통신 시도 0. 코드/lock 변경은 없다.
+- main 재fetch 결과 기준 `afd0476` 그대로였고 rollback 대상 `dpl_4GASoXeGR66hBL6FkAvz9s6Fa7Vv` READY/eligible를 확인했다. 2026-10-14 00:26:05 KST, expected-head guard와 merge commit 방식으로 #47 병합. 실제 main `bfcdea73d84fb29e99820fa201f4e32d977b846c`, tree `8dd9122b3993c36c4db95e9a22dd05b7d3fbf6b0`가 검증 후보와 정확히 일치한다.
+- #37–#46의 정확한 HEAD 10개 모두 main 조상임을 확인했다. #37은 GitHub가 간접 병합 처리했고 #38–#46은 포함 확인 후 closed 처리했다. 기존 스택 브랜치와 순서를 보존했으며 재병합하지 않았다.
+- main Product CI `38422031411` 실제 로그: backend 296개(3.529초), Linux PDF-required smoke와 수퍼비전 8개(0.644초), 프런트엔드 9개/build(3.59초) 모두 통과. 운영은 기존 Git 연동 배포 `dpl_FqEXtN3ZXa8CyjWtsd3WKn1atz3W` 한 건으로 진행하며 수동 중복 배포하지 않았다.
+- 최종 증거는 `codex/security-release-evidence-20261014` 별도 브랜치에 보존하며 문서만으로 추가 운영 배포하지 않는다.
+- 2026-10-14 00:30:12.992 KST, 운영 `dpl_FqEXtN3ZXa8CyjWtsd3WKn1atz3W` READY. 실제 source `bfcdea73d84fb29e99820fa201f4e32d977b846c`, target production, `remind.ai.kr`/기존 Vercel 도메인 alias를 provider metadata에서 확인했다.
+- 배포 후 00:30:55 KST까지 health·인증 경계 12/12 통과(11개 Supabase guard 일치, 합성 토큰 반사 없음), homepage/현재 JS/CSS 모두 200·올바른 content type. 새 배포의 00:30:12 이후 약 1분 범위 error/fatal와 합성 토큰 검색 집계 모두 반환 그룹 0. 전 기간 무오류/무누출을 뜻하지 않는다. 승인된 운영 합성 인증 계정이 없어 로그인 후 저장·복원·내보내기·사용자 간 격리는 실제 운영에서 미검증이다.
+- 관측한 릴리스 회귀가 없어 rollback은 실행하지 않았다. 정상 배포 목록에서 이전 `dpl_4GASoXeGR66hBL6FkAvz9s6Fa7Vv` READY/rollback candidate 재확인. 별도 rollback-only 목록은 403 권한 오류였고 권장 fallback용 Vercel CLI는 설치되어 있지 않았다. eligibility metadata와 실제 rollback 실행 권한 검증은 구분한다.
+- 완료: 기존 10개 보안 PR 통합, 확인된 통합 결함 3개 수정, 전체 관련 회귀·독립 검토·격리 PostgreSQL·운영 인증 거부 검사, 실제 운영 릴리스. 운영 DB/RLS·고객 행·보존 정책·환경 변수 변경과 유료 API 사용 0.
+- 재개 지점: [통합 릴리스 보고서](integration-release-report.md)의 실제 SHA·배포·CI·rollback·한계를 사용한다. 다음 작업은 서영님 정확한 PR/SHA를 받아 기존 체크리스트와 통합 대조하거나 승인된 운영 합성 계정으로 미검증 인증 성공 경로만 확인하는 것이다. 원격 SQL/기존 불일치 행 처리/잠금·validation·rollback 계획, 보존·삭제 제품/법률 결정, 유료 모델/STT 비용은 각각 별도 확정·승인이 필요하다. 완료 검사 반복이나 미공개 기능 중복 구현은 하지 않는다.
+
+## 운영 인증·DB·보존 후속 실행 — 2026-10-14 KST
+
+- 사용자 후속 위임에 따라 `codex/security-followthrough-20261014`에서 세 미완료 작업을 실행한다. 기준 main `bfcdea7`, 기존 릴리스 증거 `82a3d59`. 코드 수정의 검증·병합·안전한 배포 위임은 계속 유효하다. 원격 보호장치 우회, 고객 자료 열람, 보존 기간 임의 설정, 유료 모델 호출은 하지 않는다.
+- 정상 signup와 실제 이메일 확인을 거친 전용 합성 계정 2개를 만들었다. 확인 전 로그인 거절, 확인 후 비밀번호 로그인, refresh 회전, logout 후 기존 refresh 거절과 재로그인 성공을 운영에서 확인했다. 계정·행·토큰은 Git 밖의 제한된 저장소와 합성 manifest로 관리한다.
+- 운영 API 저장/복원·확정·초안·DOCX 및 알려진 상대방 ID 조회/수정 격리 통과. 모델 비용을 피하기 위해 session/note fixture만 사용자 JWT로 직접 생성했다. 실제 모델 생성의 성공 근거로 사용하지 않는다. dense RPC도 합성 벡터로 자신의 결과/상대 결과 차단을 확인했다. 같은 공개 draft ID를 A가 저장해도 B 데이터는 불변이고 A 공간으로 분리됐다. 추가 probe 행은 즉시 삭제/0행 확인했다.
+- 실제 브라우저 12단계·앱 응답 33개·59.866초 통과: 두 계정 로그인, 목록, 확정 기록 재열기, 임시저장 복원/reload, Word download, 동일 profile A→B 전환과 logout. 문서는 자신의 canary만 포함했다. 생성/STT 요청 0. 브라우저 logout으로 서버 Auth/API 접근은 거부됐으나 이미 발행된 JWT의 직접 REST 권한은 만료 전까지 유지되는 차이를 기록했다. 후속 초안 검사의 최초 401은 logout 상태의 harness 세션 때문이며 정상 재로그인 후 통과했다.
+- 실제 Supabase project/catalog와 PostgreSQL 17.6/vector 0.8.0을 식별했다. 격리 native 동일 버전의 결합 49그룹(실제 다중 연결 6개 포함), 추가 catalog/RPC 7그룹 통과. columns 166/indexes 52의 운영 일치를 확인했다. migration 기록과 실제 객체의 drift는 별도 제안으로 남기며 자동 db push를 하지 않는다.
+- 06:13:29 UTC 운영 읽기 전용 집계: 제안과 충돌하는 14항목 모두 0, 관련 비정규 키 0, 미검증 제약 0. 실상담 내용은 조회하지 않았다. 합성 부모끼리 기존 소유 관계 문제를 운영에서 재현하고 즉시 해당 2행 삭제·0행·기존 부모 불변을 확인했다. 운영 DDL/RLS/고객 행 수정은 하지 않았다.
+- 9월 30일 사업계획서 최신 원본 hash 일치, Notion 및 최신 공식 법/협회/공급자 자료를 다시 검토했다. 일괄 보존 기간의 근거는 없었다. 정확한 연구·SQL·재현 자료는 비공개 artifact에 보존한다. 공개 후속 결과는 [후속 실행 보고서](security-followthrough-report.md)에 모은다.
+- 업로드 검증의 예외 시 임시 파일 잔존을 재현해 수정했다(새 5개+기존 취소 8개 통과). 저장 정책 읽기 API는 flags 조합·인증·기존 wrapper 회귀 34개 통과. 과거 검색 데이터의 정리 후보는 독립 검토에서 opt-out/동시 수정/실패 경로의 빈틈이 확인되어 출시하지 않고 현재 원본 검증과 캐시 유효성 수정으로 범위를 조정했다. 보존 정책 계획기는 실행/삭제 기능 없이 구현 중이다.
+- 정리 현황: 핵심 합성 fixture와 Auth 계정은 배포 후 검증까지 보유한다. 새 브라우저 profile 삭제도 자동 승인 검토의 `blocked by policy`로 거부됐고 우회하지 않았다. 경로/합성 다운로드 2개는 비공개 ledger에 남겼다. 이전 9개 profile은 건드리지 않았다.
+- 최종 독립 검토의 두 차단 문제를 수정했다: 요청 사례와 어긋난 recency 원본의 query/반환 검증, Python DST fold 시각의 UTC 정규화. 검토자의 최초 재현을 다시 실행해 두 문제 해결을 확인했다. 관련 검색/HTTP 58개와 보존 계획기 19개 통과, UTC 변환 범위 초과의 입력 거부도 통과했다.
+- 최초 전체 backend 341개 통과 후 위 변경 때문에 최종 344개를 실행했다. 343개 통과/fixture 실패 1개/외부 통신 시도 0. 해당 정상 제어 fixture에 실제 DB 필수 case_id가 빠져 있어 보완했고 실패한 검사만 다시 실행해 통과했다. 제품 보호 조건은 완화하지 않았다. 최종 PDF-required smoke 11.625초 통과/외부 시도 0. 최종 CI와 고정 diff 보안 검사 후 코드 릴리스를 진행한다.

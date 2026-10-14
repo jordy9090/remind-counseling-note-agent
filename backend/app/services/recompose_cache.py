@@ -11,10 +11,12 @@ from threading import Lock
 from app.core.config import settings
 from app.graph.graph import run_note_pipeline
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
+from app.services.supabase_storage import _storage_for_actor
 
 
-# Results created before retrieval masking must not bypass the privacy boundary.
-CACHE_VERSION = "recompose-v5-retrieval-privacy"
+# Older results did not validate their current confirmed-note sources.
+CACHE_VERSION = "recompose-v6-confirmed-source-validity"
+SOURCE_REVISION_LIMIT = 500
 _CACHE_REPLACE_LOCK = Lock()
 
 
@@ -22,9 +24,11 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
     """Return a checklist-specific generated note, using cache for repeated settings."""
     actor_id = str(actor or settings.remind_preview_actor)
     visible_section_ids = _normalize_section_ids(request.visible_section_ids)
-    cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor_id)
+    source_revision = _case_source_revision(request.session_input.case_id, actor=actor)
+    cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor_id, source_revision=source_revision)
     cached = _read_cached_result(cache_key)
     if cached is not None:
+        _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
         return RecomposeNoteResponse(
             result=cached,
             visible_section_ids=visible_section_ids,
@@ -38,6 +42,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
         session_topic=request.session_topic,
         actor=actor,
     )
+    _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
     _write_cached_result(cache_key, result)
     return RecomposeNoteResponse(
         result=result,
@@ -52,6 +57,7 @@ def build_recompose_cache_key(
     visible_section_ids: list[str] | None = None,
     *,
     actor: str = "",
+    source_revision: str = "",
 ) -> str:
     payload = {
         "version": CACHE_VERSION,
@@ -62,12 +68,58 @@ def build_recompose_cache_key(
         "enable_rag": settings.enable_rag,
         "enable_raw_region_grounding": settings.enable_raw_region_grounding,
         "actor_scope": actor or settings.remind_preview_actor,
+        "source_revision": source_revision,
         "session_input": request.session_input.model_dump(mode="json"),
         "session_topic": request.session_topic,
         "visible_section_ids": visible_section_ids or _normalize_section_ids(request.visible_section_ids),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _case_source_revision(case_id: str, *, actor: str) -> str:
+    """Hash complete owned note sources without retaining their text in the key.
+
+    The bound limits work, not the fingerprint's coverage: overflow fails closed
+    instead of treating a truncated set or a maximum timestamp as a revision.
+    """
+    if not settings.enable_rag:
+        return "rag-disabled"
+    actor_id = str(actor or settings.remind_preview_actor)
+    client = _storage_for_actor(actor)
+    if not client.retrieval_enabled:
+        return "retrieval-unconfigured"
+    try:
+        rows = []
+        # An empty next page proves completion even if the service applies a
+        # lower row cap than our requested limit. Never hash a partial snapshot.
+        for _ in range(12):
+            page = client.select("generated_notes", {
+                "user_id": f"eq.{actor_id}", "case_id": f"eq.{case_id}",
+                "select": "id,user_id,case_id,session_id,confirmation_status,confirmed_at,confirmed_json,draft_json,created_at,updated_at",
+                "order": "id.asc", "limit": SOURCE_REVISION_LIMIT + 1, "offset": len(rows),
+            })
+            if not page:
+                break
+            rows.extend(page)
+            if len(rows) > SOURCE_REVISION_LIMIT or any(
+                row.get("user_id") != actor_id or row.get("case_id") != case_id for row in page
+            ):
+                raise ValueError("Incomplete or unscoped source snapshot")
+        else:
+            raise ValueError("Source pagination limit exceeded")
+        if len({row.get("id") for row in rows}) != len(rows):
+            raise ValueError("Source snapshot changed while paginating")
+        payload = json.dumps(sorted(rows, key=lambda row: str(row.get("id") or "")),
+                             ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        raise RuntimeError("Recomposition source validation is unavailable.") from None
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _assert_source_revision(case_id: str, *, actor: str, expected: str) -> None:
+    if _case_source_revision(case_id, actor=actor) != expected:
+        raise RuntimeError("Recomposition source changed during the request; retry with the current source.")
 
 
 def _normalize_section_ids(section_ids: list[str]) -> list[str]:

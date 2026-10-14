@@ -1,5 +1,7 @@
 # Data inventory and access matrix
 
+The tables below preserve the 2026-10-13 source snapshot. The [2026-10-14 follow-through report](security-followthrough-report.md) records subsequent real authentication/RLS evidence, deployed catalog parity, current-source cache validation and storage-policy observability. Use its dated results when an earlier verification limit below has been resolved.
+
 Reviewed: 2026-10-13. Source baseline: `afd0476bd82dd7809b96fcd64a044325db06e565`; candidate revisions include embedding privacy fix `fb888c6`, cache staging fix `fbef1d8`, and access tests `0f7d879`. The progress ledger records exact revisions and results. Source references below use repository-relative paths and inspected line numbers. This document records source behavior and the explicitly scoped provider metadata snapshot below; it does not attest to Production environment values, applied migrations, provider contracts, legal compliance, or a deployed fix.
 
 This is the current security inventory where older runtime descriptions disagree with the inspected source. It contains no real counseling records, credentials, private research excerpts, or sensitive policy-review reproduction details. Policy changes require private owner review before any remote application.

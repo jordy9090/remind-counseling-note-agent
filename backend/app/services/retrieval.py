@@ -96,6 +96,7 @@ def retrieve_case_context(
     session_ids = [str(row["id"]) for row in sessions if row.get("id")]
     notes_by_session = _latest_notes_by_session(
         session_ids,
+        case_id=case_id,
         user_id=user_id,
         storage_client=client,
     )
@@ -155,7 +156,10 @@ def retrieve_case_memory_chunks(
     )
     rpc_latency_ms = _elapsed_ms(rpc_started)
     total_latency_ms = _elapsed_ms(total_started)
-    chunks = [_case_memory_row_to_chunk(row) for row in rows or []]
+    current_rows = _current_confirmed_memory_rows(
+        rows or [], user_id=counselor_id, case_id=case_id, storage_client=client,
+    )
+    chunks = [_case_memory_row_to_chunk(row) for row in current_rows]
     _apply_timing(chunks, embedding_latency_ms, rpc_latency_ms, total_latency_ms)
     _log_retrieval(
         storage_client=client,
@@ -476,9 +480,46 @@ def _case_memory_row_to_chunk(row: dict[str, Any]) -> RetrievalChunk:
     )
 
 
+def _current_confirmed_memory_rows(
+    rows: list[dict[str, Any]], *, user_id: str, case_id: str, storage_client: SupabaseStorage,
+) -> list[dict[str, Any]]:
+    """Admit derived text only while its owned confirmed source still agrees.
+
+    Index synchronization is not transactional with note confirmation. Validate
+    at the read boundary even when indexing was opted out or failed. This does
+    not delete stored rows or establish the provenance of their ranking vectors.
+    """
+    notes: dict[str, dict[str, Any] | None] = {}
+    accepted = []
+    for row in rows:
+        note_id = str(row.get("source_note_id") or "")
+        if not note_id or not row.get("session_id"):
+            continue
+        if note_id not in notes:
+            try:
+                matches = storage_client.select("generated_notes", {
+                    "id": f"eq.{note_id}", "user_id": f"eq.{user_id}", "case_id": f"eq.{case_id}",
+                    "select": "id,user_id,case_id,session_id,confirmation_status,confirmed_json", "limit": 1,
+                })
+            except Exception:
+                raise RuntimeError("Confirmed source validation is unavailable.") from None
+            notes[note_id] = matches[0] if matches else None
+        note = notes[note_id]
+        if not note or any(str(note.get(key) or "") != expected for key, expected in (
+            ("id", note_id), ("user_id", user_id), ("case_id", case_id),
+            ("session_id", str(row.get("session_id") or "")),
+        )) or note.get("confirmation_status") not in {"confirmed", "demo_confirmed"}:
+            continue
+        current = _confirmed_field_text(note.get("confirmed_json"), str(row.get("field_type") or ""))
+        if current and _mask_text(current) == _mask_text(str(row.get("chunk_text") or "").strip()):
+            accepted.append(row)
+    return accepted
+
+
 def _latest_notes_by_session(
     session_ids: list[str],
     *,
+    case_id: str,
     user_id: str,
     storage_client: SupabaseStorage,
 ) -> dict[str, dict[str, Any]]:
@@ -488,8 +529,9 @@ def _latest_notes_by_session(
         "generated_notes",
         {
             "session_id": f"in.({','.join(session_ids)})",
+            "case_id": f"eq.{case_id}",
             "user_id": f"eq.{user_id}",
-            "select": "id,session_id,note_type,draft_json,confirmed_json,created_at",
+            "select": "id,user_id,case_id,session_id,note_type,draft_json,confirmed_json,confirmation_status,created_at",
             "order": "created_at.desc",
             "limit": 50,
         },
@@ -497,7 +539,10 @@ def _latest_notes_by_session(
     latest: dict[str, dict[str, Any]] = {}
     for row in rows:
         session_id = str(row.get("session_id") or "")
-        if session_id and session_id not in latest:
+        # Legacy rows can reference a session from a different case. Keep the
+        # admitted sources within the same scope used by cache revision checks.
+        if (session_id in session_ids and row.get("user_id") == user_id
+                and row.get("case_id") == case_id and session_id not in latest):
             latest[session_id] = row
     return latest
 
@@ -588,11 +633,13 @@ def _mask_content(value: Any) -> Any:
 
 def _summary_from_note(note: dict[str, Any]) -> str:
     confirmed = note.get("confirmed_json") or {}
-    sections = confirmed.get("sections") if isinstance(confirmed, dict) else None
-    if isinstance(sections, dict):
-        for key in ("session_content", "session_theme", "presenting_problem"):
-            if sections.get(key):
-                return str(sections[key])
+    for key in ("session_content", "session_theme", "presenting_problem"):
+        current = _confirmed_field_text(confirmed, key)
+        if current:
+            return current
+    if confirmed or note.get("confirmation_status") in {"confirmed", "demo_confirmed"}:
+        # An intentional empty or omitted confirmed field supersedes its draft.
+        return ""
 
     draft = note.get("draft_json") or {}
     if isinstance(draft, dict):
@@ -601,6 +648,21 @@ def _summary_from_note(note: dict[str, Any]) -> str:
             if isinstance(value, dict) and value.get("text"):
                 return str(value["text"])
     return ""
+
+
+def _confirmed_field_text(payload: Any, field_name: str) -> str:
+    if field_name not in {
+        "session_theme", "presenting_problem", "session_content", "counselor_intervention",
+        "client_response", "reflection", "next_plan",
+    } or not isinstance(payload, dict):
+        return ""
+    sections = payload.get("sections") if "sections" in payload else payload
+    if not isinstance(sections, dict):
+        return ""
+    value = sections.get(field_name)
+    if isinstance(value, dict):
+        value = value.get("text")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _metadata(chunk: dict[str, Any]) -> dict[str, Any]:
