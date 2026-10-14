@@ -247,3 +247,15 @@
 - 정리 현황: 핵심 합성 fixture와 Auth 계정은 배포 후 검증까지 보유한다. 새 브라우저 profile 삭제도 자동 승인 검토의 `blocked by policy`로 거부됐고 우회하지 않았다. 경로/합성 다운로드 2개는 비공개 ledger에 남겼다. 이전 9개 profile은 건드리지 않았다.
 - 최종 독립 검토의 두 차단 문제를 수정했다: 요청 사례와 어긋난 recency 원본의 query/반환 검증, Python DST fold 시각의 UTC 정규화. 검토자의 최초 재현을 다시 실행해 두 문제 해결을 확인했다. 관련 검색/HTTP 58개와 보존 계획기 19개 통과, UTC 변환 범위 초과의 입력 거부도 통과했다.
 - 최초 전체 backend 341개 통과 후 위 변경 때문에 최종 344개를 실행했다. 343개 통과/fixture 실패 1개/외부 통신 시도 0. 해당 정상 제어 fixture에 실제 DB 필수 case_id가 빠져 있어 보완했고 실패한 검사만 다시 실행해 통과했다. 제품 보호 조건은 완화하지 않았다. 최종 PDF-required smoke 11.625초 통과/외부 시도 0. 최종 CI와 고정 diff 보안 검사 후 코드 릴리스를 진행한다.
+
+### 2026-10-14 16:12 KST — PR #48 배포 및 합성 자료 정리
+
+- 후보 `2035782`의 Product CI: backend 344개, PDF/form 8개와 필수 smoke, frontend 9개 검증 및 build 통과. Security CI 141개 통과. 서로 겹치는 검사 수는 합산하지 않는다. 실제 job log를 확인했다.
+- 최종 diff scan `da82932e-9b6a-4b95-86c7-605c8debd250` 완료: source/config/test 18개와 문서 6개 검토, 남은 신규 발견 사항 0, 범위 내 미검토 항목 0. 기존 운영 DB 문제나 물리적 삭제까지 해결됐다는 뜻은 아니다.
+- PR #48을 지정 head와 merge commit 방식으로 병합했다. main `6e4295b`와 후보 tree `983f0e44db6e14429de4761258642a46e155a38b` 일치. Git 자동 운영 배포 `dpl_538Yon7nyTxEs64HSbiqic7trE9A`는 16:06:28 KST READY, 정상 도메인 연결 확인. 중복 수동 배포 없음.
+- 운영 smoke 12개 통과: health, 인증 없는 정책 조회 거절, 두 계정의 실제 flags 및 기록/초안 복원, 상대 기록 거절, DOCX. 관측된 값은 persistence=true, SAVE_ORIGINAL_INPUT=true, SAVE_RAW_INPUT=false, mode=original. 원문 미저장이라는 일괄 설명과 모순되며 설정은 변경하지 않았다.
+- 합성 초안/사례와 cascade된 회기/기록을 사용자 JWT로 정확히 삭제한 후 11개 관련 테이블 모두 해당 계정 행 0 확인. 전역 로그아웃/refresh 거절 후 엄격한 UUID·메일 alias·합성 이름·앱 0행 조건으로 두 Auth 계정을 삭제했다. Auth users/identities/sessions/refresh_tokens 0, 두 계정 재로그인 invalid_credentials 확인. 확인 메일 2개는 휴지통 이동.
+- 최초 정리 요청의 draft 키 열 이름 오류로 400이 발생했으나 삭제는 없었다. 비공개 harness를 실제 draft_id 열에 맞춰 수정하고 8개 삭제/readback 검사 통과. 초기 실패도 ledger에 남겼다.
+- 16:12:01 KST 운영 집계 재확인: 14개 제안 충돌 0, 후보 DB 객체 0, 합성 앱 행 0. 실상담 내용 열람, 운영 DDL/RLS 변경, 고객 기록 수정·삭제, 유료 추론, 보존 기간 설정 없음.
+- 격리 native PostgreSQL은 테스트 DB 전부 삭제 후 종료. 로컬 profile 및 정확한 임시 자격 증명 파일 삭제는 자동 승인 검토가 blocked by policy로 거부하여 우회하지 않았다. 운영 계정 정리는 완료됐고 로컬 파일 잔존은 별도 미완료 항목이다.
+- 이전 정상 배포 `dpl_FqEXtN3ZXa8CyjWtsd3WKn1atz3W`의 READY/rollback candidate 상태 재확인. 최종 문서만 `codex/security-followthrough-evidence-20261014`에 보관한다. 다음 실행은 [후속 보고서](security-followthrough-report.md)의 정확한 DB 운영 승인·복구 확인 및 기관별 보존/공급자 계약 결정 항목에서 재개한다.
