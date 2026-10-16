@@ -14,23 +14,26 @@ const ACCEPTED_FILES = '.txt,.pdf,.docx'
 
 /**
  * "간편 요약하기" body shared by the public landing and the signed-in workspace:
- * input (typing or file) → AI four-item summary → copy / save.
+ * input (typing or file) → AI four-item summary → copy. Signed-in summaries are saved
+ * automatically by the workspace; nothing is saved before login.
  */
 export default function QuickSummaryPanel({
   result,
   onResult,
-  onSave,
-  saving = false,
   canExtractDocuments,
+  privacyNote,
+  resultStatus,
   notice,
   below,
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
-  onSave: (result: QuickSummaryResult) => void
-  saving?: boolean
   /** PDF/DOCX extraction is a protected API, so only signed-in users can upload those. */
   canExtractDocuments: boolean
+  /** What happens to the input and the summary, shown under the input box. */
+  privacyNote: ReactNode
+  /** Save state shown in the result card (signed-in auto-save). */
+  resultStatus?: ReactNode
   notice?: ReactNode
   below?: ReactNode
 }) {
@@ -135,12 +138,10 @@ export default function QuickSummaryPanel({
             <button type="button" onClick={startOver} className="inline-flex items-center gap-1.5 text-sm font-semibold text-grey-500 hover:text-grey-900">
               <RotateCcw className="h-4 w-4" />새로 요약하기
             </button>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => void copy()} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm font-semibold text-grey-700 hover:bg-grey-100">
-                {copied ? <Check className="h-4 w-4 text-success-500" /> : <Copy className="h-4 w-4" />}{copied ? '복사했어요' : '복사하기'}
-              </button>
-              <button type="button" onClick={() => onSave(result)} disabled={saving} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-60">
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}저장하기
+            <div className="flex items-center gap-3">
+              {resultStatus}
+              <button type="button" onClick={() => void copy()} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500">
+                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? '복사했어요' : '복사하기'}
               </button>
             </div>
           </div>
@@ -186,11 +187,7 @@ export default function QuickSummaryPanel({
       )}
 
       {error && <p role="alert" className="mt-4 w-full rounded-lg bg-danger-50 px-4 py-3 text-sm text-danger-500">{error}</p>}
-      {!result && (
-        <p className="mt-4 w-full text-center text-xs leading-5 text-grey-500">
-          입력한 내용은 저장되지 않아요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요.
-        </p>
-      )}
+      {!result && <p className="mt-4 w-full text-center text-xs leading-5 text-grey-500">{privacyNote}</p>}
 
       {below && <div className="mt-6 w-full">{below}</div>}
     </section>
