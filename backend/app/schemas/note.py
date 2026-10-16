@@ -426,6 +426,15 @@ class CaseDashboardExport(BaseModel):
     created_at: str | None = None
 
 
+class SessionInputDeletionResponse(BaseModel):
+    """Result of deleting one session's stored input (회기별 원문 삭제)."""
+
+    note_id: str
+    session_id: str
+    deleted: list[str]
+    kept: list[str]
+
+
 class ClientProfileFields(BaseModel):
     """내담자 프로필 (cases 테이블의 선택 컬럼). 모두 선택값이며 저장 시 RLS 소유자 범위에서만 읽힌다."""
 
@@ -434,13 +443,12 @@ class ClientProfileFields(BaseModel):
     client_occupation: str | None = Field(default=None, max_length=100)
     marital_status: str | None = Field(default=None, max_length=30)
     family_composition: str | None = Field(default=None, max_length=50)
-    client_phone: str | None = Field(default=None, max_length=40)
-    client_email: str | None = Field(default=None, max_length=120)
+    # Phone and email are intentionally absent: the profile no longer collects contact details, and
+    # unknown fields in a request (including client_phone/client_email) are ignored.
     client_notes: str | None = Field(default=None, max_length=4000)
 
     @field_validator(
-        "client_gender", "client_occupation", "marital_status", "family_composition",
-        "client_phone", "client_email", "client_notes",
+        "client_gender", "client_occupation", "marital_status", "family_composition", "client_notes",
     )
     @classmethod
     def _blank_to_none(cls, value: str | None) -> str | None:

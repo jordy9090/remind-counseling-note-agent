@@ -30,10 +30,12 @@ from app.schemas.note import (
     InputSources,
     PersistenceReport,
     SessionInput,
+    SessionInputDeletionResponse,
     SupervisionReportDraft,
     SupervisionReportRequest,
 )
 from app.services.deidentification import deidentify_text
+from app.services.storage_deidentification import deidentify_case_profile, deidentify_json
 from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
 from app.services.supabase_errors import read_error_code
 
@@ -326,7 +328,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
 
         report.stored = True
-        report.message = _stored_message()
+        report.message = _stored_message(actor)
     except Exception as error:
         report.message = f"Supabase persistence failed; generation response was preserved: {error}"
         return report
@@ -371,6 +373,8 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
         request = request.model_copy(update={"confirmed_note": {
             key: value for key, value in request.confirmed_note.items() if key not in {"relational_insights", "insight_lens"}
         }})
+    # Counselor edits can bring names and occupations back; the stored confirmation is de-identified.
+    request = request.model_copy(update={"confirmed_note": deidentify_json(request.confirmed_note)[0]})
     _validate_confirmation_status(note, request.confirmed_note, counselor_edited=request.counselor_edited)
 
     confirmed_at = datetime.now(UTC).isoformat()
@@ -445,6 +449,51 @@ def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
         confirmation_status=str(note.get("confirmation_status") or "draft"),
         session_input=stored_input,
         session_input_is_original=is_original,
+    )
+
+
+SESSION_INPUT_DELETED = [
+    "sessions.raw_input_text (입력 원문)",
+    "sessions.sanitized_input_text (개인정보를 가린 입력 사본)",
+    "transcript_turns (축어록 발화)",
+    "transcript_windows (축어록 검색 구간과 임베딩)",
+]
+SESSION_INPUT_KEPT = [
+    "generated_notes (AI 요약 초안과 상담사 확정본)",
+    "evidence_items (요약 근거로 연결된 문장 일부)",
+    "case_memory (확정본에서 만든 회기 기억)",
+    "counseling_drafts (상담사가 임시저장한 작업)",
+]
+
+
+def delete_session_input(note_id: str, *, actor: str) -> SessionInputDeletionResponse:
+    """Delete the stored input of the note's session for its owner (회기별 원문 삭제).
+
+    The ownership chain is the one used for reading and confirming a note. The summary, evidence
+    snippets, case memory and temporary drafts are kept and listed in the response.
+    """
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise NoteConfirmationError(503, "저장소 연결을 확인할 수 없습니다.")
+    note = _fetch_generated_note(note_id, actor=actor, actor_storage=actor_storage)
+    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
+    case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
+    context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
+    scope = {"user_id": f"eq.{actor}", "case_id": f"eq.{context.case_id}", "session_id": f"eq.{context.session_id}"}
+    # Derived transcript rows go first, so a failure never leaves turns without the session input.
+    actor_storage.delete("transcript_windows", query=scope)
+    actor_storage.delete("transcript_turns", query=scope)
+    actor_storage.update(
+        "sessions",
+        {"raw_input_text": None, "sanitized_input_text": None},
+        query={"id": f"eq.{context.session_id}", "user_id": f"eq.{actor}"},
+        return_representation=False,
+    )
+    return SessionInputDeletionResponse(
+        note_id=context.note_id,
+        session_id=context.session_id,
+        deleted=SESSION_INPUT_DELETED,
+        kept=SESSION_INPUT_KEPT,
     )
 
 
@@ -627,7 +676,14 @@ def _original_input_text(session_input: SessionInput) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _session_raw_input(session_input: SessionInput) -> str | None:
+def actor_stores_original_input(actor: str) -> bool:
+    """False when the counselor turned off 원문 저장 in Settings (Supabase user_metadata)."""
+    return getattr(actor, "store_original_input", True) is not False
+
+
+def _session_raw_input(session_input: SessionInput, actor: str) -> str | None:
+    if not actor_stores_original_input(actor):
+        return None
     if settings.save_original_input:
         return _original_input_text(session_input)
     if settings.save_raw_input:
@@ -664,7 +720,7 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
         "session_date": session_input.session_date or None,
         "session_title": _session_title(session_input),
         "transcript_status": _transcript_status(session_input),
-        "raw_input_text": _session_raw_input(session_input),
+        "raw_input_text": _session_raw_input(session_input, user_id),
         "sanitized_input_text": json.dumps(
             result.sanitized_input.model_dump(mode="json"),
             ensure_ascii=False,
@@ -672,7 +728,12 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
     }
 
 
-def _stored_message() -> str:
+def _stored_message(actor: str) -> str:
+    if not actor_stores_original_input(actor):
+        return (
+            "Generated note was stored in Supabase without raw_input_text because the counselor turned off "
+            "원문 저장; sanitized input and metadata were stored."
+        )
     if settings.save_original_input:
         return (
             "Generated note was stored in Supabase with the session input as entered in raw_input_text."
@@ -874,14 +935,14 @@ _NOTE_TYPE_LABELS = {
 }
 
 # 내담자 프로필 컬럼 (migration 20260918000100). 조회·저장 모두 이 목록만 사용한다.
+# client_phone and client_email are no longer collected or returned. Values stored earlier stay in
+# the table until an approved deletion; this code neither reads nor overwrites them.
 PROFILE_COLUMNS = (
     "client_age",
     "client_gender",
     "client_occupation",
     "marital_status",
     "family_composition",
-    "client_phone",
-    "client_email",
     "client_notes",
 )
 _CASE_SELECT = (
@@ -1094,14 +1155,20 @@ def create_case(request: CaseCreateRequest, *, actor: str = "server_demo_actor")
     if existing:
         raise SupabaseStorageError("이미 사용 중인 케이스 ID입니다. 다른 ID를 입력해주세요.")
     now = datetime.now(UTC).isoformat()
+    # Stored name: middle characters masked (홍O동); occupation: broad category (교육자).
+    alias, occupation, notes, _ = deidentify_case_profile(
+        case_alias=request.case_alias, client_occupation=request.client_occupation, client_notes=request.client_notes,
+    )
     row = {
         "id": case_id,
-        "case_alias": request.case_alias,
+        "case_alias": alias,
         "counselor_id": actor or None,
         "user_id": actor,
         "status": "active",
         "updated_at": now,
         **{column: getattr(request, column) for column in PROFILE_COLUMNS},
+        "client_occupation": occupation,
+        "client_notes": notes,
     }
     try:
         actor_storage.insert("cases", [row], return_representation=False)
@@ -1127,6 +1194,16 @@ def update_case_profile(
 
     _require_owned_case(actor_storage, case_id, actor)
     payload = request.model_dump(exclude_unset=True)
+    deidentified_fields = ("case_alias", "client_occupation", "client_notes")
+    if any(field in payload for field in deidentified_fields):
+        alias, occupation, notes, _ = deidentify_case_profile(
+            case_alias=payload.get("case_alias"),
+            client_occupation=payload.get("client_occupation"),
+            client_notes=payload.get("client_notes"),
+        )
+        for field, value in zip(deidentified_fields, (alias, occupation, notes)):
+            if field in payload:
+                payload[field] = value
     if payload:
         payload["updated_at"] = datetime.now(UTC).isoformat()
         try:

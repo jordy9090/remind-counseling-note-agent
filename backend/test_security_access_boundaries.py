@@ -500,6 +500,34 @@ class AccessBoundaryTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
         self.assert_b_unchanged()
 
+    def test_session_input_deletion_is_owner_scoped_and_keeps_the_summary(self):
+        paths = lambda note: (("backend", f"/api/notes/records/{note}/input-deletion"),
+                              ("record", f"/api/notes/record?note_id={note}&scope=input-deletion"),
+                              ("record", f"/api/notes/records/{note}/input-deletion"))
+        for name, path in paths(NOTES["b"]):
+            with self.subTest(name=name, path=path):
+                response = self.request(name, "POST", path)
+                self.assertEqual(response.status_code, 404)
+                self.assert_private(response)
+        self.assert_b_unchanged()
+        self.assertFalse(any(call["method"] in {"PATCH", "DELETE"} for call in self.transport.calls))
+
+        notes_before = copied(self.transport.tables["generated_notes"])
+        evidence_before = copied(self.transport.tables["evidence_items"])
+        response = self.request("record", "POST", f'/api/notes/records/{NOTES["a"]}/input-deletion')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["session_id"], SESSIONS["a"])
+        session = next(row for row in self.transport.tables["sessions"] if row["id"] == SESSIONS["a"])
+        self.assertIsNone(session["raw_input_text"])
+        self.assertIsNone(session["sanitized_input_text"])
+        for table in ("transcript_turns", "transcript_windows"):
+            self.assertFalse([row for row in self.transport.tables[table] if row["user_id"] == USERS["a"]])
+        # The summary and its evidence stay; only the input is removed.
+        self.assertEqual(self.transport.tables["generated_notes"], notes_before)
+        self.assertEqual(self.transport.tables["evidence_items"], evidence_before)
+        self.assertIsNone(self.request("backend", "GET", f'/api/notes/records/{NOTES["a"]}').json()["session_input"])
+        self.assert_b_unchanged()
+
     def test_delete_methods_are_unsupported_not_a_database_deletion_test(self):
         paths = [("backend", "/api/cases"), ("backend", f'/api/cases/{CASES["b"]}/dashboard'),
                  ("backend", f'/api/notes/records/{NOTES["b"]}'), ("backend", f"/api/notes/drafts/{DRAFT_ID}"),

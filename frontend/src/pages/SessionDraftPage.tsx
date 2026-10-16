@@ -20,6 +20,7 @@ import {
   Save,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Workflow,
   X,
   type LucideIcon,
@@ -41,6 +42,7 @@ import {
   saveTemporaryDraft,
   listTemporaryDrafts,
   loadTemporaryDraft,
+  deleteSessionInput,
   loadGeneratedNote,
   confirmGeneratedNote,
   fetchCaseDashboard,
@@ -1010,6 +1012,25 @@ export default function SessionDraftPage({
     setVisibleSectionIds((prev) => new Set(prev).add(id))
   }
 
+  /** 회기별 원문 삭제: remove this session's stored input; the AI summary and confirmed note stay. */
+  const deleteStoredInput = () => {
+    const noteId = storedNoteId
+    if (!noteId) return
+    if (!window.confirm('이 회기에 저장된 입력 원문(메모·축어록 등), 개인정보를 가린 사본, 축어록 검색 데이터를 삭제합니다.\nAI 요약과 확정본, 요약 근거로 연결된 문장 일부는 남습니다. 삭제한 원문은 되돌릴 수 없습니다. 삭제할까요?')) return
+    void runPersistence(async () => {
+      await deleteSessionInput(noteId)
+      setForm((current) => ({
+        ...current, counselor_memo: '', transcript_text: '', previous_session_summary: '', counseling_goal: '',
+        psychological_test_summary: '', nonverbal_notes: '', key_issue_tags: [],
+      }))
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      objectUrlsRef.current.clear()
+      setMaterials([])
+      setStoredNote((current) => (current ? { ...current, session_input: null, session_input_is_original: false } : current))
+      setDraftSaveMessage('이 회기의 입력 원문을 삭제했습니다. AI 요약과 확정본은 그대로 남습니다.')
+    })
+  }
+
   const goBackToInput = () => {
     setInputMode('existing')
     setInputReturnScreen('summary_draft')
@@ -1192,8 +1213,6 @@ export default function SessionDraftPage({
         client_occupation: dashboard.client_occupation,
         marital_status: dashboard.marital_status,
         family_composition: dashboard.family_composition,
-        client_phone: dashboard.client_phone,
-        client_email: dashboard.client_email,
         client_notes: dashboard.client_notes,
       },
     })
@@ -1836,6 +1855,7 @@ export default function SessionDraftPage({
                 onAddCustomSection={addCustomSection}
                 onOpenDocument={(document) => document.document_type === 'session_note' && document.document_id !== storedNoteId && restoreNote(document.document_id)}
                 onAddMaterial={goBackToInput}
+                onDeleteStoredInput={storedNoteId ? deleteStoredInput : undefined}
               />
             )}
 
@@ -2090,6 +2110,7 @@ function SessionDetailWorkspace({
   onAddCustomSection,
   onOpenDocument,
   onAddMaterial,
+  onDeleteStoredInput,
 }: {
   clientName: string
   form: SessionInput
@@ -2118,6 +2139,8 @@ function SessionDetailWorkspace({
   onAddCustomSection: () => void
   onOpenDocument: (document: CaseDashboardDocument) => void
   onAddMaterial: () => void
+  /** Present when this session has a stored note, so its stored input can be deleted. */
+  onDeleteStoredInput?: () => void
 }) {
   const [tab, setTab] = useState<'sources' | 'checklist'>('sources')
   const [editMode, setEditMode] = useState(false)
@@ -2201,6 +2224,14 @@ function SessionDetailWorkspace({
                   <div className="rm-scroll mt-3 max-h-[460px] overflow-y-auto whitespace-pre-wrap rounded-[10px] bg-grey-100/70 p-4 text-sm leading-7 text-grey-800">
                     {activeSource ? activeSource.text : '첨부된 자료가 없습니다. "자료 추가"로 회기 입력 화면에서 자료를 올릴 수 있습니다.'}
                   </div>
+                  {onDeleteStoredInput && sources.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-grey-500">저장된 입력 원문은 언제든 삭제할 수 있어요. AI 요약은 남아요.</p>
+                      <button type="button" onClick={onDeleteStoredInput} className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-bold text-danger-500 hover:bg-danger-50">
+                        <Trash2 className="h-3.5 w-3.5" />원문 삭제
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>

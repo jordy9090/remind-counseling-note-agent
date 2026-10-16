@@ -19,8 +19,6 @@ interface FormState {
   client_occupation: string
   marital_status: string
   family_composition: string
-  client_phone: string
-  client_email: string
   client_notes: string
   status: string
 }
@@ -33,8 +31,6 @@ function toState(initial?: ClientFormInitial): FormState {
     client_occupation: initial?.client_occupation || '',
     marital_status: initial?.marital_status || '',
     family_composition: initial?.family_composition || '',
-    client_phone: initial?.client_phone || '',
-    client_email: initial?.client_email || '',
     client_notes: initial?.client_notes || '',
     status: initial?.status || 'active',
   }
@@ -61,7 +57,7 @@ export default function ClientFormModal({
   const ageNumber = form.client_age.trim() === '' ? null : Number(form.client_age)
   const ageInvalid = ageNumber !== null && (!Number.isInteger(ageNumber) || ageNumber < 0 || ageNumber > 150)
   const requiredMissing = !form.case_alias.trim() || !form.client_gender || ageNumber === null || !form.client_occupation.trim()
-    || !form.marital_status || !form.family_composition || !form.client_phone.trim()
+    || !form.marital_status || !form.family_composition
   const canSubmit = !requiredMissing && !ageInvalid && !submitting
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -74,8 +70,6 @@ export default function ClientFormModal({
       client_occupation: form.client_occupation.trim() || null,
       marital_status: form.marital_status || null,
       family_composition: form.family_composition || null,
-      client_phone: form.client_phone.trim() || null,
-      client_email: form.client_email.trim() || null,
       client_notes: form.client_notes.trim() || null,
       ...(mode === 'edit' ? { status: form.status } : {}),
     })
@@ -117,14 +111,6 @@ export default function ClientFormModal({
             <SelectField ariaLabel="가족 구성" value={form.family_composition} onChange={(value) => update('family_composition', value)} options={FAMILY} />
           </label>
         </div>
-        <label className="block">
-          <span className="rm-label">전화번호<span className="req">*</span></span>
-          <input className="rm-input" inputMode="tel" value={form.client_phone} onChange={(event) => update('client_phone', event.target.value)} placeholder="010-1234-5678" maxLength={40} required />
-        </label>
-        <label className="block">
-          <span className="rm-label">이메일</span>
-          <input className="rm-input" type="email" value={form.client_email} onChange={(event) => update('client_email', event.target.value)} placeholder="remind@email.com" maxLength={120} />
-        </label>
         <label className="block">
           <span className="rm-label">특이사항</span>
           <textarea className="rm-textarea" value={form.client_notes} onChange={(event) => update('client_notes', event.target.value)} placeholder="상담 시 반드시 기억해야 할 정보를 자유롭게 기록해주세요" rows={3} maxLength={4000} />

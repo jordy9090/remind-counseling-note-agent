@@ -17,6 +17,7 @@ from app.schemas.note import (
     TemporaryDraftSaveResponse,
 )
 from app.services import supabase_store
+from app.services.storage_deidentification import deidentify_json
 from app.services.temporary_draft_payload import temporary_draft_payload
 
 
@@ -29,6 +30,9 @@ def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> T
     draft_id = request.draft_id if _is_safe_draft_id(request.draft_id) else _new_draft_id()
     saved_at = datetime.now(UTC).isoformat()
     data = temporary_draft_payload(request.model_dump())
+    # Drafts are stored too: names masked, occupations generalized (identifiers and enums untouched).
+    form = data.get("form") if isinstance(data.get("form"), dict) else {}
+    data, _ = deidentify_json(data, known_names=[str(form.get("client_alias") or ""), str(form.get("counselor_name") or "")])
     data["draft_id"] = draft_id
     data["saved_at"] = saved_at
     record = TemporaryDraftRecord(**data)
