@@ -14,16 +14,21 @@ from app.core.config import settings
 
 PreviewTokenHeader = Annotated[str | None, Header(alias="X-Remind-Preview-Token")]
 AuthorizationHeader = Annotated[str | None, Header(alias="Authorization")]
+# Supabase user_metadata key for the counselor's 원문 저장 setting. Only an explicit false opts out;
+# a missing value keeps the default of storing the session input.
+ORIGINAL_INPUT_PREFERENCE_KEY = "remind_store_original_input"
 
 
 class AuthenticatedActor(str):
     """User id that also carries the verified JWT for downstream RLS requests."""
 
     access_token: str
+    store_original_input: bool
 
-    def __new__(cls, user_id: str, access_token: str):
+    def __new__(cls, user_id: str, access_token: str, *, store_original_input: bool = True):
         actor = super().__new__(cls, user_id)
         actor.access_token = access_token
+        actor.store_original_input = store_original_input
         return actor
 
 
@@ -82,4 +87,6 @@ def _require_supabase_user(authorization: str | None) -> str:
     # 익명 진입은 제거됐다. 원격 설정에 익명 로그인이 남아 있어도 보호 API는 이메일 계정만 허용한다.
     if payload.get("is_anonymous") is True:
         raise HTTPException(status_code=401, detail="익명 세션으로는 이용할 수 없습니다. 이메일로 로그인해주세요.")
-    return AuthenticatedActor(user_id, token)
+    metadata = payload.get("user_metadata")
+    opted_out = isinstance(metadata, dict) and metadata.get(ORIGINAL_INPUT_PREFERENCE_KEY) is False
+    return AuthenticatedActor(user_id, token, store_original_input=not opted_out)

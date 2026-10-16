@@ -164,10 +164,16 @@ class CaseListRouteTests(unittest.TestCase):
         stored = self.store.tables["cases"][0]
         self.assertEqual(stored["user_id"], "synthetic-user-a")
         self.assertEqual(stored["client_gender"], "남")
+        # Contact details are no longer collected: ignored on input, never written or returned.
+        for field in ("client_phone", "client_email"):
+            self.assertNotIn(field, stored)
+            self.assertNotIn(field, body)
+        self.assertNotIn("010-0000-0000", created.text)
 
         listed = self.client.get("/api/cases", headers=self.headers_a).json()
         self.assertEqual(listed["cases"][0]["case_id"], case_id)
-        self.assertEqual(listed["cases"][0]["client_occupation"], "직장인")
+        # Occupations are stored as a broad category (직장인 → 사무직 종사자).
+        self.assertEqual(listed["cases"][0]["client_occupation"], "사무직 종사자")
         self.assertEqual(listed["recent_documents"], [])
 
         updated = self.client.patch(f"/api/cases/{case_id}/profile", headers=self.headers_a,

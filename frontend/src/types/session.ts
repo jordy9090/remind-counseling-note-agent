@@ -705,8 +705,6 @@ export interface ClientProfileFields {
   client_occupation: string | null
   marital_status: string | null
   family_composition: string | null
-  client_phone: string | null
-  client_email: string | null
   client_notes: string | null
 }
 
@@ -755,4 +753,12 @@ export interface CaseListResponse {
   cases: CaseListItem[]
   total_count: number
   recent_documents: RecentDocumentItem[]
+}
+
+/** Result of 회기별 원문 삭제 (POST /api/notes/records/{note_id}/input-deletion). */
+export interface SessionInputDeletionResponse {
+  note_id: string
+  session_id: string
+  deleted: string[]
+  kept: string[]
 }

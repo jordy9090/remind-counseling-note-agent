@@ -17,6 +17,7 @@ from app.schemas.note import (
     RecomposeNoteRequest,
     RecomposeNoteResponse,
     SessionInput,
+    SessionInputDeletionResponse,
     SupervisionReportDraft,
     SupervisionReportRequest,
     TemporaryDraftRecord,
@@ -33,6 +34,7 @@ from app.services.quick_summary import (
     rate_limit_key,
     rate_limiter,
 )
+from app.services.storage_deidentification import deidentify_session_input
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
@@ -41,6 +43,7 @@ from app.services.storage_policy import note_storage_policy
 from app.services.supabase_storage import (
     NoteConfirmationError,
     confirm_generated_note,
+    delete_session_input,
     fetch_generated_note,
     persist_generated_note,
     persist_supervision_report,
@@ -55,7 +58,7 @@ async def get_note_storage_policy(actor: PreviewActor, response: Response) -> No
     """Describe this runtime's new-save behavior without reading existing records."""
     response.headers["Cache-Control"] = "private, no-store"
     response.headers["Vary"] = "Authorization"
-    return note_storage_policy()
+    return note_storage_policy(actor)
 
 
 @router.post("/generate", response_model=GenerateNoteResponse)
@@ -101,6 +104,20 @@ async def get_note_record(note_id: str, actor: PreviewActor, response: Response)
         raise HTTPException(status_code=503, detail="저장된 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
 
 
+@router.post("/records/{note_id}/input-deletion", response_model=SessionInputDeletionResponse)
+async def delete_note_session_input(note_id: str, actor: PreviewActor, response: Response) -> SessionInputDeletionResponse:
+    """회기별 원문 삭제: remove the stored input of the note's session; the summary is kept."""
+    try:
+        response.headers["Cache-Control"] = "private, no-store"
+        return delete_session_input(note_id, actor=actor)
+    except NoteConfirmationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="원문을 삭제하지 못했습니다. 잠시 후 다시 시도해주세요.")
+
+
 @router.post("/recompose", response_model=RecomposeNoteResponse)
 async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActor) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
@@ -119,6 +136,8 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
 async def generate_supervision_report(request: SupervisionReportRequest, actor: PreviewActor) -> SupervisionReportDraft:
     """Generate a Korean personal counseling case supervision report draft."""
     try:
+        if request.persist and settings.enable_persistence:
+            request = request.model_copy(update={"session_input": deidentify_session_input(request.session_input)[0]})
         report = run_supervision_report_pipeline(request)
         # persist=true면 생성 성공 후에만 문서 레코드를 만든다 (실패 시 pending 레코드가 남지 않음)
         report.persistence = persist_supervision_report(request, report, actor=actor)
@@ -158,6 +177,10 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
     Explicit demo mode still runs the configured stub. A failed real generation
     must never switch shared settings or replace a user's record with demo text.
     """
+    if session_input.persist and settings.enable_persistence:
+        # Everything stored for this session derives from the de-identified input:
+        # names masked (홍O동), occupations generalized (교육자).
+        session_input, _ = deidentify_session_input(session_input)
     try:
         result = run_note_pipeline(session_input, actor=actor)
     except SummaryQualityError as error:

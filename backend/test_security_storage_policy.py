@@ -44,7 +44,7 @@ class StoragePolicyTests(unittest.TestCase):
             for original in (False,True):
                 for raw in (False,True):
                     with self.subTest(enabled=enabled,original=original,raw=raw), patch.multiple(settings,enable_persistence=enabled,save_original_input=original,save_raw_input=raw):
-                        stored = _session_raw_input(session)
+                        stored = _session_raw_input(session, "synthetic-owner")
                         expected = "disabled" if not enabled else "omitted" if stored is None else "original" if json.loads(stored).get("masked") is False else "masked"
                         if not enabled:
                             with patch("app.services.supabase_storage._storage_for_actor",side_effect=AssertionError("Disabled persistence must not access storage")):
@@ -53,12 +53,31 @@ class StoragePolicyTests(unittest.TestCase):
                             response=TestClient(host).get(path,headers=self.headers)
                             self.assertEqual(response.status_code,200)
                             data=response.json()
-                            self.assertEqual(data,{"persistence_enabled":enabled,"save_original_input":original,"save_raw_input":raw,"generated_note_raw_input_mode":expected,"temporary_drafts_apply_input_policy":False,"existing_records_deleted":False})
+                            self.assertEqual(data,{"persistence_enabled":enabled,"save_original_input":original,"save_raw_input":raw,"account_store_original_input":True,"generated_note_raw_input_mode":expected,"temporary_drafts_apply_input_policy":False,"existing_records_deleted":False})
                             self.assertEqual(response.headers["cache-control"],"private, no-store")
                             self.assertEqual(response.headers["vary"],"Authorization")
                             self.assertNotIn("SECRET",response.text)
                             self.assertNotIn("synthetic-owner",response.text)
                             self.assertNotIn("synthetic-valid-token",response.text)
+
+    def test_account_opt_out_stores_no_original_whatever_the_flags(self):
+        session = SessionInput(case_id="synthetic",session_number=1,counselor_memo="Synthetic memo",transcript_text="Synthetic only",persist=True)
+        opted_out = security.AuthenticatedActor("synthetic-owner","synthetic-valid-token",store_original_input=False)
+        user = {"id":"synthetic-owner","user_metadata":{security.ORIGINAL_INPUT_PREFERENCE_KEY:False}}
+        with patch.object(security,"urlopen",side_effect=lambda *a, **kw: io.BytesIO(json.dumps(user).encode())):
+            self.assertIs(security.require_preview_access(authorization="Bearer synthetic-valid-token").store_original_input,False)
+            for original in (False,True):
+                for raw in (False,True):
+                    with self.subTest(original=original,raw=raw), patch.multiple(settings,enable_persistence=True,save_original_input=original,save_raw_input=raw):
+                        self.assertIsNone(_session_raw_input(session,opted_out))
+                        for host,path in self.hosts:
+                            data=TestClient(host).get(path,headers=self.headers).json()
+                            self.assertIs(data["account_store_original_input"],False)
+                            self.assertEqual(data["generated_note_raw_input_mode"],"omitted")
+        # Only an explicit false opts out; a missing or malformed value keeps the default.
+        for metadata in (None,{},{security.ORIGINAL_INPUT_PREFERENCE_KEY:"false"},"not-a-dict"):
+            with self.subTest(metadata=metadata), patch.object(security,"urlopen",side_effect=lambda *a, **kw: io.BytesIO(json.dumps({"id":"synthetic-owner","user_metadata":metadata}).encode())):
+                self.assertIs(security.require_preview_access(authorization="Bearer synthetic-valid-token").store_original_input,True)
 
     def test_missing_and_invalid_auth_are_rejected_on_both_hosts(self):
         for host,path in self.hosts:

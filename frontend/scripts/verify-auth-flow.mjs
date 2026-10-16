@@ -51,6 +51,16 @@ for (const flag of ['persistSession: true', 'autoRefreshToken: true', 'detectSes
 }
 assert(/getAccessToken/.test(client) && /Authorization = `Bearer \$\{accessToken\}`/.test(client), 'API client must attach the Supabase access token')
 
+// 5. 보안 조치: 원문 저장 설정 키, 원문 삭제 경로, 내담자 연락처 미수집
+const preference = read('src/lib/storagePreference.ts')
+const backendSecurity = read('../backend/app/api/security.py')
+const keyMatch = /ORIGINAL_INPUT_PREFERENCE_KEY = '([a-z_]+)'/.exec(preference)
+assert(keyMatch && backendSecurity.includes(`ORIGINAL_INPUT_PREFERENCE_KEY = "${keyMatch[1]}"`),
+  'The 원문 저장 preference key must match the backend guard')
+assert(/\/input-deletion`/.test(client) && read('../backend/app/api/routes/notes.py').includes('"/records/{note_id}/input-deletion"'),
+  'The 원문 삭제 client path must match the backend route')
+assert(!/client_phone|client_email/.test(read('src/components/clients/ClientFormModal.tsx')), 'The client form must not collect phone or email')
+
 console.log('verify-auth-flow: OK')
 console.log('  - anonymous entry removed')
 console.log('  - landing quick summary; 로그인/회원가입 and 저장하기 routed to the login modal')

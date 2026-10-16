@@ -27,6 +27,7 @@ import type {
   TemporaryDraftSaveResponse,
   TemporaryDraftRecord,
   GeneratedNoteRecord,
+  SessionInputDeletionResponse,
 } from '../types/session'
 import { getAccessToken } from '../lib/supabase'
 import type { QuickSummaryResult } from '../lib/quickSummary'
@@ -109,6 +110,12 @@ export const loadTemporaryDraft = async (draftId: string): Promise<TemporaryDraf
 
 export const loadGeneratedNote = async (noteId: string): Promise<GeneratedNoteRecord> => {
   const response = await client.get<GeneratedNoteRecord>(`/api/notes/records/${encodeURIComponent(noteId)}`)
+  return response.data
+}
+
+/** 회기별 원문 삭제: removes the stored input of the note's session; the summary is kept. */
+export const deleteSessionInput = async (noteId: string): Promise<SessionInputDeletionResponse> => {
+  const response = await client.post<SessionInputDeletionResponse>(`/api/notes/records/${encodeURIComponent(noteId)}/input-deletion`)
   return response.data
 }
 

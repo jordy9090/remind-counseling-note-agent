@@ -56,6 +56,9 @@ Distinguish API existence from UI invocation.
 - **Meaning:** Counseling case ID, pseudonym (displayed as the client's name), status, schedule metadata, and
   the client profile (`client_age`, `client_gender`, `client_occupation`, `marital_status`, `family_composition`,
   `client_phone`, `client_email`, `client_notes`, `updated_at`; migration `20260918000100_case_client_profile.sql`).
+  `client_phone` and `client_email` are no longer collected, written, or returned; earlier values stay
+  in the table until an approved deletion. `case_alias` is stored with the middle characters masked
+  (홍O동) and `client_occupation` as a broad category (교육자), see `services/storage_deidentification.py`.
   Phone/email are contact PII stored only under the owner's RLS scope; they are never sent to generation.
 - **Ownership:** user_id is the security owner; counselor_id records the server actor.
 - **Relation:** id is a global text PK, not a per-user composite PK. The same case ID cannot be

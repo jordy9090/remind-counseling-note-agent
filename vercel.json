@@ -12,6 +12,10 @@
       "destination": "/api/notes/record?scope=storage-policy"
     },
     {
+      "source": "/api/notes/records/:note_id/input-deletion",
+      "destination": "/api/notes/record?note_id=:note_id&scope=input-deletion"
+    },
+    {
       "source": "/api/notes/records/:note_id",
       "destination": "/api/notes/record?note_id=:note_id"
     },

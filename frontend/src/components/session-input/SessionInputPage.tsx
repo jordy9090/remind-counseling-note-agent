@@ -192,6 +192,7 @@ export default function SessionInputPage({
               </label>
             </div>
           )}
+          <p className="mt-2 text-xs text-grey-500">음성 파일은 축어록을 만든 뒤 바로 삭제되고, 문서 파일은 글자만 추출한 뒤 저장하지 않아요.</p>
           {form.transcript_text.trim() && (
             <p className="mt-2 text-xs text-grey-500">축어록 {form.transcript_text.replace(/\s/g, '').length.toLocaleString('ko-KR')}자가 회기 입력에 반영되어 있습니다.{materials.length > 0 ? ' 파일 항목을 눌러 내용을 확인하거나 수정할 수 있습니다.' : ''}</p>
           )}
