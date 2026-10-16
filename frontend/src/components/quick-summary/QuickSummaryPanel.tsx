@@ -15,7 +15,7 @@ const ACCEPTED_FILES = '.txt,.pdf,.docx'
 /**
  * "간편 요약하기" body shared by the public landing and the signed-in workspace:
  * input (typing or file) → AI four-item summary → copy. Signed-in summaries are saved
- * automatically by the workspace; nothing is saved before login.
+ * automatically by the workspace; the landing offers 로그인 후 저장하기 through `saveAction`.
  */
 export default function QuickSummaryPanel({
   result,
@@ -23,6 +23,7 @@ export default function QuickSummaryPanel({
   canExtractDocuments,
   privacyNote,
   resultStatus,
+  saveAction,
   notice,
   below,
 }: {
@@ -34,6 +35,8 @@ export default function QuickSummaryPanel({
   privacyNote: ReactNode
   /** Save state shown in the result card (signed-in auto-save). */
   resultStatus?: ReactNode
+  /** Primary action next to 복사하기 (the landing's 로그인 후 저장하기). */
+  saveAction?: { label: string; onSave: (result: QuickSummaryResult) => void }
   notice?: ReactNode
   below?: ReactNode
 }) {
@@ -140,9 +143,20 @@ export default function QuickSummaryPanel({
             </button>
             <div className="flex items-center gap-3">
               {resultStatus}
-              <button type="button" onClick={() => void copy()} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500">
-                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? '복사했어요' : '복사하기'}
+              <button
+                type="button"
+                onClick={() => void copy()}
+                className={saveAction
+                  ? 'inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm font-semibold text-grey-700 hover:bg-grey-100'
+                  : 'inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500'}
+              >
+                {copied ? <Check className={`h-4 w-4 ${saveAction ? 'text-success-500' : ''}`} /> : <Copy className="h-4 w-4" />}{copied ? '복사했어요' : '복사하기'}
               </button>
+              {saveAction && (
+                <button type="button" onClick={() => saveAction.onSave(result)} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500">
+                  {saveAction.label}
+                </button>
+              )}
             </div>
           </div>
         </article>

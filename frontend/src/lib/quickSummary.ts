@@ -103,14 +103,50 @@ export function quickSummaryRecordTitle(savedAt: string, result: QuickSummaryRes
   return `${day}상담 내역_요약${lead ? ` · ${lead.slice(0, 40)}${lead.length > 40 ? '…' : ''}` : ''}`
 }
 
-// Earlier builds kept a pre-login summary in local storage for the save-after-login flow.
-const LEGACY_PENDING_KEY = 'remind.quickSummary.pending'
+// "로그인 후 저장하기": a guest's summary waits in this browser until the login (or the email
+// confirmation link, which can open in a new tab) completes, then the workspace saves it like any
+// signed-in summary. Only the AI output is kept, never the input, and it expires after 30 minutes.
+const PENDING_KEY = 'remind.quickSummary.pending'
+export const PENDING_TTL_MS = 30 * 60 * 1000
 
-/** Remove a summary left in this browser by the removed save-after-login flow. */
-export function clearLegacyPendingSummary(): void {
+export function storePendingQuickSummary(result: QuickSummaryResult, now = Date.now()): void {
   try {
-    window.localStorage.removeItem(LEGACY_PENDING_KEY)
+    const { main_content, client_response, counselor_intervention, next_plan } = result
+    window.localStorage.setItem(PENDING_KEY, JSON.stringify({
+      result: { main_content, client_response, counselor_intervention, next_plan, masked_categories: [] },
+      savedAt: now,
+    }))
   } catch {
-    // Storage can be unavailable (private mode); nothing to clean up then.
+    // Storage can be unavailable (private mode); the summary then cannot carry over the login.
+  }
+}
+
+export function clearPendingQuickSummary(): void {
+  try {
+    window.localStorage.removeItem(PENDING_KEY)
+  } catch {
+    // Nothing to clean up when storage is unavailable.
+  }
+}
+
+/** Read and remove the waiting summary; null when there is none, it expired, or it is malformed. */
+export function takePendingQuickSummary(now = Date.now()): QuickSummaryResult | null {
+  let raw: string | null = null
+  try {
+    raw = window.localStorage.getItem(PENDING_KEY)
+  } catch {
+    return null
+  }
+  clearPendingQuickSummary()
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { result?: Record<string, unknown>; savedAt?: unknown }
+    if (typeof parsed.savedAt !== 'number' || now - parsed.savedAt > PENDING_TTL_MS || now < parsed.savedAt) return null
+    const value = parsed.result || {}
+    const result = Object.fromEntries(QUICK_SUMMARY_SECTIONS.map(({ key }) => [key, value[key]]))
+    if (!QUICK_SUMMARY_SECTIONS.every(({ key }) => typeof result[key] === 'string')) return null
+    return { ...(result as Omit<QuickSummaryResult, 'masked_categories'>), masked_categories: [] }
+  } catch {
+    return null
   }
 }

@@ -9,6 +9,7 @@ import {
   quickSummaryFromDraft,
   quickSummaryRecordTitle,
   relativeTimeLabel,
+  takePendingQuickSummary,
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
 import type { TemporaryDraftRecord } from '../../types/session'
@@ -20,7 +21,8 @@ type SaveState = 'saving' | 'saved' | 'failed' | null
 
 /**
  * Signed-in "간편 요약하기" screen. Every new summary is saved automatically (AI output only) and
- * listed under the input as 이전 요약한 기록; there is no separate save button.
+ * listed under the input as 이전 요약한 기록; there is no separate save button. A summary a guest
+ * sent here with 로그인 후 저장하기 is saved the same way right after login.
  */
 export default function QuickSummaryWorkspace({
   result,
@@ -33,6 +35,7 @@ export default function QuickSummaryWorkspace({
   const [loaded, setLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   // Ignores a save that finishes after the counselor already moved on to another summary.
   const saveRun = useRef(0)
 
@@ -65,11 +68,21 @@ export default function QuickSummaryWorkspace({
       .catch(() => { if (run === saveRun.current) setSaveState('failed') })
   }
 
+  useEffect(() => {
+    // Taking the summary also removes it, so it is saved once even if this effect runs twice.
+    const pending = takePendingQuickSummary()
+    if (!pending) return
+    setNotice('로그인 전에 만든 요약을 이 계정에 저장했어요.')
+    handleResult(pending)
+  // Runs once after login; handleResult only uses refs and state setters.
+  }, [])
+
   const openRecord = (draft: TemporaryDraftRecord) => {
     const summary = quickSummaryFromDraft(draft)
     if (!summary) return
     saveRun.current += 1
     setSaveState('saved')
+    setNotice(null)
     onResult(summary)
   }
 
@@ -109,8 +122,12 @@ export default function QuickSummaryWorkspace({
     <div className="quick-summary-bg flex min-h-screen flex-col justify-center">
       <QuickSummaryPanel
         result={result}
-        onResult={handleResult}
+        onResult={(next) => {
+          setNotice(null)
+          handleResult(next)
+        }}
         canExtractDocuments
+        notice={notice ? <p role="status" className="rounded-lg bg-primary-50 px-4 py-3 text-center text-sm text-primary-900">{notice}</p> : undefined}
         privacyNote="입력한 내용은 저장되지 않고, AI 요약 결과만 이전 요약한 기록에 자동 저장돼요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요."
         resultStatus={resultStatus}
         below={history}

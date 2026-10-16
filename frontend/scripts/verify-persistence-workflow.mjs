@@ -110,6 +110,31 @@ const { temporaryDraftPayload } = await loadModule('temporaryDraft')
   assert(!quick.isQuickSummaryDraft({ session_topic: 'Counselor topic' }))
   console.log('Quick summary auto-save draft round trip (AI output only, reserved case ID): passed')
 }
+{
+  // 로그인 후 저장하기: the AI output waits in local storage (no input), once, for at most 30 minutes.
+  const quick = await loadModule('quickSummary')
+  const store = new Map()
+  globalThis.window = { localStorage: {
+    getItem: (key) => (store.has(key) ? store.get(key) : null), setItem: (key, value) => store.set(key, String(value)),
+    removeItem: (key) => store.delete(key) } }
+  const summary = { main_content: 'Synthetic main', client_response: 'Synthetic response',
+    counselor_intervention: 'Synthetic intervention', next_plan: 'Synthetic plan', masked_categories: ['phone'], text: 'SYNTHETIC-INPUT' }
+  quick.storePendingQuickSummary(summary, 1000)
+  assert(![...store.values()].some((value) => value.includes('SYNTHETIC-INPUT')), 'the input never waits for login')
+  assert.deepEqual(quick.takePendingQuickSummary(2000), { main_content: 'Synthetic main', client_response: 'Synthetic response',
+    counselor_intervention: 'Synthetic intervention', next_plan: 'Synthetic plan', masked_categories: [] })
+  assert.equal(quick.takePendingQuickSummary(2000), null, 'taken once')
+  quick.storePendingQuickSummary(summary, 1000)
+  assert.equal(quick.takePendingQuickSummary(1000 + quick.PENDING_TTL_MS + 1), null, 'expired')
+  assert.equal(store.size, 0, 'an expired summary is removed')
+  store.set('remind.quickSummary.pending', '{"result":{"main_content":1},"savedAt":1000}')
+  assert.equal(quick.takePendingQuickSummary(2000), null, 'malformed')
+  quick.storePendingQuickSummary(summary, 1000)
+  quick.clearPendingQuickSummary()
+  assert.equal(store.size, 0)
+  delete globalThis.window
+  console.log('Quick summary save-after-login hand-off (AI output only, once, 30-minute expiry): passed')
+}
 const fixture = JSON.parse(fs.readFileSync('scripts/fixtures/temporary-draft.json', 'utf8'))
 const originalFixture = structuredClone(fixture)
 const saved = temporaryDraftPayload(fixture)
