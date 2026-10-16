@@ -18,17 +18,22 @@ const supabase = read('src/lib/supabase.ts')
 assert(!/signInAnonymously/.test(authGate), 'AuthGate must not call signInAnonymously')
 assert(!/signInAnonymously/.test(landing), 'LandingPage must not call signInAnonymously')
 
-// 2. Landing = 비로그인 간편 요약: 저장 없음. 로그인하면 요약이 자동 저장되고 저장 버튼은 없다.
-assert(/onLogin/.test(landing) && !/onSaveRequiresLogin/.test(landing), 'LandingPage exposes onLogin only (no save-before-login)')
+// 2. Landing = 비로그인 간편 요약: 서버 저장 없음. '로그인 후 저장하기' → 로그인 → 로그인한 상담사처럼 자동 저장
+assert(/onLogin/.test(landing) && !/onSaveRequiresLogin/.test(landing), 'LandingPage routes 로그인 후 저장하기 through onLogin')
 assert(!/onStart/.test(landing), 'LandingPage must not keep the old onStart prop')
 assert(/>\s*로그인 \/ 회원가입\s*</.test(landing), 'Landing header must render a 로그인 / 회원가입 button')
 assert(/QuickSummaryPanel/.test(landing), 'Landing must render the quick summary')
-assert(!/storePending|setItem/.test(landing), 'Nothing is saved before login, not even in the browser')
+assert(/label: '로그인 후 저장하기'/.test(landing), 'Landing must offer 로그인 후 저장하기')
+assert(/storePendingQuickSummary\(summary\)\s*onLogin\(\)/.test(landing), '로그인 후 저장하기 keeps the summary, then opens login')
+assert(/if \(!next\) clearPendingQuickSummary\(\)/.test(landing), '새로 요약하기 drops a summary waiting for login')
 const panel = read('src/components/quick-summary/QuickSummaryPanel.tsx')
-assert(!/저장하기|onSave/.test(panel), 'The quick summary has no separate save button')
+assert(!/'저장하기'/.test(panel) && /saveAction\?:/.test(panel), 'The panel has no fixed save button, only an optional save action')
 const quickWorkspace = read('src/components/quick-summary/QuickSummaryWorkspace.tsx')
 assert(/saveTemporaryDraft\(temporaryDraftPayload\(quickSummaryDraftPayload\(next\)\)\)/.test(quickWorkspace),
   'Signed-in quick summaries must be saved automatically')
+assert(/const pending = takePendingQuickSummary\(\)[\s\S]{0,200}handleResult\(pending\)/.test(quickWorkspace),
+  'A summary waiting for login must be saved through the same auto-save path')
+assert(!/saveAction/.test(quickWorkspace), 'Signed-in users get no separate save button')
 assert(/onLogin=\{\(\) => openAuth\('signin'\)\}/.test(authGate), 'AuthGate must route onLogin to signin')
 assert(/setMode\('signup'\)/.test(authGate), 'Login modal must link to signup')
 
@@ -62,6 +67,6 @@ assert(!/client_phone|client_email/.test(read('src/components/clients/ClientForm
 
 console.log('verify-auth-flow: OK')
 console.log('  - anonymous entry removed')
-console.log('  - landing quick summary saves nothing; signed-in summaries save automatically')
+console.log('  - landing quick summary saves nothing until 로그인 후 저장하기; signed-in summaries save automatically')
 console.log('  - signup/login/logout/verify-resend/password-reset present')
 console.log('  - workspace gated on session; token attached to API calls')
