@@ -31,7 +31,7 @@ MASK_RULES = [
     MaskRule(
         "resident_registration_number",
         "[RRN]",
-        re.compile(r"\b\d{6}[-\s]?[1-4]\d{6}\b"),
+        re.compile(r"(?<!\d)\d{6}[-\s]?[1-4]\d{6}(?!\d)"),
         "Resident-registration-number-like values must not be stored in counseling notes.",
     ),
     MaskRule(
@@ -43,7 +43,8 @@ MASK_RULES = [
     MaskRule(
         "phone",
         "[PHONE]",
-        re.compile(r"(?:\b01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}\b|\b\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{4}\b)"),
+        re.compile(r"(?<!\d)(?:01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}|\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{4})(?!\d)"),
+        # Digit lookarounds instead of \b: Korean particles ("010-...로") are word characters.
         "Replace phone numbers with a placeholder before storage.",
     ),
     MaskRule(

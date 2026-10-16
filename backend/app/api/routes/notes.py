@@ -4,9 +4,9 @@ from __future__ import annotations
 import traceback
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
-from app.api.security import require_preview_access
+from app.api.security import _require_supabase_user, require_preview_access
 from app.graph.graph import run_note_pipeline
 from app.graph.supervision_report import run_supervision_report_pipeline
 from app.schemas.note import (
@@ -22,6 +22,16 @@ from app.schemas.note import (
     TemporaryDraftRecord,
     TemporaryDraftSaveRequest,
     TemporaryDraftSaveResponse,
+)
+from app.core.config import settings
+from app.services.quick_summary import (
+    QuickSummaryInputError,
+    QuickSummaryRateLimited,
+    QuickSummaryRequest,
+    QuickSummaryResponse,
+    generate_quick_summary,
+    rate_limit_key,
+    rate_limiter,
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
@@ -52,6 +62,15 @@ async def get_note_storage_policy(actor: PreviewActor, response: Response) -> No
 async def generate_note(session_input: SessionInput, actor: PreviewActor) -> GenerateNoteResponse:
     """Run the note-generation workflow and return Pydantic-validated JSON."""
     return _run_pipeline_with_stub_fallback(session_input, actor=actor)
+
+
+@router.post("/quick-summary", response_model=QuickSummaryResponse)
+async def quick_summary(
+    payload: QuickSummaryRequest,
+    request: Request,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> QuickSummaryResponse:
+    return run_quick_summary(payload, request=request, authorization=authorization)
 
 
 @router.post("/confirm", response_model=ConfirmGeneratedNoteResponse)
@@ -150,3 +169,53 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
         ) from error
     result.persistence_report = persist_generated_note(session_input, result, actor=actor)
     return result
+
+
+def client_ip(request: Request) -> str:
+    """Client IP as reported by the hosting proxy (Vercel sets both headers)."""
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return request.client.host if request.client else ""
+
+
+def _optional_actor(authorization: str | None) -> str | None:
+    """Signed-in callers get a per-user quota; an invalid token falls back to the IP quota."""
+    if not authorization or not settings.enable_real_user_auth:
+        return None
+    try:
+        return str(_require_supabase_user(authorization))
+    except HTTPException:
+        return None
+
+
+def run_quick_summary(
+    payload: QuickSummaryRequest,
+    *,
+    request: Request,
+    authorization: str | None,
+) -> QuickSummaryResponse:
+    """Public quick summary. The input text is never stored or logged."""
+    actor = _optional_actor(authorization)
+    key, limit, window = rate_limit_key(client_ip=client_ip(request), actor=actor)
+    try:
+        rate_limiter.check(key, limit, window)
+    except QuickSummaryRateLimited as error:
+        raise HTTPException(
+            status_code=429,
+            detail="요약 요청이 너무 많아요. 잠시 후 다시 시도하거나 로그인 후 이용해주세요.",
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
+    try:
+        return generate_quick_summary(payload.text)
+    except QuickSummaryInputError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception:
+        # Do not attach the input text or provider payload to the error.
+        raise HTTPException(
+            status_code=502,
+            detail="요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.",
+        ) from None

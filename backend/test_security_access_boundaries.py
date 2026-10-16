@@ -57,6 +57,10 @@ WRAPPER_MODULES = {
     }.items()
 }
 APPS = {"backend": app, **{name: module.app for name, module in WRAPPER_MODULES.items()}}
+# Routes that intentionally work without login. Each one must be listed in
+# docs/security/data-inventory-and-access-matrix.md and covered by its own guest test below.
+PUBLIC_ROUTES = {("backend", "/api/notes/quick-summary"), ("generate", "/api/notes/quick-summary")}
+QUICK_SUMMARY_TEXT = "Synthetic counseling note for the public quick summary boundary test."
 USERS = {"a": "11111111-1111-4111-8111-111111111111", "b": "22222222-2222-4222-8222-222222222222"}
 TOKENS = {"a": "synthetic-access-a", "b": "synthetic-access-b"}
 PUBLIC_KEY = "synthetic-public-key"
@@ -437,17 +441,23 @@ class AccessBoundaryTests(unittest.TestCase):
 
     def test_every_protected_route_and_wrapper_alias_rejects_guests_before_services(self):
         guarded = []
+        public = set()
         for name, application in APPS.items():
             for route in application.routes:
                 if not isinstance(route, APIRoute):
                     continue
                 if name == "backend" and route.path in {"/", "/health", "/api/health"}:
                     continue
+                if (name, route.path) in PUBLIC_ROUTES:
+                    public.add((name, route.path))
+                    continue
                 self.assertTrue(any(dep.call is require_preview_access for dep in route.dependant.dependencies),
                                 f"Missing authentication dependency: {name} {route.path}")
                 path = route.path.replace("{note_id}", NOTES["b"]).replace("{case_id}", CASES["b"]).replace("{draft_id}", DRAFT_ID)
                 for method in route.methods:
                     guarded.append((name, method, path))
+        # A stale allowlist entry fails too, so the list cannot silently grow.
+        self.assertEqual(public, PUBLIC_ROUTES)
         self.assertGreaterEqual(len(guarded), 50)
         with ExitStack() as blockers:
             spies = [blockers.enter_context(patch(target, side_effect=AssertionError("Protected service reached before authentication")))
@@ -465,6 +475,28 @@ class AccessBoundaryTests(unittest.TestCase):
                         self.assertEqual(response.status_code, 401)
             for spy in spies:
                 spy.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
+    def test_public_quick_summary_serves_guests_without_reaching_storage_or_other_users(self):
+        from app.services.quick_summary import rate_limiter
+
+        with ExitStack() as blockers:
+            spies = [blockers.enter_context(patch(target, side_effect=AssertionError("Protected service reached by a guest")))
+                     for target in ("app.api.routes.notes.run_note_pipeline", "app.api.routes.notes.save_temporary_draft",
+                                    "app.api.routes.notes.persist_generated_note")]
+            for name, path in sorted(PUBLIC_ROUTES):
+                rate_limiter.reset()
+                with self.subTest(name=name, path=path):
+                    response = self.clients[name].post(path, json={"text": QUICK_SUMMARY_TEXT})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertLessEqual({"main_content", "client_response", "counselor_intervention", "next_plan"},
+                                         set(response.json()))
+                    self.assert_private(response)
+            for spy in spies:
+                spy.assert_not_called()
+        rate_limiter.reset()
+        # No Supabase request at all: nothing is read, stored, or verified for a guest.
         self.assertEqual(self.transport.calls, [])
         self.assert_b_unchanged()
 

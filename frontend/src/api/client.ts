@@ -29,6 +29,7 @@ import type {
   GeneratedNoteRecord,
 } from '../types/session'
 import { getAccessToken } from '../lib/supabase'
+import type { QuickSummaryResult } from '../lib/quickSummary'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -189,6 +190,16 @@ export const extractDocumentMaterial = async (file: File): Promise<DocumentExtra
     return response.data
   } catch (error) {
     throw normalizeApiError(error, '문서 내용을 추출하지 못했습니다.')
+  }
+}
+
+/** Public quick summary: works without login; the server masks PII and stores nothing. */
+export const requestQuickSummary = async (text: string): Promise<QuickSummaryResult> => {
+  try {
+    const response = await client.post<QuickSummaryResult>('/api/notes/quick-summary', { text })
+    return response.data
+  } catch (error) {
+    throw normalizeApiError(error, '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
   }
 }
 
