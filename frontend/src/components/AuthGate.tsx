@@ -133,8 +133,8 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
   if (!session) {
     const closeAuth = () => { setAuthOpen(false); setMessage(''); setUnconfirmed(false) }
-    // The landing (quick summary) stays mounted under the modal so its summary is not lost.
-    const landing = <LandingPage onLogin={() => openAuth('signin')} onSaveRequiresLogin={() => openAuth('signin')} />
+    // The landing (quick summary) stays mounted under the modal so an open summary stays on screen.
+    const landing = <LandingPage onLogin={() => openAuth('signin')} />
     if (!authOpen) return landing
 
     if (mode === 'verify') {

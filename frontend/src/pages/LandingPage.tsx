@@ -1,17 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import QuickSummaryPanel from '../components/quick-summary/QuickSummaryPanel'
-import { clearPendingQuickSummary, readPendingQuickSummary, storePendingQuickSummary, type QuickSummaryResult } from '../lib/quickSummary'
+import { clearLegacyPendingSummary, type QuickSummaryResult } from '../lib/quickSummary'
 
 interface LandingPageProps {
   onLogin: () => void
-  /** "저장하기" before login: the summary is kept, then the login/signup modal opens. */
-  onSaveRequiresLogin: () => void
 }
 
-/** Public landing = quick summary without login (랜딩 → 입력 → AI 요약 → 복사 / 저장하기 → 로그인). */
-export default function LandingPage({ onLogin, onSaveRequiresLogin }: LandingPageProps) {
-  const [result, setResult] = useState<QuickSummaryResult | null>(() => readPendingQuickSummary())
+/**
+ * Public landing = quick summary without login (랜딩 → 입력 → AI 요약 → 복사).
+ * Nothing is saved before login; signed-in summaries are saved automatically in the workspace.
+ */
+export default function LandingPage({ onLogin }: LandingPageProps) {
+  const [result, setResult] = useState<QuickSummaryResult | null>(null)
+
+  useEffect(() => {
+    clearLegacyPendingSummary()
+  }, [])
 
   return (
     <main className="quick-summary-bg min-h-screen text-slate-950">
@@ -28,16 +33,9 @@ export default function LandingPage({ onLogin, onSaveRequiresLogin }: LandingPag
       <div className="flex min-h-[calc(100vh-73px)] flex-col justify-center">
         <QuickSummaryPanel
           result={result}
-          onResult={(next) => {
-            setResult(next)
-            // 새로 요약하기 discards the summary kept for after login, too.
-            if (!next) clearPendingQuickSummary()
-          }}
+          onResult={setResult}
           canExtractDocuments={false}
-          onSave={(summary) => {
-            storePendingQuickSummary(summary)
-            onSaveRequiresLogin()
-          }}
+          privacyNote="입력한 내용과 요약 결과는 저장되지 않아요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요. 로그인하면 요약이 자동으로 저장돼요."
         />
       </div>
     </main>

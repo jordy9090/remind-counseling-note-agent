@@ -95,6 +95,21 @@ console.log('Confirmed string/object/sections values and intentional empty strin
 }
 
 const { temporaryDraftPayload } = await loadModule('temporaryDraft')
+{
+  // Signed-in quick summaries are temporary drafts under a reserved case ID; only the AI output survives the allowlist.
+  const quick = await loadModule('quickSummary')
+  const summary = { main_content: 'Synthetic main', client_response: 'Synthetic response',
+    counselor_intervention: 'Synthetic intervention', next_plan: 'Synthetic plan', masked_categories: ['phone'] }
+  const saved = temporaryDraftPayload(quick.quickSummaryDraftPayload(summary))
+  assert.equal(saved.case_id, quick.QUICK_SUMMARY_CASE_ID)
+  assert.deepEqual(saved.form, {})
+  assert(quick.isQuickSummaryDraft(saved))
+  const restored = quick.quickSummaryFromDraft({ ...saved, saved_at: '2026-10-16T00:00:00Z' })
+  assert.deepEqual(restored, { ...summary, masked_categories: [] })
+  assert.equal(quick.quickSummaryFromDraft({ ...saved, result: undefined }), null)
+  assert(!quick.isQuickSummaryDraft({ session_topic: 'Counselor topic' }))
+  console.log('Quick summary auto-save draft round trip (AI output only, reserved case ID): passed')
+}
 const fixture = JSON.parse(fs.readFileSync('scripts/fixtures/temporary-draft.json', 'utf8'))
 const originalFixture = structuredClone(fixture)
 const saved = temporaryDraftPayload(fixture)
