@@ -1,18 +1,19 @@
 import type { ReactNode } from 'react'
-import { FileText, LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Settings, User, Users } from 'lucide-react'
+import { FileText, LayoutGrid, LogOut, PanelLeftClose, PanelLeftOpen, Settings, Sparkles, User, Users } from 'lucide-react'
 
 import { displayNameFromEmail, useAuthSession } from '../../lib/authSession'
 import { ClientAvatar } from './ui'
 
-export type ShellSection = 'home' | 'clients' | 'documents' | 'settings'
+export type ShellSection = 'quick' | 'home' | 'clients' | 'documents' | 'settings'
 
 const NAV: { id: ShellSection; label: string; icon: ReactNode }[] = [
+  { id: 'quick', label: '간편 요약하기', icon: <Sparkles className="h-[18px] w-[18px]" /> },
   { id: 'home', label: '대시보드', icon: <LayoutGrid className="h-[18px] w-[18px]" /> },
   { id: 'clients', label: '내담자 관리', icon: <Users className="h-[18px] w-[18px]" /> },
   { id: 'documents', label: '문서 보관함', icon: <FileText className="h-[18px] w-[18px]" /> },
 ]
 
-/** Figma 사이드바: 로고, 대시보드/내담자 관리/문서 보관함, 하단 설정 + 상담사 프로필. */
+/** Figma 사이드바: 로고, 간편 요약하기/대시보드/내담자 관리/문서 보관함, 하단 설정 + 상담사 프로필. */
 export default function AppSidebar({
   active,
   collapsed,

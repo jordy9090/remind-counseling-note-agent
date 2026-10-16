@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import type { Provider, Session } from '@supabase/supabase-js'
-import { ArrowLeft, Loader2, Mail, MailCheck } from 'lucide-react'
+import { Loader2, Mail, MailCheck, X } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
 import { AuthSessionProvider } from '../lib/authSession'
@@ -132,14 +132,14 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (!session) {
-    if (!authOpen) {
-      return <LandingPage onLogin={() => openAuth('signin')} onSignup={() => openAuth('signup')} />
-    }
+    const closeAuth = () => { setAuthOpen(false); setMessage(''); setUnconfirmed(false) }
+    // The landing (quick summary) stays mounted under the modal so its summary is not lost.
+    const landing = <LandingPage onLogin={() => openAuth('signin')} onSaveRequiresLogin={() => openAuth('signin')} />
+    if (!authOpen) return landing
 
     if (mode === 'verify') {
-      return <AuthShell>
-        <Brand />
-        <div className="mt-10 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700"><MailCheck size={24} /></div>
+      return <>{landing}<AuthOverlay onClose={closeAuth}>
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700"><MailCheck size={24} /></div>
         <AuthHeading title="이메일을 확인해주세요" description={`${email} 로 인증 메일을 보냈습니다. 메일의 확인 링크를 누르면 Re:mind 워크스페이스가 열립니다.`} />
         {message && <div className="mt-6"><Feedback message={message} /></div>}
         <div className="mt-8 space-y-3">
@@ -147,7 +147,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           <button className="w-full rounded-xl px-4 py-3 text-sm font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>
         </div>
         <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">메일이 오지 않으면 스팸함을 확인하거나 몇 분 뒤 다시 보내기를 눌러주세요. 이미 가입된 이메일이라면 메일이 오지 않으니 로그인으로 돌아가 로그인해주세요.</p>
-      </AuthShell>
+      </AuthOverlay></>
     }
 
     const oauthEnabled = providers.google || providers.kakao
@@ -189,38 +189,44 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       }
     }
 
-    const heading = mode === 'reset' ? '비밀번호 찾기' : mode === 'signup' ? '무료로 시작하기' : '로그인'
+    const heading = mode === 'reset' ? '비밀번호 찾기' : mode === 'signup' ? '회원가입' : '로그인'
     const description = mode === 'reset'
       ? '가입한 이메일로 비밀번호 재설정 링크를 보내드립니다.'
       : mode === 'signup'
-        ? 'Re:mind 계정을 만들고 상담 기록 워크스페이스를 시작하세요.'
-        : 'Re:mind 계정으로 상담 기록 워크스페이스에 들어가세요.'
+        ? 'Re:mind 계정을 만들고 요약 기록을 저장하세요.'
+        : ''
 
-    return <AuthShell>
-      <button className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 transition hover:text-slate-900" type="button" onClick={() => { setAuthOpen(false); setMessage('') }}><ArrowLeft size={17} />처음으로</button>
-      <Brand />
-      <AuthHeading title={heading} description={description} />
-      {mode !== 'reset' && oauthEnabled && <div className="mt-8 space-y-3">
-        {providers.google && <button className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-3.5 font-bold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('google')}><GoogleMark /> Google로 계속하기</button>}
-        {providers.kakao && <button className="w-full rounded-xl bg-[#FEE500] px-4 py-3.5 font-bold text-[#191919] transition hover:brightness-95 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('kakao')}>Kakao로 계속하기</button>}
-      </div>}
-      {mode !== 'reset' && oauthEnabled && <div className="my-7 flex items-center gap-4 text-xs font-semibold text-slate-400"><span className="h-px flex-1 bg-slate-200" />이메일로 계속<span className="h-px flex-1 bg-slate-200" /></div>}
-      <form className={`${oauthEnabled && mode !== 'reset' ? '' : 'mt-8'} space-y-5`} onSubmit={submit}>
+    return <>{landing}<AuthOverlay onClose={closeAuth}>
+      <h1 className="text-center text-2xl font-extrabold tracking-[-0.02em] text-slate-950">{heading}</h1>
+      {description && <p className="mt-2 text-center text-sm leading-6 text-slate-500">{description}</p>}
+      <form className="mt-7 space-y-4" onSubmit={submit}>
         <EmailField value={email} onChange={setEmail} />
         {mode !== 'reset' && <PasswordField value={password} onChange={setPassword} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />}
         {message && <Feedback message={message} />}
         {unconfirmed && mode === 'signin' && <button className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void resendVerification()}>인증 메일 다시 보내기</button>}
-        <PrimaryButton loading={submitting}>{mode === 'signup' ? '계정 만들기' : mode === 'reset' ? '재설정 이메일 받기' : '이메일로 로그인'}</PrimaryButton>
+        <PrimaryButton loading={submitting}>{mode === 'signup' ? '회원가입' : mode === 'reset' ? '재설정 이메일 받기' : '로그인'}</PrimaryButton>
       </form>
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm">
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-2 text-sm text-slate-500">
         {mode === 'signin' && <>
-          <button className="font-semibold text-slate-600 hover:text-blue-700" type="button" onClick={() => { setMode('reset'); setMessage('') }}>비밀번호를 잊으셨나요?</button>
-          <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signup'); setMessage(''); setUnconfirmed(false) }}>계정 만들기</button>
+          아직 계정이 없으신가요?
+          <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signup'); setMessage(''); setUnconfirmed(false) }}>회원가입</button>
         </>}
-        {mode !== 'signin' && <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>}
+        {mode === 'signup' && <>
+          이미 계정이 있으신가요?
+          <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인</button>
+        </>}
+        {mode === 'reset' && <button className="font-bold text-blue-700 hover:text-blue-800" type="button" onClick={() => { setMode('signin'); setMessage('') }}>로그인으로 돌아가기</button>}
       </div>
-      <p className="mt-8 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">{PRIVACY_NOTE}</p>
-    </AuthShell>
+      {mode === 'signin' && <div className="mt-2 text-center"><button className="text-xs font-semibold text-slate-400 hover:text-blue-700" type="button" onClick={() => { setMode('reset'); setMessage('') }}>비밀번호를 잊으셨나요?</button></div>}
+      {mode !== 'reset' && oauthEnabled && <>
+        <div className="my-5 flex items-center gap-4 text-xs font-semibold text-slate-400"><span className="h-px flex-1 bg-slate-200" />또는<span className="h-px flex-1 bg-slate-200" /></div>
+        <div className="space-y-2.5">
+          {providers.google && <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('google')}><GoogleMark /> Google로 로그인</button>}
+          {providers.kakao && <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60" type="button" disabled={submitting} onClick={() => void startOAuth('kakao')}><span aria-hidden="true" className="inline-block h-4 w-4 rounded-full bg-[#FEE500]" />Kakao로 로그인</button>}
+        </div>
+      </>}
+      <p className="mt-6 border-t border-slate-100 pt-4 text-center text-xs leading-5 text-slate-500">{PRIVACY_NOTE}</p>
+    </AuthOverlay></>
   }
 
   // 로그인 후: 워크스페이스가 사이드바에서 계정·로그아웃을 직접 그리므로 상단 바 없이 컨텍스트만 제공한다.
@@ -241,3 +247,16 @@ function Feedback({ message }: { message: string }) { return <p className="round
 function Status({ text }: { text: string }) { return <div className="mt-10 flex items-center gap-3 text-sm font-semibold text-slate-600"><Loader2 className="animate-spin text-blue-700" size={20} />{text}</div> }
 function GoogleMark() { return <span className="text-lg font-black text-[#4285F4]" aria-hidden="true">G</span> }
 function AuthShell({ children }: { children: ReactNode }) { return <main className="flex min-h-screen items-center justify-center bg-[#f6f9ff] px-5 py-10"><section className="w-full max-w-[420px] rounded-2xl border border-slate-200 bg-white p-7 shadow-[0_18px_50px_rgba(45,75,130,0.10)] sm:p-9">{children}</section></main> }
+function AuthOverlay({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/25 px-4 py-10 backdrop-blur-[3px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <section role="dialog" aria-modal="true" aria-label="로그인" className="relative w-full max-w-[400px] rounded-2xl bg-white p-7 shadow-[0_24px_60px_rgba(17,24,39,0.18)] sm:p-8">
+      <button type="button" onClick={onClose} aria-label="닫기" className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={18} /></button>
+      {children}
+    </section>
+  </div>
+}

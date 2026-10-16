@@ -18,13 +18,20 @@ const supabase = read('src/lib/supabase.ts')
 assert(!/signInAnonymously/.test(authGate), 'AuthGate must not call signInAnonymously')
 assert(!/signInAnonymously/.test(landing), 'LandingPage must not call signInAnonymously')
 
-// 2. Landing 동선: 로그인 → 로그인 화면, 무료로 시작하기 → 회원가입 화면
-assert(/onLogin/.test(landing) && /onSignup/.test(landing), 'LandingPage must expose onLogin/onSignup')
+// 2. Landing = 비로그인 간편 요약. 로그인/회원가입 버튼과 저장하기 → 로그인 모달
+assert(/onLogin/.test(landing) && /onSaveRequiresLogin/.test(landing), 'LandingPage must expose onLogin/onSaveRequiresLogin')
 assert(!/onStart/.test(landing), 'LandingPage must not keep the old onStart prop')
-assert(/>로그인</.test(landing), 'Landing header must render a 로그인 button')
-assert(/onClick=\{onSignup\}[^>]*>무료로 시작하기/.test(landing), '무료로 시작하기 must open signup')
+assert(/>\s*로그인 \/ 회원가입\s*</.test(landing), 'Landing header must render a 로그인 / 회원가입 button')
+assert(/QuickSummaryPanel/.test(landing), 'Landing must render the quick summary')
+assert(/storePendingQuickSummary\(summary\)/.test(landing), 'Saving before login must keep the summary for after login')
+assert(/if \(!next\) clearPendingQuickSummary\(\)/.test(landing), '새로 요약하기 must discard the summary kept for after login')
+const workspace = read('src/pages/SessionDraftPage.tsx')
+assert(/const cancelQuickSave = \(\) => \{[^}]*setQuickSaveTarget\(null\)[^}]*clearPendingQuickSummary\(\)/.test(workspace),
+  'Closing the quick-save picker must drop the pending save')
+assert(/onClose=\{cancelQuickSave\}/.test(workspace), 'The quick-save picker must close through cancelQuickSave')
 assert(/onLogin=\{\(\) => openAuth\('signin'\)\}/.test(authGate), 'AuthGate must route onLogin to signin')
-assert(/onSignup=\{\(\) => openAuth\('signup'\)\}/.test(authGate), 'AuthGate must route onSignup to signup')
+assert(/onSaveRequiresLogin=\{\(\) => openAuth\('signin'\)\}/.test(authGate), 'AuthGate must route save-before-login to signin')
+assert(/setMode\('signup'\)/.test(authGate), 'Login modal must link to signup')
 
 // 3. 이메일 인증 기능 존재
 for (const call of ['signInWithPassword', 'signUp(', 'resetPasswordForEmail', 'updateUser({ password })', 'signOut()', "resend({ type: 'signup'"]) {
@@ -46,6 +53,6 @@ assert(/getAccessToken/.test(client) && /Authorization = `Bearer \$\{accessToken
 
 console.log('verify-auth-flow: OK')
 console.log('  - anonymous entry removed')
-console.log('  - landing 로그인/무료로 시작하기 routed to signin/signup')
+console.log('  - landing quick summary; 로그인/회원가입 and 저장하기 routed to the login modal')
 console.log('  - signup/login/logout/verify-resend/password-reset present')
 console.log('  - workspace gated on session; token attached to API calls')
