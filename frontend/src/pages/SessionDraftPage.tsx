@@ -54,7 +54,6 @@ import {
   caseRequestErrorMessage,
   formatKoreanDate,
   isConfirmedStatus,
-  nextSessionNumber,
   type ClientFilter,
 } from '../lib/caseList'
 import {
@@ -71,7 +70,7 @@ import CaseDashboardPanel, { type StartSessionInput } from '../components/case-d
 import ClientFormModal, { type ClientFormInitial } from '../components/clients/ClientFormModal'
 import ClientPickerModal from '../components/clients/ClientPickerModal'
 import QuickSummaryWorkspace from '../components/quick-summary/QuickSummaryWorkspace'
-import { QUICK_SUMMARY_TOPIC, clearPendingQuickSummary, quickSummaryText, readPendingQuickSummary, type QuickSummaryResult } from '../lib/quickSummary'
+import { isQuickSummaryDraft, type QuickSummaryResult } from '../lib/quickSummary'
 import DocumentArchivePage from '../components/documents/DocumentArchivePage'
 import SettingsPage from '../components/settings/SettingsPage'
 import FinalDocumentEditor from '../components/final-document/FinalDocumentEditor'
@@ -394,14 +393,8 @@ export default function SessionDraftPage({
   const [clientModalSubmitting, setClientModalSubmitting] = useState(false)
   const [clientModalError, setClientModalError] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
-  // Quick summary: a summary made before login is restored here and its save continues.
-  const [pendingQuickSummary] = useState(() => (isLocalGroundingDemo ? null : readPendingQuickSummary()))
-  const [quickResult, setQuickResult] = useState<QuickSummaryResult | null>(pendingQuickSummary)
-  const [quickNotice, setQuickNotice] = useState<string | null>(pendingQuickSummary ? '로그인 전에 만든 요약을 불러왔어요. 저장할 내담자를 선택해주세요.' : null)
-  const [quickSaveTarget, setQuickSaveTarget] = useState<QuickSummaryResult | null>(pendingQuickSummary)
-  const [quickPickerOpen, setQuickPickerOpen] = useState(Boolean(pendingQuickSummary))
-  const [quickSaving, setQuickSaving] = useState(false)
-  const [quickRecordsKey, setQuickRecordsKey] = useState(0)
+  // Signed-in quick summary shown on the 간편 요약하기 screen; kept while moving between screens.
+  const [quickResult, setQuickResult] = useState<QuickSummaryResult | null>(null)
   // 새 회기 기록 모달을 닫을 때 돌아갈 화면
   const [inputReturnScreen, setInputReturnScreen] = useState<AppScreen>('home')
   // 'new': a session that does not exist yet. 'existing': re-summarizing a stored session, which
@@ -1023,67 +1016,6 @@ export default function SessionDraftPage({
     setCurrentScreen(section === 'quick' ? 'quick_summary' : section)
   }
 
-  /** 저장하기 → 내담자 선택/새 등록 → 그 내담자의 다음 회기 임시저장으로 보관 → 내담자 프로필. */
-  const saveQuickSummaryToCase = async (caseId: string, summary: QuickSummaryResult) => {
-    setQuickSaving(true)
-    setQuickNotice(null)
-    try {
-      const [drafts, cases] = await Promise.all([listTemporaryDrafts(caseId), fetchCaseList().then((response) => response.cases)])
-      const item = cases.find((entry) => entry.case_id === caseId)
-      const sessionNumber = nextSessionNumber([{ session_number: item?.latest_session_number || 0 }], drafts)
-      const quickForm: SessionInput = {
-        ...initialForm,
-        case_id: caseId,
-        client_alias: item?.case_alias || '',
-        session_number: sessionNumber,
-        counselor_memo: quickSummaryText(summary),
-      }
-      await saveTemporaryDraft(temporaryDraftPayload({
-        case_id: caseId,
-        session_number: sessionNumber,
-        session_date: '',
-        counselor_name: '',
-        screen: 'session_input',
-        form: quickForm,
-        session_topic: QUICK_SUMMARY_TOPIC,
-        is_deidentified: true,
-        selected_previous_session_ids: [],
-        attachments: [],
-        visible_section_ids: [],
-        draft_sections: [],
-        final_document_sections: [],
-        final_document_type: 'session_note',
-      }))
-      clearPendingQuickSummary()
-      setQuickPickerOpen(false)
-      setQuickSaveTarget(null)
-      setQuickResult(null)
-      setQuickRecordsKey((value) => value + 1)
-      setDetailRefreshKey((value) => value + 1)
-      setCaseList(cases)
-      openClientDetail(caseId)
-    } catch (requestError) {
-      // The summary stays on screen, so the counselor can press 저장하기 again.
-      cancelQuickSave()
-      setQuickNotice(persistenceErrorMessage(requestError))
-    } finally {
-      setQuickSaving(false)
-    }
-  }
-
-  const requestQuickSave = (summary: QuickSummaryResult) => {
-    setQuickSaveTarget(summary)
-    setQuickPickerOpen(true)
-  }
-
-  /** Abandon a pending save so the summary cannot attach to a client registered later. */
-  const cancelQuickSave = () => {
-    setQuickPickerOpen(false)
-    setQuickSaveTarget(null)
-    // A summary carried over from before login is not offered again once dismissed.
-    clearPendingQuickSummary()
-  }
-
   const openClientDetail = (caseId: string) => {
     setSelectedCaseId(caseId)
     setCurrentScreen('client_detail')
@@ -1159,12 +1091,8 @@ export default function SessionDraftPage({
       if (clientModal.mode === 'create') {
         const created = await createCase(payload)
         setClientModal(null)
-        if (quickSaveTarget) {
-          await saveQuickSummaryToCase(created.case_id, quickSaveTarget)
-        } else {
-          await loadCaseList()
-          openClientDetail(created.case_id)
-        }
+        await loadCaseList()
+        openClientDetail(created.case_id)
       } else {
         await updateCaseProfile(clientModal.caseId, payload)
         setClientModal(null)
@@ -1432,7 +1360,7 @@ export default function SessionDraftPage({
       listTemporaryDrafts(restoreCaseId.trim() || undefined),
       restoreCaseId.trim() ? fetchCaseDashboard(restoreCaseId.trim()) : Promise.resolve(null),
     ])
-    if (drafts.status === 'fulfilled') setSavedDrafts(drafts.value)
+    if (drafts.status === 'fulfilled') setSavedDrafts(drafts.value.filter((draft) => !isQuickSummaryDraft(draft)))
     if (dashboard.status === 'fulfilled') setSavedNotes(dashboard.value?.documents.filter((document) => document.document_type === 'session_note') || [])
     setHasListedRecords(true)
     if (drafts.status === 'rejected' || dashboard.status === 'rejected') {
@@ -1731,16 +1659,7 @@ export default function SessionDraftPage({
         </section>}
 
         {backgroundScreen === 'quick_summary' && (
-          <QuickSummaryWorkspace
-            result={quickResult}
-            onResult={(next) => { setQuickResult(next); setQuickNotice(null); if (!next) clearPendingQuickSummary() }}
-            onSave={requestQuickSave}
-            saving={quickSaving}
-            notice={quickNotice}
-            cases={caseList}
-            refreshKey={quickRecordsKey}
-            onOpenRecord={(draftId, caseId) => { setSelectedCaseId(caseId); restoreTemporary(draftId) }}
-          />
+          <QuickSummaryWorkspace result={quickResult} onResult={setQuickResult} />
         )}
         {backgroundScreen === 'home' && (
           <HomeDashboardPage
@@ -1913,18 +1832,6 @@ export default function SessionDraftPage({
         />
       )}
 
-      {quickPickerOpen && quickSaveTarget && (
-        <ClientPickerModal
-          cases={caseList}
-          description="요약을 저장할 내담자를 선택해주세요. 선택한 내담자의 다음 회기로 저장돼요."
-          showAddInFooter
-          busy={quickSaving}
-          onClose={cancelQuickSave}
-          onNext={(caseId) => void saveQuickSummaryToCase(caseId, quickSaveTarget)}
-          onAddClient={() => { setQuickPickerOpen(false); setClientModalError(null); setClientModal({ mode: 'create' }) }}
-        />
-      )}
-
       {clientModal && (
         <ClientFormModal
           key={clientModal.mode === 'edit' ? clientModal.caseId : 'create'}
@@ -1932,12 +1839,7 @@ export default function SessionDraftPage({
           initial={clientModal.mode === 'edit' ? clientModal.initial : undefined}
           submitting={clientModalSubmitting}
           error={clientModalError}
-          onClose={() => {
-            if (clientModalSubmitting) return
-            setClientModal(null)
-            // Cancelling registration during a quick-summary save returns to the picker.
-            if (clientModal.mode === 'create' && quickSaveTarget) setQuickPickerOpen(true)
-          }}
+          onClose={() => !clientModalSubmitting && setClientModal(null)}
           onSubmit={(payload) => void submitClientForm(payload)}
         />
       )}

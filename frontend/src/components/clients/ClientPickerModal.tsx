@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, UserPlus } from 'lucide-react'
+import { Search, UserPlus } from 'lucide-react'
 
 import ModalShell from '../app-shell/ModalShell'
-import { OutlineButton, Pagination, PrimaryButton, SelectField } from '../app-shell/ui'
+import { Pagination, PrimaryButton, SelectField } from '../app-shell/ui'
 import { ClientRow } from '../../pages/ClientListPage'
 import { AGE_BAND_OPTIONS, DEFAULT_CLIENT_FILTER, GENDER_OPTIONS, filterClients, paginate, type AgeBand, type ClientFilter } from '../../lib/caseList'
 import type { CaseListItem } from '../../types/session'
@@ -15,18 +15,11 @@ export default function ClientPickerModal({
   onClose,
   onNext,
   onAddClient,
-  description = '회기를 기록할 내담자를 선택해주세요.',
-  showAddInFooter = false,
-  busy = false,
 }: {
   cases: CaseListItem[]
   onClose: () => void
   onNext: (caseId: string) => void
   onAddClient: () => void
-  description?: string
-  /** Quick-summary save: "내담자 새로 등록하기" sits next to "다음으로". */
-  showAddInFooter?: boolean
-  busy?: boolean
 }) {
   const [filter, setFilter] = useState<ClientFilter>(DEFAULT_CLIENT_FILTER)
   const [page, setPage] = useState(1)
@@ -39,18 +32,12 @@ export default function ClientPickerModal({
     <ModalShell
       ariaLabel="내담자 선택"
       title="내담자를 선택해주세요"
-      description={description}
+      description="회기를 기록할 내담자를 선택해주세요."
       onClose={onClose}
-      closeDisabled={busy}
       width={740}
-      footer={showAddInFooter ? (
-        <div className="flex gap-3">
-          <OutlineButton className="flex-1" disabled={busy} onClick={onAddClient}><Plus className="h-4 w-4" />내담자 새로 등록하기</OutlineButton>
-          <PrimaryButton className="flex-1" loading={busy} disabled={!selected} onClick={() => selected && onNext(selected)}>다음으로</PrimaryButton>
-        </div>
-      ) : (
+      footer={
         <PrimaryButton className="w-full" disabled={!selected} onClick={() => selected && onNext(selected)}>다음으로</PrimaryButton>
-      )}
+      }
     >
       <div className="flex flex-col gap-6">
         <div className="flex flex-wrap items-center gap-2.5">
