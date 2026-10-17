@@ -708,6 +708,14 @@ export interface ClientProfileFields {
   client_notes: string | null
 }
 
+/** POST /api/cases/{case_id}/quick-summary: a quick summary saved as the client's next session. */
+export interface QuickSummarySessionResponse {
+  case_id: string
+  session_id: string
+  note_id: string
+  session_number: number
+}
+
 export interface CaseCreateRequest extends Partial<ClientProfileFields> {
   case_id?: string | null
   case_alias: string

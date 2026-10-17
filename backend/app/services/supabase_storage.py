@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from http.client import HTTPException
 from typing import Any
 from uuid import uuid4
@@ -29,13 +29,18 @@ from app.schemas.note import (
     GeneratedNoteRecord,
     InputSources,
     PersistenceReport,
+    QuickSummarySessionRequest,
+    QuickSummarySessionResponse,
+    SessionInfo,
     SessionInput,
+    SessionSummaryDraft,
+    SummarySection,
     SessionInputDeletionResponse,
     SupervisionReportDraft,
     SupervisionReportRequest,
 )
 from app.services.deidentification import deidentify_text
-from app.services.storage_deidentification import deidentify_case_profile, deidentify_json
+from app.services.storage_deidentification import deidentify_case_profile, deidentify_json, deidentify_texts
 from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
 from app.services.supabase_errors import read_error_code
 
@@ -1142,6 +1147,81 @@ def fetch_case_dashboard(case_id: str, *, actor: str = "server_demo_actor") -> C
         exports=exports,
         **_profile_from_row(case_row),
     )
+
+
+def save_quick_summary_session(
+    case_id: str,
+    request: QuickSummarySessionRequest,
+    *,
+    actor: str = "server_demo_actor",
+) -> QuickSummarySessionResponse:
+    """Save a quick summary (간편 요약) as the owned client's next session.
+
+    The result is an ordinary session with an AI draft note, so the profile, session counts, the
+    session detail (review, edit, confirm) and document conversion treat it like any other session.
+    No session input exists for a quick summary, so raw/sanitized input stay empty.
+    """
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; quick summary save is unavailable.")
+    case_row = _require_owned_case(actor_storage, case_id, actor)
+    latest = actor_storage.select("sessions", {
+        "case_id": f"eq.{case_id}", "user_id": f"eq.{actor}",
+        "select": "session_number", "order": "session_number.desc", "limit": 1,
+    })
+    session_number = (_as_int(latest[0].get("session_number")) or 0) + 1 if latest else 1
+    # Korea has no daylight saving time, so a fixed offset avoids depending on installed tz data.
+    session_date = request.session_date or datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+    alias = str(case_row.get("case_alias") or "")
+    texts, _ = deidentify_texts({
+        "main_content": request.main_content,
+        "client_response": request.client_response,
+        "counselor_intervention": request.counselor_intervention,
+        "next_plan": request.next_plan,
+    }, known_names=[alias])
+
+    session_rows = actor_storage.insert("sessions", [{
+        "case_id": case_id,
+        "user_id": actor,
+        "session_number": session_number,
+        "session_date": session_date,
+        "session_title": f"{session_number}회기 간편 요약",
+        "transcript_status": "none",
+        "raw_input_text": None,
+        "sanitized_input_text": None,
+    }])
+    session_id = str(session_rows[0]["id"]) if session_rows else ""
+    if not session_id:
+        raise SupabaseStorageError("회기를 저장하지 못했습니다.")
+
+    def section(text: str) -> SummarySection:
+        return SummarySection(text=text.strip(), evidence_type="model_inference" if text.strip() else "needs_review",
+                              requires_review=True)
+
+    draft = SessionSummaryDraft(
+        session_info=SessionInfo(case_id=case_id, client_alias=alias, session_number=session_number, session_date=session_date),
+        session_theme=section(""),
+        presenting_problem=section(""),
+        session_content=section(texts["main_content"]),
+        counselor_intervention=section(texts["counselor_intervention"]),
+        client_response=section(texts["client_response"]),
+        reflection=section(""),
+        next_plan=section(texts["next_plan"]),
+    )
+    draft_json = draft.model_dump(mode="json")
+    draft_json["source"] = "quick_summary"
+    note_rows = actor_storage.insert("generated_notes", [{
+        "case_id": case_id,
+        "session_id": session_id,
+        "note_type": "session_note",
+        "draft_json": draft_json,
+        "confirmed_json": {},
+        "counselor_edited": False,
+        "confirmation_status": "draft",
+        "user_id": actor,
+    }])
+    note_id = str(note_rows[0]["id"]) if note_rows else ""
+    return QuickSummarySessionResponse(case_id=case_id, session_id=session_id, note_id=note_id, session_number=session_number)
 
 
 def create_case(request: CaseCreateRequest, *, actor: str = "server_demo_actor") -> CaseDashboardResponse:

@@ -14,12 +14,15 @@ from app.schemas.note import (
     CaseListResponse,
     CaseProfileUpdateRequest,
     CaseScheduleUpdateRequest,
+    QuickSummarySessionRequest,
+    QuickSummarySessionResponse,
 )
 from app.services.supabase_storage import (
     SupabaseStorageError,
     create_case,
     fetch_case_dashboard,
     list_cases,
+    save_quick_summary_session,
     update_case_profile,
     update_case_schedule,
 )
@@ -73,6 +76,18 @@ async def post_case(request: CaseCreateRequest, actor: PreviewActor) -> CaseDash
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"내담자 생성 중 오류가 발생했습니다: {str(error)}")
+
+
+@router.post("/{case_id}/quick-summary", response_model=QuickSummarySessionResponse, status_code=201)
+async def post_quick_summary_session(
+    case_id: str, request: QuickSummarySessionRequest, actor: PreviewActor
+) -> QuickSummarySessionResponse:
+    """간편 요약을 소유한 내담자의 다음 회기(AI 초안)로 저장한다."""
+    _require_storage(actor, "간편 요약 저장")
+    try:
+        return save_quick_summary_session(case_id, request, actor=actor)
+    except SupabaseStorageError as error:
+        raise HTTPException(status_code=_storage_error_status(error), detail=str(error)) from error
 
 
 @router.patch("/{case_id}/profile", response_model=CaseDashboardResponse)

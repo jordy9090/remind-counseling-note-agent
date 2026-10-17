@@ -8,6 +8,10 @@
       "destination": "/api/notes/generate?scope=quick"
     },
     {
+      "source": "/api/cases/:case_id/quick-summary",
+      "destination": "/api/cases/dashboard?case_id=:case_id&scope=quick-summary"
+    },
+    {
       "source": "/api/notes/storage-policy",
       "destination": "/api/notes/record?scope=storage-policy"
     },

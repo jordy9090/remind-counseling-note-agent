@@ -266,6 +266,49 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual(client.patch(f"/api/cases/dashboard?case_id={case_id}&scope=profile", json={"client_age": 500}, headers=self.headers_a).status_code, 422)
         self.assertEqual(client.patch(f"/api/cases/dashboard?case_id={case_id}&scope=schedule", json={"total_scheduled_session_count": -1}, headers=self.headers_a).status_code, 422)
 
+    def test_quick_summary_becomes_the_clients_next_session(self) -> None:
+        summary = {"main_content": "합성 내담자는 발표 불안을 이야기했다.", "client_response": "긴장했지만 계속 이야기했다.",
+                   "counselor_intervention": "불안할 때 떠오르는 생각을 함께 정리했다.", "next_plan": "짧은 발표 연습을 해보기로 했다."}
+        case_id = self.client.post("/api/cases", json={"case_alias": "합성 가명"}, headers=self.headers_a).json()["case_id"]
+        saved = self.client.post(f"/api/cases/{case_id}/quick-summary", json={**summary, "session_date": "2026-10-17"},
+                                 headers=self.headers_a)
+        self.assertEqual(saved.status_code, 201, saved.text[:300])
+        self.assertEqual(saved.json()["session_number"], 1)
+
+        # It is an ordinary session: counted on the profile and openable as a stored AI draft.
+        dashboard = self.client.get(f"/api/cases/{case_id}/dashboard", headers=self.headers_a).json()
+        self.assertEqual(dashboard["total_session_count"], 1)
+        record = self.client.get(f'/api/notes/records/{saved.json()["note_id"]}', headers=self.headers_a).json()
+        self.assertEqual(record["session_number"], 1)
+        self.assertEqual(record["session_date"], "2026-10-17")
+        self.assertEqual(record["confirmation_status"], "draft")
+        self.assertEqual(record["draft_json"]["session_content"]["text"], summary["main_content"])
+        self.assertEqual(record["draft_json"]["next_plan"]["text"], summary["next_plan"])
+        self.assertEqual(record["draft_json"]["source"], "quick_summary")
+        self.assertIsNone(record["session_input"], "a quick summary stores no session input")
+
+        # The next save takes the next number; the client list sees both sessions.
+        second = self.client.post(f"/api/cases/{case_id}/quick-summary", json=summary, headers=self.headers_a)
+        self.assertEqual(second.json()["session_number"], 2)
+        listed = next(case for case in self.client.get("/api/cases", headers=self.headers_a).json()["cases"] if case["case_id"] == case_id)
+        self.assertEqual(listed["total_session_count"], 2)
+
+        # Owner only, validated, and reachable through the single Vercel function.
+        sessions_before = len(self.store.tables["sessions"])
+        self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json=summary, headers=self.headers_b).status_code, 404)
+        self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json=summary).status_code, 401)
+        self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json={**summary, "main_content": ""},
+                                          headers=self.headers_a).status_code, 422)
+        self.assertEqual(len(self.store.tables["sessions"]), sessions_before)
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from api.cases.dashboard import app as wrapper
+        client = TestClient(wrapper)
+        for path in (f"/api/cases/dashboard?case_id={case_id}&scope=quick-summary", f"/api/cases/{case_id}/quick-summary"):
+            response = client.post(path, json=summary, headers=self.headers_a)
+            self.assertEqual(response.status_code, 201, path)
+            self.assertEqual(client.post(path, json=summary).status_code, 401)
+        self.assertEqual(client.post("/api/cases/dashboard?scope=quick-summary", json=summary, headers=self.headers_a).status_code, 422)
+
     def test_deployment_stays_within_vercel_function_limit(self) -> None:
         api_dir = Path(__file__).resolve().parent.parent / "api"
         functions = sorted(str(path.relative_to(api_dir)) for path in api_dir.rglob("*.py"))

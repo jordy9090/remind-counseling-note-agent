@@ -29,6 +29,7 @@ from app.api.routes.cases import (  # noqa: E402
     patch_case_profile,
     patch_case_schedule,
     post_case,
+    post_quick_summary_session,
 )
 from app.schemas.note import (  # noqa: E402
     CaseCreateRequest,
@@ -36,6 +37,8 @@ from app.schemas.note import (  # noqa: E402
     CaseListResponse,
     CaseProfileUpdateRequest,
     CaseScheduleUpdateRequest,
+    QuickSummarySessionRequest,
+    QuickSummarySessionResponse,
 )
 
 app = FastAPI(title="Re:mind Case API")
@@ -65,11 +68,32 @@ async def dashboard(case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
     return await get_case_dashboard(case_id, actor)
 
 
-@app.post("/", response_model=CaseDashboardResponse, status_code=201)
-@app.post("/api/cases", response_model=CaseDashboardResponse, status_code=201)
-@app.post("/api/cases/dashboard", response_model=CaseDashboardResponse, status_code=201)
-async def create(request: CaseCreateRequest, actor: PreviewActor) -> CaseDashboardResponse:
-    return await post_case(request, actor)
+@app.post("/", status_code=201)
+@app.post("/api/cases", status_code=201)
+@app.post("/api/cases/dashboard", status_code=201)
+async def create(
+    actor: PreviewActor,
+    case_id: str | None = None,
+    scope: str | None = None,
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> CaseDashboardResponse | QuickSummarySessionResponse:
+    """scope=quick-summary면 간편 요약을 그 내담자의 다음 회기로 저장, 그 외는 새 내담자 생성."""
+    try:
+        if scope == "quick-summary":
+            if not case_id:
+                raise HTTPException(status_code=422, detail="A quick-summary save needs a case ID.")
+            return await post_quick_summary_session(case_id, QuickSummarySessionRequest(**payload), actor)
+        return await post_case(CaseCreateRequest(**payload), actor)
+    except ValidationError as error:
+        raise _validation_error(error)
+
+
+# vercel.json rewrites /api/cases/:case_id/quick-summary to /api/cases/dashboard?case_id=...&scope=quick-summary.
+@app.post("/api/cases/{case_id}/quick-summary", response_model=QuickSummarySessionResponse, status_code=201)
+async def quick_summary_session(
+    request: QuickSummarySessionRequest, case_id: str, actor: PreviewActor
+) -> QuickSummarySessionResponse:
+    return await post_quick_summary_session(case_id, request, actor)
 
 
 @app.patch("/", response_model=CaseDashboardResponse)

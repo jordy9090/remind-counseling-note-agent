@@ -21,15 +21,21 @@ type SaveState = 'saving' | 'saved' | 'failed' | null
 
 /**
  * Signed-in "간편 요약하기" screen. Every new summary is saved automatically (AI output only) and
- * listed under the input as 이전 요약한 기록; there is no separate save button. A summary a guest
- * sent here with 로그인 후 저장하기 is saved the same way right after login.
+ * listed under the input as 이전 요약한 기록. 내담자에 저장하기 saves it as a client's next session
+ * (a regular session record). A summary a guest sent here with 로그인 후 저장하기 is auto-saved the
+ * same way right after login, and the client picker opens for it.
  */
 export default function QuickSummaryWorkspace({
   result,
   onResult,
+  onSaveToClient,
+  saveError,
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
+  /** Opens the client picker for this summary. */
+  onSaveToClient: (result: QuickSummaryResult) => void
+  saveError?: string | null
 }) {
   const [records, setRecords] = useState<TemporaryDraftRecord[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -72,8 +78,9 @@ export default function QuickSummaryWorkspace({
     // Taking the summary also removes it, so it is saved once even if this effect runs twice.
     const pending = takePendingQuickSummary()
     if (!pending) return
-    setNotice('로그인 전에 만든 요약을 이 계정에 저장했어요.')
+    setNotice('로그인 전에 만든 요약이에요. 저장할 내담자를 선택하면 그 내담자의 다음 회기로 저장돼요.')
     handleResult(pending)
+    onSaveToClient(pending)
   // Runs once after login; handleResult only uses refs and state setters.
   }, [])
 
@@ -127,7 +134,10 @@ export default function QuickSummaryWorkspace({
           handleResult(next)
         }}
         canExtractDocuments
-        notice={notice ? <p role="status" className="rounded-lg bg-primary-50 px-4 py-3 text-center text-sm text-primary-900">{notice}</p> : undefined}
+        notice={saveError
+          ? <p role="alert" className="rounded-lg bg-danger-50 px-4 py-3 text-center text-sm text-danger-500">{saveError}</p>
+          : notice ? <p role="status" className="rounded-lg bg-primary-50 px-4 py-3 text-center text-sm text-primary-900">{notice}</p> : undefined}
+        saveAction={{ label: '내담자에 저장하기', onSave: onSaveToClient }}
         privacyNote="입력한 내용은 저장되지 않고, AI 요약 결과만 이전 요약한 기록에 자동 저장돼요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요."
         resultStatus={resultStatus}
         below={history}

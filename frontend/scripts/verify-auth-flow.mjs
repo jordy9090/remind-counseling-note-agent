@@ -33,7 +33,14 @@ assert(/saveTemporaryDraft\(temporaryDraftPayload\(quickSummaryDraftPayload\(nex
   'Signed-in quick summaries must be saved automatically')
 assert(/const pending = takePendingQuickSummary\(\)[\s\S]{0,200}handleResult\(pending\)/.test(quickWorkspace),
   'A summary waiting for login must be saved through the same auto-save path')
-assert(!/saveAction/.test(quickWorkspace), 'Signed-in users get no separate save button')
+assert(/label: '내담자에 저장하기', onSave: onSaveToClient/.test(quickWorkspace), 'Signed-in users can save a summary to a client')
+assert(/handleResult\(pending\)\s*onSaveToClient\(pending\)/.test(quickWorkspace), 'A summary waiting for login opens the client picker')
+const page = read('src/pages/SessionDraftPage.tsx')
+assert(/const cancelQuickClientSave = \(\) => \{[^}]*setQuickClientSave\(null\)/.test(page) && /onClose=\{cancelQuickClientSave\}/.test(page),
+  'Closing the client picker abandons the quick-summary save')
+assert(/clientModal\.purpose === 'quick-summary' \? quickClientSave : null/.test(page),
+  'Only a client created from the quick-summary picker receives the summary')
+assert(/saveQuickSummaryToClient\(caseId, summary\)/.test(page), 'The summary is saved as a session of the chosen client')
 assert(/onLogin=\{\(\) => openAuth\('signin'\)\}/.test(authGate), 'AuthGate must route onLogin to signin')
 assert(/setMode\('signup'\)/.test(authGate), 'Login modal must link to signup')
 

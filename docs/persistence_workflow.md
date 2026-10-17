@@ -15,6 +15,7 @@ Authentication implementation and other upstream changes are taken unchanged fro
 | GET /api/notes/drafts and /drafts/{draft_id} | Lists/restores owned temporary workspaces. |
 | POST /api/notes/generate | Uses persist:true; a successful persistence report and note ID are required for confirmation. |
 | POST /api/notes/confirm | Saves current counselor sections while preserving the original AI draft. |
+| POST /api/cases/{case_id}/quick-summary | Saves a quick summary (간편 요약) as the owned client's next session: a `sessions` row with no stored input and an AI draft in `generated_notes` (`draft_json.source = "quick_summary"`). It then behaves like any session (profile counts, session detail, confirmation, document conversion). Vercel: `/api/cases/dashboard?case_id=...&scope=quick-summary`. |
 | POST /api/notes/records/{note_id}/input-deletion | 회기별 원문 삭제 for the owner: clears `sessions.raw_input_text` and `sanitized_input_text` and deletes the session's `transcript_turns` and `transcript_windows`. The summary (`generated_notes`), evidence snippets, case memory, and temporary drafts are kept and listed in the response. Vercel: `/api/notes/record?note_id=...&scope=input-deletion`. |
 | GET /api/notes/records/{note_id} | Returns full draft_json, confirmed_json, status, and `session_input` (the de-identified sources stored in `sessions.sanitized_input_text`, or null); dashboard excerpts cannot restore full text. |
 
