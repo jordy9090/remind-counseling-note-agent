@@ -27,6 +27,7 @@ import type {
   TemporaryDraftSaveResponse,
   TemporaryDraftRecord,
   GeneratedNoteRecord,
+  QuickSummarySessionResponse,
   SessionInputDeletionResponse,
 } from '../types/session'
 import { getAccessToken } from '../lib/supabase'
@@ -428,6 +429,18 @@ export const fetchCaseList = async (): Promise<CaseListResponse> => {
 /** 새 내담자(케이스) 생성. 서버가 케이스 ID를 만들고 소유자를 로그인 사용자로 기록한다. */
 export const createCase = async (payload: CaseCreateRequest): Promise<CaseDashboardResponse> => {
   const response = await client.post<CaseDashboardResponse>('/api/cases', payload)
+  return response.data
+}
+
+/** 간편 요약을 그 내담자의 다음 회기(AI 초안)로 저장한다. Only the four summary items are sent. */
+export const saveQuickSummaryToClient = async (
+  caseId: string,
+  summary: Pick<QuickSummaryResult, 'main_content' | 'client_response' | 'counselor_intervention' | 'next_plan'>,
+): Promise<QuickSummarySessionResponse> => {
+  const { main_content, client_response, counselor_intervention, next_plan } = summary
+  const response = await client.post<QuickSummarySessionResponse>(`/api/cases/${encodeURIComponent(caseId)}/quick-summary`, {
+    main_content, client_response, counselor_intervention, next_plan,
+  })
   return response.data
 }
 

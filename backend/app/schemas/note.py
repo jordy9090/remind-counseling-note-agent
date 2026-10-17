@@ -426,6 +426,24 @@ class CaseDashboardExport(BaseModel):
     created_at: str | None = None
 
 
+class QuickSummarySessionRequest(BaseModel):
+    """A quick summary (간편 요약) saved as a client's next session."""
+
+    main_content: str = Field(min_length=1, max_length=4000)
+    client_response: str = Field(default="", max_length=4000)
+    counselor_intervention: str = Field(default="", max_length=4000)
+    next_plan: str = Field(default="", max_length=4000)
+    # YYYY-MM-DD; empty means today in Asia/Seoul.
+    session_date: str = Field(default="", pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+
+
+class QuickSummarySessionResponse(BaseModel):
+    case_id: str
+    session_id: str
+    note_id: str
+    session_number: int
+
+
 class SessionInputDeletionResponse(BaseModel):
     """Result of deleting one session's stored input (회기별 원문 삭제)."""
 
