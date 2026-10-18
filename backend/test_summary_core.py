@@ -112,6 +112,32 @@ class SummaryCoreTests(unittest.TestCase):
                 policy=AUTHENTICATED_FULL_POLICY,
             )
 
+    def test_sanitized_session_date_is_counted_in_budget(self) -> None:
+        session_input = _session_input(session_date="2026-10-19")
+        token_heavy_pattern = "".join(chr(0x20000 + index) for index in range(512))
+        for session_date in ("가" * 96_001, (token_heavy_pattern * 94)[:48_001]):
+            with self.subTest(session_date_chars=len(session_date)):
+                sanitized = SanitizedInput(
+                    case_id=session_input.case_id,
+                    session_number=session_input.session_number,
+                    session_date=session_date,
+                    counselor_name=session_input.counselor_name,
+                    sources=InputSources(
+                        counselor_memo="",
+                        transcript_text=SYNTHETIC_TEXT,
+                    ),
+                )
+
+                with self.assertRaises(TranscriptLimitError):
+                    run_summary_core(
+                        {
+                            "session_input": session_input,
+                            "sanitized_input": sanitized,
+                            "input_budget_prevalidated": True,
+                        },
+                        policy=AUTHENTICATED_FULL_POLICY,
+                    )
+
     def test_public_core_never_calls_storage_or_retrieval(self) -> None:
         with patch("app.graph.nodes._storage_for_actor", side_effect=AssertionError("storage called")), patch(
             "app.graph.nodes.retrieve_case_context", side_effect=AssertionError("retrieval called")

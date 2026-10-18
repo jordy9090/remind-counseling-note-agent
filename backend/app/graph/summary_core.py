@@ -159,6 +159,7 @@ def validate_summary_input_budget(
     """Reject oversized raw requests before storage de-identification or provider use."""
     input_text = "".join(
         (
+            session_input.session_date,
             session_input.counselor_memo,
             session_input.transcript_text,
             session_input.previous_session_summary,
@@ -219,6 +220,7 @@ def _current_input_chars(sanitized: SanitizedInput) -> int:
 def _current_input_text(sanitized: SanitizedInput) -> str:
     return "".join(
         (
+            sanitized.session_date,
             sanitized.sources.counselor_memo,
             sanitized.sources.transcript_text,
             sanitized.sources.previous_session_summary,
