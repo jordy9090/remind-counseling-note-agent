@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
+from app.schemas.document import RICH_TEXT_MAX_LENGTH
 from app.schemas.note import (
     CaseDashboardDocument,
     CaseDashboardExport,
@@ -60,6 +61,10 @@ class NoteConfirmationError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+
+
+CONFIRMED_NOTE_MAX_WORK_UNITS = RICH_TEXT_MAX_LENGTH
+_CONFIRMED_VALUE_WORK_OVERHEAD = 8
 
 
 @dataclass(frozen=True)
@@ -379,6 +384,14 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     """Validate and persist explicit counselor confirmation from stored rows."""
     if not settings.enable_persistence:
         raise NoteConfirmationError(409, "ENABLE_PERSISTENCE is false; note confirmation is disabled.")
+    if _value_exceeds_confirmation_work_budget(
+        request.confirmed_note,
+        CONFIRMED_NOTE_MAX_WORK_UNITS,
+    ):
+        raise NoteConfirmationError(
+            413,
+            "상담일지 확정 요청이 너무 큽니다. 확정할 내용을 줄인 뒤 다시 시도해주세요.",
+        )
     actor_storage = _storage_for_actor(actor)
     if not getattr(actor_storage, "configured", settings.supabase_configured):
         raise NoteConfirmationError(503, "Supabase credentials are missing; note confirmation cannot be validated.")
@@ -443,6 +456,36 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
         memory_embedding_count=embedding_count,
         message=message,
     )
+
+
+def _value_exceeds_confirmation_work_budget(value: object, limit: int) -> bool:
+    """Bound nested confirmation bytes and per-value de-identification work."""
+    remaining = limit
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        remaining -= _CONFIRMED_VALUE_WORK_OVERHEAD
+        if remaining < 0:
+            return True
+        if isinstance(current, dict):
+            remaining -= 2 + max(0, len(current) - 1)
+            for key, item in current.items():
+                remaining -= len(str(key)) + 3
+                pending.append(item)
+        elif isinstance(current, (list, tuple)):
+            remaining -= 2 + max(0, len(current) - 1)
+            pending.extend(current)
+        elif isinstance(current, str):
+            remaining -= len(current) + 2
+        elif current is None:
+            remaining -= 4
+        elif isinstance(current, bool):
+            remaining -= 4 if current else 5
+        else:
+            remaining -= len(str(current))
+        if remaining < 0:
+            return True
+    return False
 
 
 def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:

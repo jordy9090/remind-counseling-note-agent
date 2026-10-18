@@ -317,6 +317,46 @@ class AccessBoundaryTests(unittest.TestCase):
                 self.assert_private(response)
         self.assertFalse(any(call["method"] != "GET" for call in self.transport.calls))
 
+    def test_oversized_confirmations_stop_before_deidentification_and_storage(self):
+        payloads = {
+            "plain-content": {"session_content": {"text": "x" * 200_001}},
+            "value-cardinality": {"extra": [""] * 20_000},
+        }
+        paths = [
+            ("backend", "/api/notes/confirm"),
+            ("confirm", "/api/notes/confirm"),
+            ("confirm", "/"),
+        ]
+        with (
+            patch(
+                "app.services.supabase_storage._storage_for_actor",
+                side_effect=AssertionError("Storage reached for oversized confirmation"),
+            ) as storage,
+            patch(
+                "app.services.supabase_storage.deidentify_json",
+                side_effect=AssertionError("De-identification reached for oversized confirmation"),
+            ) as deidentify,
+        ):
+            for payload_name, confirmed_note in payloads.items():
+                for app_name, path in paths:
+                    with self.subTest(payload=payload_name, app=app_name, path=path):
+                        response = self.request(app_name, "POST", path, json={
+                            "note_id": NOTES["a"],
+                            "confirmed_note": confirmed_note,
+                            "counselor_edited": True,
+                            "create_case_memory": False,
+                        })
+                        self.assertEqual(response.status_code, 413, response.text[:300])
+                        self.assertEqual(
+                            response.json()["detail"],
+                            "상담일지 확정 요청이 너무 큽니다. 확정할 내용을 줄인 뒤 다시 시도해주세요.",
+                        )
+                        self.assertLess(len(response.content), 200)
+            storage.assert_not_called()
+            deidentify.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_dashboard_aliases_deny_foreign_case(self):
         paths = [("backend", f'/api/cases/{CASES["b"]}/dashboard'),
                  ("cases", f'/api/cases/{CASES["b"]}/dashboard')]
