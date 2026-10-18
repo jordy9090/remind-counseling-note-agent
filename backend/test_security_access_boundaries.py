@@ -399,6 +399,27 @@ class AccessBoundaryTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
         self.assert_b_unchanged()
 
+    def test_oversized_note_ids_stop_before_session_input_deletion(self):
+        oversized_note_id = "n" * 37
+        requests = [
+            ("backend", f"/api/notes/records/{oversized_note_id}/input-deletion"),
+            ("record", "/api/notes/record", {"note_id": oversized_note_id, "scope": "input-deletion"}),
+            ("record", "/", {"note_id": oversized_note_id, "scope": "input-deletion"}),
+            ("record", f"/api/notes/records/{oversized_note_id}/input-deletion"),
+        ]
+        with patch(
+            "app.api.routes.notes.delete_session_input",
+            side_effect=AssertionError("Deletion service reached for oversized note ID"),
+        ) as delete_input:
+            for request in requests:
+                name, path, *params = request
+                with self.subTest(name=name, path=path):
+                    response = self.request(name, "POST", path, params=params[0] if params else None)
+                    self.assertEqual(response.status_code, 422, response.text)
+            delete_input.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_dashboard_aliases_deny_foreign_case(self):
         paths = [("backend", f'/api/cases/{CASES["b"]}/dashboard'),
                  ("cases", f'/api/cases/{CASES["b"]}/dashboard')]

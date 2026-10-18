@@ -58,7 +58,7 @@ async def record(
 async def record_input_deletion(
     actor: PreviewActor,
     response: Response,
-    note_id: str | None = None,
+    note_id: Annotated[str | None, Query(max_length=36)] = None,
     scope: Literal["input-deletion"] | None = None,
 ) -> SessionInputDeletionResponse:
     if scope != "input-deletion" or note_id is None:
@@ -67,5 +67,9 @@ async def record_input_deletion(
 
 
 @app.post("/api/notes/records/{note_id}/input-deletion", response_model=SessionInputDeletionResponse)
-async def input_deletion(note_id: str, actor: PreviewActor, response: Response) -> SessionInputDeletionResponse:
+async def input_deletion(
+    note_id: Annotated[str, PathParameter(max_length=36)],
+    actor: PreviewActor,
+    response: Response,
+) -> SessionInputDeletionResponse:
     return await delete_note_session_input(note_id, actor, response)

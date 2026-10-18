@@ -122,7 +122,11 @@ async def get_note_record(
 
 
 @router.post("/records/{note_id}/input-deletion", response_model=SessionInputDeletionResponse)
-async def delete_note_session_input(note_id: str, actor: PreviewActor, response: Response) -> SessionInputDeletionResponse:
+async def delete_note_session_input(
+    note_id: Annotated[str, Path(max_length=36)],
+    actor: PreviewActor,
+    response: Response,
+) -> SessionInputDeletionResponse:
     """회기별 원문 삭제: remove the stored input of the note's session; the summary is kept."""
     try:
         response.headers["Cache-Control"] = "private, no-store"
