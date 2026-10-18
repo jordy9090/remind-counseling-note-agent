@@ -49,6 +49,23 @@ class QuickSummaryTest(unittest.TestCase):
         self.assertIn("phone", body["masked_categories"])
         self.assertNotIn("010-1234-5678", response.text)
 
+    def test_frontend_timestamped_speaker_labels_remain_separated_in_stub_mode(self) -> None:
+        text = (
+            "[0:00] 상담자： 오늘 어떤 점을 이야기하고 싶나요?\n"
+            "[0:04] 내담자: 발표 전 걱정이 커졌어요.\n"
+            "[0:08] 화자 미배정: 이 문장은 역할을 추정하면 안 됩니다."
+        )
+
+        response = self.client.post("/api/notes/quick-summary", json={"text": text})
+
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertIn("오늘 어떤 점을 이야기하고 싶나요", body["counselor_intervention"])
+        self.assertIn("발표 전 걱정이 커졌어요", body["client_response"])
+        self.assertNotIn("발표 전 걱정", body["counselor_intervention"])
+        self.assertNotIn("어떤 점을 이야기", body["client_response"])
+        self.assertNotIn("역할을 추정", response.text)
+
     def test_llm_receives_masked_text_only(self) -> None:
         prompts: list[str] = []
 

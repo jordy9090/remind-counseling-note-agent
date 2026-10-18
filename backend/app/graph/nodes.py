@@ -70,6 +70,11 @@ NONVERBAL_RE = re.compile(
     r"(눈물|침묵|목소리\s*떨림|목소리[^.?!\n]{0,12}떨|한숨|말(?:의\s*속도)?가\s*느려지|말[^.?!\n]{0,12}느려지|울먹임)"
 )
 NEXT_PLAN_RE = re.compile(r"(다음\s*회기|추후|다음에는|검토하기로|보기로|계획)")
+TRANSCRIPT_SPEAKER_RE = re.compile(
+    r"^\s*(?:\[(?:\d+:)?\d{1,2}:\d{2}(?:\.\d+)?\]\s*)?"
+    r"(?P<label>Cl|Client|내담자|Co|Counselor|상담자|상담사)\s*[:：]\s*(?P<text>.*)$",
+    re.IGNORECASE,
+)
 
 
 def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
@@ -811,8 +816,8 @@ def _build_session_content_summary(sanitized: SanitizedInput) -> tuple[str, list
         return _ensure_sentence(memo_sentence), ["counselor_memo"]
 
     turns = [
-        _extract_speaker_turn(sanitized.sources.transcript_text, ("Cl:", "내담자:", "Client:"), "내담자는"),
-        _extract_speaker_turn(sanitized.sources.transcript_text, ("Co:", "상담자:", "Counselor:"), "상담자는"),
+        _extract_speaker_turn(sanitized.sources.transcript_text, "client", "내담자는"),
+        _extract_speaker_turn(sanitized.sources.transcript_text, "counselor", "상담자는"),
     ]
     supported_turns = [turn for turn in turns if turn]
     if supported_turns:
@@ -892,7 +897,7 @@ def _section_from_first(items: list[EvidenceItem], fallback: str) -> SummarySect
 def _extract_client_response(transcript_text: str) -> EvidenceItem:
     content = _extract_speaker_turn(
         transcript_text,
-        ("Cl:", "내담자:", "Client:"),
+        "client",
         "내담자는",
     )
     return EvidenceItem(
@@ -905,7 +910,7 @@ def _extract_client_response(transcript_text: str) -> EvidenceItem:
 def _extract_counselor_intervention(transcript_text: str) -> EvidenceItem:
     content = _extract_speaker_turn(
         transcript_text,
-        ("Co:", "상담자:", "Counselor:"),
+        "counselor",
         "상담자는",
     )
     return EvidenceItem(
@@ -915,27 +920,30 @@ def _extract_counselor_intervention(transcript_text: str) -> EvidenceItem:
     )
 
 
-def _extract_speaker_turn(text: str, prefixes: tuple[str, ...], attribution: str) -> str:
+def _extract_speaker_turn(text: str, speaker_role: str, attribution: str) -> str:
     for line in (text or "").splitlines():
-        stripped = line.strip()
-        for prefix in prefixes:
-            if stripped.startswith(prefix):
-                utterance = stripped[len(prefix):].strip()
-                if utterance:
-                    return _ensure_sentence(f"{attribution} {utterance}")
+        parsed = _parse_speaker_line(line)
+        if parsed and parsed[0] == speaker_role and parsed[1]:
+            return _ensure_sentence(f"{attribution} {parsed[1]}")
     return ""
 
 
 def _speaker_statement(text: str) -> str:
     stripped = (text or "").strip()
-    for prefixes, attribution in (
-        (("Cl:", "내담자:", "Client:"), "내담자는"),
-        (("Co:", "상담자:", "Counselor:"), "상담자는"),
-    ):
-        for prefix in prefixes:
-            if stripped.startswith(prefix):
-                return f"{attribution} {stripped[len(prefix):].strip()}"
+    parsed = _parse_speaker_line(stripped)
+    if parsed:
+        attribution = "내담자는" if parsed[0] == "client" else "상담자는"
+        return f"{attribution} {parsed[1]}"
     return stripped
+
+
+def _parse_speaker_line(text: str) -> tuple[str, str] | None:
+    match = TRANSCRIPT_SPEAKER_RE.match(text or "")
+    if not match:
+        return None
+    label = match.group("label").casefold()
+    role = "client" if label in {"cl", "client", "내담자"} else "counselor"
+    return role, match.group("text").strip()
 
 
 def _source_sentences(text: str) -> list[str]:
