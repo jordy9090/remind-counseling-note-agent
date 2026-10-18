@@ -192,6 +192,45 @@ class SummaryGenerationRouteTests(unittest.TestCase):
         source_revision.assert_not_called()
         recompose_pipeline.assert_not_called()
 
+    def test_oversized_case_ids_are_rejected_before_external_boundaries(self):
+        session_input = {**INPUT, "case_id": "C" * 81}
+        with patch(
+            "app.api.routes.notes.deidentify_session_input",
+            side_effect=AssertionError("storage de-identification reached"),
+        ) as deidentify, patch(
+            "app.api.routes.notes.run_note_pipeline",
+            side_effect=AssertionError("generation provider pipeline reached"),
+        ) as generation_pipeline, patch(
+            "app.api.routes.notes.persist_generated_note",
+            side_effect=AssertionError("persistence boundary reached"),
+        ) as persist, patch(
+            "app.services.recompose_cache._case_source_revision",
+            side_effect=AssertionError("source revision reached"),
+        ) as source_revision, patch(
+            "app.services.recompose_cache.run_note_pipeline",
+            side_effect=AssertionError("recomposition provider pipeline reached"),
+        ) as recompose_pipeline:
+            for app in (generate_app, main_app):
+                with self.subTest(app=app.title, endpoint="generate"):
+                    response = TestClient(app).post("/api/notes/generate", json=session_input)
+                    self.assertEqual(422, response.status_code, response.text[:300])
+            for app in (recompose_app, main_app):
+                with self.subTest(app=app.title, endpoint="recompose"):
+                    response = TestClient(app).post(
+                        "/api/notes/recompose",
+                        json={
+                            "session_input": session_input,
+                            "session_topic": "합성 주제",
+                            "visible_section_ids": ["session_content"],
+                        },
+                    )
+                    self.assertEqual(422, response.status_code, response.text[:300])
+        deidentify.assert_not_called()
+        generation_pipeline.assert_not_called()
+        persist.assert_not_called()
+        source_revision.assert_not_called()
+        recompose_pipeline.assert_not_called()
+
     def test_maximum_unbroken_unicode_is_bounded_before_provider(self):
         payload = {
             "case_id": "SYNTHETIC-TOKEN-LATENCY",

@@ -29,7 +29,7 @@ class SessionInput(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    case_id: str
+    case_id: str = Field(max_length=80)
     client_alias: str = ""
     session_number: int = Field(validation_alias=AliasChoices("session_number", "session_no"))
     session_date: str = ""
