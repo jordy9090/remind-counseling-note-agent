@@ -85,9 +85,9 @@ class SummaryGenerationRouteTests(unittest.TestCase):
 
     def test_oversized_issue_tags_are_rejected_before_provider(self):
         cases = (
-            (["가" * 96_001], "요청당 입력 한도는 96,000자입니다. 현재 96,055자입니다."),
+            (["가" * 96_001], "요청당 입력 한도는 96,000자입니다. 현재 96,061자입니다."),
             (["🧭" * 48_001], "요청당 추정 입력 토큰 한도는 96,000개입니다."),
-            ([""] * 9_600, "요청당 입력 한도는 96,000자입니다. 현재 96,044자입니다."),
+            ([""] * 9_600, "요청당 입력 한도는 96,000자입니다. 현재 96,050자입니다."),
         )
         with patch("app.api.routes.notes.run_note_pipeline") as pipeline, patch(
             "app.api.routes.notes.persist_generated_note"
@@ -139,6 +139,54 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                         )
                         self.assertEqual(413, response.status_code, response.text[:300])
                         self.assertIn(expected_detail, response.json()["detail"])
+        generation_pipeline.assert_not_called()
+        persist.assert_not_called()
+        source_revision.assert_not_called()
+        recompose_pipeline.assert_not_called()
+
+    def test_oversized_identity_metadata_is_rejected_before_deidentification_or_provider(self):
+        token_heavy_pattern = "".join(chr(0x20000 + index) for index in range(512))
+        cases = (
+            ("client_alias", "가" * 96_001, "요청당 입력 한도는 96,000자입니다."),
+            ("client_alias", (token_heavy_pattern * 94)[:48_001], "요청당 추정 입력 토큰 한도는 96,000개입니다."),
+            ("counselor_name", "가" * 96_001, "요청당 입력 한도는 96,000자입니다."),
+            ("counselor_name", (token_heavy_pattern * 94)[:48_001], "요청당 추정 입력 토큰 한도는 96,000개입니다."),
+        )
+        with patch(
+            "app.api.routes.notes.deidentify_session_input",
+            side_effect=AssertionError("storage de-identification reached"),
+        ) as deidentify, patch(
+            "app.api.routes.notes.run_note_pipeline",
+            side_effect=AssertionError("generation provider pipeline reached"),
+        ) as generation_pipeline, patch(
+            "app.api.routes.notes.persist_generated_note"
+        ) as persist, patch(
+            "app.services.recompose_cache._case_source_revision",
+            side_effect=AssertionError("source revision reached"),
+        ) as source_revision, patch(
+            "app.services.recompose_cache.run_note_pipeline",
+            side_effect=AssertionError("recomposition provider pipeline reached"),
+        ) as recompose_pipeline:
+            for field, value, expected_detail in cases:
+                session_input = {**INPUT, field: value}
+                for app in (generate_app, main_app):
+                    with self.subTest(app=app.title, endpoint="generate", field=field, expected_detail=expected_detail):
+                        response = TestClient(app).post("/api/notes/generate", json=session_input)
+                        self.assertEqual(413, response.status_code, response.text[:300])
+                        self.assertIn(expected_detail, response.json()["detail"])
+                for app in (recompose_app, main_app):
+                    with self.subTest(app=app.title, endpoint="recompose", field=field, expected_detail=expected_detail):
+                        response = TestClient(app).post(
+                            "/api/notes/recompose",
+                            json={
+                                "session_input": session_input,
+                                "session_topic": "합성 주제",
+                                "visible_section_ids": ["session_content"],
+                            },
+                        )
+                        self.assertEqual(413, response.status_code, response.text[:300])
+                        self.assertIn(expected_detail, response.json()["detail"])
+        deidentify.assert_not_called()
         generation_pipeline.assert_not_called()
         persist.assert_not_called()
         source_revision.assert_not_called()
@@ -226,8 +274,20 @@ class SummaryGenerationRouteTests(unittest.TestCase):
         self.assertEqual(
             [len(call.args[0]) for call in token_estimate.call_args_list],
             [
-                len(payload["session_date"] + payload["counselor_memo"] + payload["transcript_text"]),
-                len(payload["session_date"] + payload["counselor_memo"] + payload["transcript_text"].strip()),
+                len(
+                    payload.get("client_alias", "")
+                    + payload["session_date"]
+                    + payload["counselor_name"]
+                    + payload["counselor_memo"]
+                    + payload["transcript_text"]
+                ),
+                len(
+                    payload.get("client_alias", "")
+                    + payload["session_date"]
+                    + payload["counselor_name"]
+                    + payload["counselor_memo"]
+                    + payload["transcript_text"].strip()
+                ),
             ],
         )
 
