@@ -13,6 +13,13 @@ os.environ.setdefault("USE_STUB", "1")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
+from app.schemas.note import (  # noqa: E402
+    EvidenceItem,
+    SessionInfo,
+    SessionSummaryDraft,
+    StructuredCaseData,
+    SummarySection,
+)
 from app.services import quick_summary as qs  # noqa: E402
 
 SAMPLE = "내담자는 이번 주 취업 준비로 불안이 커졌다고 말했다. 연락처 010-1234-5678로 연락 달라고 했다. 상담자는 감정을 명료화했다."
@@ -42,19 +49,39 @@ class QuickSummaryTest(unittest.TestCase):
         self.assertNotIn("010-1234-5678", response.text)
 
     def test_llm_receives_masked_text_only(self) -> None:
-        captured: dict[str, str] = {}
+        prompts: list[str] = []
 
         class FakeLLM:
+            def __init__(self, schema):
+                self.schema = schema
+
             def invoke(self, prompt: str):
-                captured["prompt"] = prompt
-                return qs._QuickSummaryDraft(main_content="a", client_response="b", counselor_intervention="c", next_plan="d")
+                prompts.append(prompt)
+                if self.schema is StructuredCaseData:
+                    return StructuredCaseData(
+                        session_content=[EvidenceItem(content="취업 준비 불안을 다룸.", evidence_type="direct", source_refs=["transcript_text"])],
+                        client_responses=[EvidenceItem(content="내담자는 불안이 커졌다고 표현함.", evidence_type="direct", source_refs=["transcript_text"])],
+                        counselor_interventions=[EvidenceItem(content="상담자는 감정을 명료화함.", evidence_type="direct", source_refs=["transcript_text"])],
+                        next_plan=[EvidenceItem(content="[상담사 확인 필요]", evidence_type="needs_review", source_refs=[])],
+                    )
+                return SessionSummaryDraft(
+                    session_info=SessionInfo(case_id="public-quick-summary", session_number=1, session_date=""),
+                    session_theme=SummarySection(text="취업 준비 불안", evidence_type="direct", source_refs=["transcript_text"]),
+                    presenting_problem=SummarySection(text="취업 준비 과정의 불안", evidence_type="direct", source_refs=["transcript_text"]),
+                    session_content=SummarySection(text="취업 준비 과정에서 커진 불안을 다룸.", evidence_type="direct", source_refs=["transcript_text"]),
+                    client_response=SummarySection(text="내담자는 불안이 커졌다고 표현함.", evidence_type="direct", source_refs=["transcript_text"]),
+                    counselor_intervention=SummarySection(text="상담자는 감정을 명료화함.", evidence_type="direct", source_refs=["transcript_text"]),
+                    reflection=SummarySection(text="[상담사 확인 필요]", evidence_type="counselor_input", source_refs=[], requires_review=True),
+                    next_plan=SummarySection(text="[상담사 확인 필요]", evidence_type="needs_review", source_refs=[], requires_review=True),
+                )
 
         with patch.object(qs.settings, "use_stub", False), patch.object(qs.settings, "openai_api_key", "test"), \
-                patch("app.services.llm.get_structured_llm", return_value=FakeLLM()):
+                patch("app.graph.nodes.get_structured_llm", side_effect=lambda schema: FakeLLM(schema)):
             result = qs.generate_quick_summary(SAMPLE)
-        self.assertNotIn("010-1234-5678", captured["prompt"])
-        self.assertIn("[PHONE]", captured["prompt"])
-        self.assertEqual(result.next_plan, "d")
+        self.assertEqual(2, len(prompts))
+        self.assertTrue(all("010-1234-5678" not in prompt for prompt in prompts))
+        self.assertTrue(all("[PHONE]" in prompt for prompt in prompts))
+        self.assertEqual(result.next_plan, "[상담사 확인 필요]")
 
     def test_rejects_too_short_and_too_long_input(self) -> None:
         self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": "짧음"}).status_code, 422)

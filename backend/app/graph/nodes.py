@@ -440,13 +440,20 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     evidence_mapped: EvidenceMappedData = state["evidence_mapped_data"]
     summary: SessionSummaryDraft = state["session_summary_draft"]
     privacy_context: list[RetrievedPrivacyRule] = state.get("retrieved_privacy_context") or []
-    fallback = _mock_verification(sanitized, evidence_mapped, privacy_context)
     if settings.stub_mode:
-        _merge_grounding_verification(fallback, state.get("grounding"))
-        return {"verification_report": fallback}
+        core_verification: VerificationReport | None = state.get("core_verification_report")
+        if core_verification is None:
+            return verify_evidence_deterministically(state)
+        verification = core_verification.model_copy(deep=True)
+        _merge_grounding_verification(verification, state.get("grounding"))
+        _apply_verification_consistency(summary, verification)
+        return {"verification_report": verification, "session_summary_draft": summary}
 
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context)
     verification = get_structured_llm(VerificationReport).invoke(prompt)
+    core_verification: VerificationReport | None = state.get("core_verification_report")
+    if core_verification:
+        _merge_verification_reports(verification, core_verification)
     initial: VerificationReport | None = state.get("initial_verification_report")
     if initial:
         verification.unsupported_or_risky_claims = _unique_review_claims(
@@ -459,6 +466,88 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     _merge_grounding_verification(verification, state.get("grounding"))
     _apply_verification_consistency(summary, verification)
     return {"verification_report": verification}
+
+
+def verify_evidence_deterministically(state: dict[str, Any]) -> dict[str, Any]:
+    """Check summary-section references locally without another provider call."""
+    sanitized: SanitizedInput = state["sanitized_input"]
+    summary: SessionSummaryDraft = state["session_summary_draft"]
+    verification = VerificationReport(sensitive_info_items=sanitized.sensitive_info_candidates)
+    for field_name in (
+        "session_theme",
+        "presenting_problem",
+        "session_content",
+        "counselor_intervention",
+        "client_response",
+        "reflection",
+        "next_plan",
+    ):
+        section: SummarySection = getattr(summary, field_name)
+        if section.evidence_type == "direct" and section.source_refs:
+            verification.grounded_items.append(
+                GroundedItem(claim=section.text, source_refs=section.source_refs)
+            )
+        elif section.source_refs:
+            verification.weakly_grounded_items.append(
+                ReviewableClaim(
+                    claim=section.text,
+                    reason="입력 근거는 연결되어 있으나 해석 또는 여러 근거의 통합이 포함됨.",
+                    recommendation="상담사가 원문과 문장을 대조하여 유지, 수정, 삭제 여부를 판단",
+                )
+            )
+        elif "상담사 확인 필요" not in section.text:
+            verification.unsupported_or_risky_claims.append(
+                ReviewableClaim(
+                    claim=section.text,
+                    reason="요약 문장에 유효한 원문 source_ref가 없음.",
+                    recommendation="근거를 연결하거나 문장을 상담사 확인 필요 상태로 변경",
+                )
+            )
+        if section.requires_review or section.evidence_type != "direct" or not section.source_refs:
+            verification.requires_counselor_review.append(
+                CounselorReviewField(field=field_name, reason="직접 근거 또는 상담사 확정이 필요함.")
+            )
+    for field_name, reason in (
+        ("case_conceptualization", "현재 MVP 자동 생성 대상이 아닌 상담사 임상 판단 영역"),
+        ("goal_attainment", "목표 달성 정도는 상담사 확인 필요"),
+    ):
+        verification.requires_counselor_review.append(
+            CounselorReviewField(field=field_name, reason=reason)
+        )
+    if sanitized.sources.psychological_test_summary:
+        verification.requires_counselor_review.append(
+            CounselorReviewField(
+                field="psychological_test_summary",
+                reason="검사 세부 정보와 상담적 해석은 상담사 확인 필요",
+            )
+        )
+    _merge_grounding_verification(verification, state.get("grounding"))
+    _apply_verification_consistency(summary, verification)
+    return {"verification_report": verification, "session_summary_draft": summary}
+
+
+def _merge_verification_reports(target: VerificationReport, source: VerificationReport) -> None:
+    grounded = {(item.claim, tuple(item.source_refs)): item for item in target.grounded_items}
+    for item in source.grounded_items:
+        grounded.setdefault((item.claim, tuple(item.source_refs)), item)
+    target.grounded_items = list(grounded.values())
+    target.weakly_grounded_items = _unique_review_claims(
+        [*target.weakly_grounded_items, *source.weakly_grounded_items]
+    )
+    target.unsupported_or_risky_claims = _unique_review_claims(
+        [*target.unsupported_or_risky_claims, *source.unsupported_or_risky_claims]
+    )
+    sensitive = {
+        (item.source, item.category, item.text): item
+        for item in target.sensitive_info_items
+    }
+    for item in source.sensitive_info_items:
+        sensitive.setdefault((item.source, item.category, item.text), item)
+    target.sensitive_info_items = list(sensitive.values())
+    review_fields = {item.field: item for item in target.requires_counselor_review}
+    for item in source.requires_counselor_review:
+        review_fields.setdefault(item.field, item)
+    target.requires_counselor_review = list(review_fields.values())
 
 
 def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
@@ -712,61 +801,6 @@ def _mock_summary(sanitized: SanitizedInput, structured: StructuredCaseData) -> 
             requires_review=True,
         ),
         next_plan=_section_from_first(structured.next_plan, "추후 계획 확인 필요"),
-    )
-
-
-def _mock_verification(
-    sanitized: SanitizedInput,
-    evidence_mapped: EvidenceMappedData,
-    privacy_context: list[RetrievedPrivacyRule] | None = None,
-) -> VerificationReport:
-    grounded = [
-        GroundedItem(claim=item.content, source_refs=item.source_refs)
-        for item in evidence_mapped.items
-        if item.evidence_type == "direct"
-    ]
-    weak = [
-        ReviewableClaim(
-            claim=item.content,
-            reason="입력 근거는 있으나 일부 해석 또는 요약이 포함되어 상담사 확인이 필요함.",
-            recommendation="상담사가 유지, 수정, 삭제 여부를 판단",
-        )
-        for item in evidence_mapped.items
-        if item.evidence_type in {"mixed", "inferred", "prior_context_based"}
-    ][:5]
-    privacy_context = privacy_context or []
-    counselor_review_fields = [
-        CounselorReviewField(field="reflection", reason="상담자 내적 경험과 임상적 판단 영역"),
-        CounselorReviewField(field="case_conceptualization", reason="현재 MVP 자동 생성 대상이 아님"),
-        CounselorReviewField(field="goal_attainment", reason="목표 달성 정도는 상담사 확인 필요"),
-    ]
-    if sanitized.sources.psychological_test_summary:
-        counselor_review_fields.append(
-            CounselorReviewField(
-                field="psychological_test_summary",
-                reason="입력 요약은 있으나 검사명, 실시일, 세부 척도, 상담적 해석 확인 필요",
-            )
-        )
-    return VerificationReport(
-        grounded_items=grounded,
-        weakly_grounded_items=weak,
-        unsupported_or_risky_claims=[
-            ReviewableClaim(
-                claim="사례개념화, 위험 판단, 목표 달성 정도를 자동으로 확정하지 않음.",
-                reason="현재 MVP의 자동 생성 대상이 아니며 상담사 임상 판단 영역임.",
-                recommendation="상담사가 직접 작성하거나 별도 확인 필드로 분리",
-            )
-        ]
-        + [
-            ReviewableClaim(
-                claim=rule.warning,
-                reason=f"개인정보/윤리 KB 검토 항목: {rule.title}",
-                recommendation="저장, 공유, export 전에 상담사가 동의와 비식별화 필요 여부를 확인",
-            )
-            for rule in privacy_context[:3]
-        ],
-        sensitive_info_items=sanitized.sensitive_info_candidates,
-        requires_counselor_review=counselor_review_fields,
     )
 
 
