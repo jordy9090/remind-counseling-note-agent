@@ -128,7 +128,7 @@ def credential_rate_limit_key(authorization: str) -> tuple[str, int, int]:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limit, window
 
 
-def validate_quick_summary_text(text: str) -> str:
+def _validate_quick_summary_input(text: str) -> tuple[str, int]:
     cleaned = re.sub(r"[ \t]+\n", "\n", (text or "").strip())
     if len(cleaned) < QUICK_SUMMARY_MIN_CHARS:
         raise QuickSummaryInputError(f"요약할 상담 내용을 {QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.")
@@ -141,13 +141,17 @@ def validate_quick_summary_text(text: str) -> str:
         raise QuickSummaryInputError(
             "간편 요약의 추정 입력 토큰 한도를 초과했어요. 내용을 줄여서 다시 시도해주세요."
         )
-    return cleaned
+    return cleaned, estimated_tokens
+
+
+def validate_quick_summary_text(text: str) -> str:
+    return _validate_quick_summary_input(text)[0]
 
 
 def generate_quick_summary(text: str) -> QuickSummaryResponse:
     """Run the public shared core and render its four-item compatibility response."""
-    cleaned = validate_quick_summary_text(text)
-    _enforce_estimated_cost_limit(cleaned)
+    cleaned, estimated_source_tokens = _validate_quick_summary_input(text)
+    _enforce_estimated_cost_limit(estimated_source_tokens)
     acquired = _concurrency_guard.acquire(timeout=settings.quick_summary_concurrency_wait_seconds)
     if not acquired:
         raise QuickSummaryBusy("public summary capacity exhausted")
@@ -181,8 +185,7 @@ def generate_quick_summary(text: str) -> QuickSummaryResponse:
     )
 
 
-def _enforce_estimated_cost_limit(text: str) -> None:
-    estimated_source_tokens = estimate_korean_tokens(text)
+def _enforce_estimated_cost_limit(estimated_source_tokens: int) -> None:
     estimated_cost = estimate_generation_cost_usd(
         input_tokens=(estimated_source_tokens + 4_000) * PUBLIC_QUICK_POLICY.max_core_provider_calls,
         output_tokens=2_500 * PUBLIC_QUICK_POLICY.max_core_provider_calls,

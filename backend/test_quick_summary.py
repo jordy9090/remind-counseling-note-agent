@@ -161,6 +161,18 @@ class QuickSummaryTest(unittest.TestCase):
             self.client.post("/api/notes/quick-summary", json={"text": token_heavy}).status_code,
         )
 
+    def test_cost_guard_reuses_the_validated_token_estimate(self) -> None:
+        with patch.object(
+            qs,
+            "estimate_korean_tokens",
+            wraps=qs.estimate_korean_tokens,
+        ) as estimate_tokens:
+            response = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE})
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, estimate_tokens.call_count)
+        self.assertEqual(SAMPLE, estimate_tokens.call_args.args[0])
+
     def test_anonymous_requests_are_rate_limited_per_ip(self) -> None:
         limit = qs.ANONYMOUS_LIMIT[0]
         headers = {"x-real-ip": "203.0.113.7"}
