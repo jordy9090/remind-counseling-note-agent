@@ -305,7 +305,7 @@ class TemporaryDraftSaveRequest(BaseModel):
     """Frontend workspace state saved by the counselor before final confirmation."""
 
     draft_id: str | None = None
-    case_id: str
+    case_id: str = Field(max_length=80)
     session_number: int
     session_date: str = ""
     counselor_name: str = ""

@@ -350,6 +350,38 @@ class AccessBoundaryTests(unittest.TestCase):
                 self.assert_private(response)
                 self.assertNotIn(CASES["b"], response.text)
 
+    def test_oversized_case_ids_stop_before_draft_and_export_services(self):
+        oversized_case_id = "C" * 81
+        draft_payload = {"case_id": oversized_case_id, "session_number": 1}
+        document_payload = {**export_payload(), "case_id": oversized_case_id}
+        requests = [
+            ("backend", "POST", "/api/notes/drafts", {"json": draft_payload}),
+            ("drafts", "POST", "/", {"json": draft_payload}),
+            ("drafts", "POST", "/api/notes/drafts", {"json": draft_payload}),
+            ("backend", "GET", "/api/notes/drafts", {"params": {"case_id": oversized_case_id}}),
+            ("drafts", "GET", "/", {"params": {"case_id": oversized_case_id}}),
+            ("drafts", "GET", "/api/notes/drafts", {"params": {"case_id": oversized_case_id}}),
+            ("backend", "POST", "/api/documents/export", {"json": document_payload}),
+            ("export", "POST", "/", {"json": document_payload}),
+            ("export", "POST", "/api/documents/export", {"json": document_payload}),
+        ]
+        with ExitStack() as blockers:
+            spies = [
+                blockers.enter_context(patch("app.api.routes.notes.save_temporary_draft")),
+                blockers.enter_context(patch.object(WRAPPER_MODULES["drafts"], "save_temporary_draft")),
+                blockers.enter_context(patch("app.api.routes.notes.list_temporary_drafts")),
+                blockers.enter_context(patch.object(WRAPPER_MODULES["drafts"], "list_temporary_drafts")),
+                blockers.enter_context(patch("app.services.document_export.DocumentExportService.export")),
+            ]
+            for name, method, path, kwargs in requests:
+                with self.subTest(name=name, method=method, path=path):
+                    response = self.request(name, method, path, **kwargs)
+                    self.assertEqual(response.status_code, 422, response.text)
+            for spy in spies:
+                spy.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_create_cannot_claim_existing_foreign_id(self):
         for name, path in [("backend", "/api/cases"), ("cases", "/"), ("cases", "/api/cases"), ("cases", "/api/cases/dashboard")]:
             with self.subTest(name=name, path=path):

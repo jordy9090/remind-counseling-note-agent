@@ -6,7 +6,7 @@ import os
 import traceback
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
 from app.api.security import _require_supabase_user, require_preview_access
 from app.graph.graph import run_note_pipeline
@@ -178,7 +178,10 @@ async def get_note_draft(draft_id: str, actor: PreviewActor) -> TemporaryDraftRe
 
 
 @router.get("/drafts", response_model=list[TemporaryDraftRecord])
-async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> list[TemporaryDraftRecord]:
+async def list_note_drafts(
+    actor: PreviewActor,
+    case_id: Annotated[str | None, Query(max_length=80)] = None,
+) -> list[TemporaryDraftRecord]:
     """Return temporary drafts, optionally filtered by case id."""
     return list_temporary_drafts(actor=actor, case_id=case_id)
 

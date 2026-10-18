@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from typing import Annotated
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -39,7 +39,7 @@ async def save_note_draft(
 @app.get("/api/notes/drafts", response_model=list[TemporaryDraftRecord])
 async def list_note_drafts(
     actor: PreviewActor,
-    case_id: str | None = None,
+    case_id: Annotated[str | None, Query(max_length=80)] = None,
 ) -> list[TemporaryDraftRecord]:
     return list_temporary_drafts(actor=actor, case_id=case_id)
 
