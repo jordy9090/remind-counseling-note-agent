@@ -39,7 +39,7 @@ from app.schemas.note import (
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues
 from app.services.relational_insights import has_documented_counselor_reflection
-from app.services.deidentification import deidentify_sources, render_counselor_text
+from app.services.deidentification import deidentify_sources, deidentify_text, mask_known_names, render_counselor_text
 from app.services.session_materials import separate_session_materials
 from app.services.supabase_storage import _storage_for_actor
 from app.services.grounded_generation import (
@@ -76,15 +76,22 @@ def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
     """Detect sensitive candidates and normalize input sources."""
     session_input: SessionInput = state["session_input"]
     materials = separate_session_materials(session_input.counselor_memo, session_input.transcript_text)
-    masked_sources, sensitive_candidates = deidentify_sources(
-        {
+    tags = list(session_input.key_issue_tags or [])
+    source_values = {
             "counselor_memo": materials.counselor_memo.strip(),
             "transcript_text": materials.transcript_text.strip(),
             "previous_session_summary": session_input.previous_session_summary.strip(),
             "counseling_goal": session_input.counseling_goal.strip(),
             "psychological_test_summary": session_input.psychological_test_summary.strip(),
             "nonverbal_notes": session_input.nonverbal_notes.strip(),
-        }
+    }
+    source_values.update({f"key_issue_tags/{index}": tag for index, tag in enumerate(tags)})
+    masked_sources, sensitive_candidates = deidentify_sources(
+        source_values,
+        known_name_replacements={
+            session_input.client_alias: "[CLIENT]",
+            session_input.counselor_name: "[COUNSELOR]",
+        },
     )
     sanitized = SanitizedInput(
         case_id=session_input.case_id,
@@ -98,7 +105,7 @@ def sanitize_input(state: dict[str, Any]) -> dict[str, Any]:
             previous_session_summary=masked_sources["previous_session_summary"],
             counseling_goal=masked_sources["counseling_goal"],
             psychological_test_summary=masked_sources["psychological_test_summary"],
-            key_issue_tags=session_input.key_issue_tags,
+            key_issue_tags=[masked_sources[f"key_issue_tags/{index}"] for index in range(len(tags))],
             nonverbal_notes=masked_sources["nonverbal_notes"],
         ),
         sensitive_info_candidates=sensitive_candidates,
@@ -407,6 +414,13 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         )
         if summary_quality_issues(summary):
             raise SummaryQualityError()
+    summary.session_info = SessionInfo(
+        case_id=sanitized.case_id,
+        client_alias=sanitized.client_alias,
+        session_number=sanitized.session_number,
+        session_date=sanitized.session_date,
+        counselor_name=sanitized.counselor_name,
+    )
     _normalize_summary_refs(
         summary,
         sanitized,
@@ -1090,6 +1104,7 @@ def _build_structure_prompt(
     template_context: RetrievedTemplateContext | None,
 ) -> str:
     source_ref_keys = list(_source_catalog(sanitized, case_context))
+    provider_sanitized = _provider_safe_sanitized(sanitized)
     return f"""
 You are generating structured counseling documentation data for Re:mind V1.
 Role: documentation assistant for a counselor, not a clinician and not a supervisor.
@@ -1124,7 +1139,7 @@ Uncertainty behavior: if evidence is missing or weak, return needs_review and id
 Failure behavior: prefer a brief needs_review item over a plausible guess.
 
 Sanitized input:
-{_json(sanitized)}
+{_json(provider_sanitized)}
 
 Retrieved case context:
 {_json(case_context)}
@@ -1149,6 +1164,11 @@ def _build_summary_prompt(
     requested_section_ids = requested_section_ids or []
     case_context = case_context or []
     source_segments = source_segments or {}
+    provider_sanitized = _provider_safe_sanitized(sanitized)
+    provider_session_topic = mask_known_names(
+        deidentify_text(session_topic, source="session_topic")[0],
+        {sanitized.client_alias: "[CLIENT]", sanitized.counselor_name: "[COUNSELOR]"},
+    )
     source_ref_keys = list(_source_catalog(sanitized, case_context, source_segments))
     # Raw session material is supplied once. Repeated extraction lists encourage
     # structured-output models to copy utterances into intervention/response fields.
@@ -1163,7 +1183,7 @@ def _build_summary_prompt(
     ]
     if hierarchical:
         rendered_input: Any = {
-            "case_id": sanitized.case_id,
+            "case_id": provider_sanitized.case_id,
             "session_number": sanitized.session_number,
             "session_date": sanitized.session_date,
             "previous_session_summary": sanitized.sources.previous_session_summary,
@@ -1178,7 +1198,7 @@ def _build_summary_prompt(
         }
         evidence_label = "Hierarchical chunk summaries with position-preserving source references"
     else:
-        rendered_input = sanitized
+        rendered_input = provider_sanitized
         evidence_label = "Evidence reference index (reference metadata only; summarize the original material above)"
     return f"""
 Generate an editable Korean counseling session summary draft.
@@ -1240,7 +1260,7 @@ The frontend will display only these requested section ids:
 If requested_section_ids is not empty, rewrite the requested sections as a coherent self-contained draft
 for that exact checklist configuration. Avoid relying on omitted sections for essential context.
 For non-requested sections, keep them brief and grounded because they may be hidden by the frontend.
-Counselor-selected session topic, if provided: {session_topic or "not provided"}
+Counselor-selected session topic, if provided: {provider_session_topic or "not provided"}
 
 Sanitized input:
 {_json(rendered_input)}
@@ -1264,6 +1284,11 @@ def _build_verification_prompt(
     privacy_context: list[RetrievedPrivacyRule] | None = None,
 ) -> str:
     privacy_context = privacy_context or []
+    provider_sanitized = _provider_safe_sanitized(sanitized)
+    provider_summary = summary.model_copy(deep=True)
+    provider_summary.session_info = provider_summary.session_info.model_copy(
+        update={"case_id": "provider-case", "client_alias": "", "counselor_name": ""}
+    )
     return f"""
 Verify the generated counseling note draft.
 Role: safety and evidence verifier for a counseling documentation draft.
@@ -1278,7 +1303,7 @@ raw audio storage risk, access-control risk, unsupported claims, and counselor-r
 Failure behavior: when uncertain, add a reviewable claim instead of approving the claim.
 
 Sanitized input:
-{_json(sanitized)}
+{_json(provider_sanitized)}
 
 Structured data:
 {_json(structured)}
@@ -1287,11 +1312,18 @@ Evidence mapped data:
 {_json(evidence_mapped)}
 
 Summary draft:
-{_json(summary)}
+{_json(provider_summary)}
 
 Retrieved privacy/ethics/security context:
 {_json(privacy_context)}
 """
+
+
+def _provider_safe_sanitized(sanitized: SanitizedInput) -> SanitizedInput:
+    return sanitized.model_copy(
+        update={"case_id": "provider-case", "client_alias": "", "counselor_name": ""},
+        deep=True,
+    )
 
 
 def _merge_grounding_verification(

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     llm_input_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
     llm_cached_input_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
     llm_output_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
+    allow_external_storage_entity_extraction: bool = False
     relational_insight_timeout_seconds: float = Field(default=60, ge=1, le=90)
     quick_summary_max_concurrent: int = Field(default=2, ge=1, le=16)
     quick_summary_concurrency_wait_seconds: float = Field(default=0.1, ge=0, le=5)

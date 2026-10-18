@@ -219,7 +219,13 @@ def _storage_for_actor(actor: str) -> SupabaseStorage:
     return SupabaseStorage(timeout_seconds=storage.timeout_seconds, access_token=access_token)
 
 
-def persist_generated_note(session_input: SessionInput, result: GenerateNoteResponse, *, actor: str = "server_demo_actor") -> PersistenceReport:
+def persist_generated_note(
+    session_input: SessionInput,
+    result: GenerateNoteResponse,
+    *,
+    actor: str = "server_demo_actor",
+    original_session_input: SessionInput | None = None,
+) -> PersistenceReport:
     """Persist a generated note when explicitly requested by the API caller."""
     report = PersistenceReport(
         enabled=settings.enable_persistence,
@@ -261,7 +267,14 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         )
         session_rows = actor_storage.upsert(
             "sessions",
-            [_build_session_row(session_input, result, user_id=actor)],
+            [
+                _build_session_row(
+                    session_input,
+                    result,
+                    user_id=actor,
+                    original_session_input=original_session_input,
+                )
+            ],
             on_conflict="case_id,session_number",
         )
         session_id = str(session_rows[0]["id"]) if session_rows else None
@@ -717,7 +730,13 @@ def _transcript_status(session_input: SessionInput) -> str:
     return "completed" if (session_input.transcript_text or "").strip() else "none"
 
 
-def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse, *, user_id: str) -> dict[str, Any]:
+def _build_session_row(
+    session_input: SessionInput,
+    result: GenerateNoteResponse,
+    *,
+    user_id: str,
+    original_session_input: SessionInput | None = None,
+) -> dict[str, Any]:
     return {
         "case_id": session_input.case_id,
         "user_id": user_id,
@@ -725,7 +744,7 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
         "session_date": session_input.session_date or None,
         "session_title": _session_title(session_input),
         "transcript_status": _transcript_status(session_input),
-        "raw_input_text": _session_raw_input(session_input, user_id),
+        "raw_input_text": _session_raw_input(original_session_input or session_input, user_id),
         "sanitized_input_text": json.dumps(
             result.sanitized_input.model_dump(mode="json"),
             ensure_ascii=False,

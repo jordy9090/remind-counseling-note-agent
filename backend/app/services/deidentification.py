@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.schemas.note import SensitiveInfoCandidate
@@ -63,6 +64,18 @@ MASK_RULES = [
         "Institution names can re-identify a client; review and generalize them.",
     ),
     MaskRule(
+        "occupation",
+        "[OCCUPATION]",
+        re.compile(
+            r"(?<![가-힣])(?:초등학교\s+교사|중학교\s+교사|고등학교\s+교사|보육교사|간호사|약사|한의사|"
+            r"변호사|법무사|운동선수|공무원|소방관|직업군인|회사원|개발자|프로그래머|연구원|바리스타|"
+            r"승무원|대학생|대학원생)"
+            r"(?=(?:은|는|이|가|을|를|과|와|로|으로|인|이며|이고|에서|에게|의|도|만|라고|라며)?"
+            r"(?:\s|[,.;!?]|$))"
+        ),
+        "Occupations can re-identify a client; generalize them before external processing.",
+    ),
+    MaskRule(
         "rare_occupation",
         "[OCCUPATION]",
         re.compile(r"(?:우주비행사|싱어송라이터|프로게이머|유명인|연예인|국회의원|외교관)"),
@@ -91,10 +104,26 @@ MASK_RULES = [
     ),
 ]
 
+_CONTEXTUAL_PERSON_NAME = re.compile(
+    r"(?P<role>친구|동생|형|누나|언니|오빠|어머니|아버지|엄마|아빠|배우자|남편|아내|동료|상사|담임|보호자)"
+    r"(?P<spacing>\s+)(?P<name>[가-힣]{2,4}?)"
+    r"(?=(?:은|는|이|가|을|를|과|와|에게|한테|씨|님)?(?:[^가-힣]|$))"
+)
+_GENERIC_PERSON_LABELS = frozenset({
+    "내담자", "상담자", "상담사", "상담", "보호자", "어머니", "아버지", "엄마", "아빠", "선생님",
+    "client", "counselor",
+})
+_CONTEXTUAL_NON_NAMES = frozenset({
+    "가정", "갈등", "고민", "관계", "대화", "도움", "문제", "반응", "상담", "상태", "생각",
+    "소식", "약속", "연락", "이야기", "직장", "표현", "학교", "행동", "계획",
+})
+
 
 COUNSELOR_PLACEHOLDER_LABELS = {
     "[PERSON]": "내담자",
     "[NAME]": "내담자",
+    "[CLIENT]": "내담자",
+    "[COUNSELOR]": "상담자",
     "[LOCATION]": "장소 정보 비공개",
     "[ADDRESS]": "장소 정보 비공개",
     "[INSTITUTION]": "기관 정보 비공개",
@@ -123,16 +152,22 @@ def render_counselor_text(text: str, *, client_alias: str = "") -> str:
         "과": ("과", "와"),
         "와": ("과", "와"),
     }
-    for placeholder in ("[PERSON]", "[NAME]"):
+    person_labels = {
+        "[PERSON]": person_label,
+        "[NAME]": person_label,
+        "[CLIENT]": person_label,
+        "[COUNSELOR]": "상담자",
+    }
+    for placeholder, replacement in person_labels.items():
         for supplied, (with_final, without_final) in particle_pairs.items():
             rendered = rendered.replace(
                 placeholder + supplied,
-                person_label + (with_final if _has_final_consonant(person_label) else without_final),
+                replacement + (with_final if _has_final_consonant(replacement) else without_final),
             )
     for placeholder, label in COUNSELOR_PLACEHOLDER_LABELS.items():
         rendered = rendered.replace(
             placeholder,
-            person_label if placeholder in {"[PERSON]", "[NAME]"} else label,
+            person_labels.get(placeholder, label),
         )
     return rendered
 
@@ -168,6 +203,25 @@ def deidentify_text(text: str, source: str = "") -> tuple[str, list[SensitiveInf
     """
     masked = text or ""
     candidates: list[SensitiveInfoCandidate] = []
+    contextual_name_count = 0
+
+    def replace_contextual_name(match: re.Match[str]) -> str:
+        nonlocal contextual_name_count
+        if match.group("name") in _CONTEXTUAL_NON_NAMES:
+            return match.group(0)
+        contextual_name_count += 1
+        return f"{match.group('role')}{match.group('spacing')}[PERSON]"
+
+    masked = _CONTEXTUAL_PERSON_NAME.sub(replace_contextual_name, masked)
+    if contextual_name_count:
+        candidates.append(
+            SensitiveInfoCandidate(
+                text="[PERSON]",
+                source=source,
+                category="person_name",
+                recommendation="Explicit names should be replaced with aliases.",
+            )
+        )
     for rule in MASK_RULES:
         seen_in_rule = False
 
@@ -189,11 +243,48 @@ def deidentify_text(text: str, source: str = "") -> tuple[str, list[SensitiveInf
     return masked, candidates
 
 
-def deidentify_sources(sources: dict[str, str]) -> tuple[dict[str, str], list[SensitiveInfoCandidate]]:
+def known_name_variants(raw_name: str) -> set[str]:
+    """Return safe-to-mask variants for an explicitly supplied personal name or alias."""
+    value = (raw_name or "").strip()
+    if len(value) < 2 or value.casefold() in _GENERIC_PERSON_LABELS:
+        return set()
+    variants = {value}
+    if re.fullmatch(r"[가-힣]{3,5}", value):
+        given_name = value[1:]
+        if given_name not in _GENERIC_PERSON_LABELS:
+            variants.add(given_name)
+    return variants
+
+
+def mask_known_names(text: str, replacements: Mapping[str, str]) -> str:
+    """Replace explicitly supplied names before material reaches an external processor."""
+    masked = text or ""
+    variants = {
+        variant: placeholder
+        for raw_name, placeholder in replacements.items()
+        for variant in known_name_variants(raw_name)
+    }
+    for variant in sorted(variants, key=len, reverse=True):
+        if re.fullmatch(r"[가-힣]{2,5}", variant):
+            particles = r"은|는|이|가|을|를|과|와|에게|한테|씨|님|의|도|만"
+            pattern = re.compile(
+                rf"(?<![가-힣]){re.escape(variant)}(?=(?:{particles})?(?:[^가-힣]|$))"
+            )
+        else:
+            pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(variant)}(?![A-Za-z0-9])", re.IGNORECASE)
+        masked = pattern.sub(variants[variant], masked)
+    return masked
+
+
+def deidentify_sources(
+    sources: dict[str, str],
+    *,
+    known_name_replacements: Mapping[str, str] | None = None,
+) -> tuple[dict[str, str], list[SensitiveInfoCandidate]]:
     masked_sources: dict[str, str] = {}
     candidates: list[SensitiveInfoCandidate] = []
     for source, text in sources.items():
         masked, found = deidentify_text(text, source=source)
-        masked_sources[source] = masked
+        masked_sources[source] = mask_known_names(masked, known_name_replacements or {})
         candidates.extend(found)
     return masked_sources, candidates

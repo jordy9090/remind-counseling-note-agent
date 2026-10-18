@@ -185,6 +185,7 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
     must never switch shared settings or replace a user's record with demo text.
     """
     with observe_llm_request("full_summary", max_calls=16):
+        original_session_input = session_input
         try:
             validate_summary_input_budget(session_input, policy=AUTHENTICATED_FULL_POLICY)
             if session_input.persist and settings.enable_persistence:
@@ -201,7 +202,12 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
                 status_code=502,
                 detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
             ) from error
-        result.persistence_report = persist_generated_note(session_input, result, actor=actor)
+        result.persistence_report = persist_generated_note(
+            session_input,
+            result,
+            actor=actor,
+            original_session_input=original_session_input,
+        )
         return result
 
 

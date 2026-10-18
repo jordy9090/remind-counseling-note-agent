@@ -8,7 +8,7 @@ This review covers the repository state on 2026-10-19. It uses synthetic data on
 | --- | --- | --- | --- |
 | Public Quick Summary | Configured generation provider | Deterministically masked current-session text, then structured evidence | No Supabase read/write, prior-session context, actor context, or persistence. Raw text is sent once; the summary call reuses structured evidence. |
 | Authenticated Full Summary (`persist=false`) | Configured generation provider | Deterministically masked current-session sources; retrieved context only when enabled | Generation provider is selected once per process configuration. There is no automatic provider fallback. |
-| Authenticated Full Summary (`persist=true`) | Configured generation provider, then Supabase | `storage_deidentification.py` can send joined raw storage text to a model to find names and occupations before deterministic replacement | **Open risk:** stored text may be de-identified while the extraction provider has already received raw text. This sprint does not rewrite the file because parallel work owns that implementation. |
+| Authenticated Full Summary (`persist=true`) | Configured generation provider, then Supabase | Generation receives deterministically masked session material. Storage entity extraction is disabled by default; an explicit opt-in receives only the deterministic masking baseline. | Raw storage text is no longer sent as entered for entity extraction. Unknown contextual quasi-identifiers can remain after deterministic masking, so this is not an anonymity guarantee. |
 | Dense retrieval / memory indexing | OpenAI embeddings endpoint | Sanitized retrieval query or de-identified stored chunks | Explicitly enabled only. Embedding telemetry records counts and latency, never text. Generation-provider configuration does not silently redirect embeddings. |
 | Relational insight, grounded generation, claim support | Configured generation provider | Sanitized current-session sources and/or explicitly retrieved evidence | Optional paths. Failure preserves the base summary or fails closed depending on the validation stage. |
 | Audio transcription | Local WhisperX / pyannote runtime | Uploaded audio is processed by the configured local runtime | Model artifacts may be fetched from their registries during setup, but this code has no remote transcription API call. |
@@ -26,6 +26,8 @@ The deterministic masker now covers common direct identifiers, institutions, sel
 ## Generation provider abstraction
 
 `LLM_PROVIDER=openai` uses the OpenAI endpoint. `LLM_PROVIDER=openai_compatible` requires one explicit `OPENAI_COMPATIBLE_BASE_URL` and never falls back to OpenAI after an error. Structured Pydantic output is validated through the same shared core.
+
+`ALLOW_EXTERNAL_STORAGE_ENTITY_EXTRACTION=0` is the secure default. Enabling it is an explicit data-processing decision; even then, supported direct identifiers and known aliases are masked before the extraction request.
 
 The reproducible compatibility harness is:
 

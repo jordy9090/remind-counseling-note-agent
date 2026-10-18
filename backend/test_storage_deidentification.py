@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -53,9 +53,9 @@ class MaskingRuleTests(unittest.TestCase):
     def test_model_mentions_are_masked_and_generalized_in_text(self) -> None:
         with model_returns(ENTITIES):
             texts, report = deid.deidentify_texts({"memo": MEMO})
-        self.assertEqual(texts["memo"], "김O지 내담자는 교육자로 일한다. 민O가 동생 박O준과 다툰 뒤 예술가인 친구에게 연락했다.")
+        self.assertEqual(texts["memo"], "김O지 내담자는 교육자로 일한다. 민O가 동생 [PERSON]과 다툰 뒤 예술가인 친구에게 연락했다.")
         self.assertTrue(report.llm_used)
-        self.assertEqual((report.names_masked, report.occupations_generalized), (3, 2))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 2))
 
     def test_names_are_not_masked_inside_other_words_or_twice(self) -> None:
         entities = deid._StorageEntities(person_names=["지원", "홍O동"], occupations=[])
@@ -68,16 +68,55 @@ class MaskingRuleTests(unittest.TestCase):
             texts, report = deid.deidentify_texts({"memo": MEMO}, known_names=["김민지", "합성 가명"])
         self.assertIn("김O지 내담자", texts["memo"])
         self.assertIn("민O가", texts["memo"])
-        self.assertIn("초등학교 교사", texts["memo"], "free-text occupations need the model")
+        self.assertIn("교육자", texts["memo"])
+        self.assertFalse(report.llm_used)
+
+    def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
+        with patch.object(settings, "allow_external_storage_entity_extraction", False):
+            texts, report = deid.deidentify_texts({"memo": "친구 박서준은 간호사로 일한다."})
+        self.assertEqual("친구 [PERSON]은 의료인으로 일한다.", texts["memo"])
         self.assertFalse(report.llm_used)
 
     def test_stub_mode_never_calls_the_provider(self) -> None:
-        with patch.object(settings, "use_stub", True), patch("app.services.llm.get_structured_llm",
+        with patch.object(settings, "allow_external_storage_entity_extraction", True), patch.object(settings, "use_stub", True), patch("app.services.llm.get_structured_llm",
                                                             side_effect=AssertionError("provider called")):
             self.assertIsNone(deid._extract_entities(MEMO))
 
+    def test_external_entity_extraction_is_disabled_by_default(self) -> None:
+        with patch.object(settings, "allow_external_storage_entity_extraction", False), patch.object(
+            settings, "use_stub", False
+        ), patch.object(settings, "openai_api_key", "synthetic-key"), patch(
+            "app.services.llm.get_structured_llm", side_effect=AssertionError("provider called")
+        ):
+            texts, report = deid.deidentify_texts(
+                {"memo": "이름: 김민지, 010-1234-5678, minji@example.com, 한빛고등학교"},
+                known_names=["김민지"],
+            )
+        self.assertFalse(report.llm_used)
+        for raw in ("김민지", "010-1234-5678", "minji@example.com", "한빛고등학교"):
+            self.assertNotIn(raw, texts["memo"])
+
+    def test_opt_in_extraction_receives_only_deterministically_masked_text(self) -> None:
+        captured: list[str] = []
+        runnable = Mock()
+        runnable.invoke.side_effect = lambda prompt: captured.append(prompt) or deid._StorageEntities()
+        with patch.object(settings, "allow_external_storage_entity_extraction", True), patch.object(
+            settings, "use_stub", False
+        ), patch.object(settings, "openai_api_key", "synthetic-key"), patch(
+            "app.services.llm.get_structured_llm", return_value=runnable
+        ):
+            deid.deidentify_texts(
+                {"memo": "최하늘 010-1234-5678 minji@example.com 한빛고등학교 싱어송라이터"},
+                known_names=["최하늘"],
+            )
+        self.assertEqual(1, runnable.invoke.call_count)
+        provider_text = captured[0].split("Text:\n", 1)[1]
+        for raw in ("최하늘", "010-1234-5678", "minji@example.com", "한빛고등학교", "싱어송라이터"):
+            self.assertNotIn(raw, provider_text)
+        self.assertIn("최O늘", provider_text)
+
     def test_provider_errors_fall_back_quietly(self) -> None:
-        with patch.object(settings, "use_stub", False), patch.object(settings, "openai_api_key", "synthetic-key"), \
+        with patch.object(settings, "allow_external_storage_entity_extraction", True), patch.object(settings, "use_stub", False), patch.object(settings, "openai_api_key", "synthetic-key"), \
                 patch("app.services.llm.get_structured_llm", side_effect=RuntimeError("synthetic outage")):
             self.assertIsNone(deid._extract_entities(MEMO))
 
@@ -92,6 +131,25 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual(result["form"]["key_issue_tags"], ["민O 갈등"])
         self.assertIn("교육자로", result["form"]["counselor_memo"])
         self.assertEqual(result["sections"][0]["content"], "민O는 교사가 꿈이었다.")
+
+    def test_json_payloads_preserve_only_curated_theory_source_urls(self) -> None:
+        payload = {
+            "result": {
+                "relational_insights": {
+                    "theory_sources": [{"url": "https://example.org/synthetic"}],
+                },
+            },
+            "content": "내담자 계정은 https://example.org/minji 이다.",
+        }
+
+        result, _ = deid.deidentify_json(payload)
+
+        self.assertEqual(
+            "https://example.org/synthetic",
+            result["result"]["relational_insights"]["theory_sources"][0]["url"],
+        )
+        self.assertNotIn("https://example.org/minji", result["content"])
+        self.assertIn("[ACCOUNT]", result["content"])
 
 
 class StorageEntryPointTests(unittest.TestCase):
@@ -114,16 +172,18 @@ class StorageEntryPointTests(unittest.TestCase):
         for raw in ("김민지", "민지가", "박서준", "초등학교 교사", "싱어송라이터"):
             self.assertNotIn(raw, text)
 
-    def test_generation_stores_only_deidentified_input_and_notes(self) -> None:
+    def test_generation_deidentifies_derived_storage_and_preserves_configured_original(self) -> None:
         response = self.client.post("/api/notes/generate", headers=self.headers,
                                     json={**INPUT, "client_alias": "김민지", "counselor_memo": MEMO})
         self.assertEqual(response.status_code, 200, response.text[:300])
         self.assertTrue(response.json()["persistence_report"]["stored"])
-        for table in ("sessions", "generated_notes", "cases"):
+        for table in ("generated_notes", "cases"):
             with self.subTest(table=table):
                 self.assert_deidentified(self.stored_text(table))
         session = self.store.tables["sessions"][0]
-        self.assertIn("김O지 내담자는 교육자로 일한다", json.loads(session["raw_input_text"])["counselor_memo"])
+        self.assertEqual(MEMO, json.loads(session["raw_input_text"])["counselor_memo"])
+        self.assert_deidentified(session["sanitized_input_text"])
+        self.assertIn("교육자로 일한다", session["sanitized_input_text"])
         self.assertEqual(self.store.tables["cases"][0]["case_alias"], "김O지")
 
     def test_client_profile_is_stored_with_masked_name_and_category(self) -> None:

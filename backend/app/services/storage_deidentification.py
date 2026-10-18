@@ -6,15 +6,10 @@ Rules (product decision, 2026-10-16):
 - Occupations are replaced with a broad category that keeps the field but not the job, for example
   초등학교 교사 / 교수 → 교육자, 연예인 → 예술가.
 
-Names and occupations in free text are found with the OpenAI model (structured output). The model
-only returns the mentions; the replacement itself is deterministic and applies only to text that
-actually occurs in the input. When the model is unavailable (stub mode, missing key, timeout, or
-error), the deterministic fallback still masks the client alias and its given name and maps the
-profile occupation field through a keyword table; other free-text names and occupations are then
-left as they are and the report says so. Saving never fails because of this step.
-
-The extraction request sends the text as entered to the model provider; the generation pipeline
-afterwards receives the de-identified text.
+Direct identifiers and known aliases are masked deterministically before any optional entity
+extraction. External extraction is disabled by default. When an operator explicitly enables it,
+the configured provider receives only that deterministic baseline and can identify remaining name
+or occupation mentions. Saving never fails because of this optional step.
 """
 from __future__ import annotations
 
@@ -26,6 +21,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.services.deidentification import deidentify_text, known_name_variants
 
 NAME_MASK_CHAR = "O"
 FALLBACK_OCCUPATION = "기타 직업군"
@@ -90,6 +86,36 @@ _KEYWORDS_LONGEST_FIRST = sorted(
 
 _HANGUL = re.compile(r"[가-힣]")
 _NAME_TOKEN = re.compile(r"^[가-힣]{2,5}$|^[A-Za-z][A-Za-z.'-]{1,20}$")
+_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS: dict[str, str] = {
+    "초등학교 교사": "교육자",
+    "중학교 교사": "교육자",
+    "고등학교 교사": "교육자",
+    "보육교사": "교육자",
+    "간호사": "의료인",
+    "약사": "의료인",
+    "한의사": "의료인",
+    "변호사": "법률 전문가",
+    "법무사": "법률 전문가",
+    "운동선수": "체육인",
+    "공무원": "공공 부문 종사자",
+    "소방관": "공공 부문 종사자",
+    "직업군인": "공공 부문 종사자",
+    "회사원": "사무직 종사자",
+    "개발자": "IT·기술직 종사자",
+    "프로그래머": "IT·기술직 종사자",
+    "연구원": "연구자",
+    "바리스타": "서비스직 종사자",
+    "승무원": "서비스직 종사자",
+    "대학생": "학생",
+    "대학원생": "학생",
+    "우주비행사": FALLBACK_OCCUPATION,
+    "싱어송라이터": "예술가",
+    "프로게이머": FALLBACK_OCCUPATION,
+    "유명인": FALLBACK_OCCUPATION,
+    "연예인": "예술가",
+    "국회의원": "공공 부문 종사자",
+    "외교관": "공공 부문 종사자",
+}
 
 
 def mask_name(name: str) -> str:
@@ -159,8 +185,8 @@ class StorageDeidentificationReport:
 
 
 def _extract_entities(text: str) -> _StorageEntities | None:
-    """Ask the model for name and occupation mentions; None when the model is unavailable."""
-    if settings.stub_mode or not text.strip():
+    """Optionally extract residual mentions from a deterministically masked baseline."""
+    if not settings.allow_external_storage_entity_extraction or settings.stub_mode or not text.strip():
         return None
     try:
         from app.services.llm import get_structured_llm
@@ -184,13 +210,25 @@ def _alias_names(known_names: Iterable[str]) -> set[str]:
     """Deterministic names: each known alias that looks like a personal name, plus its given name."""
     names: set[str] = set()
     for raw in known_names:
-        value = (raw or "").strip()
-        if not value or is_masked_name(value) or not re.fullmatch(r"[가-힣]{2,5}", value):
-            continue
-        names.add(value)
-        if len(value) >= 3:
-            names.add(value[1:])  # 김민지 → 민지
+        for value in known_name_variants(raw):
+            if not is_masked_name(value) and re.fullmatch(r"[가-힣]{2,5}", value):
+                names.add(value)
     return names
+
+
+def _occupation_pattern(occupation: str) -> re.Pattern[str]:
+    particles = r"은|는|이|가|을|를|과|와|로|으로|인|이며|이고|에서|에게|의|도|만|라고|라며"
+    return re.compile(
+        rf"(?<![가-힣]){re.escape(occupation)}(?P<particle>{particles})?(?=\s|[,.;!?]|$)"
+    )
+
+
+def _generalized_occupation(match: re.Match[str], category: str) -> str:
+    particle = match.group("particle") or ""
+    if particle in {"로", "으로"}:
+        final_index = (ord(category[-1]) - 0xAC00) % 28 if category and "가" <= category[-1] <= "힣" else 0
+        particle = "로" if final_index in {0, 8} else "으로"
+    return category + particle
 
 
 def deidentify_texts(
@@ -199,9 +237,27 @@ def deidentify_texts(
     known_names: Iterable[str] = (),
 ) -> tuple[dict[str, str], StorageDeidentificationReport]:
     """Return the texts with names masked and occupations generalized, plus a value-free report."""
-    joined = "\n\n".join(f"[{key}]\n{value}" for key, value in texts.items() if value and value.strip())
-    entities = _extract_entities(joined)
     names = _alias_names(known_names)
+    names_masked = 0
+    occupations_generalized = 0
+    baseline: dict[str, str] = {}
+    for key, value in texts.items():
+        text = value or ""
+        for occupation, category in _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS.items():
+            text, count = _occupation_pattern(occupation).subn(
+                lambda match, category=category: _generalized_occupation(match, category),
+                text,
+            )
+            if count:
+                occupations_generalized += count
+        text = deidentify_text(text, source=key)[0]
+        for name in sorted(names, key=len, reverse=True):
+            text, count = _name_pattern(name).subn(mask_name(name), text)
+            names_masked += count
+        baseline[key] = text
+
+    joined = "\n\n".join(f"[{key}]\n{value}" for key, value in baseline.items() if value and value.strip())
+    entities = _extract_entities(joined)
     occupations: dict[str, str] = {}
     if entities is not None:
         for name in entities.person_names:
@@ -213,11 +269,8 @@ def deidentify_texts(
             if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
                 occupations[value] = mention.category
 
-    names_masked = 0
-    occupations_generalized = 0
     result: dict[str, str] = {}
-    for key, value in texts.items():
-        text = value or ""
+    for key, text in baseline.items():
         # Longest first, so 김민지 is handled before 민지 and 초등학교 교사 before 교사.
         for occupation in sorted(occupations, key=len, reverse=True):
             count = text.count(occupation)
@@ -247,6 +300,14 @@ _STRUCTURAL_KEYS = frozenset({
     "appliedTargets", "confidence", "severity", "sectionId", "blockId", "reportDate", "sessionNumber",
     "workspace_note_id", "confirmation_status", "note_type", "field", "category",
 })
+_CURATED_THEORY_SOURCE_URL = re.compile(
+    r"^/result/relational_insights/theory_sources/\d+/url$"
+)
+
+
+def _is_structural_string(path: str, key: str) -> bool:
+    child_path = f"{path}/{key}"
+    return key in _STRUCTURAL_KEYS or bool(_CURATED_THEORY_SOURCE_URL.fullmatch(child_path))
 
 
 def deidentify_json(value: Any, *, known_names: Iterable[str] = ()) -> tuple[Any, StorageDeidentificationReport]:
@@ -256,7 +317,7 @@ def deidentify_json(value: Any, *, known_names: Iterable[str] = ()) -> tuple[Any
     def collect(node: Any, path: str) -> None:
         if isinstance(node, dict):
             for key, item in node.items():
-                if key not in _STRUCTURAL_KEYS:
+                if not _is_structural_string(path, key):
                     collect(item, f"{path}/{key}")
         elif isinstance(node, list):
             for index, item in enumerate(node):
@@ -271,7 +332,10 @@ def deidentify_json(value: Any, *, known_names: Iterable[str] = ()) -> tuple[Any
 
     def rebuild(node: Any, path: str) -> Any:
         if isinstance(node, dict):
-            return {key: item if key in _STRUCTURAL_KEYS else rebuild(item, f"{path}/{key}") for key, item in node.items()}
+            return {
+                key: item if _is_structural_string(path, key) else rebuild(item, f"{path}/{key}")
+                for key, item in node.items()
+            }
         if isinstance(node, list):
             return [rebuild(item, f"{path}/{index}") for index, item in enumerate(node)]
         if isinstance(node, str) and path in replaced:
