@@ -7,6 +7,10 @@ from functools import lru_cache
 
 
 _SENTENCE_END = re.compile(r"[.!?。！？](?:[\"'”’」』])?\s+")
+_MAX_EXACT_TOKENIZER_SPAN_CHARS = 1_024
+_OVERSIZED_UNBROKEN_SPAN = re.compile(
+    rf"\S{{{_MAX_EXACT_TOKENIZER_SPAN_CHARS + 1}}}"
+)
 
 
 class TranscriptLimitError(ValueError):
@@ -97,10 +101,15 @@ def _preferred_boundary(text: str, start: int, proposed_end: int) -> int:
 def estimate_korean_tokens(text: str) -> int:
     """Return an offline token count, with a UTF-8 upper bound when tiktoken is unavailable."""
     value = text or ""
+    utf8_upper_bound = len(value.encode("utf-8"))
+    # Very long unbroken Unicode spans trigger superlinear BPE work. The byte
+    # count is conservative and keeps adversarial request validation bounded.
+    if _OVERSIZED_UNBROKEN_SPAN.search(value):
+        return utf8_upper_bound
     encoding = _token_encoding()
     if encoding is not None:
         return len(encoding.encode(value))
-    return len(value.encode("utf-8"))
+    return utf8_upper_bound
 
 
 @lru_cache(maxsize=1)
