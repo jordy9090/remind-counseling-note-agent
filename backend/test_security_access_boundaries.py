@@ -68,6 +68,18 @@ SERVICE_KEY = "synthetic-service-key-must-not-be-used"
 CASES = {key: f"SYNTHETIC-CASE-{key.upper()}" for key in USERS}
 SESSIONS = {"a": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "b": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
 NOTES = {"a": "aaaaaaaa-0000-4000-8000-000000000001", "b": "bbbbbbbb-0000-4000-8000-000000000002"}
+
+
+def api_routes(application):
+    pending = list(application.routes)
+    while pending:
+        route = pending.pop()
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None:
+            pending.extend(included_router.routes)
 PRIVATE_B = "SYNTHETIC-PRIVATE-B-CONTENT"
 PUBLIC_A = "SYNTHETIC-A-SUBMITTED-CONTENT"
 DRAFT_ID = "draft_shared_synthetic"
@@ -443,9 +455,7 @@ class AccessBoundaryTests(unittest.TestCase):
         guarded = []
         public = set()
         for name, application in APPS.items():
-            for route in application.routes:
-                if not isinstance(route, APIRoute):
-                    continue
+            for route in api_routes(application):
                 if name == "backend" and route.path in {"/", "/health", "/api/health"}:
                     continue
                 if (name, route.path) in PUBLIC_ROUTES:
