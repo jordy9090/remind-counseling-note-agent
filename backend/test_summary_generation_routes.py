@@ -83,6 +83,24 @@ class SummaryGenerationRouteTests(unittest.TestCase):
         deidentify.assert_not_called()
         pipeline.assert_not_called()
 
+    def test_oversized_issue_tags_are_rejected_before_provider(self):
+        cases = (
+            (["가" * 96_001], "요청당 입력 한도는 96,000자입니다. 현재 96,033자입니다."),
+            (["🧭" * 48_001], "요청당 추정 입력 토큰 한도는 96,000개입니다."),
+        )
+        with patch("app.api.routes.notes.run_note_pipeline") as pipeline, patch(
+            "app.api.routes.notes.persist_generated_note"
+        ) as persist:
+            for tags, expected_detail in cases:
+                with self.subTest(expected_detail=expected_detail):
+                    payload = {**INPUT, "key_issue_tags": tags, "persist": False}
+                    response = TestClient(main_app).post("/api/notes/generate", json=payload)
+
+                    self.assertEqual(413, response.status_code)
+                    self.assertEqual(expected_detail, response.json()["detail"])
+        pipeline.assert_not_called()
+        persist.assert_not_called()
+
     def test_authenticated_route_reuses_raw_input_budget_validation(self):
         payload = {
             **INPUT,

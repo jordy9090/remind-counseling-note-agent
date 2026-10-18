@@ -10,10 +10,15 @@ os.environ.setdefault("USE_STUB", "1")
 from app.core.config import settings  # noqa: E402
 from app.graph import summary_core  # noqa: E402
 from app.graph.graph import run_note_pipeline  # noqa: E402
-from app.graph.summary_core import PUBLIC_QUICK_POLICY, _sanitized_chunk, run_summary_core  # noqa: E402
+from app.graph.summary_core import (  # noqa: E402
+    AUTHENTICATED_FULL_POLICY,
+    PUBLIC_QUICK_POLICY,
+    _sanitized_chunk,
+    run_summary_core,
+)
 from app.schemas.note import InputSources, SanitizedInput, SessionInput  # noqa: E402
 from app.services import quick_summary  # noqa: E402
-from app.services.transcript_chunking import SourceChunk  # noqa: E402
+from app.services.transcript_chunking import SourceChunk, TranscriptLimitError  # noqa: E402
 
 
 SYNTHETIC_TEXT = (
@@ -67,6 +72,30 @@ class SummaryCoreTests(unittest.TestCase):
             run_note_pipeline(_session_input(), actor="synthetic-owner")
 
         validate_budget.assert_called_once()
+
+    def test_sanitized_issue_tags_are_counted_in_budget(self) -> None:
+        session_input = _session_input(key_issue_tags=["개발자"])
+        sanitized = SanitizedInput(
+            case_id=session_input.case_id,
+            session_number=session_input.session_number,
+            session_date=session_input.session_date,
+            counselor_name=session_input.counselor_name,
+            sources=InputSources(
+                counselor_memo="",
+                transcript_text=SYNTHETIC_TEXT,
+                key_issue_tags=["가" * 96_001],
+            ),
+        )
+
+        with self.assertRaises(TranscriptLimitError):
+            run_summary_core(
+                {
+                    "session_input": session_input,
+                    "sanitized_input": sanitized,
+                    "input_budget_prevalidated": True,
+                },
+                policy=AUTHENTICATED_FULL_POLICY,
+            )
 
     def test_public_core_never_calls_storage_or_retrieval(self) -> None:
         with patch("app.graph.nodes._storage_for_actor", side_effect=AssertionError("storage called")), patch(

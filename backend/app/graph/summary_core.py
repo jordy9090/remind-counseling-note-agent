@@ -144,6 +144,7 @@ def validate_summary_input_budget(
             session_input.transcript_text,
             session_input.previous_session_summary,
             session_input.counseling_goal,
+            "".join(session_input.key_issue_tags),
             session_input.psychological_test_summary,
             session_input.nonverbal_notes,
         )
@@ -202,6 +203,7 @@ def _current_input_text(sanitized: SanitizedInput) -> str:
             sanitized.sources.transcript_text,
             sanitized.sources.previous_session_summary,
             sanitized.sources.counseling_goal,
+            "".join(sanitized.sources.key_issue_tags),
             sanitized.sources.psychological_test_summary,
             sanitized.sources.nonverbal_notes,
         )
