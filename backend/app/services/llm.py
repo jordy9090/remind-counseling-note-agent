@@ -145,11 +145,6 @@ class _InstrumentedStructuredRunnable:
                 result = self._runnable.invoke(provider_input, **kwargs)
             else:
                 result = self._runnable.invoke(provider_input, config=config, **kwargs)
-            parsed, raw, parsing_error = _structured_result(result)
-            if parsing_error is not None:
-                raise parsing_error
-            if parsed is None:
-                raise ValueError("Structured provider response did not contain a parsed result.")
         except Exception as error:
             _record_metric(
                 stage=self._stage,
@@ -159,7 +154,21 @@ class _InstrumentedStructuredRunnable:
                 max_retries=self._max_retries,
                 error_type=type(error).__name__,
             )
-            raise
+            raise LLMProviderInvocationError("The generation provider request failed.") from None
+        parsed, raw, parsing_error = _structured_result(result)
+        if parsing_error is not None or parsed is None:
+            error_type = type(parsing_error).__name__ if parsing_error is not None else "StructuredOutputError"
+            _record_metric(
+                stage=self._stage,
+                latency_ms=_elapsed_ms(started),
+                success=False,
+                raw=raw,
+                max_retries=self._max_retries,
+                error_type=error_type,
+            )
+            raise LLMProviderInvocationError(
+                "The generation provider returned invalid structured output."
+            ) from None
         _record_metric(
             stage=self._stage,
             latency_ms=_elapsed_ms(started),
@@ -172,6 +181,10 @@ class _InstrumentedStructuredRunnable:
 
 class LLMCallBudgetExceeded(RuntimeError):
     """A request attempted more provider calls than its configured maximum."""
+
+
+class LLMProviderInvocationError(RuntimeError):
+    """A content-safe provider failure suitable for propagation across API boundaries."""
 
 
 def _structured_result(result: Any) -> tuple[Any, Any, Exception | None]:

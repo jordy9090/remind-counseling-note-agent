@@ -12,7 +12,7 @@ from app.graph.nodes import (
     structure_session,
     verify_evidence_deterministically,
 )
-from app.schemas.note import EvidenceItem, InputSources, SanitizedInput, SessionInput, StructuredCaseData
+from app.schemas.note import EvidenceItem, SanitizedInput, SessionInput, StructuredCaseData
 from app.services.transcript_chunking import (
     SourceChunk,
     TranscriptLimitError,
@@ -74,6 +74,7 @@ _RETRIEVAL_STATE_KEYS = {
     "retrieved_privacy_context",
     "raw_regions_by_need",
     "grounding_context",
+    "grounding",
 }
 
 
@@ -275,10 +276,19 @@ def _source_chunks(sanitized: SanitizedInput, policy: SummaryCorePolicy) -> list
 
 
 def _sanitized_chunk(sanitized: SanitizedInput, chunk: SourceChunk) -> SanitizedInput:
-    sources = InputSources(
-        counselor_memo=chunk.text if chunk.source_field == "counselor_memo" else "",
-        transcript_text=chunk.text if chunk.source_field == "transcript_text" else "",
-    )
+    updates: dict[str, Any] = {
+        "counselor_memo": chunk.text if chunk.source_field == "counselor_memo" else "",
+        "transcript_text": chunk.text if chunk.source_field == "transcript_text" else "",
+    }
+    if chunk.index != 1:
+        updates.update(
+            previous_session_summary="",
+            counseling_goal="",
+            psychological_test_summary="",
+            key_issue_tags=[],
+            nonverbal_notes="",
+        )
+    sources = sanitized.sources.model_copy(update=updates, deep=True)
     return sanitized.model_copy(update={"sources": sources})
 
 

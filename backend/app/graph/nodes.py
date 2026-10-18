@@ -1166,6 +1166,7 @@ def _build_summary_prompt(
             "case_id": sanitized.case_id,
             "session_number": sanitized.session_number,
             "session_date": sanitized.session_date,
+            "previous_session_summary": sanitized.sources.previous_session_summary,
             "counseling_goal": sanitized.sources.counseling_goal,
             "key_issue_tags": sanitized.sources.key_issue_tags,
             "psychological_test_summary": sanitized.sources.psychological_test_summary,

@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = str(BACKEND_ENV_FILE)
         env_file_encoding = "utf-8"
+        env_ignore_empty = True
 
     @property
     def stub_mode(self) -> bool:

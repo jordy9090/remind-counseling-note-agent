@@ -62,6 +62,27 @@ class SourceReferenceTests(unittest.TestCase):
                 self.assertEqual(1, prompt.count(memo), "reference metadata must not duplicate counseling material")
                 self.assertEqual(1, prompt.count(transcript))
 
+    def test_hierarchical_summary_prompt_preserves_previous_session_context(self) -> None:
+        previous_summary = "SYNTHETIC-PREVIOUS-SESSION-CONTEXT"
+        sanitized = SanitizedInput(
+            case_id="SYNTH-REFS", session_number=2, session_date="2026-10-19", counselor_name="",
+            sources=InputSources(
+                counselor_memo="",
+                transcript_text="current session",
+                previous_session_summary=previous_summary,
+            ),
+        )
+
+        prompt = _build_summary_prompt(
+            sanitized,
+            StructuredCaseData(),
+            EvidenceMappedData(),
+            source_segments={"transcript_text.chars_0_15": "current session"},
+            hierarchical=True,
+        )
+
+        self.assertEqual(1, prompt.count(previous_summary))
+
     def test_missing_refs_are_recovered_only_from_literal_source_text(self) -> None:
         catalog = {
             "transcript_text": "내담자: 말한다고 괜찮아지는 건 아직 모르겠어요.\n상담자: 어떤 마음인가요?",

@@ -1,11 +1,27 @@
 """Model-specific request compatibility without sending provider requests."""
+import os
 import unittest
 from unittest.mock import patch
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.services.llm import get_llm
 
 
 class ModelSettingsTests(unittest.TestCase):
+    def test_empty_optional_pricing_environment_values_are_ignored(self):
+        empty_pricing = {
+            "LLM_INPUT_COST_PER_MILLION_USD": "",
+            "LLM_CACHED_INPUT_COST_PER_MILLION_USD": "",
+            "LLM_OUTPUT_COST_PER_MILLION_USD": "",
+            "EMBEDDING_INPUT_COST_PER_MILLION_USD": "",
+        }
+        with patch.dict(os.environ, empty_pricing):
+            configured = Settings(_env_file=None)
+
+        self.assertIsNone(configured.llm_input_cost_per_million_usd)
+        self.assertIsNone(configured.llm_cached_input_cost_per_million_usd)
+        self.assertIsNone(configured.llm_output_cost_per_million_usd)
+        self.assertIsNone(configured.embedding_input_cost_per_million_usd)
+
     def test_evaluated_model_defaults_to_low_reasoning_and_bounded_call(self):
         with patch.object(settings, "openai_api_key", "synthetic-key"), patch.object(settings, "openai_model", "gpt-5.4"), patch.object(settings, "openai_reasoning_effort", None), patch.object(settings, "openai_timeout_seconds", 60), patch("app.services.llm.ChatOpenAI") as client:
             get_llm()

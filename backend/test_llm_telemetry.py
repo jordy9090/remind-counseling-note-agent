@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sys
+import traceback
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
@@ -19,6 +20,7 @@ if str(ROOT_DIR) not in sys.path:
 from app.core.config import settings
 from app.services.llm import (
     LLMCallBudgetExceeded,
+    LLMProviderInvocationError,
     _InstrumentedStructuredRunnable,
     observe_llm_request,
 )
@@ -93,19 +95,41 @@ class LLMTelemetryTests(unittest.TestCase):
 
         self.assertEqual(1, runnable.invoke.call_count)
 
-    def test_provider_failure_is_recorded_once_and_propagated(self) -> None:
+    def test_provider_failure_is_recorded_once_without_exposing_provider_content(self) -> None:
+        private_marker = "PRIVATE_SYNTHETIC_PROVIDER_RESPONSE"
         runnable = Mock()
-        runnable.invoke.side_effect = RuntimeError("provider unavailable")
+        runnable.invoke.side_effect = RuntimeError(f"provider unavailable: {private_marker}")
         instrumented = _InstrumentedStructuredRunnable(runnable, stage="bounded", max_retries=0)
 
         with observe_llm_request("synthetic_request") as observation:
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(LLMProviderInvocationError) as raised:
                 instrumented.invoke("content")
 
         self.assertEqual(1, runnable.invoke.call_count)
         self.assertEqual(1, len(observation.calls))
         self.assertFalse(observation.calls[0].success)
         self.assertEqual("RuntimeError", observation.calls[0].error_type)
+        self.assertNotIn(private_marker, str(raised.exception))
+        self.assertNotIn(private_marker, "".join(traceback.format_exception(raised.exception)))
+
+    def test_structured_parsing_failure_is_safe_and_preserves_failure_type(self) -> None:
+        private_marker = "PRIVATE_SYNTHETIC_INVALID_OUTPUT"
+        runnable = Mock()
+        runnable.invoke.return_value = {
+            "parsed": None,
+            "raw": SimpleNamespace(),
+            "parsing_error": ValueError(private_marker),
+        }
+        instrumented = _InstrumentedStructuredRunnable(runnable, stage="bounded", max_retries=0)
+
+        with observe_llm_request("synthetic_request") as observation:
+            with self.assertRaises(LLMProviderInvocationError) as raised:
+                instrumented.invoke("content")
+
+        self.assertEqual(1, len(observation.calls))
+        self.assertEqual("ValueError", observation.calls[0].error_type)
+        self.assertNotIn(private_marker, str(raised.exception))
+        self.assertNotIn(private_marker, "".join(traceback.format_exception(raised.exception)))
 
     def test_vercel_wrappers_apply_request_call_budgets(self) -> None:
         with patch.object(vercel_recompose, "observe_llm_request", return_value=nullcontext()) as guard, patch.object(

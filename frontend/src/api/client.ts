@@ -32,6 +32,7 @@ import type {
 } from '../types/session'
 import { getAccessToken } from '../lib/supabase'
 import type { QuickSummaryResult } from '../lib/quickSummary'
+import { sliceByCodePoint } from '../lib/summaryEvidence'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -363,7 +364,11 @@ function getPositionedSourceExcerpt(fullResponse: GenerateNoteResponse, refs: st
     const match = /^(transcript_text|counselor_memo)\.chars_(\d+)_(\d+)$/.exec(ref)
     if (!match) continue
     const sourceField = match[1] as 'transcript_text' | 'counselor_memo'
-    return fullResponse.sanitized_input.sources[sourceField].slice(Number(match[2]), Number(match[3]))
+    return sliceByCodePoint(
+      fullResponse.sanitized_input.sources[sourceField],
+      Number(match[2]),
+      Number(match[3]),
+    )
   }
   return ''
 }

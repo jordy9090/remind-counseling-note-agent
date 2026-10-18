@@ -6,7 +6,7 @@ const source = fs.readFileSync('src/lib/summaryEvidence.ts', 'utf8')
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 })
-const { summarySectionEvidence, riskInformation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const { sliceByCodePoint, summarySectionEvidence, riskInformation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 const relationalSource = ts.transpileModule(fs.readFileSync('src/lib/relationalInsights.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText
@@ -14,6 +14,7 @@ const { formatRelationalSupervisionMemo } = await import(`data:text/javascript;b
 const section = (text, refs, review = false, type = 'direct') => ({
   text, source_refs: refs, requires_review: review, evidence_type: type,
 })
+assert.equal(sliceByCodePoint('A😀BC', 1, 3), '😀B', 'backend code-point offsets must match frontend excerpts')
 const note = { full_response: {
   session_summary_draft: {
     presenting_problem: section('Synthetic issue summary', ['counselor_memo']),
@@ -77,6 +78,14 @@ for (const [ref, type, excerpt] of [
   assert.equal(review.evidence[0].source_excerpt, excerpt)
   assert.equal(review.requiresReview, false)
 }
+const positionedUnicode = structuredClone(note)
+positionedUnicode.full_response.sanitized_input.sources.transcript_text = 'A😀BC'
+positionedUnicode.full_response.session_summary_draft.client_response.source_refs = ['transcript_text.chars_1_3']
+assert.equal(
+  summarySectionEvidence(positionedUnicode, 'client_response').evidence[0].source_excerpt,
+  '😀B',
+  'positioned evidence must use Unicode code-point offsets',
+)
 
 assert.equal(riskInformation(note).text, note.full_response.session_note_draft.sections['위험 관련 확인 가능 정보'])
 assert.deepEqual(summarySectionEvidence(note, 'risk_signal').evidence.map(item => item.source_type), ['transcript'])

@@ -10,9 +10,10 @@ os.environ.setdefault("USE_STUB", "1")
 from app.core.config import settings  # noqa: E402
 from app.graph import summary_core  # noqa: E402
 from app.graph.graph import run_note_pipeline  # noqa: E402
-from app.graph.summary_core import PUBLIC_QUICK_POLICY, run_summary_core  # noqa: E402
-from app.schemas.note import SessionInput  # noqa: E402
+from app.graph.summary_core import PUBLIC_QUICK_POLICY, _sanitized_chunk, run_summary_core  # noqa: E402
+from app.schemas.note import InputSources, SanitizedInput, SessionInput  # noqa: E402
 from app.services import quick_summary  # noqa: E402
+from app.services.transcript_chunking import SourceChunk  # noqa: E402
 
 
 SYNTHETIC_TEXT = (
@@ -68,11 +69,46 @@ class SummaryCoreTests(unittest.TestCase):
             ({"session_input": _session_input(previous_session_summary="이전 기록")}),
             ({"session_input": _session_input(persist=True)}),
             ({"session_input": _session_input(), "retrieved_case_context": [object()]}),
+            ({"session_input": _session_input(), "grounding": {"sources": [object()]}}),
         ]
         for state in cases:
             with self.subTest(keys=sorted(state)):
                 with self.assertRaises(ValueError):
                     run_summary_core(state, policy=PUBLIC_QUICK_POLICY)
+
+    def test_long_input_includes_auxiliary_sources_once(self) -> None:
+        sanitized = SanitizedInput(
+            case_id="synthetic-case",
+            session_number=1,
+            session_date="2026-10-19",
+            counselor_name="Synthetic Counselor",
+            sources=InputSources(
+                counselor_memo="memo",
+                transcript_text="transcript",
+                previous_session_summary="previous",
+                counseling_goal="goal",
+                psychological_test_summary="test",
+                key_issue_tags=["tag"],
+                nonverbal_notes="nonverbal",
+            ),
+        )
+        first = _sanitized_chunk(
+            sanitized,
+            SourceChunk("counselor_memo", "counselor_memo.chars_0_4", "memo", 0, 4, 1, 2),
+        )
+        second = _sanitized_chunk(
+            sanitized,
+            SourceChunk("transcript_text", "transcript_text.chars_0_10", "transcript", 0, 10, 2, 2),
+        )
+
+        self.assertEqual("previous", first.sources.previous_session_summary)
+        self.assertEqual("goal", first.sources.counseling_goal)
+        self.assertEqual("test", first.sources.psychological_test_summary)
+        self.assertEqual(["tag"], first.sources.key_issue_tags)
+        self.assertEqual("nonverbal", first.sources.nonverbal_notes)
+        self.assertEqual("", second.sources.previous_session_summary)
+        self.assertEqual("", second.sources.counseling_goal)
+        self.assertEqual([], second.sources.key_issue_tags)
 
 
 if __name__ == "__main__":
