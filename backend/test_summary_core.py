@@ -56,6 +56,18 @@ class SummaryCoreTests(unittest.TestCase):
             run_note_pipeline(_session_input(), actor="synthetic-owner")
         self.assertEqual(1, full_runner.call_count)
 
+    def test_direct_full_pipeline_keeps_raw_input_budget_validation(self) -> None:
+        with patch.object(
+            summary_core,
+            "validate_summary_input_budget",
+            wraps=summary_core.validate_summary_input_budget,
+        ) as validate_budget, patch.object(settings, "use_stub", True), patch.object(
+            settings, "enable_rag", False
+        ), patch.object(settings, "enable_raw_region_grounding", False):
+            run_note_pipeline(_session_input(), actor="synthetic-owner")
+
+        validate_budget.assert_called_once()
+
     def test_public_core_never_calls_storage_or_retrieval(self) -> None:
         with patch("app.graph.nodes._storage_for_actor", side_effect=AssertionError("storage called")), patch(
             "app.graph.nodes.retrieve_case_context", side_effect=AssertionError("retrieval called")

@@ -90,7 +90,8 @@ def run_summary_core(
     """
     session_input: SessionInput = state["session_input"]
     _validate_policy_boundary(state, session_input, policy)
-    validate_summary_input_budget(session_input, policy=policy)
+    if not state.get("input_budget_prevalidated"):
+        validate_summary_input_budget(session_input, policy=policy)
 
     working_state = dict(state)
     updates: dict[str, Any] = {}

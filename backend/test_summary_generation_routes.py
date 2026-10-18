@@ -18,8 +18,9 @@ from app.api.security import require_preview_access
 from app.core.config import settings
 from app.main import app as main_app
 from app.graph.graph import run_note_pipeline
+from app.graph import summary_core
 from app.api.routes.notes import _run_pipeline_with_stub_fallback
-from app.schemas.note import RecomposeNoteRequest, SessionInput
+from app.schemas.note import PersistenceReport, RecomposeNoteRequest, SessionInput
 from app.services.recompose_cache import build_recompose_cache_key
 from app.services.summary_quality import SummaryQualityError
 from app.services.transcript_chunking import TranscriptLimitError
@@ -81,6 +82,35 @@ class SummaryGenerationRouteTests(unittest.TestCase):
         self.assertEqual(413, caught.exception.status_code)
         deidentify.assert_not_called()
         pipeline.assert_not_called()
+
+    def test_authenticated_route_reuses_raw_input_budget_validation(self):
+        payload = {
+            **INPUT,
+            "transcript_text": "synthetic full preprocessing line.\n" * 400,
+            "persist": False,
+            "insight_lens": "none",
+        }
+        with patch.object(settings, "use_stub", True), patch.object(
+            settings, "enable_persistence", False
+        ), patch.object(settings, "enable_rag", False), patch.object(
+            summary_core,
+            "estimate_korean_tokens",
+            wraps=summary_core.estimate_korean_tokens,
+        ) as token_estimate, patch(
+            "app.api.routes.notes.persist_generated_note",
+            return_value=PersistenceReport(enabled=False, requested=False),
+        ):
+            response = TestClient(main_app).post("/api/notes/generate", json=payload)
+
+        self.assertEqual(200, response.status_code, response.text[:300])
+        self.assertEqual(2, token_estimate.call_count)
+        self.assertEqual(
+            [len(call.args[0]) for call in token_estimate.call_args_list],
+            [
+                len(payload["counselor_memo"] + payload["transcript_text"]),
+                len(payload["counselor_memo"] + payload["transcript_text"].strip()),
+            ],
+        )
 
     def test_recomposition_reports_quality_failure_on_both_hosts(self):
         payload = {"session_input": INPUT, "visible_section_ids": ["session_content"]}

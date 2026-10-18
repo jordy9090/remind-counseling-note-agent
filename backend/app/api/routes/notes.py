@@ -195,7 +195,11 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
                 # Everything stored for this session derives from the de-identified input:
                 # names masked (홍O동), occupations generalized (교육자).
                 session_input, _ = deidentify_session_input(session_input)
-            result = run_note_pipeline(session_input, actor=actor)
+            result = run_note_pipeline(
+                session_input,
+                actor=actor,
+                input_budget_prevalidated=True,
+            )
         except TranscriptLimitError as error:
             raise HTTPException(status_code=413, detail=str(error)) from error
         except SummaryQualityError as error:
