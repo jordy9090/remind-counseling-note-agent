@@ -329,15 +329,16 @@ function getSourceType(evidenceType: EvidenceType, refs: string[]): EvidenceSour
   if (['inferred', 'model_inference', 'needs_review'].includes(evidenceType)) {
     return 'ai_inference'
   }
-  if (refs.includes('transcript_text')) return 'transcript'
-  if (refs.includes('counselor_memo') || refs.includes('nonverbal_notes')) return 'counselor_memo'
+  if (refs.some((ref) => ref === 'transcript_text' || ref.startsWith('transcript_text.chars_'))) return 'transcript'
+  if (refs.some((ref) => ref === 'counselor_memo' || ref.startsWith('counselor_memo.chars_')) || refs.includes('nonverbal_notes')) return 'counselor_memo'
   if (refs.includes('previous_session_summary')) return 'previous_summary'
   return 'ai_inference'
 }
 
 function getSourceExcerpt(fullResponse: GenerateNoteResponse, sourceType: EvidenceSourceType, refs: string[]): string {
   const sources = fullResponse.sanitized_input.sources
-  const sourceText = sourceType === 'retrieved_context'
+  const positionedSource = getPositionedSourceExcerpt(fullResponse, refs)
+  const sourceText = positionedSource || (sourceType === 'retrieved_context'
     ? getRetrievedContextExcerpt(fullResponse, refs)
     : sourceType === 'template_context'
       ? getTemplateContextExcerpt(fullResponse)
@@ -351,10 +352,20 @@ function getSourceExcerpt(fullResponse: GenerateNoteResponse, sourceType: Eviden
         ? sources.counselor_memo
         : sourceType === 'previous_summary'
           ? sources.previous_session_summary
-          : '입력 자료를 바탕으로 한 AI 요약/추론입니다. 상담사 확인이 필요합니다.'
+          : '입력 자료를 바탕으로 한 AI 요약/추론입니다. 상담사 확인이 필요합니다.')
 
   const compact = sourceText.replace(/\s+/g, ' ').trim()
   return compact.length > 180 ? `${compact.slice(0, 180)}...` : compact
+}
+
+function getPositionedSourceExcerpt(fullResponse: GenerateNoteResponse, refs: string[]): string {
+  for (const ref of refs) {
+    const match = /^(transcript_text|counselor_memo)\.chars_(\d+)_(\d+)$/.exec(ref)
+    if (!match) continue
+    const sourceField = match[1] as 'transcript_text' | 'counselor_memo'
+    return fullResponse.sanitized_input.sources[sourceField].slice(Number(match[2]), Number(match[3]))
+  }
+  return ''
 }
 
 function getConfidence(evidenceType: EvidenceType): EvidenceConfidence {

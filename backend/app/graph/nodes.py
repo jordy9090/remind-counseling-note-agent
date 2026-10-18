@@ -337,7 +337,11 @@ def map_evidence(state: dict[str, Any]) -> dict[str, Any]:
     """Flatten structured items and mark review-sensitive evidence types."""
     structured: StructuredCaseData = state["structured_case_data"]
     sanitized: SanitizedInput = state["sanitized_input"]
-    catalog = _source_catalog(sanitized, state.get("retrieved_case_context") or [])
+    catalog = _source_catalog(
+        sanitized,
+        state.get("retrieved_case_context") or [],
+        state.get("source_segments") or {},
+    )
     mapped_items: list[EvidenceMappedItem] = []
 
     for field_name, items in structured:
@@ -382,6 +386,8 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         session_topic,
         case_context,
         template_context,
+        source_segments=state.get("source_segments") or {},
+        hierarchical=bool(state.get("hierarchical_summary")),
     )
     llm = get_structured_llm(SessionSummaryDraft)
     summary = llm.invoke(prompt)
@@ -401,7 +407,12 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         )
         if summary_quality_issues(summary):
             raise SummaryQualityError()
-    _normalize_summary_refs(summary, sanitized, case_context)
+    _normalize_summary_refs(
+        summary,
+        sanitized,
+        case_context,
+        state.get("source_segments") or {},
+    )
     if not has_documented_counselor_reflection(sanitized.sources.counselor_memo):
         summary.reflection = SummarySection(
             text="[상담사 확인 필요]", evidence_type="counselor_input",
@@ -922,6 +933,7 @@ def _first_previous_session_text(text: str) -> str:
 def _source_catalog(
     sanitized: SanitizedInput,
     case_context: list[RetrievedCaseContextItem],
+    source_segments: dict[str, str] | None = None,
 ) -> dict[str, str]:
     catalog = {
         "counselor_memo": sanitized.sources.counselor_memo,
@@ -945,6 +957,7 @@ def _source_catalog(
         catalog[item.source_ref] = item.summary or json.dumps(item.confirmed_note, ensure_ascii=False)
         for evidence in item.evidence_items:
             catalog[evidence.source_ref] = evidence.source_text
+    catalog.update(source_segments or {})
     return {ref: text for ref, text in catalog.items() if text}
 
 
@@ -990,8 +1003,9 @@ def _normalize_summary_refs(
     summary: SessionSummaryDraft,
     sanitized: SanitizedInput,
     case_context: list[RetrievedCaseContextItem],
+    source_segments: dict[str, str] | None = None,
 ) -> None:
-    catalog = _source_catalog(sanitized, case_context)
+    catalog = _source_catalog(sanitized, case_context, source_segments)
     for section in (
         summary.session_theme, summary.presenting_problem, summary.session_content,
         summary.counselor_intervention, summary.client_response, summary.reflection,
@@ -1128,16 +1142,43 @@ def _build_summary_prompt(
     session_topic: str = "",
     case_context: list[RetrievedCaseContextItem] | None = None,
     template_context: RetrievedTemplateContext | None = None,
+    *,
+    source_segments: dict[str, str] | None = None,
+    hierarchical: bool = False,
 ) -> str:
     requested_section_ids = requested_section_ids or []
     case_context = case_context or []
-    source_ref_keys = list(_source_catalog(sanitized, case_context))
+    source_segments = source_segments or {}
+    source_ref_keys = list(_source_catalog(sanitized, case_context, source_segments))
     # Raw session material is supplied once. Repeated extraction lists encourage
     # structured-output models to copy utterances into intervention/response fields.
     evidence_index = [
-        {"field": item.field, "evidence_type": item.evidence_type, "source_refs": item.source_refs}
+        {
+            "field": item.field,
+            "content": item.content if hierarchical else None,
+            "evidence_type": item.evidence_type,
+            "source_refs": item.source_refs,
+        }
         for item in evidence_mapped.items
     ]
+    if hierarchical:
+        rendered_input: Any = {
+            "case_id": sanitized.case_id,
+            "session_number": sanitized.session_number,
+            "session_date": sanitized.session_date,
+            "counseling_goal": sanitized.sources.counseling_goal,
+            "key_issue_tags": sanitized.sources.key_issue_tags,
+            "psychological_test_summary": sanitized.sources.psychological_test_summary,
+            "nonverbal_notes": sanitized.sources.nonverbal_notes,
+            "source_segments": [
+                {"source_ref": ref, "character_count": len(text)}
+                for ref, text in source_segments.items()
+            ],
+        }
+        evidence_label = "Hierarchical chunk summaries with position-preserving source references"
+    else:
+        rendered_input = sanitized
+        evidence_label = "Evidence reference index (reference metadata only; summarize the original material above)"
     return f"""
 Generate an editable Korean counseling session summary draft.
 Role: Korean counseling documentation drafting assistant.
@@ -1201,9 +1242,9 @@ For non-requested sections, keep them brief and grounded because they may be hid
 Counselor-selected session topic, if provided: {session_topic or "not provided"}
 
 Sanitized input:
-{_json(sanitized)}
+{_json(rendered_input)}
 
-Evidence reference index (reference metadata only; summarize the original material above):
+{evidence_label}:
 {_json(evidence_index)}
 
 Retrieved case context:

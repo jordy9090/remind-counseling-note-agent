@@ -38,6 +38,7 @@ from app.services.storage_deidentification import deidentify_session_input
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
+from app.services.transcript_chunking import TranscriptLimitError
 from app.schemas.storage_policy import NoteStoragePolicy
 from app.services.storage_policy import note_storage_policy
 from app.services.supabase_storage import (
@@ -183,6 +184,8 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
         session_input, _ = deidentify_session_input(session_input)
     try:
         result = run_note_pipeline(session_input, actor=actor)
+    except TranscriptLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception as error:

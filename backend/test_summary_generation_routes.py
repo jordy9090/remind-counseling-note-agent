@@ -20,6 +20,7 @@ from app.graph.graph import run_note_pipeline
 from app.schemas.note import RecomposeNoteRequest, SessionInput
 from app.services.recompose_cache import build_recompose_cache_key
 from app.services.summary_quality import SummaryQualityError
+from app.services.transcript_chunking import TranscriptLimitError
 
 
 INPUT = {
@@ -56,6 +57,17 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                     pipeline.assert_called_once()
                     persist.assert_not_called()
                     self.assertFalse(settings.use_stub)
+
+    def test_oversized_generation_returns_clear_limit_error_without_persisting(self):
+        for app in (generate_app, main_app):
+            with self.subTest(app=app.title), patch(
+                "app.api.routes.notes.run_note_pipeline",
+                side_effect=TranscriptLimitError("요청당 입력 한도를 초과했습니다."),
+            ), patch("app.api.routes.notes.persist_generated_note") as persist:
+                response = TestClient(app).post("/api/notes/generate", json=INPUT)
+                self.assertEqual(413, response.status_code)
+                self.assertEqual("요청당 입력 한도를 초과했습니다.", response.json()["detail"])
+                persist.assert_not_called()
 
     def test_recomposition_reports_quality_failure_on_both_hosts(self):
         payload = {"session_input": INPUT, "visible_section_ids": ["session_content"]}
