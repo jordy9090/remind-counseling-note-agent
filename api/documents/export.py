@@ -20,6 +20,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.document import DocumentExportRequest  # noqa: E402
 from app.services.document_export import (  # noqa: E402
+    DocumentExportLimitError,
     DocumentExportRuntimeError,
     DocumentExportService,
     DocumentExportValidationError,
@@ -40,6 +41,8 @@ async def export_document(
     """Generate a downloadable document from the latest final-document draft."""
     try:
         result = await run_in_threadpool(document_export_service.export, request)
+    except DocumentExportLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
     except (DocumentExportValidationError, UnsupportedExportFormat) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except DocumentExportRuntimeError as error:

@@ -382,6 +382,45 @@ class AccessBoundaryTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
         self.assert_b_unchanged()
 
+    def test_oversized_document_exports_stop_before_rendering(self):
+        base_payload = export_payload()
+        payloads = {
+            "plain-content": {
+                **base_payload,
+                "sections": [{"id": "body", "title": "Synthetic body", "content": "x" * 200_001}],
+            },
+            "metadata-cardinality": {
+                **base_payload,
+                "metadata": {f"key_{index:05d}": "x" for index in range(20_000)},
+            },
+        }
+        paths = [
+            ("backend", "/api/documents/export"),
+            ("export", "/"),
+            ("export", "/api/documents/export"),
+        ]
+        with (
+            patch(
+                "app.services.document_export.DocxDocumentExporter.export",
+                side_effect=AssertionError("Renderer reached for oversized export"),
+            ) as renderer,
+            patch("app.api.routes.documents.record_document_export") as export_log,
+        ):
+            for payload_name, payload in payloads.items():
+                for app_name, path in paths:
+                    with self.subTest(payload=payload_name, app=app_name, path=path):
+                        response = self.request(app_name, "POST", path, json=payload)
+                        self.assertEqual(response.status_code, 413, response.text[:300])
+                        self.assertEqual(
+                            response.json()["detail"],
+                            "문서 내보내기 요청은 최대 200,000자까지 처리할 수 있습니다.",
+                        )
+                        self.assertLess(len(response.content), 200)
+            renderer.assert_not_called()
+            export_log.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_create_cannot_claim_existing_foreign_id(self):
         for name, path in [("backend", "/api/cases"), ("cases", "/"), ("cases", "/api/cases"), ("cases", "/api/cases/dashboard")]:
             with self.subTest(name=name, path=path):

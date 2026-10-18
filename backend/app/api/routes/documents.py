@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.security import require_preview_access
 from app.schemas.document import DocumentCapabilitiesResponse, DocumentExportRequest
 from app.services.document_export import (
+    DocumentExportLimitError,
     DocumentExportRuntimeError,
     DocumentExportService,
     DocumentExportValidationError,
@@ -42,6 +43,8 @@ async def export_document(request: DocumentExportRequest, actor: AuthenticatedUs
 
     try:
         result = await run_in_threadpool(document_export_service.export, request)
+    except DocumentExportLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
     except (DocumentExportValidationError, UnsupportedExportFormat) as error:
         _log_export("failed", str(error))
         raise HTTPException(status_code=422, detail=str(error)) from error
