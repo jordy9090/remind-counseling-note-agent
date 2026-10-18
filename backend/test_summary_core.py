@@ -99,6 +99,19 @@ class SummaryCoreTests(unittest.TestCase):
                         policy=AUTHENTICATED_FULL_POLICY,
                     )
 
+    def test_length_expanding_recompose_topic_is_counted_after_masking(self) -> None:
+        session_input = _session_input()
+        session_topic = "개발자 " * 10_000
+
+        with self.assertRaises(TranscriptLimitError):
+            run_summary_core(
+                {
+                    "session_input": session_input,
+                    "session_topic": session_topic,
+                },
+                policy=AUTHENTICATED_FULL_POLICY,
+            )
+
     def test_public_core_never_calls_storage_or_retrieval(self) -> None:
         with patch("app.graph.nodes._storage_for_actor", side_effect=AssertionError("storage called")), patch(
             "app.graph.nodes.retrieve_case_context", side_effect=AssertionError("retrieval called")

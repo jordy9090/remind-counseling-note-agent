@@ -143,6 +143,42 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                 generate.assert_called_once()
                 self.assertFalse(settings.use_stub)
 
+    def test_recomposition_control_fields_are_rejected_before_cache_or_provider(self):
+        cases = (
+            (
+                {"session_input": INPUT, "session_topic": "가" * 96_001},
+                "요청당 입력 한도는 96,000자입니다.",
+            ),
+            (
+                {"session_input": INPUT, "session_topic": "🧭" * 48_001},
+                "요청당 추정 입력 토큰 한도는 96,000개입니다.",
+            ),
+            (
+                {
+                    "session_input": INPUT,
+                    "session_topic": "합성 주제",
+                    "visible_section_ids": [f"section-{index}" for index in range(10_000)],
+                },
+                "요청당 입력 한도는 96,000자입니다.",
+            ),
+        )
+        with patch(
+            "app.services.recompose_cache._case_source_revision",
+            side_effect=AssertionError("source revision reached"),
+        ) as source_revision, patch(
+            "app.services.recompose_cache.run_note_pipeline",
+            side_effect=AssertionError("provider pipeline reached"),
+        ) as pipeline:
+            for app in (recompose_app, main_app):
+                for payload, expected_detail in cases:
+                    with self.subTest(app=app.title, fields=tuple(payload)):
+                        response = TestClient(app).post("/api/notes/recompose", json=payload)
+
+                        self.assertEqual(413, response.status_code, response.text[:300])
+                        self.assertIn(expected_detail, response.json()["detail"])
+        source_revision.assert_not_called()
+        pipeline.assert_not_called()
+
     def test_missing_model_key_cannot_silently_generate_a_sample(self):
         with patch.object(settings, "openai_api_key", None), patch("app.graph.graph.note_graph.invoke") as graph:
             with self.assertRaises(RuntimeError):

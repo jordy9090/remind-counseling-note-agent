@@ -1207,9 +1207,10 @@ def _build_summary_prompt(
     case_context = case_context or []
     source_segments = source_segments or {}
     provider_sanitized = _provider_safe_sanitized(sanitized)
-    provider_session_topic = mask_known_names(
-        deidentify_text(session_topic, source="session_topic")[0],
-        {sanitized.client_alias: "[CLIENT]", sanitized.counselor_name: "[COUNSELOR]"},
+    provider_session_topic = provider_safe_session_topic(
+        session_topic,
+        client_alias=sanitized.client_alias,
+        counselor_name=sanitized.counselor_name,
     )
     source_ref_keys = list(_source_catalog(sanitized, case_context, source_segments))
     # Raw session material is supplied once. Repeated extraction lists encourage
@@ -1316,6 +1317,19 @@ Retrieved case context:
 Retrieved document template context:
 {_json(template_context)}
 """
+
+
+def provider_safe_session_topic(
+    session_topic: str,
+    *,
+    client_alias: str = "",
+    counselor_name: str = "",
+) -> str:
+    """Apply the same deterministic masking used for provider-bound session topics."""
+    return mask_known_names(
+        deidentify_text(session_topic, source="session_topic")[0],
+        {client_alias: "[CLIENT]", counselor_name: "[COUNSELOR]"},
+    )
 
 
 def _build_verification_prompt(

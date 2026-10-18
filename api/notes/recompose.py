@@ -19,6 +19,7 @@ from app.schemas.note import RecomposeNoteRequest, RecomposeNoteResponse  # noqa
 from app.services.llm import observe_llm_request  # noqa: E402
 from app.services.recompose_cache import recompose_note_with_cache  # noqa: E402
 from app.services.summary_quality import SummaryQualityError  # noqa: E402
+from app.services.transcript_chunking import TranscriptLimitError  # noqa: E402
 
 app = FastAPI(title="Re:mind Note Recompose API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -33,6 +34,8 @@ async def recompose_note_draft(
     try:
         with observe_llm_request("recompose_summary", max_calls=16):
             return recompose_note_with_cache(request, actor=actor)
+    except TranscriptLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception:

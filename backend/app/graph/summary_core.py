@@ -9,6 +9,7 @@ from typing import Any
 from app.graph.nodes import (
     generate_summary,
     map_evidence,
+    provider_safe_session_topic,
     sanitize_input,
     structure_session,
     verify_evidence_deterministically,
@@ -92,19 +93,35 @@ def run_summary_core(
     session_input: SessionInput = state["session_input"]
     _validate_policy_boundary(state, session_input, policy)
     if not state.get("input_budget_prevalidated"):
-        validate_summary_input_budget(session_input, policy=policy)
+        validate_summary_input_budget(
+            session_input,
+            policy=policy,
+            additional_input_text=summary_request_context_budget_text(
+                state.get("session_topic") or "",
+                state.get("requested_section_ids") or [],
+            ),
+        )
 
     working_state = dict(state)
     updates: dict[str, Any] = {}
     if "sanitized_input" not in working_state:
         _apply_step(working_state, updates, sanitize_input)
     sanitized: SanitizedInput = working_state["sanitized_input"]
-    input_chars = _current_input_chars(sanitized)
+    request_context_text = summary_request_context_budget_text(
+        provider_safe_session_topic(
+            state.get("session_topic") or "",
+            client_alias=sanitized.client_alias,
+            counselor_name=sanitized.counselor_name,
+        ),
+        state.get("requested_section_ids") or [],
+    )
+    input_text = _current_input_text(sanitized) + request_context_text
+    input_chars = len(input_text)
     if input_chars > policy.max_input_chars:
         raise TranscriptLimitError(
             f"요청당 입력 한도는 {policy.max_input_chars:,}자입니다. 현재 {input_chars:,}자입니다."
         )
-    estimated_input_tokens = estimate_korean_tokens(_current_input_text(sanitized))
+    estimated_input_tokens = estimate_korean_tokens(input_text)
     if estimated_input_tokens > policy.max_estimated_input_tokens:
         raise TranscriptLimitError(
             f"요청당 추정 입력 토큰 한도는 {policy.max_estimated_input_tokens:,}개입니다."
@@ -137,6 +154,7 @@ def validate_summary_input_budget(
     session_input: SessionInput,
     *,
     policy: SummaryCorePolicy,
+    additional_input_text: str = "",
 ) -> None:
     """Reject oversized raw requests before storage de-identification or provider use."""
     input_text = "".join(
@@ -148,6 +166,7 @@ def validate_summary_input_budget(
             _issue_tags_budget_text(session_input.key_issue_tags),
             session_input.psychological_test_summary,
             session_input.nonverbal_notes,
+            additional_input_text,
         )
     )
     if len(input_text) > policy.max_input_chars:
@@ -216,6 +235,12 @@ def _issue_tags_budget_text(tags: list[str]) -> str:
     if not tags:
         return ""
     return json.dumps(tags, ensure_ascii=False, indent=6)
+
+
+def summary_request_context_budget_text(session_topic: str, requested_section_ids: list[str]) -> str:
+    """Render recompose-only controls as they appear in the provider prompt."""
+    section_ids_text = json.dumps(requested_section_ids, ensure_ascii=False, indent=2) if requested_section_ids else ""
+    return session_topic + section_ids_text
 
 
 def _structure_long_input(

@@ -132,6 +132,8 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
     try:
         with observe_llm_request("recompose_summary", max_calls=16):
             return recompose_note_with_cache(request, actor=actor)
+    except TranscriptLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception:

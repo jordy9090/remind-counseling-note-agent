@@ -10,6 +10,12 @@ from threading import Lock
 
 from app.core.config import settings
 from app.graph.graph import run_note_pipeline
+from app.graph.nodes import provider_safe_session_topic
+from app.graph.summary_core import (
+    AUTHENTICATED_FULL_POLICY,
+    summary_request_context_budget_text,
+    validate_summary_input_budget,
+)
 from app.schemas.note import GenerateNoteResponse, RecomposeNoteRequest, RecomposeNoteResponse
 from app.services.supabase_storage import _storage_for_actor
 
@@ -24,6 +30,26 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
     """Return a checklist-specific generated note, using cache for repeated settings."""
     actor_id = str(actor or settings.remind_preview_actor)
     visible_section_ids = _normalize_section_ids(request.visible_section_ids)
+    request_context_text = summary_request_context_budget_text(request.session_topic, visible_section_ids)
+    validate_summary_input_budget(
+        request.session_input,
+        policy=AUTHENTICATED_FULL_POLICY,
+        additional_input_text=request_context_text,
+    )
+    provider_session_topic = provider_safe_session_topic(
+        request.session_topic,
+        client_alias=request.session_input.client_alias,
+        counselor_name=request.session_input.counselor_name,
+    )
+    if provider_session_topic != request.session_topic:
+        validate_summary_input_budget(
+            request.session_input,
+            policy=AUTHENTICATED_FULL_POLICY,
+            additional_input_text=summary_request_context_budget_text(
+                provider_session_topic,
+                visible_section_ids,
+            ),
+        )
     source_revision = _case_source_revision(request.session_input.case_id, actor=actor)
     cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor_id, source_revision=source_revision)
     cached = _read_cached_result(cache_key)
@@ -41,6 +67,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
         requested_section_ids=visible_section_ids,
         session_topic=request.session_topic,
         actor=actor,
+        input_budget_prevalidated=True,
     )
     _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
     _write_cached_result(cache_key, result)
