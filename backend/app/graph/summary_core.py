@@ -13,7 +13,12 @@ from app.graph.nodes import (
     verify_evidence_deterministically,
 )
 from app.schemas.note import EvidenceItem, InputSources, SanitizedInput, SessionInput, StructuredCaseData
-from app.services.transcript_chunking import SourceChunk, TranscriptLimitError, split_source_text
+from app.services.transcript_chunking import (
+    SourceChunk,
+    TranscriptLimitError,
+    estimate_korean_tokens,
+    split_source_text,
+)
 
 
 class SummaryExecutionMode(str, Enum):
@@ -28,6 +33,7 @@ class SummaryCorePolicy:
     allow_persistence: bool
     deterministic_verification: bool
     max_input_chars: int
+    max_estimated_input_tokens: int
     chunk_threshold_chars: int
     chunk_target_chars: int
     max_chunks: int
@@ -40,6 +46,7 @@ PUBLIC_QUICK_POLICY = SummaryCorePolicy(
     allow_persistence=False,
     deterministic_verification=True,
     max_input_chars=20_000,
+    max_estimated_input_tokens=20_000,
     chunk_threshold_chars=20_000,
     chunk_target_chars=20_000,
     max_chunks=1,
@@ -52,6 +59,7 @@ AUTHENTICATED_FULL_POLICY = SummaryCorePolicy(
     allow_persistence=True,
     deterministic_verification=True,
     max_input_chars=96_000,
+    max_estimated_input_tokens=96_000,
     chunk_threshold_chars=12_000,
     chunk_target_chars=14_000,
     max_chunks=8,
@@ -81,6 +89,7 @@ def run_summary_core(
     """
     session_input: SessionInput = state["session_input"]
     _validate_policy_boundary(state, session_input, policy)
+    validate_summary_input_budget(session_input, policy=policy)
 
     working_state = dict(state)
     updates: dict[str, Any] = {}
@@ -92,12 +101,22 @@ def run_summary_core(
         raise TranscriptLimitError(
             f"요청당 입력 한도는 {policy.max_input_chars:,}자입니다. 현재 {input_chars:,}자입니다."
         )
+    estimated_input_tokens = estimate_korean_tokens(_current_input_text(sanitized))
+    if estimated_input_tokens > policy.max_estimated_input_tokens:
+        raise TranscriptLimitError(
+            f"요청당 추정 입력 토큰 한도는 {policy.max_estimated_input_tokens:,}개입니다."
+        )
     if input_chars > policy.chunk_threshold_chars:
         chunk_updates = _structure_long_input(working_state, sanitized, policy)
         working_state.update(chunk_updates)
         updates.update(chunk_updates)
     else:
+        if 3 > policy.max_core_provider_calls:
+            raise TranscriptLimitError("요청당 AI 호출 상한이 요약 처리에 필요한 호출 수보다 작습니다.")
         _apply_step(working_state, updates, structure_session)
+        if policy.mode == SummaryExecutionMode.PUBLIC_QUICK:
+            working_state["compact_summary_context"] = True
+            updates["compact_summary_context"] = True
     _apply_step(working_state, updates, map_evidence)
     _apply_step(working_state, updates, generate_summary)
     if policy.deterministic_verification:
@@ -109,6 +128,32 @@ def run_summary_core(
         else:
             updates["core_verification_report"] = verification_updates["verification_report"]
     return updates
+
+
+def validate_summary_input_budget(
+    session_input: SessionInput,
+    *,
+    policy: SummaryCorePolicy,
+) -> None:
+    """Reject oversized raw requests before storage de-identification or provider use."""
+    input_text = "".join(
+        (
+            session_input.counselor_memo,
+            session_input.transcript_text,
+            session_input.previous_session_summary,
+            session_input.counseling_goal,
+            session_input.psychological_test_summary,
+            session_input.nonverbal_notes,
+        )
+    )
+    if len(input_text) > policy.max_input_chars:
+        raise TranscriptLimitError(
+            f"요청당 입력 한도는 {policy.max_input_chars:,}자입니다. 현재 {len(input_text):,}자입니다."
+        )
+    if estimate_korean_tokens(input_text) > policy.max_estimated_input_tokens:
+        raise TranscriptLimitError(
+            f"요청당 추정 입력 토큰 한도는 {policy.max_estimated_input_tokens:,}개입니다."
+        )
 
 
 def summary_core_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -145,9 +190,12 @@ def _validate_policy_boundary(
 
 
 def _current_input_chars(sanitized: SanitizedInput) -> int:
-    return sum(
-        len(value)
-        for value in (
+    return len(_current_input_text(sanitized))
+
+
+def _current_input_text(sanitized: SanitizedInput) -> str:
+    return "".join(
+        (
             sanitized.sources.counselor_memo,
             sanitized.sources.transcript_text,
             sanitized.sources.previous_session_summary,

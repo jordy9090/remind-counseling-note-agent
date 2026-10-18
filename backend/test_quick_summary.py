@@ -76,12 +76,59 @@ class QuickSummaryTest(unittest.TestCase):
                 )
 
         with patch.object(qs.settings, "use_stub", False), patch.object(qs.settings, "openai_api_key", "test"), \
-                patch("app.graph.nodes.get_structured_llm", side_effect=lambda schema: FakeLLM(schema)):
-            result = qs.generate_quick_summary(SAMPLE)
+                patch("app.graph.nodes.get_structured_llm", side_effect=lambda schema, **_: FakeLLM(schema)):
+            result = qs.generate_quick_summary(SAMPLE + " 원문고유표식ABC123은 구조화 뒤 반복 전송하지 않는다.")
         self.assertEqual(2, len(prompts))
         self.assertTrue(all("010-1234-5678" not in prompt for prompt in prompts))
-        self.assertTrue(all("[PHONE]" in prompt for prompt in prompts))
+        self.assertIn("[PHONE]", prompts[0])
+        self.assertEqual(1, sum("[PHONE]" in prompt for prompt in prompts))
+        self.assertEqual(1, sum("원문고유표식ABC123" in prompt for prompt in prompts))
         self.assertEqual(result.next_plan, "[상담사 확인 필요]")
+
+    def test_institution_rare_occupation_and_distinctive_event_are_masked_before_llm(self) -> None:
+        raw_fragments = ("한빛고등학교", "우주비행사", "전국별빛대회 최우수상")
+        text = (
+            "내담자는 한빛고등학교에 다니며 부모가 우주비행사라고 말했다. "
+            "전국별빛대회 최우수상을 받은 뒤 주변의 관심이 부담스럽다고 표현했다."
+        )
+        prompts: list[str] = []
+
+        class RecordingLLM:
+            def __init__(self, schema):
+                self.schema = schema
+
+            def invoke(self, prompt: str):
+                prompts.append(prompt)
+                if self.schema is StructuredCaseData:
+                    return StructuredCaseData(
+                        session_content=[EvidenceItem(content="주변의 관심에 대한 부담을 다룸.", evidence_type="direct", source_refs=["transcript_text"])],
+                    )
+                return SessionSummaryDraft(
+                    session_info=SessionInfo(case_id="public-quick-summary", session_number=1, session_date=""),
+                    session_theme=SummarySection(text="주변 관심에 대한 부담", evidence_type="direct", source_refs=["transcript_text"]),
+                    presenting_problem=SummarySection(text="부담감", evidence_type="direct", source_refs=["transcript_text"]),
+                    session_content=SummarySection(text="주변 관심에 대한 부담을 다룸.", evidence_type="direct", source_refs=["transcript_text"]),
+                    client_response=SummarySection(text="내담자는 부담스럽다고 표현함.", evidence_type="direct", source_refs=["transcript_text"]),
+                    counselor_intervention=SummarySection(text="[상담사 확인 필요]", evidence_type="needs_review", requires_review=True),
+                    reflection=SummarySection(text="[상담사 확인 필요]", evidence_type="needs_review", requires_review=True),
+                    next_plan=SummarySection(text="[상담사 확인 필요]", evidence_type="needs_review", requires_review=True),
+                )
+
+        with patch.object(qs.settings, "use_stub", False), patch.object(qs.settings, "openai_api_key", "test"), patch(
+            "app.graph.nodes.get_structured_llm", side_effect=lambda schema, **_: RecordingLLM(schema)
+        ):
+            result = qs.generate_quick_summary(text)
+
+        self.assertTrue(prompts)
+        self.assertTrue(all(fragment not in prompt for prompt in prompts for fragment in raw_fragments))
+        self.assertIn("[INSTITUTION]", prompts[0])
+        self.assertIn("[OCCUPATION]", prompts[0])
+        self.assertIn("[UNIQUE_EVENT]", prompts[0])
+        self.assertTrue(all(fragment not in prompts[1] for fragment in raw_fragments))
+        self.assertEqual(
+            {"institution", "rare_occupation", "specific_event"},
+            set(result.masked_categories),
+        )
 
     def test_rejects_too_short_and_too_long_input(self) -> None:
         self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": "짧음"}).status_code, 422)
@@ -98,6 +145,27 @@ class QuickSummaryTest(unittest.TestCase):
         self.assertIn("Retry-After", blocked.headers)
         other_ip = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers={"x-real-ip": "203.0.113.8"})
         self.assertEqual(other_ip.status_code, 200)
+
+    def test_busy_instance_fails_fast_without_running_the_summary(self) -> None:
+        with patch.object(qs._concurrency_guard, "acquire", return_value=False), patch.object(
+            qs._concurrency_guard, "release"
+        ) as release, patch("app.services.quick_summary.run_summary_core") as core:
+            response = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE})
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("1", response.headers["Retry-After"])
+        core.assert_not_called()
+        release.assert_not_called()
+
+    def test_estimated_cost_limit_blocks_before_provider_execution(self) -> None:
+        with patch.object(qs.settings, "llm_provider", "openai"), patch.object(
+            qs.settings, "openai_model", "gpt-5.4"
+        ), patch.object(qs.settings, "quick_summary_max_estimated_cost_usd", 0.000001), patch(
+            "app.services.quick_summary.run_summary_core"
+        ) as core:
+            response = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE})
+        self.assertEqual(503, response.status_code)
+        self.assertIn("비용 한도", response.json()["detail"])
+        core.assert_not_called()
 
     def test_vercel_rewrite_reaches_quick_summary_without_auth(self) -> None:
         module = _load_vercel_generate()

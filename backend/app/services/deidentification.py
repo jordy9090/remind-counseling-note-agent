@@ -63,6 +63,21 @@ MASK_RULES = [
         "Institution names can re-identify a client; review and generalize them.",
     ),
     MaskRule(
+        "rare_occupation",
+        "[OCCUPATION]",
+        re.compile(r"(?:우주비행사|싱어송라이터|프로게이머|유명인|연예인|국회의원|외교관)"),
+        "Rare occupations can re-identify a client; generalize them before external processing.",
+    ),
+    MaskRule(
+        "specific_event",
+        "[UNIQUE_EVENT]",
+        re.compile(
+            r"[가-힣A-Za-z0-9]{2,40}(?:대회|공모전|올림피아드)[^\n,.]{0,40}"
+            r"(?:수상|입상|금메달|은메달|동메달|최우수상|우승)"
+        ),
+        "Distinctive events can re-identify a client; remove unnecessary event detail.",
+    ),
+    MaskRule(
         "person_name",
         "[PERSON]",
         # Role nouns such as "내담자는 예정된 시간에..." are ordinary
@@ -83,6 +98,8 @@ COUNSELOR_PLACEHOLDER_LABELS = {
     "[LOCATION]": "장소 정보 비공개",
     "[ADDRESS]": "장소 정보 비공개",
     "[INSTITUTION]": "기관 정보 비공개",
+    "[OCCUPATION]": "직업 정보 비공개",
+    "[UNIQUE_EVENT]": "구체적 사건 정보 비공개",
     "[EMAIL]": "연락처 정보 비공개",
     "[PHONE]": "연락처 정보 비공개",
     "[ACCOUNT]": "계정 정보 비공개",

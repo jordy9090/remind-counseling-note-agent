@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from app.api.security import _require_supabase_user, require_preview_access
 from app.graph.graph import run_note_pipeline
+from app.graph.summary_core import AUTHENTICATED_FULL_POLICY, validate_summary_input_budget
 from app.graph.supervision_report import run_supervision_report_pipeline
 from app.schemas.note import (
     ConfirmGeneratedNoteRequest,
@@ -26,6 +27,8 @@ from app.schemas.note import (
 )
 from app.core.config import settings
 from app.services.quick_summary import (
+    QuickSummaryBusy,
+    QuickSummaryCostLimit,
     QuickSummaryInputError,
     QuickSummaryRateLimited,
     QuickSummaryRequest,
@@ -34,6 +37,7 @@ from app.services.quick_summary import (
     rate_limit_key,
     rate_limiter,
 )
+from app.services.llm import observe_llm_request
 from app.services.storage_deidentification import deidentify_session_input
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
@@ -123,7 +127,8 @@ async def delete_note_session_input(note_id: str, actor: PreviewActor, response:
 async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActor) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
     try:
-        return recompose_note_with_cache(request, actor=actor)
+        with observe_llm_request("recompose_summary", max_calls=16):
+            return recompose_note_with_cache(request, actor=actor)
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception:
@@ -137,12 +142,13 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
 async def generate_supervision_report(request: SupervisionReportRequest, actor: PreviewActor) -> SupervisionReportDraft:
     """Generate a Korean personal counseling case supervision report draft."""
     try:
-        if request.persist and settings.enable_persistence:
-            request = request.model_copy(update={"session_input": deidentify_session_input(request.session_input)[0]})
-        report = run_supervision_report_pipeline(request)
-        # persist=true면 생성 성공 후에만 문서 레코드를 만든다 (실패 시 pending 레코드가 남지 않음)
-        report.persistence = persist_supervision_report(request, report, actor=actor)
-        return report
+        with observe_llm_request("supervision_report", max_calls=4):
+            if request.persist and settings.enable_persistence:
+                request = request.model_copy(update={"session_input": deidentify_session_input(request.session_input)[0]})
+            report = run_supervision_report_pipeline(request)
+            # persist=true면 생성 성공 후에만 문서 레코드를 만든다 (실패 시 pending 레코드가 남지 않음)
+            report.persistence = persist_supervision_report(request, report, actor=actor)
+            return report
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(
@@ -178,23 +184,25 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
     Explicit demo mode still runs the configured stub. A failed real generation
     must never switch shared settings or replace a user's record with demo text.
     """
-    if session_input.persist and settings.enable_persistence:
-        # Everything stored for this session derives from the de-identified input:
-        # names masked (홍O동), occupations generalized (교육자).
-        session_input, _ = deidentify_session_input(session_input)
-    try:
-        result = run_note_pipeline(session_input, actor=actor)
-    except TranscriptLimitError as error:
-        raise HTTPException(status_code=413, detail=str(error)) from error
-    except SummaryQualityError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
-        ) from error
-    result.persistence_report = persist_generated_note(session_input, result, actor=actor)
-    return result
+    with observe_llm_request("full_summary", max_calls=16):
+        try:
+            validate_summary_input_budget(session_input, policy=AUTHENTICATED_FULL_POLICY)
+            if session_input.persist and settings.enable_persistence:
+                # Everything stored for this session derives from the de-identified input:
+                # names masked (홍O동), occupations generalized (교육자).
+                session_input, _ = deidentify_session_input(session_input)
+            result = run_note_pipeline(session_input, actor=actor)
+        except TranscriptLimitError as error:
+            raise HTTPException(status_code=413, detail=str(error)) from error
+        except SummaryQualityError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
+            ) from error
+        result.persistence_report = persist_generated_note(session_input, result, actor=actor)
+        return result
 
 
 def client_ip(request: Request) -> str:
@@ -236,9 +244,21 @@ def run_quick_summary(
             headers={"Retry-After": str(error.retry_after)},
         ) from error
     try:
-        return generate_quick_summary(payload.text)
+        with observe_llm_request("public_quick_summary", max_calls=3):
+            return generate_quick_summary(payload.text)
     except QuickSummaryInputError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except QuickSummaryBusy as error:
+        raise HTTPException(
+            status_code=503,
+            detail="현재 요약 요청이 많아요. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": "1"},
+        ) from error
+    except QuickSummaryCostLimit as error:
+        raise HTTPException(
+            status_code=503,
+            detail="현재 설정된 요청 비용 한도를 초과해 요약을 실행할 수 없어요.",
+        ) from error
     except Exception:
         # Do not attach the input text or provider payload to the error.
         raise HTTPException(

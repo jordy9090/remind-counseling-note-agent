@@ -23,11 +23,14 @@ from app.core.config import settings
 from app.graph.summary_core import PUBLIC_QUICK_POLICY, run_summary_core
 from app.schemas.note import SessionInput
 from app.services.deidentification import render_counselor_text
+from app.services.llm import estimate_generation_cost_usd
+from app.services.transcript_chunking import estimate_korean_tokens
 
 QUICK_SUMMARY_MAX_CHARS = 20_000
 QUICK_SUMMARY_MIN_CHARS = 20
 ANONYMOUS_LIMIT = (5, 60 * 60)  # 5 requests per hour per IP
 AUTHENTICATED_LIMIT = (60, 60 * 60)  # 60 requests per hour per user
+_concurrency_guard = threading.BoundedSemaphore(settings.quick_summary_max_concurrent)
 
 class QuickSummaryRequest(BaseModel):
     text: str = Field(default="", max_length=QUICK_SUMMARY_MAX_CHARS + 1000)
@@ -50,6 +53,14 @@ class QuickSummaryRateLimited(RuntimeError):
     def __init__(self, retry_after: int):
         super().__init__("rate limited")
         self.retry_after = retry_after
+
+
+class QuickSummaryBusy(RuntimeError):
+    """This server instance has no public-summary execution slot available."""
+
+
+class QuickSummaryCostLimit(RuntimeError):
+    """The conservative request estimate exceeds the configured public budget."""
 
 
 class _SlidingWindowLimiter:
@@ -104,19 +115,26 @@ def validate_quick_summary_text(text: str) -> str:
 def generate_quick_summary(text: str) -> QuickSummaryResponse:
     """Run the public shared core and render its four-item compatibility response."""
     cleaned = validate_quick_summary_text(text)
-    core = run_summary_core(
-        {
-            "session_input": SessionInput(
-                case_id="public-quick-summary",
-                session_number=1,
-                counselor_memo="",
-                transcript_text=cleaned,
-                persist=False,
-                insight_lens="none",
-            )
-        },
-        policy=PUBLIC_QUICK_POLICY,
-    )
+    _enforce_estimated_cost_limit(cleaned)
+    acquired = _concurrency_guard.acquire(timeout=settings.quick_summary_concurrency_wait_seconds)
+    if not acquired:
+        raise QuickSummaryBusy("public summary capacity exhausted")
+    try:
+        core = run_summary_core(
+            {
+                "session_input": SessionInput(
+                    case_id="public-quick-summary",
+                    session_number=1,
+                    counselor_memo="",
+                    transcript_text=cleaned,
+                    persist=False,
+                    insight_lens="none",
+                )
+            },
+            policy=PUBLIC_QUICK_POLICY,
+        )
+    finally:
+        _concurrency_guard.release()
     sanitized = core["sanitized_input"]
     summary = core["session_summary_draft"]
     categories = sorted({candidate.category for candidate in sanitized.sensitive_info_candidates})
@@ -129,3 +147,13 @@ def generate_quick_summary(text: str) -> QuickSummaryResponse:
         masked_categories=categories,
         stub=settings.stub_mode,
     )
+
+
+def _enforce_estimated_cost_limit(text: str) -> None:
+    estimated_source_tokens = estimate_korean_tokens(text)
+    estimated_cost = estimate_generation_cost_usd(
+        input_tokens=(estimated_source_tokens + 4_000) * PUBLIC_QUICK_POLICY.max_core_provider_calls,
+        output_tokens=2_500 * PUBLIC_QUICK_POLICY.max_core_provider_calls,
+    )
+    if estimated_cost is not None and estimated_cost > settings.quick_summary_max_estimated_cost_usd:
+        raise QuickSummaryCostLimit("public summary estimated cost exceeds the configured maximum")

@@ -62,8 +62,9 @@ def build_recompose_cache_key(
     payload = {
         "version": CACHE_VERSION,
         "use_stub": settings.use_stub,
+        "llm_provider": settings.llm_provider,
         "model": settings.openai_model,
-        "model_configured": bool(settings.openai_api_key),
+        "model_configured": settings.llm_configured,
         "actor": str(actor or settings.remind_preview_actor),
         "enable_rag": settings.enable_rag,
         "enable_raw_region_grounding": settings.enable_raw_region_grounding,

@@ -387,7 +387,7 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         case_context,
         template_context,
         source_segments=state.get("source_segments") or {},
-        hierarchical=bool(state.get("hierarchical_summary")),
+        hierarchical=bool(state.get("hierarchical_summary") or state.get("compact_summary_context")),
     )
     llm = get_structured_llm(SessionSummaryDraft)
     summary = llm.invoke(prompt)

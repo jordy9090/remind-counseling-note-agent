@@ -28,3 +28,14 @@ All 12 fixtures preserved the synthetic early, middle, and late event markers. P
 - Authenticated Full Summary accepts at most 96,000 sanitized input characters, eight chunks, and ten core model calls.
 - These figures are measured for deterministic preprocessing. Model latency, provider usage tokens, and monetary cost remain unknown because the approved paid-API budget was USD 0.
 - The mock-backed regression suite verifies orchestration, source coverage, speaker-field separation, and failure semantics. A counselor must still review clinical quality from a real model before release.
+
+## Call and cost comparison
+
+| Flow | Normal generation calls | Maximum guarded calls | Raw current-session text transmissions | Cost status |
+| --- | ---: | ---: | ---: | --- |
+| Legacy Quick at base `ba46cce` | 1 | 1 | 1 | Not measured |
+| Improved Quick | 2 (structure + summary) | 3 including one repair | 1; the summary reuses structured evidence | Estimated only when provider usage and known/configured rates exist |
+| Full, short input | 3 (structure + summary + provider verification) | 16 request-wide | 2 in the existing full-quality path | Estimated only when provider usage and known/configured rates exist |
+| Full, 60-minute synthetic input | 4 (two chunk structures + summary + provider verification) | 16 request-wide | Each raw chunk once; final summary uses chunk evidence | Model usage unknown because no paid call ran |
+
+The improved Quick path deliberately spends one additional call versus the legacy one-shot prompt to share field separation and evidence handling with Full Summary. It avoids sending the raw text twice. Telemetry uses provider-reported input, output, and cached-input tokens; missing usage remains `unknown`, never `0`. The built-in standard GPT-5.4 estimate uses the official 2026-10-19 rates of $2.50/M input, $0.25/M cached input, and $15/M output from the [OpenAI model page](https://developers.openai.com/api/docs/models/gpt-5.4). This sprint made no paid calls, so there is no actual billed-cost result.

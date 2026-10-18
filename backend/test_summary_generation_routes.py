@@ -7,6 +7,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,6 +18,7 @@ from app.api.security import require_preview_access
 from app.core.config import settings
 from app.main import app as main_app
 from app.graph.graph import run_note_pipeline
+from app.api.routes.notes import _run_pipeline_with_stub_fallback
 from app.schemas.note import RecomposeNoteRequest, SessionInput
 from app.services.recompose_cache import build_recompose_cache_key
 from app.services.summary_quality import SummaryQualityError
@@ -68,6 +70,17 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                 self.assertEqual(413, response.status_code)
                 self.assertEqual("요청당 입력 한도를 초과했습니다.", response.json()["detail"])
                 persist.assert_not_called()
+
+    def test_oversized_persistent_input_is_rejected_before_deidentification_provider(self):
+        oversized = SessionInput(**{**INPUT, "transcript_text": "가" * 96_001})
+        with patch.object(settings, "enable_persistence", True), patch(
+            "app.api.routes.notes.deidentify_session_input"
+        ) as deidentify, patch("app.api.routes.notes.run_note_pipeline") as pipeline:
+            with self.assertRaises(HTTPException) as caught:
+                _run_pipeline_with_stub_fallback(oversized, actor="synthetic-owner")
+        self.assertEqual(413, caught.exception.status_code)
+        deidentify.assert_not_called()
+        pipeline.assert_not_called()
 
     def test_recomposition_reports_quality_failure_on_both_hosts(self):
         payload = {"session_input": INPUT, "visible_section_ids": ["session_content"]}

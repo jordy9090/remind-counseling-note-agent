@@ -49,7 +49,7 @@ class SummaryCoreTests(unittest.TestCase):
             summary_core,
             "run_summary_core",
             wraps=summary_core.run_summary_core,
-        ) as full_runner, patch.object(settings, "enable_rag", False), patch.object(
+        ) as full_runner, patch.object(settings, "use_stub", True), patch.object(settings, "enable_rag", False), patch.object(
             settings, "enable_raw_region_grounding", False
         ):
             run_note_pipeline(_session_input(), actor="synthetic-owner")

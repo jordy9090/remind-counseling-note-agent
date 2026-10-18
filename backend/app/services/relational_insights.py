@@ -293,7 +293,7 @@ def generate_relational_insights(sanitized: SanitizedInput, summary: SessionSumm
     """Fail independently so unavailable hypotheses never erase the base session summary."""
     if settings.use_stub:
         return RelationalInsights(status="demo", notices=["데모 모드에서는 실제 사례 인사이트를 생성하지 않습니다."])
-    if not settings.openai_api_key:
+    if not settings.llm_configured:
         return RelationalInsights(status="unavailable", notices=["회기 인사이트 생성 서비스를 사용할 수 없습니다. 회기요약은 유지됩니다."])
     sources = _session_sources(sanitized)
     if len("".join(sources.values())) < 60:
