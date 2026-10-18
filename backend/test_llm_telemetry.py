@@ -1,11 +1,20 @@
 """Metadata-only LLM telemetry and provider-budget regression tests."""
 from __future__ import annotations
 
-from types import SimpleNamespace
+import asyncio
+import importlib
+import sys
 import unittest
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from pydantic import BaseModel
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from app.core.config import settings
 from app.services.llm import (
@@ -13,6 +22,10 @@ from app.services.llm import (
     _InstrumentedStructuredRunnable,
     observe_llm_request,
 )
+from api.notes import recompose as vercel_recompose
+
+
+vercel_supervision = importlib.import_module("api.notes.supervision-report")
 
 
 class _Answer(BaseModel):
@@ -93,6 +106,25 @@ class LLMTelemetryTests(unittest.TestCase):
         self.assertEqual(1, len(observation.calls))
         self.assertFalse(observation.calls[0].success)
         self.assertEqual("RuntimeError", observation.calls[0].error_type)
+
+    def test_vercel_wrappers_apply_request_call_budgets(self) -> None:
+        with patch.object(vercel_recompose, "observe_llm_request", return_value=nullcontext()) as guard, patch.object(
+            vercel_recompose,
+            "recompose_note_with_cache",
+            return_value="recomposed",
+        ):
+            result = asyncio.run(vercel_recompose.recompose_note_draft(object(), actor="synthetic-owner"))
+        self.assertEqual("recomposed", result)
+        guard.assert_called_once_with("recompose_summary", max_calls=16)
+
+        with patch.object(vercel_supervision, "observe_llm_request", return_value=nullcontext()) as guard, patch.object(
+            vercel_supervision,
+            "run_supervision_report_pipeline",
+            return_value="supervision",
+        ):
+            result = asyncio.run(vercel_supervision.generate_supervision_report(object(), actor="synthetic-owner"))
+        self.assertEqual("supervision", result)
+        guard.assert_called_once_with("supervision_report", max_calls=4)
 
 
 if __name__ == "__main__":
