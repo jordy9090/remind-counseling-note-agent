@@ -75,27 +75,29 @@ class SummaryCoreTests(unittest.TestCase):
 
     def test_sanitized_issue_tags_are_counted_in_budget(self) -> None:
         session_input = _session_input(key_issue_tags=["개발자"])
-        sanitized = SanitizedInput(
-            case_id=session_input.case_id,
-            session_number=session_input.session_number,
-            session_date=session_input.session_date,
-            counselor_name=session_input.counselor_name,
-            sources=InputSources(
-                counselor_memo="",
-                transcript_text=SYNTHETIC_TEXT,
-                key_issue_tags=["가" * 96_001],
-            ),
-        )
+        for tags in (["가" * 96_001], [""] * 9_600):
+            with self.subTest(tag_count=len(tags)):
+                sanitized = SanitizedInput(
+                    case_id=session_input.case_id,
+                    session_number=session_input.session_number,
+                    session_date=session_input.session_date,
+                    counselor_name=session_input.counselor_name,
+                    sources=InputSources(
+                        counselor_memo="",
+                        transcript_text=SYNTHETIC_TEXT,
+                        key_issue_tags=tags,
+                    ),
+                )
 
-        with self.assertRaises(TranscriptLimitError):
-            run_summary_core(
-                {
-                    "session_input": session_input,
-                    "sanitized_input": sanitized,
-                    "input_budget_prevalidated": True,
-                },
-                policy=AUTHENTICATED_FULL_POLICY,
-            )
+                with self.assertRaises(TranscriptLimitError):
+                    run_summary_core(
+                        {
+                            "session_input": session_input,
+                            "sanitized_input": sanitized,
+                            "input_budget_prevalidated": True,
+                        },
+                        policy=AUTHENTICATED_FULL_POLICY,
+                    )
 
     def test_public_core_never_calls_storage_or_retrieval(self) -> None:
         with patch("app.graph.nodes._storage_for_actor", side_effect=AssertionError("storage called")), patch(

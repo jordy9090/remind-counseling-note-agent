@@ -85,8 +85,9 @@ class SummaryGenerationRouteTests(unittest.TestCase):
 
     def test_oversized_issue_tags_are_rejected_before_provider(self):
         cases = (
-            (["가" * 96_001], "요청당 입력 한도는 96,000자입니다. 현재 96,033자입니다."),
+            (["가" * 96_001], "요청당 입력 한도는 96,000자입니다. 현재 96,045자입니다."),
             (["🧭" * 48_001], "요청당 추정 입력 토큰 한도는 96,000개입니다."),
+            ([""] * 9_600, "요청당 입력 한도는 96,000자입니다. 현재 96,034자입니다."),
         )
         with patch("app.api.routes.notes.run_note_pipeline") as pipeline, patch(
             "app.api.routes.notes.persist_generated_note"
