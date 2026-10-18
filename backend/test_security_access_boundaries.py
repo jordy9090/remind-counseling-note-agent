@@ -357,6 +357,48 @@ class AccessBoundaryTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
         self.assert_b_unchanged()
 
+    def test_oversized_note_ids_stop_before_confirmation_and_record_services(self):
+        oversized_note_id = "n" * 37
+        confirmation = {
+            "note_id": oversized_note_id,
+            "confirmed_note": {},
+            "counselor_edited": True,
+            "create_case_memory": False,
+        }
+        requests = [
+            ("backend", "POST", "/api/notes/confirm", {"json": confirmation}),
+            ("confirm", "POST", "/api/notes/confirm", {"json": confirmation}),
+            ("confirm", "POST", "/", {"json": confirmation}),
+            ("backend", "GET", f"/api/notes/records/{oversized_note_id}", {}),
+            ("record", "GET", f"/api/notes/records/{oversized_note_id}", {}),
+            ("record", "GET", "/api/notes/record", {"params": {"note_id": oversized_note_id}}),
+            ("record", "GET", "/", {"params": {"note_id": oversized_note_id}}),
+        ]
+        with (
+            patch(
+                "app.api.routes.notes.confirm_generated_note",
+                side_effect=AssertionError("Confirmation service reached for oversized note ID"),
+            ) as backend_confirm,
+            patch.object(
+                WRAPPER_MODULES["confirm"],
+                "confirm_generated_note",
+                side_effect=AssertionError("Confirmation service reached for oversized note ID"),
+            ) as wrapper_confirm,
+            patch(
+                "app.api.routes.notes.fetch_generated_note",
+                side_effect=AssertionError("Record service reached for oversized note ID"),
+            ) as fetch_record,
+        ):
+            for name, method, path, kwargs in requests:
+                with self.subTest(name=name, method=method, path=path):
+                    response = self.request(name, method, path, **kwargs)
+                    self.assertEqual(response.status_code, 422, response.text)
+            backend_confirm.assert_not_called()
+            wrapper_confirm.assert_not_called()
+            fetch_record.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_dashboard_aliases_deny_foreign_case(self):
         paths = [("backend", f'/api/cases/{CASES["b"]}/dashboard'),
                  ("cases", f'/api/cases/{CASES["b"]}/dashboard')]

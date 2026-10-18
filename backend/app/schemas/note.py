@@ -243,7 +243,7 @@ class PersistenceReport(BaseModel):
 class ConfirmGeneratedNoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    note_id: str
+    note_id: str = Field(max_length=36)
     confirmed_note: dict[str, Any] = Field(default_factory=dict)
     counselor_edited: bool = True
     create_case_memory: bool = True

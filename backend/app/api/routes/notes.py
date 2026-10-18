@@ -6,7 +6,7 @@ import os
 import traceback
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request, Response
 
 from app.api.security import _require_supabase_user, require_preview_access
 from app.graph.graph import run_note_pipeline
@@ -104,7 +104,11 @@ async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor
 
 
 @router.get("/records/{note_id}", response_model=GeneratedNoteRecord)
-async def get_note_record(note_id: str, actor: PreviewActor, response: Response) -> GeneratedNoteRecord:
+async def get_note_record(
+    note_id: Annotated[str, Path(max_length=36)],
+    actor: PreviewActor,
+    response: Response,
+) -> GeneratedNoteRecord:
     """Return the complete owned draft and confirmed record without regenerating."""
     try:
         response.headers["Cache-Control"] = "private, no-store"
