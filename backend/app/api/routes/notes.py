@@ -42,7 +42,12 @@ from app.services.quick_summary import (
 )
 from app.services.llm import observe_llm_request
 from app.services.storage_deidentification import deidentify_session_input
-from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
+from app.services.draft_store import (
+    TemporaryDraftLimitError,
+    get_temporary_draft,
+    list_temporary_drafts,
+    save_temporary_draft,
+)
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
 from app.services.transcript_chunking import TranscriptLimitError
@@ -165,7 +170,10 @@ async def generate_supervision_report(request: SupervisionReportRequest, actor: 
 @router.post("/drafts", response_model=TemporaryDraftSaveResponse)
 async def save_note_draft(draft: TemporaryDraftSaveRequest, actor: PreviewActor) -> TemporaryDraftSaveResponse:
     """Persist a counselor's temporary workspace draft."""
-    return save_temporary_draft(draft, actor=actor)
+    try:
+        return save_temporary_draft(draft, actor=actor)
+    except TemporaryDraftLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
 
 
 @router.get("/drafts/{draft_id}", response_model=TemporaryDraftRecord)

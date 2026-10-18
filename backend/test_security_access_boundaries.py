@@ -382,6 +382,43 @@ class AccessBoundaryTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [])
         self.assert_b_unchanged()
 
+    def test_oversized_temporary_drafts_stop_before_deidentification_and_storage(self):
+        payloads = {
+            "plain-form-content": {
+                "case_id": CASES["a"], "session_number": 1,
+                "form": {"transcript_text": "x" * 200_001},
+            },
+            "form-cardinality": {
+                "case_id": CASES["a"], "session_number": 1,
+                "form": {"key_issue_tags": ["x"] * 20_000},
+            },
+        }
+        paths = [
+            ("backend", "/api/notes/drafts"),
+            ("drafts", "/"),
+            ("drafts", "/api/notes/drafts"),
+        ]
+        with (
+            patch.object(draft_store, "deidentify_json") as deidentify,
+            patch.object(supabase_store, "upsert_draft_row") as storage,
+            patch.object(draft_store, "_write_to_disk") as disk,
+        ):
+            for payload_name, payload in payloads.items():
+                for app_name, path in paths:
+                    with self.subTest(payload=payload_name, app=app_name, path=path):
+                        response = self.request(app_name, "POST", path, json=payload)
+                        self.assertEqual(response.status_code, 413, response.text[:300])
+                        self.assertEqual(
+                            response.json()["detail"],
+                            "임시저장 요청이 너무 큽니다. 저장할 내용을 줄인 뒤 다시 시도해주세요.",
+                        )
+                        self.assertLess(len(response.content), 200)
+            deidentify.assert_not_called()
+            storage.assert_not_called()
+            disk.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_oversized_document_exports_stop_before_rendering(self):
         base_payload = export_payload()
         payloads = {

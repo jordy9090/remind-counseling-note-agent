@@ -20,7 +20,12 @@ from app.schemas.note import (  # noqa: E402
     TemporaryDraftSaveRequest,
     TemporaryDraftSaveResponse,
 )
-from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft  # noqa: E402
+from app.services.draft_store import (  # noqa: E402
+    TemporaryDraftLimitError,
+    get_temporary_draft,
+    list_temporary_drafts,
+    save_temporary_draft,
+)
 
 app = FastAPI(title="Re:mind Temporary Draft API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -32,7 +37,10 @@ async def save_note_draft(
     draft: TemporaryDraftSaveRequest,
     actor: PreviewActor,
 ) -> TemporaryDraftSaveResponse:
-    return save_temporary_draft(draft, actor=actor)
+    try:
+        return save_temporary_draft(draft, actor=actor)
+    except TemporaryDraftLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
 
 
 @app.get("/", response_model=list[TemporaryDraftRecord])
