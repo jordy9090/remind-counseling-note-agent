@@ -731,60 +731,36 @@ def _detect_sensitive_info(session_input: SessionInput) -> list[SensitiveInfoCan
 
 def _mock_structured_case(
     sanitized: SanitizedInput,
-    case_context: list[RetrievedCaseContextItem] | None = None,
+    _case_context: list[RetrievedCaseContextItem] | None = None,
 ) -> StructuredCaseData:
-    tags = ", ".join(sanitized.sources.key_issue_tags) or "주요 상담 이슈"
-    transcript_ref = "transcript_text"
+    tags = ", ".join(sanitized.sources.key_issue_tags)
     memo_ref = "counselor_memo"
-    prev_ref = "previous_session_summary"
-    case_context = case_context or []
-    session_content_refs = [memo_ref, transcript_ref, prev_ref]
-    if case_context:
-        session_content_refs.append(case_context[0].source_ref)
+    session_content, session_content_refs = _build_session_content_summary(sanitized)
+
+    presenting_problem = _first_source_sentence(sanitized.sources.counselor_memo, "")
+    presenting_problem_item = EvidenceItem(
+        content=presenting_problem or "주호소는 상담사 확인이 필요함.",
+        evidence_type="direct" if presenting_problem else "needs_review",
+        source_refs=[memo_ref] if presenting_problem else [],
+    )
 
     return StructuredCaseData(
-        presenting_problem=[
-            EvidenceItem(
-                content=_first_source_sentence(sanitized.sources.counselor_memo, "주호소는 상담사 확인이 필요함."),
-                evidence_type="direct",
-                source_refs=[transcript_ref, memo_ref],
-            )
-        ],
-        session_theme=[
-            EvidenceItem(
-                content=f"주요 회기 주제: {tags}",
-                evidence_type="direct",
-                source_refs=[memo_ref],
-            )
-        ],
+        presenting_problem=[presenting_problem_item],
+        session_theme=[EvidenceItem(
+            content=f"주요 회기 주제: {tags}" if tags else "회기 주제는 상담사 확인이 필요함.",
+            evidence_type="direct" if tags else "needs_review",
+            source_refs=["key_issue_tags"] if tags else [],
+        )],
         session_content=[
             EvidenceItem(
-                content=_build_session_content_summary(sanitized),
-                evidence_type="mixed",
+                content=session_content,
+                evidence_type="mixed" if session_content_refs else "needs_review",
                 source_refs=session_content_refs,
             )
         ],
-        counselor_interventions=[
-            EvidenceItem(
-                content=_first_source_sentence(sanitized.sources.counselor_memo, "상담자 개입은 상담사 확인이 필요함."),
-                evidence_type="direct",
-                source_refs=[memo_ref, transcript_ref],
-            )
-        ],
-        client_responses=[
-            EvidenceItem(
-                content=_extract_client_utterance(sanitized.sources.transcript_text),
-                evidence_type="direct",
-                source_refs=[transcript_ref],
-            )
-        ],
-        key_client_utterances=[
-            EvidenceItem(
-                content=_extract_client_utterance(sanitized.sources.transcript_text),
-                evidence_type="direct",
-                source_refs=[transcript_ref],
-            )
-        ],
+        counselor_interventions=[_extract_counselor_intervention(sanitized.sources.transcript_text)],
+        client_responses=[_extract_client_response(sanitized.sources.transcript_text)],
+        key_client_utterances=[_extract_client_response(sanitized.sources.transcript_text)],
         nonverbal_observations=_extract_nonverbal_observations(sanitized),
         reflection_candidates=[
             EvidenceItem(
@@ -829,13 +805,19 @@ def _mock_summary(sanitized: SanitizedInput, structured: StructuredCaseData) -> 
     )
 
 
-def _build_session_content_summary(sanitized: SanitizedInput) -> str:
-    tags = ", ".join(sanitized.sources.key_issue_tags) or "주요 상담 이슈"
-    return (
-        f"이번 회기에서는 다음 주제를 다루었다: {tags}. "
-        "내담자는 회기에서 확인된 불안과 반복되는 사고 흐름을 표현했고, "
-        "상담자는 이를 구체화하며 다음 회기에서 이어갈 계획을 정리하였다."
-    )
+def _build_session_content_summary(sanitized: SanitizedInput) -> tuple[str, list[str]]:
+    memo_sentence = _first_source_sentence(sanitized.sources.counselor_memo, "")
+    if memo_sentence:
+        return _ensure_sentence(memo_sentence), ["counselor_memo"]
+
+    turns = [
+        _extract_speaker_turn(sanitized.sources.transcript_text, ("Cl:", "내담자:", "Client:"), "내담자는"),
+        _extract_speaker_turn(sanitized.sources.transcript_text, ("Co:", "상담자:", "Counselor:"), "상담자는"),
+    ]
+    supported_turns = [turn for turn in turns if turn]
+    if supported_turns:
+        return " ".join(supported_turns), ["transcript_text"]
+    return "[상담사 확인 필요]", []
 
 
 def _extract_nonverbal_observations(sanitized: SanitizedInput) -> list[EvidenceItem]:
@@ -875,13 +857,17 @@ def _extract_nonverbal_observations(sanitized: SanitizedInput) -> list[EvidenceI
 
 
 def _extract_next_plan(sanitized: SanitizedInput) -> EvidenceItem:
-    for sentence in _sentences(sanitized.sources.counselor_memo):
-        if NEXT_PLAN_RE.search(sentence):
-            return EvidenceItem(
-                content=_ensure_sentence(sentence),
-                evidence_type="direct",
-                source_refs=["counselor_memo"],
-            )
+    for source_ref, text in (
+        ("counselor_memo", sanitized.sources.counselor_memo),
+        ("transcript_text", sanitized.sources.transcript_text),
+    ):
+        for sentence in _source_sentences(text):
+            if NEXT_PLAN_RE.search(sentence):
+                return EvidenceItem(
+                    content=_ensure_sentence(_speaker_statement(sentence)),
+                    evidence_type="direct",
+                    source_refs=[source_ref],
+                )
 
     return EvidenceItem(
         content="[상담사 확인 필요]",
@@ -903,12 +889,60 @@ def _section_from_first(items: list[EvidenceItem], fallback: str) -> SummarySect
     )
 
 
-def _extract_client_utterance(transcript_text: str) -> str:
-    for line in transcript_text.splitlines():
+def _extract_client_response(transcript_text: str) -> EvidenceItem:
+    content = _extract_speaker_turn(
+        transcript_text,
+        ("Cl:", "내담자:", "Client:"),
+        "내담자는",
+    )
+    return EvidenceItem(
+        content=content or "중요한 내담자 발화는 축어록에서 상담사가 확인해야 함.",
+        evidence_type="direct" if content else "needs_review",
+        source_refs=["transcript_text"] if content else [],
+    )
+
+
+def _extract_counselor_intervention(transcript_text: str) -> EvidenceItem:
+    content = _extract_speaker_turn(
+        transcript_text,
+        ("Co:", "상담자:", "Counselor:"),
+        "상담자는",
+    )
+    return EvidenceItem(
+        content=content or "상담자 개입은 상담사 확인이 필요함.",
+        evidence_type="direct" if content else "needs_review",
+        source_refs=["transcript_text"] if content else [],
+    )
+
+
+def _extract_speaker_turn(text: str, prefixes: tuple[str, ...], attribution: str) -> str:
+    for line in (text or "").splitlines():
         stripped = line.strip()
-        if stripped.startswith(("Cl:", "내담자:", "Client:")):
-            return stripped
-    return "중요한 내담자 발화는 축어록에서 상담사가 확인해야 함."
+        for prefix in prefixes:
+            if stripped.startswith(prefix):
+                utterance = stripped[len(prefix):].strip()
+                if utterance:
+                    return _ensure_sentence(f"{attribution} {utterance}")
+    return ""
+
+
+def _speaker_statement(text: str) -> str:
+    stripped = (text or "").strip()
+    for prefixes, attribution in (
+        (("Cl:", "내담자:", "Client:"), "내담자는"),
+        (("Co:", "상담자:", "Counselor:"), "상담자는"),
+    ):
+        for prefix in prefixes:
+            if stripped.startswith(prefix):
+                return f"{attribution} {stripped[len(prefix):].strip()}"
+    return stripped
+
+
+def _source_sentences(text: str) -> list[str]:
+    sentences: list[str] = []
+    for line in (text or "").splitlines():
+        sentences.extend(_sentences(line))
+    return sentences
 
 
 def _sentences(text: str) -> list[str]:

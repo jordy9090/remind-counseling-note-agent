@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app.core.config import settings
-from app.graph.nodes import generate_summary, _build_summary_prompt
+from app.graph.nodes import _build_summary_prompt, _mock_structured_case, _mock_summary, generate_summary
 from app.schemas.note import (
     EvidenceMappedData,
     EvidenceMappedItem,
@@ -60,6 +60,56 @@ def _state() -> dict:
 
 
 class SummaryQualityTests(unittest.TestCase):
+    def test_stub_fallback_does_not_invent_anxiety_intervention_or_plan(self) -> None:
+        sanitized = SanitizedInput(
+            case_id="SYNTH-STUB",
+            session_number=1,
+            session_date="2026-10-19",
+            counselor_name="",
+            sources=InputSources(
+                counselor_memo="내담자는 동아리 모임에서 의견을 말했다고 보고함.",
+                transcript_text=(
+                    "내담자: 동아리에서 제 의견을 말했어요.\n"
+                    "상담자: 그때 어떤 반응이 있었나요?\n"
+                    "내담자: 친구가 고개를 끄덕였어요."
+                ),
+            ),
+        )
+
+        summary = _mock_summary(sanitized, _mock_structured_case(sanitized))
+
+        self.assertNotIn("불안", summary.session_content.text)
+        self.assertNotIn("반복되는 사고", summary.session_content.text)
+        self.assertNotIn("다음 회기", summary.session_content.text)
+        self.assertEqual("상담자는 그때 어떤 반응이 있었나요?", summary.counselor_intervention.text)
+        self.assertNotIn("내담자는 동아리", summary.counselor_intervention.text)
+        self.assertEqual("[상담사 확인 필요]", summary.next_plan.text)
+        self.assertTrue(summary.next_plan.requires_review)
+
+    def test_stub_fallback_preserves_a_documented_transcript_plan(self) -> None:
+        sanitized = SanitizedInput(
+            case_id="SYNTH-STUB-PLAN",
+            session_number=1,
+            session_date="2026-10-19",
+            counselor_name="",
+            sources=InputSources(
+                counselor_memo="발표 연습 경험을 돌아봄.",
+                transcript_text=(
+                    "내담자: 짧게 연습해 보니 시작하기 쉬웠어요.\n"
+                    "상담자: 다음 회기에는 실제 발표 전 반응을 살펴보기로 해요."
+                ),
+            ),
+        )
+
+        summary = _mock_summary(sanitized, _mock_structured_case(sanitized))
+
+        self.assertEqual(
+            "상담자는 다음 회기에는 실제 발표 전 반응을 살펴보기로 해요.",
+            summary.next_plan.text,
+        )
+        self.assertEqual(["transcript_text"], summary.next_plan.source_refs)
+        self.assertFalse(summary.next_plan.requires_review)
+
     def test_concise_prose_and_ready_written_memo_are_accepted(self) -> None:
         summary = _summary()
         self.assertEqual({}, summary_quality_issues(summary))
