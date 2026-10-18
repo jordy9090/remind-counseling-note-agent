@@ -1,6 +1,8 @@
 """Routes for note generation."""
 from __future__ import annotations
 
+import ipaddress
+import os
 import traceback
 from typing import Annotated
 
@@ -34,6 +36,7 @@ from app.services.quick_summary import (
     QuickSummaryRequest,
     QuickSummaryResponse,
     generate_quick_summary,
+    credential_rate_limit_key,
     rate_limit_key,
     rate_limiter,
 )
@@ -212,14 +215,21 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
 
 
 def client_ip(request: Request) -> str:
-    """Client IP as reported by the hosting proxy (Vercel sets both headers)."""
-    real_ip = (request.headers.get("x-real-ip") or "").strip()
-    if real_ip:
-        return real_ip
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if forwarded:
-        return forwarded
-    return request.client.host if request.client else ""
+    """Return a canonical IP, trusting forwarded headers only behind a configured proxy."""
+    candidates: list[str] = []
+    if os.getenv("VERCEL") == "1" or settings.trust_proxy_client_ip_headers:
+        candidates.extend([
+            (request.headers.get("x-vercel-forwarded-for") or "").split(",")[0].strip(),
+            (request.headers.get("x-forwarded-for") or "").split(",")[0].strip(),
+            (request.headers.get("x-real-ip") or "").strip(),
+        ])
+    candidates.append(request.client.host if request.client else "")
+    for candidate in candidates:
+        try:
+            return ipaddress.ip_address(candidate).compressed
+        except ValueError:
+            continue
+    return ""
 
 
 def _optional_actor(authorization: str | None) -> str | None:
@@ -239,16 +249,33 @@ def run_quick_summary(
     authorization: str | None,
 ) -> QuickSummaryResponse:
     """Public quick summary. The input text is never stored or logged."""
-    actor = _optional_actor(authorization)
-    key, limit, window = rate_limit_key(client_ip=client_ip(request), actor=actor)
+    ip_key, anonymous_limit, anonymous_window = rate_limit_key(
+        client_ip=client_ip(request), actor=None
+    )
     try:
-        rate_limiter.check(key, limit, window)
+        rate_limiter.check(ip_key, anonymous_limit, anonymous_window)
+        if authorization and settings.enable_real_user_auth:
+            credential_key, credential_limit, credential_window = credential_rate_limit_key(authorization)
+            rate_limiter.check(credential_key, credential_limit, credential_window)
     except QuickSummaryRateLimited as error:
         raise HTTPException(
             status_code=429,
             detail="요약 요청이 너무 많아요. 잠시 후 다시 시도하거나 로그인 후 이용해주세요.",
             headers={"Retry-After": str(error.retry_after)},
         ) from error
+
+    actor = _optional_actor(authorization)
+    if actor:
+        rate_limiter.refund(ip_key)
+        actor_key, actor_limit, actor_window = rate_limit_key(client_ip="", actor=actor)
+        try:
+            rate_limiter.check(actor_key, actor_limit, actor_window)
+        except QuickSummaryRateLimited as error:
+            raise HTTPException(
+                status_code=429,
+                detail="요약 요청이 너무 많아요. 잠시 후 다시 시도해주세요.",
+                headers={"Retry-After": str(error.retry_after)},
+            ) from error
     try:
         with observe_llm_request("public_quick_summary", max_calls=3):
             return generate_quick_summary(payload.text)

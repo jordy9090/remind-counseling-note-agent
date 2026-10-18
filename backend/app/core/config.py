@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     quick_summary_max_concurrent: int = Field(default=2, ge=1, le=16)
     quick_summary_concurrency_wait_seconds: float = Field(default=0.1, ge=0, le=5)
     quick_summary_max_estimated_cost_usd: float = Field(default=0.30, gt=0, le=5)
+    trust_proxy_client_ip_headers: bool = False
 
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)
     use_stub: bool = False

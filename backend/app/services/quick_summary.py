@@ -30,6 +30,7 @@ QUICK_SUMMARY_MAX_CHARS = 20_000
 QUICK_SUMMARY_MIN_CHARS = 20
 ANONYMOUS_LIMIT = (5, 60 * 60)  # 5 requests per hour per IP
 AUTHENTICATED_LIMIT = (60, 60 * 60)  # 60 requests per hour per user
+RATE_LIMIT_MAX_KEYS = 10_000
 _concurrency_guard = threading.BoundedSemaphore(settings.quick_summary_max_concurrent)
 
 class QuickSummaryRequest(BaseModel):
@@ -64,27 +65,46 @@ class QuickSummaryCostLimit(RuntimeError):
 
 
 class _SlidingWindowLimiter:
-    def __init__(self) -> None:
+    def __init__(self, *, max_keys: int = RATE_LIMIT_MAX_KEYS) -> None:
         self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
+        self._max_keys = max_keys
 
     def check(self, key: str, limit: int, window: int, now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
         with self._lock:
-            hits = self._hits.setdefault(key, deque())
+            hits = self._hits.get(key)
+            if hits is None:
+                if len(self._hits) >= self._max_keys:
+                    stale_keys = [
+                        existing_key
+                        for existing_key, existing_hits in self._hits.items()
+                        if not existing_hits or now - existing_hits[-1] >= window
+                    ]
+                    for stale_key in stale_keys:
+                        del self._hits[stale_key]
+                if len(self._hits) >= self._max_keys:
+                    raise QuickSummaryRateLimited(window)
+                hits = self._hits.setdefault(key, deque())
             while hits and now - hits[0] >= window:
                 hits.popleft()
             if len(hits) >= limit:
                 raise QuickSummaryRateLimited(max(1, int(window - (now - hits[0]))))
             hits.append(now)
-            if len(self._hits) > 10_000:
-                # Drop idle keys so the map cannot grow without bound.
-                for stale in [k for k, v in self._hits.items() if not v]:
-                    del self._hits[stale]
 
     def reset(self) -> None:
         with self._lock:
             self._hits.clear()
+
+    def refund(self, key: str) -> None:
+        """Remove one provisional hit after a caller crosses a stronger identity boundary."""
+        with self._lock:
+            hits = self._hits.get(key)
+            if not hits:
+                return
+            hits.pop()
+            if not hits:
+                del self._hits[key]
 
 
 rate_limiter = _SlidingWindowLimiter()
@@ -101,6 +121,13 @@ def rate_limit_key(*, client_ip: str, actor: str | None) -> tuple[str, int, int]
     return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limit, window
 
 
+def credential_rate_limit_key(authorization: str) -> tuple[str, int, int]:
+    """Bound authentication checks without retaining the bearer credential."""
+    limit, window = AUTHENTICATED_LIMIT
+    raw = f"credential:{authorization}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limit, window
+
+
 def validate_quick_summary_text(text: str) -> str:
     cleaned = re.sub(r"[ \t]+\n", "\n", (text or "").strip())
     if len(cleaned) < QUICK_SUMMARY_MIN_CHARS:
@@ -108,6 +135,11 @@ def validate_quick_summary_text(text: str) -> str:
     if len(cleaned) > QUICK_SUMMARY_MAX_CHARS:
         raise QuickSummaryInputError(
             f"간편 요약은 {QUICK_SUMMARY_MAX_CHARS:,}자까지 입력할 수 있어요. 현재 {len(cleaned):,}자입니다."
+        )
+    estimated_tokens = estimate_korean_tokens(cleaned)
+    if estimated_tokens > PUBLIC_QUICK_POLICY.max_estimated_input_tokens:
+        raise QuickSummaryInputError(
+            "간편 요약의 추정 입력 토큰 한도를 초과했어요. 내용을 줄여서 다시 시도해주세요."
         )
     return cleaned
 
@@ -155,5 +187,5 @@ def _enforce_estimated_cost_limit(text: str) -> None:
         input_tokens=(estimated_source_tokens + 4_000) * PUBLIC_QUICK_POLICY.max_core_provider_calls,
         output_tokens=2_500 * PUBLIC_QUICK_POLICY.max_core_provider_calls,
     )
-    if estimated_cost is not None and estimated_cost > settings.quick_summary_max_estimated_cost_usd:
+    if estimated_cost is None or estimated_cost > settings.quick_summary_max_estimated_cost_usd:
         raise QuickSummaryCostLimit("public summary estimated cost exceeds the configured maximum")

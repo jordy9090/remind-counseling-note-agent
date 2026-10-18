@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("USE_STUB", "1")
 
+from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
@@ -135,16 +136,85 @@ class QuickSummaryTest(unittest.TestCase):
         too_long = "가" * (qs.QUICK_SUMMARY_MAX_CHARS + 1)
         self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": too_long}).status_code, 422)
 
+    def test_rejects_token_heavy_input_below_character_limit(self) -> None:
+        token_heavy = "쀍" * 7_000
+        self.assertLess(len(token_heavy), qs.QUICK_SUMMARY_MAX_CHARS)
+        self.assertEqual(
+            422,
+            self.client.post("/api/notes/quick-summary", json={"text": token_heavy}).status_code,
+        )
+
     def test_anonymous_requests_are_rate_limited_per_ip(self) -> None:
         limit = qs.ANONYMOUS_LIMIT[0]
         headers = {"x-real-ip": "203.0.113.7"}
-        for _ in range(limit):
-            self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers=headers).status_code, 200)
-        blocked = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers=headers)
-        self.assertEqual(blocked.status_code, 429)
-        self.assertIn("Retry-After", blocked.headers)
-        other_ip = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers={"x-real-ip": "203.0.113.8"})
-        self.assertEqual(other_ip.status_code, 200)
+        with patch.object(qs.settings, "trust_proxy_client_ip_headers", True):
+            for _ in range(limit):
+                self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers=headers).status_code, 200)
+            blocked = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers=headers)
+            self.assertEqual(blocked.status_code, 429)
+            self.assertIn("Retry-After", blocked.headers)
+            other_ip = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE}, headers={"x-real-ip": "203.0.113.8"})
+            self.assertEqual(other_ip.status_code, 200)
+
+    def test_untrusted_forwarded_ip_header_cannot_rotate_the_quota(self) -> None:
+        limit = qs.ANONYMOUS_LIMIT[0]
+        with patch.dict(os.environ, {"VERCEL": ""}), patch.object(
+            qs.settings, "trust_proxy_client_ip_headers", False
+        ):
+            for index in range(limit):
+                response = self.client.post(
+                    "/api/notes/quick-summary",
+                    json={"text": SAMPLE},
+                    headers={"x-real-ip": f"203.0.113.{index + 1}"},
+                )
+                self.assertEqual(200, response.status_code)
+            blocked = self.client.post(
+                "/api/notes/quick-summary",
+                json={"text": SAMPLE},
+                headers={"x-real-ip": "203.0.113.99"},
+            )
+        self.assertEqual(429, blocked.status_code)
+
+    def test_invalid_bearer_is_rate_limited_before_repeated_auth_checks(self) -> None:
+        headers = {"Authorization": "Bearer synthetic-invalid"}
+        with patch.object(qs.settings, "enable_real_user_auth", True), patch(
+            "app.api.routes.notes._require_supabase_user",
+            side_effect=HTTPException(status_code=401, detail="synthetic invalid token"),
+        ) as authenticate:
+            statuses = [
+                self.client.post(
+                    "/api/notes/quick-summary", json={"text": SAMPLE}, headers=headers
+                ).status_code
+                for _ in range(qs.ANONYMOUS_LIMIT[0] + 2)
+            ]
+
+        self.assertEqual([200] * qs.ANONYMOUS_LIMIT[0] + [429, 429], statuses)
+        self.assertEqual(qs.ANONYMOUS_LIMIT[0], authenticate.call_count)
+
+    def test_valid_bearer_uses_user_quota_instead_of_anonymous_ip_quota(self) -> None:
+        headers = {"Authorization": "Bearer synthetic-valid"}
+        with patch.object(qs.settings, "enable_real_user_auth", True), patch(
+            "app.api.routes.notes._require_supabase_user", return_value="synthetic-user"
+        ):
+            statuses = [
+                self.client.post(
+                    "/api/notes/quick-summary", json={"text": SAMPLE}, headers=headers
+                ).status_code
+                for _ in range(qs.ANONYMOUS_LIMIT[0] + 1)
+            ]
+
+        self.assertEqual([200] * (qs.ANONYMOUS_LIMIT[0] + 1), statuses)
+
+    def test_rate_limiter_rejects_new_keys_when_active_key_capacity_is_full(self) -> None:
+        limiter = qs._SlidingWindowLimiter(max_keys=2)
+        limiter.check("first", 5, 60, now=0)
+        limiter.check("second", 5, 60, now=0)
+
+        with self.assertRaises(qs.QuickSummaryRateLimited):
+            limiter.check("third", 5, 60, now=1)
+
+        limiter.check("third", 5, 60, now=60)
+        self.assertLessEqual(len(limiter._hits), 2)
 
     def test_busy_instance_fails_fast_without_running_the_summary(self) -> None:
         with patch.object(qs._concurrency_guard, "acquire", return_value=False), patch.object(
@@ -160,6 +230,17 @@ class QuickSummaryTest(unittest.TestCase):
         with patch.object(qs.settings, "llm_provider", "openai"), patch.object(
             qs.settings, "openai_model", "gpt-5.4"
         ), patch.object(qs.settings, "quick_summary_max_estimated_cost_usd", 0.000001), patch(
+            "app.services.quick_summary.run_summary_core"
+        ) as core:
+            response = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE})
+        self.assertEqual(503, response.status_code)
+        self.assertIn("비용 한도", response.json()["detail"])
+        core.assert_not_called()
+
+    def test_unknown_provider_pricing_blocks_before_provider_execution(self) -> None:
+        with patch.object(qs.settings, "llm_provider", "openai_compatible"), patch.object(
+            qs.settings, "llm_input_cost_per_million_usd", None
+        ), patch.object(qs.settings, "llm_output_cost_per_million_usd", None), patch(
             "app.services.quick_summary.run_summary_core"
         ) as core:
             response = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE})

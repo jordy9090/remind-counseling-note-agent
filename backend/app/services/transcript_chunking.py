@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 _SENTENCE_END = re.compile(r"[.!?。！？](?:[\"'”’」』])?\s+")
@@ -94,5 +95,19 @@ def _preferred_boundary(text: str, start: int, proposed_end: int) -> int:
 
 
 def estimate_korean_tokens(text: str) -> int:
-    """Return a conservative offline estimate when provider usage is unavailable."""
-    return len(text or "")
+    """Return an offline token count, with a UTF-8 upper bound when tiktoken is unavailable."""
+    value = text or ""
+    encoding = _token_encoding()
+    if encoding is not None:
+        return len(encoding.encode(value))
+    return len(value.encode("utf-8"))
+
+
+@lru_cache(maxsize=1)
+def _token_encoding():
+    try:
+        import tiktoken
+
+        return tiktoken.get_encoding("o200k_base")
+    except (ImportError, ValueError):
+        return None

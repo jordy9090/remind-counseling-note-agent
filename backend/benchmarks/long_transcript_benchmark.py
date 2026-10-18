@@ -1,8 +1,8 @@
 """Generate synthetic Korean transcripts and measure offline request bounds.
 
-This benchmark never calls an external model. Token counts are measured with
-tiktoken when available; otherwise they are reported as unknown alongside the
-runtime's conservative character-based estimate.
+This benchmark never calls an external model. Token counts use the runtime's
+offline tokenizer when available and retain a separate measured field for
+comparison.
 """
 from __future__ import annotations
 
