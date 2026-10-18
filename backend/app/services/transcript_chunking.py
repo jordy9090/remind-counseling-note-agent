@@ -109,5 +109,5 @@ def _token_encoding():
         import tiktoken
 
         return tiktoken.get_encoding("o200k_base")
-    except (ImportError, ValueError):
+    except Exception:
         return None

@@ -16,11 +16,24 @@ from app.schemas.note import (  # noqa: E402
     StructuredCaseData,
     SummarySection,
 )
-from app.services.transcript_chunking import TranscriptLimitError, split_source_text  # noqa: E402
+from app.services.transcript_chunking import (  # noqa: E402
+    TranscriptLimitError,
+    _token_encoding,
+    estimate_korean_tokens,
+    split_source_text,
+)
 from benchmarks.long_transcript_benchmark import EVENT_MARKERS, generate_synthetic_transcript  # noqa: E402
 
 
 class TranscriptChunkingTests(unittest.TestCase):
+    def test_token_estimator_falls_back_without_downloading_encoding_data(self) -> None:
+        _token_encoding.cache_clear()
+        try:
+            with patch("tiktoken.get_encoding", side_effect=RuntimeError("network forbidden")):
+                self.assertEqual(len("상담".encode("utf-8")), estimate_korean_tokens("상담"))
+        finally:
+            _token_encoding.cache_clear()
+
     def test_60_minute_transcript_preserves_boundaries_offsets_and_events(self) -> None:
         text = generate_synthetic_transcript(60, "timestamps")
         chunks = split_source_text(
