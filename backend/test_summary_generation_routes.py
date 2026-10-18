@@ -171,6 +171,37 @@ class SummaryGenerationRouteTests(unittest.TestCase):
         pipeline.assert_not_called()
         persist.assert_not_called()
 
+    def test_segmented_unicode_tokenization_work_is_bounded_before_provider(self):
+        spans = (["가" * 1_023] * 93) + ["가" * 768]
+        transcript = " ".join(spans)
+        self.assertEqual(96_000, len(transcript))
+        self.assertEqual(1_023, max(map(len, spans)))
+        payload = {
+            "case_id": "SYNTHETIC-SEGMENTED-TOKEN-LATENCY",
+            "session_number": 1,
+            "counselor_memo": "",
+            "transcript_text": transcript,
+            "persist": False,
+            "insight_lens": "none",
+        }
+        with patch(
+            "app.services.transcript_chunking._token_encoding",
+            side_effect=AssertionError("exact tokenizer reached"),
+        ) as token_encoding, patch(
+            "app.api.routes.notes.run_note_pipeline",
+            side_effect=AssertionError("provider pipeline reached"),
+        ) as pipeline, patch("app.api.routes.notes.persist_generated_note") as persist:
+            response = TestClient(main_app).post("/api/notes/generate", json=payload)
+
+        self.assertEqual(413, response.status_code, response.text[:300])
+        self.assertEqual(
+            "요청당 추정 입력 토큰 한도는 96,000개입니다.",
+            response.json()["detail"],
+        )
+        token_encoding.assert_not_called()
+        pipeline.assert_not_called()
+        persist.assert_not_called()
+
     def test_authenticated_route_reuses_raw_input_budget_validation(self):
         payload = {
             **INPUT,

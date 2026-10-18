@@ -8,9 +8,8 @@ from functools import lru_cache
 
 _SENTENCE_END = re.compile(r"[.!?。！？](?:[\"'”’」』])?\s+")
 _MAX_EXACT_TOKENIZER_SPAN_CHARS = 1_024
-_OVERSIZED_UNBROKEN_SPAN = re.compile(
-    rf"\S{{{_MAX_EXACT_TOKENIZER_SPAN_CHARS + 1}}}"
-)
+_MAX_EXACT_TOKENIZER_WORK = 16 * _MAX_EXACT_TOKENIZER_SPAN_CHARS**2
+_NON_WHITESPACE_SPAN = re.compile(r"\S+")
 
 
 class TranscriptLimitError(ValueError):
@@ -102,10 +101,18 @@ def estimate_korean_tokens(text: str) -> int:
     """Return an offline token count, with a UTF-8 upper bound when tiktoken is unavailable."""
     value = text or ""
     utf8_upper_bound = len(value.encode("utf-8"))
-    # Very long unbroken Unicode spans trigger superlinear BPE work. The byte
-    # count is conservative and keeps adversarial request validation bounded.
-    if _OVERSIZED_UNBROKEN_SPAN.search(value):
-        return utf8_upper_bound
+    # BPE work grows superlinearly within unbroken spans. Bound both individual
+    # spans and their aggregate squared-length work before exact tokenization.
+    tokenizer_work = 0
+    for match in _NON_WHITESPACE_SPAN.finditer(value):
+        span_chars = match.end() - match.start()
+        tokenizer_work += span_chars**2
+        if (
+            span_chars > _MAX_EXACT_TOKENIZER_SPAN_CHARS
+            or tokenizer_work > _MAX_EXACT_TOKENIZER_WORK
+        ):
+            # A byte-level tokenizer cannot emit more tokens than input bytes.
+            return utf8_upper_bound
     encoding = _token_encoding()
     if encoding is not None:
         return len(encoding.encode(value))
