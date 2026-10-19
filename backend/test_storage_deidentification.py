@@ -71,6 +71,19 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertIn("교육자", texts["memo"])
         self.assertFalse(report.llm_used)
 
+    def test_disabled_extraction_does_not_repeat_known_name_scan(self) -> None:
+        known_names = ["김민지", "박상담"]
+        texts = {"memo": "김민지와 박상담이 만났다.", "note": "민지와 상담 이야기"}
+        expected_scans = len(deid._alias_names(known_names)) * len(texts)
+
+        with model_returns(None), patch.object(deid, "_name_pattern", wraps=deid._name_pattern) as name_pattern:
+            result, report = deid.deidentify_texts(texts, known_names=known_names)
+
+        self.assertEqual(result, {"memo": "김O지와 박O담이 만났다.", "note": "민O와 상담 이야기"})
+        self.assertEqual(report.names_masked, 3)
+        self.assertFalse(report.llm_used)
+        self.assertEqual(name_pattern.call_count, expected_scans)
+
     def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
         with patch.object(settings, "allow_external_storage_entity_extraction", False):
             texts, report = deid.deidentify_texts({"memo": "친구 박서준은 간호사로 일한다."})

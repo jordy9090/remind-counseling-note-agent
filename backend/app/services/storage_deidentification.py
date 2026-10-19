@@ -258,16 +258,22 @@ def deidentify_texts(
 
     joined = "\n\n".join(f"[{key}]\n{value}" for key, value in baseline.items() if value and value.strip())
     entities = _extract_entities(joined)
+    if entities is None:
+        return baseline, StorageDeidentificationReport(
+            llm_used=False,
+            names_masked=names_masked,
+            occupations_generalized=occupations_generalized,
+        )
+
     occupations: dict[str, str] = {}
-    if entities is not None:
-        for name in entities.person_names:
-            value = name.strip()
-            if _NAME_TOKEN.match(value) and not is_masked_name(value) and value in joined:
-                names.add(value)
-        for mention in entities.occupations:
-            value = mention.text.strip()
-            if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
-                occupations[value] = mention.category
+    for name in entities.person_names:
+        value = name.strip()
+        if _NAME_TOKEN.match(value) and not is_masked_name(value) and value in joined:
+            names.add(value)
+    for mention in entities.occupations:
+        value = mention.text.strip()
+        if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
+            occupations[value] = mention.category
 
     result: dict[str, str] = {}
     for key, text in baseline.items():
