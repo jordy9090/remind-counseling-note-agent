@@ -108,6 +108,29 @@ class MaskingRuleTests(unittest.TestCase):
             len(texts),
         )
 
+    def test_opt_in_extraction_deduplicates_candidates_before_membership_checks(self) -> None:
+        entities = deid._StorageEntities(
+            person_names=["최하늘", "하늘"] * 100,
+            occupations=[
+                deid._OccupationMention(text="아동도예가", category="예술가"),
+                deid._OccupationMention(text="도예가", category="예술가"),
+            ] * 100,
+        )
+        text = "최하늘은 하늘과 아동도예가 및 도예가로 일한다."
+
+        with model_returns(entities), patch.object(
+            deid, "_candidate_is_present", wraps=deid._candidate_is_present,
+        ) as candidate_is_present:
+            result, report = deid.deidentify_texts({"memo": text})
+
+        self.assertEqual(result["memo"], "최O늘은 하O과 예술가 및 예술가로 일한다.")
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 2))
+        self.assertEqual(candidate_is_present.call_count, 4)
+        self.assertEqual(
+            {call.args[0] for call in candidate_is_present.call_args_list},
+            {"최하늘", "하늘", "아동도예가", "도예가"},
+        )
+
     def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
         with patch.object(settings, "allow_external_storage_entity_extraction", False):
             texts, report = deid.deidentify_texts({"memo": "친구 박서준은 간호사로 일한다."})

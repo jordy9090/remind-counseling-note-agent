@@ -231,6 +231,10 @@ def _generalized_occupation(match: re.Match[str], category: str) -> str:
     return category + particle
 
 
+def _candidate_is_present(candidate: str, text: str) -> bool:
+    return candidate in text
+
+
 def deidentify_texts(
     texts: Mapping[str, str],
     *,
@@ -265,16 +269,23 @@ def deidentify_texts(
             occupations_generalized=occupations_generalized,
         )
 
-    extracted_names: set[str] = set()
-    occupations: dict[str, str] = {}
+    name_candidates: set[str] = set()
     for name in entities.person_names:
         value = name.strip()
-        if _NAME_TOKEN.match(value) and not is_masked_name(value) and value in joined:
-            extracted_names.add(value)
+        if _NAME_TOKEN.match(value) and not is_masked_name(value):
+            name_candidates.add(value)
+    extracted_names = {value for value in name_candidates if _candidate_is_present(value, joined)}
+
+    occupation_candidates: dict[str, str] = {}
     for mention in entities.occupations:
         value = mention.text.strip()
-        if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
-            occupations[value] = mention.category
+        if len(value) >= 2 and value not in OCCUPATION_CATEGORIES:
+            occupation_candidates[value] = mention.category
+    occupations = {
+        value: category
+        for value, category in occupation_candidates.items()
+        if _candidate_is_present(value, joined)
+    }
 
     result: dict[str, str] = {}
     for key, text in baseline.items():
