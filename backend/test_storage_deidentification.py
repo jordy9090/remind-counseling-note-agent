@@ -299,6 +299,28 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual(result["memo"], "학생 " + baseline[len(core) + 1:])
         self.assertEqual((report.names_masked, report.occupations_generalized), (0, 1))
 
+    def test_opt_in_extraction_bounds_dense_repeated_prefix_occupation_matches(self) -> None:
+        candidates = ["가" * length for length in range(3, 503)]
+        baseline = "가" * 200_000
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_matches",
+            side_effect=AssertionError("dense output-link traversal used"),
+        ), patch.object(
+            deid, "_generalize_occupations_once",
+            side_effect=AssertionError("distinct-length staged scan used"),
+        ):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(result["memo"], "학생" * 399)
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 399))
+
     def test_opt_in_extraction_preserves_occupation_cascade_and_global_overlap_order(self) -> None:
         cases = (
             (

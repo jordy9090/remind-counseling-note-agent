@@ -14,6 +14,7 @@ or occupation mentions. Saving never fails because of this optional step.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -521,6 +522,64 @@ def _replacement_can_introduce_occupation(occupations: Mapping[str, str]) -> boo
     )
 
 
+def _generalize_repeated_character_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+) -> tuple[str, int] | None:
+    """Collapse repeated-character runs when categories cannot create another candidate."""
+    plans: dict[str, dict[int, str]] = {}
+    for occupation, category in occupations.items():
+        if not occupation:
+            return None
+        character = occupation[0]
+        if occupation.count(character) != len(occupation):
+            return None
+        plans.setdefault(character, {})[len(occupation)] = category
+
+    candidate_characters = set(plans)
+    if any(
+        any(character in candidate_characters for character in category)
+        for category in occupations.values()
+    ):
+        return None
+
+    ordered_plans = {
+        character: (sorted(replacements), replacements)
+        for character, replacements in plans.items()
+    }
+    chunks: list[str] = []
+    cursor = 0
+    index = 0
+    count = 0
+    while index < len(text):
+        character = text[index]
+        plan = ordered_plans.get(character)
+        if plan is None:
+            index += 1
+            continue
+
+        run_end = index + 1
+        while run_end < len(text) and text[run_end] == character:
+            run_end += 1
+        chunks.append(text[cursor:index])
+        remaining = run_end - index
+        lengths, replacements = plan
+        while remaining >= lengths[0]:
+            length = lengths[bisect_right(lengths, remaining) - 1]
+            matches, remaining = divmod(remaining, length)
+            chunks.append(replacements[length] * matches)
+            count += matches
+        if remaining:
+            chunks.append(character * remaining)
+        cursor = run_end
+        index = run_end
+
+    if not count:
+        return text, 0
+    chunks.append(text[cursor:])
+    return "".join(chunks), count
+
+
 def _generalize_prioritized_occupations(
     text: str,
     occupations: Mapping[str, str],
@@ -631,6 +690,10 @@ def _generalize_extracted_occupations(
     """Generalize occupations with bounded scans while retaining legacy cascade behavior."""
     if not occupations or not text:
         return text, 0
+
+    generalized = _generalize_repeated_character_occupations(text, occupations)
+    if generalized is not None:
+        return generalized
 
     trie = trie or _occupation_trie(occupations)
     generalized = _generalize_non_overlapping_occupations(text, occupations, trie)
