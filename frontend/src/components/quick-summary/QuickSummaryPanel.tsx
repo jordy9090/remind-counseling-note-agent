@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, Loader2, Plus, RotateCcw } from 'lucide-react'
+import { Check, Copy, Loader2, PenLine, Plus, RotateCcw, X } from 'lucide-react'
 
 import { extractDocumentMaterial, requestQuickSummary } from '../../api/client'
 import {
@@ -20,6 +20,8 @@ const ACCEPTED_FILES = '.txt,.pdf,.docx'
 export default function QuickSummaryPanel({
   result,
   onResult,
+  onEditResult,
+  editDisabled = false,
   canExtractDocuments,
   privacyNote,
   resultStatus,
@@ -29,6 +31,10 @@ export default function QuickSummaryPanel({
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
+  /** Commits a counselor-reviewed result without starting another AI generation. */
+  onEditResult: (result: QuickSummaryResult) => void
+  /** Prevents editing while the signed-in workspace is still assigning the summary's draft id. */
+  editDisabled?: boolean
   /** PDF/DOCX extraction is a protected API, so only signed-in users can upload those. */
   canExtractDocuments: boolean
   /** What happens to the input and the summary, shown under the input box. */
@@ -45,6 +51,10 @@ export default function QuickSummaryPanel({
   const [extracting, setExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editDraft, setEditDraft] = useState<QuickSummaryResult | null>(null)
+  // Kept only in this mounted component so a fresh AI result can be checked against its input.
+  const [sourceText, setSourceText] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const length = text.trim().length
@@ -57,7 +67,11 @@ export default function QuickSummaryPanel({
     setError(null)
     setLoading(true)
     try {
-      onResult(await requestQuickSummary(text))
+      const summary = await requestQuickSummary(text)
+      setSourceText(text)
+      setEditing(false)
+      setEditDraft(null)
+      onResult(summary)
       setCopied(false)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
@@ -108,6 +122,42 @@ export default function QuickSummaryPanel({
 
   const startOver = () => {
     onResult(null)
+    setSourceText(null)
+    setEditing(false)
+    setEditDraft(null)
+    setError(null)
+    setCopied(false)
+  }
+
+  const beginEditing = () => {
+    if (!result) return
+    setEditDraft({ ...result })
+    setEditing(true)
+    setError(null)
+  }
+
+  const cancelEditing = () => {
+    setEditDraft(null)
+    setEditing(false)
+    setError(null)
+  }
+
+  const finishEditing = () => {
+    if (!editDraft) return
+    const edited = {
+      ...editDraft,
+      main_content: editDraft.main_content.trim(),
+      client_response: editDraft.client_response.trim(),
+      counselor_intervention: editDraft.counselor_intervention.trim(),
+      next_plan: editDraft.next_plan.trim(),
+    }
+    if (QUICK_SUMMARY_SECTIONS.some(({ key }) => !edited[key])) {
+      setError('내용이 없는 항목이 있어요. 각 항목을 확인한 뒤 수정 완료를 눌러주세요.')
+      return
+    }
+    onEditResult(edited)
+    setEditDraft(null)
+    setEditing(false)
     setError(null)
     setCopied(false)
   }
@@ -125,39 +175,84 @@ export default function QuickSummaryPanel({
 
       {result ? (
         <article aria-label="AI 요약 결과" className="mt-10 w-full rounded-2xl border border-primary-100 bg-white p-5 shadow-card sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs leading-5 text-grey-500">AI가 정리한 초안이에요. 원문과 비교한 뒤 필요한 내용을 직접 고쳐주세요.</p>
+            {!editing && (
+              <button type="button" onClick={beginEditing} disabled={editDisabled} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-grey-200 px-3 text-xs font-semibold text-grey-700 hover:bg-grey-100 disabled:cursor-wait disabled:opacity-50">
+                <PenLine className="h-3.5 w-3.5" />요약 수정하기
+              </button>
+            )}
+          </div>
           <div className="space-y-5">
             {QUICK_SUMMARY_SECTIONS.map(({ key, title }) => (
               <section key={key}>
-                <h2 className="text-sm font-bold text-grey-900">{title}</h2>
-                <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-grey-700">{result[key]}</p>
+                {editing && editDraft ? (
+                  <>
+                    <label htmlFor={`quick-summary-${key}`} className="text-sm font-bold text-grey-900">{title}</label>
+                    <textarea
+                      id={`quick-summary-${key}`}
+                      aria-label={`${title} 수정`}
+                      value={editDraft[key]}
+                      onChange={(event) => {
+                        setEditDraft((current) => current ? { ...current, [key]: event.target.value } : current)
+                        setError(null)
+                      }}
+                      rows={3}
+                      className="mt-1.5 block w-full resize-y rounded-lg border border-grey-200 px-3 py-2 text-sm leading-6 text-grey-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-sm font-bold text-grey-900">{title}</h2>
+                    <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-grey-700">{result[key]}</p>
+                  </>
+                )}
               </section>
             ))}
           </div>
+          {sourceText && (
+            <details className="mt-5 rounded-lg border border-grey-200 bg-grey-50 px-3 py-2.5">
+              <summary className="cursor-pointer text-sm font-semibold text-grey-700">입력 원문과 비교하기</summary>
+              <p className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-grey-700">{sourceText}</p>
+              <p className="mt-2 text-xs text-grey-500">입력 원문은 이 화면에서 비교할 때만 사용되며 저장되지 않아요.</p>
+            </details>
+          )}
           {result.masked_categories.length > 0 && (
             <p className="mt-5 rounded-lg bg-primary-50 px-3 py-2 text-xs text-primary-900">연락처·이름 등 개인정보로 보이는 내용은 가린 뒤 AI에 보냈어요.</p>
           )}
           {result.stub && <p className="mt-3 text-xs text-grey-500">데모 모드로 생성된 요약입니다.</p>}
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-            <button type="button" onClick={startOver} className="inline-flex items-center gap-1.5 text-sm font-semibold text-grey-500 hover:text-grey-900">
+            <button type="button" onClick={startOver} disabled={editDisabled} className="inline-flex items-center gap-1.5 text-sm font-semibold text-grey-500 hover:text-grey-900 disabled:cursor-wait disabled:opacity-50">
               <RotateCcw className="h-4 w-4" />새로 요약하기
             </button>
-            <div className="flex items-center gap-3">
-              {resultStatus}
-              <button
-                type="button"
-                onClick={() => void copy()}
-                className={saveAction
-                  ? 'inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm font-semibold text-grey-700 hover:bg-grey-100'
-                  : 'inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500'}
-              >
-                {copied ? <Check className={`h-4 w-4 ${saveAction ? 'text-success-500' : ''}`} /> : <Copy className="h-4 w-4" />}{copied ? '복사했어요' : '복사하기'}
-              </button>
-              {saveAction && (
-                <button type="button" onClick={() => saveAction.onSave(result)} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500">
-                  {saveAction.label}
+            {editing ? (
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={cancelEditing} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm font-semibold text-grey-700 hover:bg-grey-100">
+                  <X className="h-4 w-4" />취소
                 </button>
-              )}
-            </div>
+                <button type="button" onClick={finishEditing} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500">
+                  <Check className="h-4 w-4" />수정 완료
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {resultStatus}
+                <button
+                  type="button"
+                  onClick={() => void copy()}
+                  className={saveAction
+                    ? 'inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm font-semibold text-grey-700 hover:bg-grey-100'
+                    : 'inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500'}
+                >
+                  {copied ? <Check className={`h-4 w-4 ${saveAction ? 'text-success-500' : ''}`} /> : <Copy className="h-4 w-4" />}{copied ? '복사했어요' : '복사하기'}
+                </button>
+                {saveAction && (
+                  <button type="button" onClick={() => saveAction.onSave(result)} disabled={editDisabled} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-5 text-sm font-bold text-white hover:bg-primary-500 disabled:cursor-wait disabled:opacity-50">
+                    {saveAction.label}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </article>
       ) : (

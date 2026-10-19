@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState, type MutableRefObject } from 'react'
 import { Check, History, Loader2 } from 'lucide-react'
 
 import { listTemporaryDrafts, saveTemporaryDraft } from '../../api/client'
@@ -17,7 +17,7 @@ import QuickSummaryPanel from './QuickSummaryPanel'
 
 const RECENT_LIMIT = 3
 
-type SaveState = 'saving' | 'saved' | 'failed' | null
+export type QuickSummarySaveState = 'saving' | 'saved' | 'failed' | null
 
 /**
  * Signed-in "간편 요약하기" screen. Every new summary is saved automatically (AI output only) and
@@ -28,11 +28,23 @@ type SaveState = 'saving' | 'saved' | 'failed' | null
 export default function QuickSummaryWorkspace({
   result,
   onResult,
+  draftId,
+  onDraftId,
+  saveState,
+  onSaveState,
+  saveRun,
   onSaveToClient,
   saveError,
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
+  /** The saved quick-summary draft id survives sidebar navigation with the result. */
+  draftId: string | null
+  onDraftId: (draftId: string | null) => void
+  /** Save lifecycle is owned by the parent so it survives sidebar navigation. */
+  saveState: QuickSummarySaveState
+  onSaveState: (state: QuickSummarySaveState) => void
+  saveRun: MutableRefObject<number>
   /** Opens the client picker for this summary. */
   onSaveToClient: (result: QuickSummaryResult) => void
   saveError?: string | null
@@ -40,10 +52,7 @@ export default function QuickSummaryWorkspace({
   const [records, setRecords] = useState<TemporaryDraftRecord[]>([])
   const [loaded, setLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [saveState, setSaveState] = useState<SaveState>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Ignores a save that finishes after the counselor already moved on to another summary.
-  const saveRun = useRef(0)
 
   useEffect(() => {
     let cancelled = false
@@ -58,20 +67,42 @@ export default function QuickSummaryWorkspace({
       .catch(() => { if (!cancelled) setRecords([]) })
       .finally(() => { if (!cancelled) setLoaded(true) })
     return () => { cancelled = true }
-  }, [refreshKey])
+  }, [refreshKey, saveState, draftId])
 
   const handleResult = (next: QuickSummaryResult | null) => {
     onResult(next)
     const run = ++saveRun.current
-    setSaveState(next ? 'saving' : null)
+    onSaveState(next ? 'saving' : null)
+    onDraftId(null)
     if (!next) return
-    saveTemporaryDraft(temporaryDraftPayload(quickSummaryDraftPayload(next)))
-      .then(() => {
+    const request = saveTemporaryDraft(temporaryDraftPayload(quickSummaryDraftPayload(next)))
+    request
+      .then((saved) => {
         if (run !== saveRun.current) return
-        setSaveState('saved')
+        onDraftId(saved.draft_id)
+        onSaveState('saved')
         setRefreshKey((value) => value + 1)
       })
-      .catch(() => { if (run === saveRun.current) setSaveState('failed') })
+      .catch(() => { if (run === saveRun.current) onSaveState('failed') })
+  }
+
+  const handleResultEdit = (next: QuickSummaryResult) => {
+    onResult(next)
+    const run = ++saveRun.current
+    onSaveState('saving')
+    const existingDraftId = draftId
+    const request = saveTemporaryDraft(temporaryDraftPayload({
+      ...quickSummaryDraftPayload(next),
+      ...(existingDraftId ? { draft_id: existingDraftId } : {}),
+    }))
+    request
+      .then((saved) => {
+        if (run !== saveRun.current) return
+        onDraftId(saved.draft_id)
+        onSaveState('saved')
+        setRefreshKey((value) => value + 1)
+      })
+      .catch(() => { if (run === saveRun.current) onSaveState('failed') })
   }
 
   useEffect(() => {
@@ -88,7 +119,8 @@ export default function QuickSummaryWorkspace({
     const summary = quickSummaryFromDraft(draft)
     if (!summary) return
     saveRun.current += 1
-    setSaveState('saved')
+    onDraftId(draft.draft_id)
+    onSaveState('saved')
     setNotice(null)
     onResult(summary)
   }
@@ -133,6 +165,8 @@ export default function QuickSummaryWorkspace({
           setNotice(null)
           handleResult(next)
         }}
+        onEditResult={handleResultEdit}
+        editDisabled={saveState === 'saving'}
         canExtractDocuments
         notice={saveError
           ? <p role="alert" className="rounded-lg bg-danger-50 px-4 py-3 text-center text-sm text-danger-500">{saveError}</p>
