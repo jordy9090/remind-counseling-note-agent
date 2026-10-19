@@ -28,18 +28,25 @@ ANONYMOUS_LIMIT = (5, 60 * 60)  # 5 requests per hour per IP
 AUTHENTICATED_LIMIT = (60, 60 * 60)  # 60 requests per hour per user
 
 QUICK_SUMMARY_PROMPT = """당신은 심리상담사의 상담 기록 정리를 돕는 보조자입니다.
-아래 상담 내용을 읽고 다음 네 항목으로 간결하게 정리하세요.
+아래 상담 내용을 읽고 상담사가 검토·수정할 수 있는 간결한 3인칭 기록체로 다음 네 항목을 작성하세요.
 
-- main_content (주요 상담 내용): 이번 회기에서 다룬 핵심 주제와 호소 내용
-- client_response (내담자 반응): 내담자가 보인 정서·인지·행동 반응
-- counselor_intervention (상담자 개입): 상담자가 사용한 개입과 그 의도
-- next_plan (다음 회기 계획): 다음 회기에 이어갈 과제나 계획
+- main_content (주요 상담 내용): 주요 사건, 회기에서 실제로 탐색한 내용, 남아 있는 어려움을 1~3문장으로 통합
+- client_response (내담자 반응): 상담자 개입에 대한 내담자의 표현과 여전히 남은 반응을 1~2문장으로 정리
+- counselor_intervention (상담자 개입): 상담자가 실제로 한 질문·반영·탐색의 대상과 내용을 1~2문장으로 정리
+- next_plan (다음 회기 계획): 입력에서 실제로 제안하거나 합의한 계획만 1문장으로 정리
 
 규칙:
-- 입력에 근거한 내용만 쓰고, 입력에 없는 내용은 "입력 내용에서 확인되지 않음"이라고 쓰세요.
+- 입력에 근거한 내용만 쓰고, 자료가 적으면 짧게 쓰세요. 분량을 채우기 위해 사실을 보충하지 마세요.
+- 각 항목에 해당하는 내용이 입력에 없으면 "입력 내용에서 확인되지 않음"이라고 쓰세요.
+- 상담자의 질문·반영과 내담자의 표현·반응을 구분하고, 누가 누구의 반응을 살폈는지 보존하세요.
+- 관찰된 사실과 내담자의 예상·지각을 구분하세요. 상대의 의도, 반복되는 관계 패턴, 호전이나 목표 달성을 확대 해석하지 마세요.
+- 입력에 명시된 반대 근거, 관계·장면 사이의 차이, 불확실성, 여전히 남은 어려움을 생략해 뜻을 바꾸지 마세요.
+- 이미 회기에서 수행한 탐색을 다음 회기 계획으로 바꾸지 마세요. 상담자의 제안은 "제안함"으로,
+  명시적으로 합의한 계획만 "하기로 함"으로 기록하세요. 별도 과제나 계획을 새로 만들지 마세요.
+- 다음 회기 계획이 입력에 없으면 next_plan에 "입력 내용에서 확인되지 않음"이라고 쓰세요.
+- 발화를 그대로 이어 붙이거나 화자 표지가 붙은 대화문으로 출력하지 말고 의미를 압축해 재서술하세요.
 - 진단, 위험도 판정, 치료 권고를 하지 마세요.
 - [PERSON], [PHONE] 같은 가림 표시는 그대로 두세요.
-- 각 항목은 2~4문장의 한국어 서술형으로 작성하세요.
 
 상담 내용:
 {text}
@@ -60,10 +67,10 @@ class QuickSummaryResponse(BaseModel):
 
 
 class _QuickSummaryDraft(BaseModel):
-    main_content: str = Field(description="주요 상담 내용")
-    client_response: str = Field(description="내담자 반응")
-    counselor_intervention: str = Field(description="상담자 개입")
-    next_plan: str = Field(description="다음 회기 계획")
+    main_content: str = Field(description="근거가 있는 주요 사건·탐색·남은 어려움을 압축한 상담 기록")
+    client_response: str = Field(description="개입에 대한 내담자의 표현과 남은 반응")
+    counselor_intervention: str = Field(description="상담자가 실제로 한 질문·반영·탐색")
+    next_plan: str = Field(description="실제로 제안하거나 합의한 계획, 없으면 입력 내용에서 확인되지 않음")
 
 
 class QuickSummaryInputError(ValueError):

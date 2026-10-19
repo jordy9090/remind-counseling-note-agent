@@ -16,6 +16,11 @@ from app.main import app  # noqa: E402
 from app.services import quick_summary as qs  # noqa: E402
 
 SAMPLE = "내담자는 이번 주 취업 준비로 불안이 커졌다고 말했다. 연락처 010-1234-5678로 연락 달라고 했다. 상담자는 감정을 명료화했다."
+QUALITY_SAMPLE = (
+    "내담자: 동료의 부탁을 거절했지만 동료가 실망했다고 말한 것은 아니에요. 그래도 미안함은 남아 있어요.\n"
+    "상담자: 동료의 실제 반응과 예상한 반응을 나누어 살펴보면 어떨까요?\n"
+    "내담자: 실제로는 괜찮다고 답했어요. 오늘 별도의 행동 과제는 정하지 않았어요."
+)
 
 
 def _load_vercel_generate():
@@ -55,6 +60,36 @@ class QuickSummaryTest(unittest.TestCase):
         self.assertNotIn("010-1234-5678", captured["prompt"])
         self.assertIn("[PHONE]", captured["prompt"])
         self.assertEqual(result.next_plan, "d")
+
+    def test_quality_prompt_includes_roles_counterevidence_and_plan_boundaries(self) -> None:
+        prompts: list[str] = []
+
+        class FakeLLM:
+            def invoke(self, prompt: str):
+                prompts.append(prompt)
+                return qs._QuickSummaryDraft(
+                    main_content="동료의 실제 반응과 예상한 반응을 구분해 살펴봄.",
+                    client_response="미안함은 남아 있으나 동료는 괜찮다고 답했다고 표현함.",
+                    counselor_intervention="상담자는 실제 반응과 예상한 반응을 나누어 탐색할 것을 제안함.",
+                    next_plan="입력 내용에서 확인되지 않음",
+                )
+
+        with patch.object(qs.settings, "use_stub", False), patch.object(qs.settings, "openai_api_key", "test"), \
+                patch("app.services.llm.get_structured_llm", return_value=FakeLLM()):
+            result = qs.generate_quick_summary(QUALITY_SAMPLE)
+
+        self.assertEqual(len(prompts), 1)
+        prompt = prompts[0]
+        self.assertIn(QUALITY_SAMPLE, prompt)
+        self.assertIn('각 항목에 해당하는 내용이 입력에 없으면 "입력 내용에서 확인되지 않음"', prompt)
+        self.assertIn("상담자의 질문·반영과 내담자의 표현·반응을 구분", prompt)
+        self.assertIn("관찰된 사실과 내담자의 예상·지각을 구분", prompt)
+        self.assertIn("반대 근거", prompt)
+        self.assertIn('상담자의 제안은 "제안함"', prompt)
+        self.assertIn('명시적으로 합의한 계획만 "하기로 함"', prompt)
+        self.assertIn("별도 과제나 계획을 새로 만들지 마세요", prompt)
+        self.assertIn("자료가 적으면 짧게", prompt)
+        self.assertEqual(result.next_plan, "입력 내용에서 확인되지 않음")
 
     def test_rejects_too_short_and_too_long_input(self) -> None:
         self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": "짧음"}).status_code, 422)
