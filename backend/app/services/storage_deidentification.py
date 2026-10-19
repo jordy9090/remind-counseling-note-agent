@@ -448,7 +448,7 @@ def _introduces_later_occupation(
     if not selected:
         return False
 
-    width = len(next(iter(occupations)))
+    width = max(map(len, occupations))
     priority = {occupation: index for index, occupation in enumerate(occupations)}
 
     def rendered_occurrence(index: int, current_priority: int) -> str:
@@ -509,6 +509,84 @@ def _introduces_later_occupation(
     return False
 
 
+def _replacement_can_introduce_occupation(occupations: Mapping[str, str]) -> bool:
+    candidate_characters = {
+        character
+        for occupation in occupations
+        for character in occupation
+    }
+    return any(
+        any(character in candidate_characters for character in category)
+        for category in occupations.values()
+    )
+
+
+def _generalize_prioritized_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+) -> tuple[str, int] | None:
+    """Resolve bounded overlaps by global priority when replacements cannot create later matches."""
+    match_limit = max(len(text) * 2, len(occupations))
+    matches: dict[str, list[tuple[int, int]]] = {occupation: [] for occupation in occupations}
+    match_count = 0
+    for start, end, occupation in _occupation_matches(text, trie):
+        match_count += 1
+        if match_count > match_limit:
+            return None
+        matches[occupation].append((start, end))
+
+    prioritized = dict(sorted(occupations.items(), key=lambda item: len(item[0]), reverse=True))
+    # A Fenwick tree keeps each overlap query logarithmic while selected spans cover at most
+    # the original input once.
+    coverage = [0] * (len(text) + 1)
+
+    def covered(end: int) -> int:
+        total = 0
+        while end:
+            total += coverage[end]
+            end -= end & -end
+        return total
+
+    def mark(start: int, end: int) -> None:
+        for position in range(start + 1, end + 1):
+            index = position
+            while index < len(coverage):
+                coverage[index] += 1
+                index += index & -index
+
+    selected: list[tuple[int, int, str]] = []
+    for occupation in prioritized:
+        for start, end in matches[occupation]:
+            if covered(end) != covered(start):
+                continue
+            selected.append((start, end, occupation))
+            mark(start, end)
+
+    if not selected:
+        return text, 0
+
+    selected.sort()
+    max_width = len(next(iter(prioritized)))
+    if len(selected) * max_width > max(len(text) * 4, len(occupations)):
+        return None
+    if _replacement_can_introduce_occupation(prioritized) and _introduces_later_occupation(
+        text, prioritized, trie, selected
+    ):
+        return None
+
+    chunks: list[str] = []
+    cursor = 0
+    for start, end, occupation in selected:
+        chunks.extend((text[cursor:start], occupations[occupation]))
+        cursor = end
+    chunks.append(text[cursor:])
+    generalized = "".join(chunks)
+    if next(iter(_occupation_matches(generalized, trie)), None) is not None:
+        return None
+    return generalized, len(selected)
+
+
 def _generalize_non_overlapping_occupations(
     text: str,
     occupations: Mapping[str, str],
@@ -519,6 +597,7 @@ def _generalize_non_overlapping_occupations(
     cursor = 0
     selected_end = 0
     count = 0
+    selected: list[tuple[int, int, str]] = []
     for start, end, occupation in _occupation_matches(text, trie):
         if start < selected_end:
             return None
@@ -526,11 +605,17 @@ def _generalize_non_overlapping_occupations(
         chunks.extend((text[cursor:start], occupations[occupation]))
         cursor = end
         count += 1
+        selected.append((start, end, occupation))
     if not count:
         return text, 0
 
     chunks.append(text[cursor:])
     generalized = "".join(chunks)
+    prioritized = dict(sorted(occupations.items(), key=lambda item: len(item[0]), reverse=True))
+    if _replacement_can_introduce_occupation(prioritized) and _introduces_later_occupation(
+        text, prioritized, trie, selected
+    ):
+        return None
     if next(iter(_occupation_matches(generalized, trie)), None) is not None:
         return None
     return generalized, count
@@ -549,6 +634,9 @@ def _generalize_extracted_occupations(
 
     trie = trie or _occupation_trie(occupations)
     generalized = _generalize_non_overlapping_occupations(text, occupations, trie)
+    if generalized is not None:
+        return generalized
+    generalized = _generalize_prioritized_occupations(text, occupations, trie)
     if generalized is not None:
         return generalized
 

@@ -250,7 +250,7 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertFalse(any(value in result["memo"] for value in full_occupations + short_occupations))
         self.assertEqual((report.names_masked, report.occupations_generalized), (0, candidate_count))
         self.assertEqual(occupation_trie.call_count, 3)
-        self.assertEqual(generalize_once.call_count, 2)
+        self.assertEqual(generalize_once.call_count, 0)
 
     def test_opt_in_extraction_generalizes_distinct_occupation_lengths_in_two_passes(self) -> None:
         candidates = [
@@ -279,6 +279,26 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual((report.names_masked, report.occupations_generalized), (0, len(candidates)))
         self.assertEqual(occupation_matches.call_count, 2)
 
+    def test_opt_in_extraction_bounds_nested_distinct_length_occupation_overlaps(self) -> None:
+        candidates = ["가" * length for length in range(3, 503)]
+        core = candidates[-1]
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_generalize_occupations_once",
+            side_effect=AssertionError("distinct-length staged scan used"),
+        ):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(result["memo"], "학생 " + baseline[len(core) + 1:])
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 1))
+
     def test_opt_in_extraction_preserves_occupation_cascade_and_global_overlap_order(self) -> None:
         cases = (
             (
@@ -298,6 +318,17 @@ class MaskingRuleTests(unittest.TestCase):
                 ],
                 "a의료인",
                 1,
+            ),
+            (
+                "ab학|ab자a육자",
+                [
+                    deid._OccupationMention(text="ab학", category="의료인"),
+                    deid._OccupationMention(text="자a육자", category="학생"),
+                    deid._OccupationMention(text="ab", category="학생"),
+                    deid._OccupationMention(text="bc", category="학생"),
+                ],
+                "의료인|의료인생",
+                3,
             ),
         )
 
