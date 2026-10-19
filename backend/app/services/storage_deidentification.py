@@ -335,25 +335,33 @@ def _longest_name_at(text: str, start: int, trie: list[dict[str, Any]]) -> str |
     return longest
 
 
-def _mask_names_once(text: str, trie: list[dict[str, Any]]) -> tuple[str, int]:
-    chunks: list[str] = []
-    cursor = 0
+def _mask_names_once(text: str, trie: list[dict[str, Any]]) -> tuple[str, int, bool]:
+    selected: list[tuple[int, int, str]] = []
+    selected_end = 0
     index = 0
-    count = 0
+    crossing_overlap = False
     while index < len(text):
         name = _longest_name_at(text, index, trie)
         if name is None:
             index += 1
             continue
         end = index + len(name)
-        chunks.extend((text[cursor:index], mask_name(name)))
+        if index < selected_end:
+            crossing_overlap = True
+        else:
+            selected.append((index, end, name))
+            selected_end = end
+        index += 1
+    if not selected:
+        return text, 0, crossing_overlap
+
+    chunks: list[str] = []
+    cursor = 0
+    for start, end, name in selected:
+        chunks.extend((text[cursor:start], mask_name(name)))
         cursor = end
-        index = end
-        count += 1
-    if not count:
-        return text, 0
     chunks.append(text[cursor:])
-    return "".join(chunks), count
+    return "".join(chunks), len(selected), crossing_overlap
 
 
 def _mask_extracted_names(
@@ -367,13 +375,14 @@ def _mask_extracted_names(
         return text, 0
 
     trie = trie or _name_trie(names)
-    masked, count = _mask_names_once(text, trie)
-    _, remaining = _mask_names_once(masked, trie)
-    if not remaining:
+    masked, count, crossing_overlap = _mask_names_once(text, trie)
+    _, remaining, _ = _mask_names_once(masked, trie)
+    if not crossing_overlap and not remaining:
         return masked, count
 
-    # A replacement can expose an overlapping name (for example 가나다 + 다라). Keep the
-    # established longest-first sequential behavior for that uncommon ambiguous case.
+    # Shifted overlaps can conflict with global longest-first priority, and a replacement can
+    # expose an overlapping name (for example 가나다 + 다라). Keep the established sequential
+    # behavior for those uncommon ambiguous cases.
     masked = text
     count = 0
     for name in sorted(names, key=len, reverse=True):
@@ -766,6 +775,7 @@ def deidentify_texts(
 ) -> tuple[dict[str, str], StorageDeidentificationReport]:
     """Return the texts with names masked and occupations generalized, plus a value-free report."""
     names = _alias_names(known_names)
+    known_name_trie = _name_trie(names) if names else None
     names_masked = 0
     occupations_generalized = 0
     baseline: dict[str, str] = {}
@@ -774,8 +784,8 @@ def deidentify_texts(
         text, count = _generalize_high_confidence_occupations(text)
         occupations_generalized += count
         text = deidentify_text(text, source=key)[0]
-        for name in sorted(names, key=len, reverse=True):
-            text, count = _name_pattern(name).subn(mask_name(name), text)
+        if known_name_trie is not None:
+            text, count = _mask_extracted_names(text, names, trie=known_name_trie)
             names_masked += count
         baseline[key] = text
 

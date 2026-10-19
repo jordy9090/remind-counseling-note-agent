@@ -112,15 +112,37 @@ class MaskingRuleTests(unittest.TestCase):
     def test_disabled_extraction_does_not_repeat_known_name_scan(self) -> None:
         known_names = ["김민지", "박상담"]
         texts = {"memo": "김민지와 박상담이 만났다.", "note": "민지와 상담 이야기"}
-        expected_scans = len(deid._alias_names(known_names)) * len(texts)
 
-        with model_returns(None), patch.object(deid, "_name_pattern", wraps=deid._name_pattern) as name_pattern:
+        with model_returns(None), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern, patch.object(
+            deid, "_mask_extracted_names", wraps=deid._mask_extracted_names
+        ) as mask_names, patch.object(
+            deid, "_name_trie", wraps=deid._name_trie
+        ) as name_trie:
             result, report = deid.deidentify_texts(texts, known_names=known_names)
 
         self.assertEqual(result, {"memo": "김O지와 박O담이 만났다.", "note": "민O와 상담 이야기"})
         self.assertEqual(report.names_masked, 3)
         self.assertFalse(report.llm_used)
-        self.assertEqual(name_pattern.call_count, expected_scans)
+        self.assertEqual(name_pattern.call_count, 0)
+        self.assertEqual(mask_names.call_count, len(texts))
+        self.assertEqual(name_trie.call_count, 1)
+
+    def test_known_name_masking_preserves_sequential_overlap_behavior(self) -> None:
+        with model_returns(None), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern:
+            result, report = deid.deidentify_texts(
+                {"memo": "가나다라"},
+                known_names=["가나다", "다라"],
+            )
+
+        self.assertEqual(result, {"memo": "가O다O"})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 0))
+        self.assertEqual(name_pattern.call_count, 3)
 
     def test_opt_in_extraction_scans_only_new_names_on_the_second_pass(self) -> None:
         known_names = ["김민지"]
@@ -129,8 +151,6 @@ class MaskingRuleTests(unittest.TestCase):
             person_names=["김민지", "최하늘"],
             occupations=[deid._OccupationMention(text="도예가", category="예술가")],
         )
-        expected_scans = len(deid._alias_names(known_names)) * len(texts)
-
         with model_returns(entities), patch.object(
             deid, "_name_pattern", wraps=deid._name_pattern
         ) as name_pattern, patch.object(
@@ -146,10 +166,10 @@ class MaskingRuleTests(unittest.TestCase):
         })
         self.assertEqual((report.names_masked, report.occupations_generalized), (4, 1))
         self.assertTrue(report.llm_used)
-        self.assertEqual(name_pattern.call_count, expected_scans)
+        self.assertEqual(name_pattern.call_count, 0)
         self.assertNotIn("최하늘", [call.args[0] for call in name_pattern.call_args_list])
-        self.assertEqual(mask_extracted_names.call_count, len(texts))
-        self.assertEqual(name_trie.call_count, 1)
+        self.assertEqual(mask_extracted_names.call_count, len(texts) * 2)
+        self.assertEqual(name_trie.call_count, 2)
 
     def test_opt_in_extraction_deduplicates_candidates_before_membership_checks(self) -> None:
         entities = deid._StorageEntities(
@@ -244,6 +264,20 @@ class MaskingRuleTests(unittest.TestCase):
 
         self.assertEqual(result, {"memo": "가O다O"})
         self.assertEqual((report.names_masked, report.occupations_generalized), (2, 0))
+        self.assertEqual(name_pattern.call_count, 2)
+
+    def test_opt_in_extraction_preserves_shifted_ascii_name_priority(self) -> None:
+        entities = deid._StorageEntities(person_names=["A.B", "B-CD"])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern:
+            result, report = deid.deidentify_texts({"memo": "A.B-CD"})
+
+        self.assertEqual(result, {"memo": "A.BOOD"})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (1, 0))
         self.assertEqual(name_pattern.call_count, 2)
 
     def test_opt_in_extraction_generalizes_many_overlapping_occupations_without_per_value_scans(self) -> None:
