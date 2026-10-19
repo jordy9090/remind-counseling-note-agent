@@ -71,6 +71,44 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertIn("교육자", texts["memo"])
         self.assertFalse(report.llm_used)
 
+    def test_high_confidence_occupations_scan_each_text_field_once(self) -> None:
+        occupations = list(deid._HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS)
+        present = occupations[::2]
+        particles = ("로", "으로", "은", "는", "이", "가", "에서", "의")
+        segments = [
+            f" {occupation}{particles[index % len(particles)]} "
+            for index, occupation in enumerate(present)
+        ]
+        texts: dict[str, str] = {}
+        for field_index in range(4):
+            prefix = "".join(segments[field_index:] + segments[:field_index])
+            texts[f"field_{field_index}"] = prefix + "x" * (50_000 - len(prefix))
+
+        with model_returns(None), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(
+            deid,
+            "_generalize_high_confidence_occupations",
+            wraps=deid._generalize_high_confidence_occupations,
+        ) as generalize_occupations:
+            result, report = deid.deidentify_texts(texts)
+
+        self.assertEqual(sum(map(len, texts.values())), 200_000)
+        self.assertEqual(generalize_occupations.call_count, len(texts))
+        self.assertFalse(any(occupation in "\n".join(result.values()) for occupation in present))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 56))
+
+    def test_high_confidence_occupation_particle_adjustment_is_unchanged(self) -> None:
+        with model_returns(None), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ):
+            result, report = deid.deidentify_texts({
+                "memo": "초등학교 교사로 일하고 간호사로 일하며 대학생으로 지낸다.",
+            })
+
+        self.assertEqual(result["memo"], "교육자로 일하고 의료인으로 일하며 학생으로 지낸다.")
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 3))
+
     def test_disabled_extraction_does_not_repeat_known_name_scan(self) -> None:
         known_names = ["김민지", "박상담"]
         texts = {"memo": "김민지와 박상담이 만났다.", "note": "민지와 상담 이야기"}

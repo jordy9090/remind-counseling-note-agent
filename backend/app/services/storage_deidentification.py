@@ -118,6 +118,11 @@ _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS: dict[str, str] = {
     "국회의원": "공공 부문 종사자",
     "외교관": "공공 부문 종사자",
 }
+_OCCUPATION_PARTICLES = r"은|는|이|가|을|를|과|와|로|으로|인|이며|이고|에서|에게|의|도|만|라고|라며"
+_HIGH_CONFIDENCE_OCCUPATION_PATTERN = re.compile(
+    rf"(?<![가-힣])(?P<occupation>{'|'.join(map(re.escape, _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS))})"
+    rf"(?P<particle>{_OCCUPATION_PARTICLES})?(?=\s|[,.;!?]|$)"
+)
 
 
 def mask_name(name: str) -> str:
@@ -218,19 +223,26 @@ def _alias_names(known_names: Iterable[str]) -> set[str]:
     return names
 
 
-def _occupation_pattern(occupation: str) -> re.Pattern[str]:
-    particles = r"은|는|이|가|을|를|과|와|로|으로|인|이며|이고|에서|에게|의|도|만|라고|라며"
-    return re.compile(
-        rf"(?<![가-힣]){re.escape(occupation)}(?P<particle>{particles})?(?=\s|[,.;!?]|$)"
-    )
-
-
 def _generalized_occupation(match: re.Match[str], category: str) -> str:
     particle = match.group("particle") or ""
     if particle in {"로", "으로"}:
         final_index = (ord(category[-1]) - 0xAC00) % 28 if category and "가" <= category[-1] <= "힣" else 0
         particle = "로" if final_index in {0, 8} else "으로"
     return category + particle
+
+
+def _generalize_high_confidence_occupations(text: str) -> tuple[str, int]:
+    """Generalize deterministic occupation phrases in one pass over a text field."""
+    if not text or not _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS:
+        return text, 0
+
+    return _HIGH_CONFIDENCE_OCCUPATION_PATTERN.subn(
+        lambda match: _generalized_occupation(
+            match,
+            _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS[match.group("occupation")],
+        ),
+        text,
+    )
 
 
 def _present_candidates(candidates: Iterable[str], text: str) -> set[str]:
@@ -759,13 +771,8 @@ def deidentify_texts(
     baseline: dict[str, str] = {}
     for key, value in texts.items():
         text = value or ""
-        for occupation, category in _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS.items():
-            text, count = _occupation_pattern(occupation).subn(
-                lambda match, category=category: _generalized_occupation(match, category),
-                text,
-            )
-            if count:
-                occupations_generalized += count
+        text, count = _generalize_high_confidence_occupations(text)
+        occupations_generalized += count
         text = deidentify_text(text, source=key)[0]
         for name in sorted(names, key=len, reverse=True):
             text, count = _name_pattern(name).subn(mask_name(name), text)
