@@ -278,6 +278,97 @@ def _present_candidates(candidates: Iterable[str], text: str) -> set[str]:
     return found
 
 
+def _name_trie(names: Iterable[str]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = [{"next": {}, "name": None}]
+    for name in names:
+        state = 0
+        for character in name:
+            transitions: dict[str, int] = nodes[state]["next"]
+            state = transitions.setdefault(character, len(nodes))
+            if state == len(nodes):
+                nodes.append({"next": {}, "name": None})
+        nodes[state]["name"] = name
+    return nodes
+
+
+def _longest_name_at(text: str, start: int, trie: list[dict[str, Any]]) -> str | None:
+    first = text[start]
+    korean = bool(_HANGUL.match(first))
+    if korean:
+        if start and _HANGUL.match(text[start - 1]):
+            return None
+    elif first.isascii() and first.isalpha():
+        if start and text[start - 1].isascii() and text[start - 1].isalpha():
+            return None
+    else:
+        return None
+
+    state = 0
+    longest: str | None = None
+    index = start
+    while index < len(text):
+        next_state = trie[state]["next"].get(text[index])
+        if next_state is None:
+            break
+        state = next_state
+        index += 1
+        name = trie[state]["name"]
+        if name is not None and (
+            korean
+            or index == len(text)
+            or not (text[index].isascii() and text[index].isalpha())
+        ):
+            longest = name
+    return longest
+
+
+def _mask_names_once(text: str, trie: list[dict[str, Any]]) -> tuple[str, int]:
+    chunks: list[str] = []
+    cursor = 0
+    index = 0
+    count = 0
+    while index < len(text):
+        name = _longest_name_at(text, index, trie)
+        if name is None:
+            index += 1
+            continue
+        end = index + len(name)
+        chunks.extend((text[cursor:index], mask_name(name)))
+        cursor = end
+        index = end
+        count += 1
+    if not count:
+        return text, 0
+    chunks.append(text[cursor:])
+    return "".join(chunks), count
+
+
+def _mask_extracted_names(
+    text: str,
+    names: set[str],
+    *,
+    trie: list[dict[str, Any]] | None = None,
+) -> tuple[str, int]:
+    """Mask many extracted names with bounded scans while retaining legacy overlap behavior."""
+    if not names or not text:
+        return text, 0
+
+    trie = trie or _name_trie(names)
+    masked, count = _mask_names_once(text, trie)
+    _, remaining = _mask_names_once(masked, trie)
+    if not remaining:
+        return masked, count
+
+    # A replacement can expose an overlapping name (for example 가나다 + 다라). Keep the
+    # established longest-first sequential behavior for that uncommon ambiguous case.
+    masked = text
+    count = 0
+    for name in sorted(names, key=len, reverse=True):
+        masked, matches = _name_pattern(name).subn(mask_name(name), masked)
+        count += matches
+    return masked, count
+
+
 def deidentify_texts(
     texts: Mapping[str, str],
     *,
@@ -326,6 +417,7 @@ def deidentify_texts(
             occupation_candidates[value] = mention.category
     present_occupations = _present_candidates(occupation_candidates, joined)
     occupations = {value: occupation_candidates[value] for value in present_occupations}
+    extracted_name_trie = _name_trie(extracted_names) if extracted_names else None
 
     result: dict[str, str] = {}
     for key, text in baseline.items():
@@ -335,9 +427,8 @@ def deidentify_texts(
             if count:
                 text = text.replace(occupation, occupations[occupation])
                 occupations_generalized += count
-        for name in sorted(extracted_names, key=len, reverse=True):
-            text, count = _name_pattern(name).subn(mask_name(name), text)
-            names_masked += count
+        text, count = _mask_extracted_names(text, extracted_names, trie=extracted_name_trie)
+        names_masked += count
         result[key] = text
     return result, StorageDeidentificationReport(
         llm_used=entities is not None,

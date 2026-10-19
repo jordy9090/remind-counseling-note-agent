@@ -91,9 +91,15 @@ class MaskingRuleTests(unittest.TestCase):
             person_names=["김민지", "최하늘"],
             occupations=[deid._OccupationMention(text="도예가", category="예술가")],
         )
-        expected_scans = (len(deid._alias_names(known_names)) + 1) * len(texts)
+        expected_scans = len(deid._alias_names(known_names)) * len(texts)
 
-        with model_returns(entities), patch.object(deid, "_name_pattern", wraps=deid._name_pattern) as name_pattern:
+        with model_returns(entities), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern, patch.object(
+            deid, "_mask_extracted_names", wraps=deid._mask_extracted_names
+        ) as mask_extracted_names, patch.object(
+            deid, "_name_trie", wraps=deid._name_trie
+        ) as name_trie:
             result, report = deid.deidentify_texts(texts, known_names=known_names)
 
         self.assertEqual(result, {
@@ -103,10 +109,9 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual((report.names_masked, report.occupations_generalized), (4, 1))
         self.assertTrue(report.llm_used)
         self.assertEqual(name_pattern.call_count, expected_scans)
-        self.assertEqual(
-            [call.args[0] for call in name_pattern.call_args_list].count("최하늘"),
-            len(texts),
-        )
+        self.assertNotIn("최하늘", [call.args[0] for call in name_pattern.call_args_list])
+        self.assertEqual(mask_extracted_names.call_count, len(texts))
+        self.assertEqual(name_trie.call_count, 1)
 
     def test_opt_in_extraction_deduplicates_candidates_before_membership_checks(self) -> None:
         entities = deid._StorageEntities(
@@ -160,6 +165,48 @@ class MaskingRuleTests(unittest.TestCase):
             [10_000, 10_000],
         )
         self.assertEqual({len(call.args[1]) for call in present_candidates.call_args_list}, {200_007})
+
+    def test_opt_in_extraction_masks_many_overlapping_names_without_per_name_scans(self) -> None:
+        candidate_count = 1_000
+        full_names: list[str] = []
+        short_names: list[str] = []
+        tokens: list[str] = []
+        for index in range(candidate_count):
+            suffix = chr(0xAC00 + index // 11172) + chr(0xAC00 + index % 11172)
+            full_names.append("힣" + suffix)
+            short_names.append(suffix)
+            tokens.append("힣" + suffix)
+        core = " ".join(tokens)
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(person_names=full_names + short_names)
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", side_effect=AssertionError("per-name scan used")
+        ), patch.object(
+            deid, "_mask_extracted_names", wraps=deid._mask_extracted_names
+        ) as mask_extracted_names:
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(len(result["memo"]), len(baseline))
+        self.assertEqual(result["memo"].count("힣O"), candidate_count)
+        self.assertEqual((report.names_masked, report.occupations_generalized), (candidate_count, 0))
+        self.assertEqual(mask_extracted_names.call_count, 1)
+
+    def test_opt_in_extraction_preserves_sequential_name_overlap_behavior(self) -> None:
+        entities = deid._StorageEntities(person_names=["가나다", "다라"])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern:
+            result, report = deid.deidentify_texts({"memo": "가나다라"})
+
+        self.assertEqual(result, {"memo": "가O다O"})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 0))
+        self.assertEqual(name_pattern.call_count, 2)
 
     def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
         with patch.object(settings, "allow_external_storage_entity_extraction", False):
