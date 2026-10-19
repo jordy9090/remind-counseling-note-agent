@@ -431,6 +431,50 @@ class AccessBoundaryTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 404)
                 self.assert_private(response)
 
+    def test_oversized_case_ids_stop_before_case_services(self):
+        oversized_case_id = "C" * 81
+        summary = {
+            "main_content": "Synthetic summary",
+            "client_response": "Synthetic response",
+            "counselor_intervention": "Synthetic intervention",
+            "next_plan": "Synthetic plan",
+            "session_date": "2026-10-19",
+        }
+        requests = [
+            ("backend", "GET", f"/api/cases/{oversized_case_id}/dashboard", {}),
+            ("cases", "GET", f"/api/cases/{oversized_case_id}/dashboard", {}),
+            *[("cases", "GET", path, {"params": {"case_id": oversized_case_id}})
+              for path in ("/", "/api/cases", "/api/cases/dashboard")],
+            ("backend", "PATCH", f"/api/cases/{oversized_case_id}/profile",
+             {"json": {"case_alias": "Synthetic alias"}}),
+            ("cases", "PATCH", f"/api/cases/{oversized_case_id}/profile",
+             {"json": {"case_alias": "Synthetic alias"}}),
+            *[("cases", "PATCH", path, {
+                "params": {"case_id": oversized_case_id, "scope": "profile"},
+                "json": {"case_alias": "Synthetic alias"},
+            }) for path in ("/", "/api/cases/dashboard")],
+            ("backend", "PATCH", f"/api/cases/{oversized_case_id}/schedule",
+             {"json": {"total_scheduled_session_count": 9}}),
+            ("cases", "PATCH", f"/api/cases/{oversized_case_id}/schedule",
+             {"json": {"total_scheduled_session_count": 9}}),
+            *[("cases", "PATCH", path, {
+                "params": {"case_id": oversized_case_id, "scope": "schedule"},
+                "json": {"total_scheduled_session_count": 9},
+            }) for path in ("/", "/api/cases/dashboard")],
+            ("backend", "POST", f"/api/cases/{oversized_case_id}/quick-summary", {"json": summary}),
+            ("cases", "POST", f"/api/cases/{oversized_case_id}/quick-summary", {"json": summary}),
+            *[("cases", "POST", path, {
+                "params": {"case_id": oversized_case_id, "scope": "quick-summary"},
+                "json": summary,
+            }) for path in ("/", "/api/cases", "/api/cases/dashboard")],
+        ]
+        for name, method, path, kwargs in requests:
+            with self.subTest(name=name, method=method, path=path):
+                response = self.request(name, method, path, **kwargs)
+                self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_profile_and_schedule_aliases_cannot_mutate_foreign_case(self):
         for scope, payload in (("profile", {"case_alias": PUBLIC_A}), ("schedule", {"total_scheduled_session_count": 9})):
             paths = [("backend", f'/api/cases/{CASES["b"]}/{scope}'), ("cases", f'/api/cases/{CASES["b"]}/{scope}')]
