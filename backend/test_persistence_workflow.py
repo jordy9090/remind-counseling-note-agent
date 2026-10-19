@@ -389,6 +389,79 @@ class PersistenceWorkflowTests(unittest.TestCase):
             self.assertEqual(len(list(Path(directory).rglob("*.json"))), 2)
             self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
 
+    def test_local_disk_deidentifies_exact_budget_expanding_pii(self):
+        account = "@aaa"
+        client_name = "합성가명"
+        counselor_name = "모의상담"
+        repetitions = 10_000
+        unit = f"{account} {client_name} {counselor_name} "
+        payload = {
+            "draft_id": "draft_dense_pii_boundary",
+            "case_id": "SYNTHETIC-DENSE-PII",
+            "session_number": 1,
+            "form": {
+                "client_alias": client_name,
+                "counselor_name": counselor_name,
+                "counselor_memo": unit * repetitions,
+            },
+        }
+
+        def projected_with(filler_length):
+            candidate = json_copy(payload)
+            candidate["form"]["counselor_memo"] += "x" * filler_length
+            request = TemporaryDraftSaveRequest(**candidate)
+            return candidate, temporary_draft_payload(request.model_dump())
+
+        low, high = 0, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS + 1
+        while low + 1 < high:
+            middle = (low + high) // 2
+            _, projected = projected_with(middle)
+            if draft_store._value_exceeds_work_budget(projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS):
+                high = middle
+            else:
+                low = middle
+        accepted, accepted_projected = projected_with(low)
+        self.assertFalse(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS,
+        ))
+        self.assertTrue(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS - 1,
+        ))
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
+                patch.object(supabase_store, "configured_for", return_value=False):
+            saved = self.client.post("/api/notes/drafts", json=accepted, headers=self.headers)
+            self.assertEqual(saved.status_code, 200, saved.text)
+            draft_id = saved.json()["draft_id"]
+            owner_path = Path(directory) / "synthetic-user-a" / f"{draft_id}.json"
+            disk_text = owner_path.read_text(encoding="utf-8")
+
+            detail = self.client.get(f"/api/notes/drafts/{draft_id}", headers=self.headers)
+            listed = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(detail.status_code, 200, detail.text)
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual(listed.json(), [detail.json()])
+
+            stored_memo = detail.json()["form"]["counselor_memo"]
+            raw_memo = accepted["form"]["counselor_memo"]
+            self.assertEqual(len(stored_memo), len(raw_memo) + (5 * repetitions))
+            self.assertEqual(stored_memo.count("[ACCOUNT]"), repetitions)
+            self.assertEqual(stored_memo.count("합OO명"), repetitions)
+            self.assertEqual(stored_memo.count("모OO담"), repetitions)
+            self.assertEqual(detail.json()["form"]["client_alias"], "합OO명")
+            self.assertEqual(detail.json()["form"]["counselor_name"], "모OO담")
+            for identifier in (account, client_name, counselor_name):
+                self.assertNotIn(identifier, disk_text)
+                self.assertNotIn(identifier, detail.text)
+                self.assertNotIn(identifier, listed.text)
+
+            self.assertEqual(list(Path(directory).rglob("*.json")), [owner_path])
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+            other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+            self.assertEqual(self.client.get(f"/api/notes/drafts/{draft_id}", headers=other).status_code, 404)
+            self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+            self.assertFalse((Path(directory) / "synthetic-user-b").exists())
+
     def test_local_disk_rejects_one_unit_over_unicode_replacement_before_staging(self):
         fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
         payload = json.loads(fixture.read_text(encoding="utf-8"))
