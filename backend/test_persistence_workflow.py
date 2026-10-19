@@ -23,8 +23,10 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.config import settings
+from app.schemas.note import TemporaryDraftSaveRequest
 from app.services.supabase_storage import SupabaseStorage, SupabaseStorageError
-from app.services import supabase_store
+from app.services import draft_store, supabase_store
+from app.services.temporary_draft_payload import temporary_draft_payload
 
 TOKEN = "synthetic-access-token"
 OTHER_TOKEN = "synthetic-other-token"
@@ -386,6 +388,68 @@ class PersistenceWorkflowTests(unittest.TestCase):
                                 for source, destination in replacements))
             self.assertEqual(len(list(Path(directory).rglob("*.json"))), 2)
             self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+
+    def test_local_disk_rejects_one_unit_over_unicode_replacement_before_staging(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        payload["draft_id"] = "draft_budget_boundary"
+        maximum_code_point = "\U0010ffff"
+
+        def projected_with(filler_length):
+            candidate = json_copy(payload)
+            block = candidate["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+            block["rows"][0]["비고"] = maximum_code_point * filler_length
+            request = TemporaryDraftSaveRequest(**candidate)
+            return candidate, temporary_draft_payload(request.model_dump())
+
+        low, high = 0, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS + 1
+        while low + 1 < high:
+            middle = (low + high) // 2
+            _, projected = projected_with(middle)
+            if draft_store._value_exceeds_work_budget(projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS):
+                high = middle
+            else:
+                low = middle
+        accepted, accepted_projected = projected_with(low)
+        oversized, oversized_projected = projected_with(low + 1)
+        self.assertFalse(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS,
+        ))
+        self.assertTrue(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS - 1,
+        ))
+        self.assertTrue(draft_store._value_exceeds_work_budget(
+            oversized_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS,
+        ))
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
+                patch.object(supabase_store, "configured_for", return_value=False):
+            created = self.client.post("/api/notes/drafts", json=accepted, headers=self.headers)
+            self.assertEqual(created.status_code, 200, created.text)
+            draft_id = created.json()["draft_id"]
+            owner_path = Path(directory) / "synthetic-user-a" / f"{draft_id}.json"
+            accepted_bytes = owner_path.read_bytes()
+            self.assertIn(maximum_code_point.encode("utf-8"), accepted_bytes)
+            before_list = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(before_list.status_code, 200, before_list.text)
+
+            with patch.object(draft_store, "deidentify_json") as deidentify, \
+                    patch.object(draft_store, "_write_to_disk") as disk_write, \
+                    patch.object(draft_store.tempfile, "NamedTemporaryFile") as staging:
+                rejected = self.client.post("/api/notes/drafts", json=oversized, headers=self.headers)
+            self.assertEqual(rejected.status_code, 413, rejected.text)
+            deidentify.assert_not_called()
+            disk_write.assert_not_called()
+            staging.assert_not_called()
+
+            after_list = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(after_list.content, before_list.content)
+            self.assertEqual(owner_path.read_bytes(), accepted_bytes)
+            self.assertEqual(list(Path(directory).rglob("*.json")), [owner_path])
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+            other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+            self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+            self.assertFalse((Path(directory) / "synthetic-user-b").exists())
 
     def test_confirmed_string_object_sections_and_empty_values_survive_reconfirmation(self):
         for fields in ({"session_content": "Counselor string", "next_plan": ""},
