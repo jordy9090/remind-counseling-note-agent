@@ -21,6 +21,7 @@ QUALITY_SAMPLE = (
     "상담자: 동료의 실제 반응과 예상한 반응을 나누어 살펴보면 어떨까요?\n"
     "내담자: 실제로는 괜찮다고 답했어요. 오늘 별도의 행동 과제는 정하지 않았어요."
 )
+SPARSE_CLIENT_SAMPLE = "내담자는 내일 발표가 걱정되어 어젯밤 잠을 설쳤다고 말함."
 
 
 def _load_vercel_generate():
@@ -90,6 +91,31 @@ class QuickSummaryTest(unittest.TestCase):
         self.assertIn("별도 과제나 계획을 새로 만들지 마세요", prompt)
         self.assertIn("자료가 적으면 짧게", prompt)
         self.assertEqual(result.next_plan, "입력 내용에서 확인되지 않음")
+
+    def test_quality_contract_includes_client_reactions_without_intervention(self) -> None:
+        captured: dict[str, str] = {}
+
+        class FakeLLM:
+            def invoke(self, prompt: str):
+                captured["prompt"] = prompt
+                return qs._QuickSummaryDraft(
+                    main_content="내담자는 발표를 앞두고 걱정하여 잠을 설쳤다고 보고함.",
+                    client_response="내담자는 발표에 대한 걱정과 수면 어려움을 표현함.",
+                    counselor_intervention="입력 내용에서 확인되지 않음",
+                    next_plan="입력 내용에서 확인되지 않음",
+                )
+
+        with patch.object(qs.settings, "use_stub", False), patch.object(qs.settings, "openai_api_key", "test"), \
+                patch("app.services.llm.get_structured_llm", return_value=FakeLLM()):
+            result = qs.generate_quick_summary(SPARSE_CLIENT_SAMPLE)
+
+        self.assertIn(SPARSE_CLIENT_SAMPLE, captured["prompt"])
+        self.assertIn("내담자의 정서·인지·행동 반응", captured["prompt"])
+        self.assertIn("질문·반영·탐색·역할연습 등 개입", captured["prompt"])
+        schema = qs._QuickSummaryDraft.model_json_schema()["properties"]
+        self.assertIn("정서·인지·행동 반응", schema["client_response"]["description"])
+        self.assertIn("역할연습", schema["counselor_intervention"]["description"])
+        self.assertEqual(result.client_response, "내담자는 발표에 대한 걱정과 수면 어려움을 표현함.")
 
     def test_rejects_too_short_and_too_long_input(self) -> None:
         self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": "짧음"}).status_code, 422)

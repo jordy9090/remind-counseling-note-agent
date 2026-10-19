@@ -31,8 +31,8 @@ QUICK_SUMMARY_PROMPT = """당신은 심리상담사의 상담 기록 정리를 �
 아래 상담 내용을 읽고 상담사가 검토·수정할 수 있는 간결한 3인칭 기록체로 다음 네 항목을 작성하세요.
 
 - main_content (주요 상담 내용): 주요 사건, 회기에서 실제로 탐색한 내용, 남아 있는 어려움을 1~3문장으로 통합
-- client_response (내담자 반응): 상담자 개입에 대한 내담자의 표현과 여전히 남은 반응을 1~2문장으로 정리
-- counselor_intervention (상담자 개입): 상담자가 실제로 한 질문·반영·탐색의 대상과 내용을 1~2문장으로 정리
+- client_response (내담자 반응): 입력에서 확인되는 내담자의 정서·인지·행동 반응과, 기록된 경우 상담자 개입에 대한 반응을 1~2문장으로 정리
+- counselor_intervention (상담자 개입): 상담자가 실제로 한 질문·반영·탐색·역할연습 등 개입의 대상과 내용을 1~2문장으로 정리
 - next_plan (다음 회기 계획): 입력에서 실제로 제안하거나 합의한 계획만 1문장으로 정리
 
 규칙:
@@ -68,8 +68,8 @@ class QuickSummaryResponse(BaseModel):
 
 class _QuickSummaryDraft(BaseModel):
     main_content: str = Field(description="근거가 있는 주요 사건·탐색·남은 어려움을 압축한 상담 기록")
-    client_response: str = Field(description="개입에 대한 내담자의 표현과 남은 반응")
-    counselor_intervention: str = Field(description="상담자가 실제로 한 질문·반영·탐색")
+    client_response: str = Field(description="입력에서 확인되는 내담자의 정서·인지·행동 반응과 기록된 개입에 대한 반응")
+    counselor_intervention: str = Field(description="상담자가 실제로 한 질문·반영·탐색·역할연습 등 개입")
     next_plan: str = Field(description="실제로 제안하거나 합의한 계획, 없으면 입력 내용에서 확인되지 않음")
 
 
