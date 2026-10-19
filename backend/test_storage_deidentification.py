@@ -84,6 +84,30 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertFalse(report.llm_used)
         self.assertEqual(name_pattern.call_count, expected_scans)
 
+    def test_opt_in_extraction_scans_only_new_names_on_the_second_pass(self) -> None:
+        known_names = ["김민지"]
+        texts = {"memo": "김민지와 최하늘은 도예가로 일한다.", "note": "민지와 최하늘 이야기"}
+        entities = deid._StorageEntities(
+            person_names=["김민지", "최하늘"],
+            occupations=[deid._OccupationMention(text="도예가", category="예술가")],
+        )
+        expected_scans = (len(deid._alias_names(known_names)) + 1) * len(texts)
+
+        with model_returns(entities), patch.object(deid, "_name_pattern", wraps=deid._name_pattern) as name_pattern:
+            result, report = deid.deidentify_texts(texts, known_names=known_names)
+
+        self.assertEqual(result, {
+            "memo": "김O지와 최O늘은 예술가로 일한다.",
+            "note": "민O와 최O늘 이야기",
+        })
+        self.assertEqual((report.names_masked, report.occupations_generalized), (4, 1))
+        self.assertTrue(report.llm_used)
+        self.assertEqual(name_pattern.call_count, expected_scans)
+        self.assertEqual(
+            [call.args[0] for call in name_pattern.call_args_list].count("최하늘"),
+            len(texts),
+        )
+
     def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
         with patch.object(settings, "allow_external_storage_entity_extraction", False):
             texts, report = deid.deidentify_texts({"memo": "친구 박서준은 간호사로 일한다."})

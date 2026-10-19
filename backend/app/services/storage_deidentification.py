@@ -265,11 +265,12 @@ def deidentify_texts(
             occupations_generalized=occupations_generalized,
         )
 
+    extracted_names: set[str] = set()
     occupations: dict[str, str] = {}
     for name in entities.person_names:
         value = name.strip()
         if _NAME_TOKEN.match(value) and not is_masked_name(value) and value in joined:
-            names.add(value)
+            extracted_names.add(value)
     for mention in entities.occupations:
         value = mention.text.strip()
         if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
@@ -283,7 +284,7 @@ def deidentify_texts(
             if count:
                 text = text.replace(occupation, occupations[occupation])
                 occupations_generalized += count
-        for name in sorted(names, key=len, reverse=True):
+        for name in sorted(extracted_names, key=len, reverse=True):
             text, count = _name_pattern(name).subn(mask_name(name), text)
             names_masked += count
         result[key] = text
