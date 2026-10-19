@@ -370,14 +370,14 @@ def _mask_extracted_names(
 
 
 def _occupation_trie(occupations: Iterable[str]) -> list[dict[str, Any]]:
-    nodes: list[dict[str, Any]] = [{"next": {}, "occupation": None, "failure": 0}]
+    nodes: list[dict[str, Any]] = [{"next": {}, "occupation": None, "failure": 0, "output": None}]
     for occupation in occupations:
         state = 0
         for character in occupation:
             transitions: dict[str, int] = nodes[state]["next"]
             state = transitions.setdefault(character, len(nodes))
             if state == len(nodes):
-                nodes.append({"next": {}, "occupation": None, "failure": 0})
+                nodes.append({"next": {}, "occupation": None, "failure": 0, "output": None})
         nodes[state]["occupation"] = occupation
 
     queue = deque(nodes[0]["next"].values())
@@ -389,22 +389,28 @@ def _occupation_trie(occupations: Iterable[str]) -> list[dict[str, Any]]:
             while fallback and character not in nodes[fallback]["next"]:
                 fallback = nodes[fallback]["failure"]
             nodes[next_state]["failure"] = nodes[fallback]["next"].get(character, 0)
+            failure = nodes[next_state]["failure"]
+            nodes[next_state]["output"] = (
+                failure if nodes[failure]["occupation"] is not None else nodes[failure]["output"]
+            )
     return nodes
 
 
 def _occupation_matches(
     text: str,
     trie: list[dict[str, Any]],
-    width: int,
 ) -> Iterable[tuple[int, int, str]]:
     state = 0
     for index, character in enumerate(text):
         while state and character not in trie[state]["next"]:
             state = trie[state]["failure"]
         state = trie[state]["next"].get(character, 0)
-        occupation: str | None = trie[state]["occupation"]
-        if occupation is not None:
-            yield index - width + 1, index + 1, occupation
+        output_state: int | None = state
+        while output_state:
+            occupation: str | None = trie[output_state]["occupation"]
+            if occupation is not None:
+                yield index - len(occupation) + 1, index + 1, occupation
+            output_state = trie[output_state]["output"]
 
 
 def _generalize_occupations_once(
@@ -418,8 +424,7 @@ def _generalize_occupations_once(
     count = 0
     crossing_overlap = False
     selected: list[tuple[int, int, str]] = []
-    width = len(next(iter(occupations)))
-    for start, end, occupation in _occupation_matches(text, trie, width):
+    for start, end, occupation in _occupation_matches(text, trie):
         if start < selected_end:
             crossing_overlap = True
             continue
@@ -494,7 +499,7 @@ def _introduces_later_occupation(
         local = left + replacement + right
         replacement_start = len(left)
         replacement_end = replacement_start + len(replacement)
-        for match_start, match_end, matched in _occupation_matches(local, trie, width):
+        for match_start, match_end, matched in _occupation_matches(local, trie):
             if (
                 match_start < replacement_end
                 and match_end > replacement_start
@@ -504,15 +509,48 @@ def _introduces_later_occupation(
     return False
 
 
+def _generalize_non_overlapping_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+) -> tuple[str, int] | None:
+    """Apply all lengths together when replacements cannot make rule order observable."""
+    chunks: list[str] = []
+    cursor = 0
+    selected_end = 0
+    count = 0
+    for start, end, occupation in _occupation_matches(text, trie):
+        if start < selected_end:
+            return None
+        selected_end = end
+        chunks.extend((text[cursor:start], occupations[occupation]))
+        cursor = end
+        count += 1
+    if not count:
+        return text, 0
+
+    chunks.append(text[cursor:])
+    generalized = "".join(chunks)
+    if next(iter(_occupation_matches(generalized, trie)), None) is not None:
+        return None
+    return generalized, count
+
+
 def _generalize_extracted_occupations(
     text: str,
     occupations: Mapping[str, str],
     *,
+    trie: list[dict[str, Any]] | None = None,
     groups: list[tuple[dict[str, str], list[dict[str, Any]]]] | None = None,
 ) -> tuple[str, int]:
     """Generalize occupations with bounded scans while retaining legacy cascade behavior."""
     if not occupations or not text:
         return text, 0
+
+    trie = trie or _occupation_trie(occupations)
+    generalized = _generalize_non_overlapping_occupations(text, occupations, trie)
+    if generalized is not None:
+        return generalized
 
     if groups is None:
         by_length: dict[int, dict[str, str]] = {}
@@ -599,6 +637,7 @@ def deidentify_texts(
         (group, _occupation_trie(group))
         for _, group in sorted(occupations_by_length.items(), reverse=True)
     ]
+    extracted_occupation_trie = _occupation_trie(occupations) if occupations else None
 
     result: dict[str, str] = {}
     for key, text in baseline.items():
@@ -606,6 +645,7 @@ def deidentify_texts(
         text, count = _generalize_extracted_occupations(
             text,
             occupations,
+            trie=extracted_occupation_trie,
             groups=extracted_occupation_groups,
         )
         occupations_generalized += count

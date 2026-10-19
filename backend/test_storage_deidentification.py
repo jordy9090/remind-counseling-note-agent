@@ -249,8 +249,35 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual(len(result["memo"]), len(baseline))
         self.assertFalse(any(value in result["memo"] for value in full_occupations + short_occupations))
         self.assertEqual((report.names_masked, report.occupations_generalized), (0, candidate_count))
-        self.assertEqual(occupation_trie.call_count, 2)
+        self.assertEqual(occupation_trie.call_count, 3)
         self.assertEqual(generalize_once.call_count, 2)
+
+    def test_opt_in_extraction_generalizes_distinct_occupation_lengths_in_two_passes(self) -> None:
+        candidates = [
+            chr(0x3400 + index) + "가" * (length - 1)
+            for index, length in enumerate(range(3, 131))
+        ]
+        core = " ".join(candidates)
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_matches", wraps=deid._occupation_matches
+        ) as occupation_matches, patch.object(
+            deid, "_generalize_occupations_once",
+            side_effect=AssertionError("distinct-length staged scan used"),
+        ):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertFalse(any(value in result["memo"] for value in candidates))
+        self.assertEqual(result["memo"].count("학생"), len(candidates))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, len(candidates)))
+        self.assertEqual(occupation_matches.call_count, 2)
 
     def test_opt_in_extraction_preserves_occupation_cascade_and_global_overlap_order(self) -> None:
         cases = (
