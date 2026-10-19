@@ -318,19 +318,74 @@ class PersistenceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/notes/drafts/{draft_id}", headers=other).status_code, 404)
         self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
 
-    def test_local_disk_uses_the_same_temporary_storage_boundary(self):
-        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft.json"
+    def test_local_disk_atomically_replaces_unicode_drafts_per_actor(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
         payload = json.loads(fixture.read_text(encoding="utf-8"))
+        replacements = []
+        original_replace = Path.replace
+
+        def observed_replace(source, destination):
+            replacements.append((source, destination))
+            return original_replace(source, destination)
+
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
-                patch.object(supabase_store, "configured_for", return_value=False):
-            saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers).json()
-            stored_files = list(Path(directory).rglob("*.json"))
-            self.assertEqual(len(stored_files), 1)
-            stored = json.loads(stored_files[0].read_text(encoding="utf-8"))
-            self.assertNotIn("SYNTHETIC-RAW-CACHE", json.dumps(stored))
-            self.assertEqual(stored["form"]["counselor_memo"], payload["form"]["counselor_memo"])
-            url = f'/api/notes/drafts/{saved["draft_id"]}'
-            self.assertEqual(self.client.get(url, headers=self.headers).json(), stored)
+                patch.object(supabase_store, "configured_for", return_value=False), \
+                patch.object(Path, "replace", observed_replace):
+            first = self.client.post("/api/notes/drafts", json=payload, headers=self.headers)
+            self.assertEqual(first.status_code, 200, first.text)
+            draft_id = first.json()["draft_id"]
+            owner_path = Path(directory) / "synthetic-user-a" / f"{draft_id}.json"
+            first_bytes = owner_path.read_bytes()
+            first_stored = json.loads(first_bytes.decode("utf-8"))
+            maximum_code_point = "\U0010ffff"
+            self.assertIn(maximum_code_point, first_stored["attachments"][0]["filename"])
+            self.assertIn(maximum_code_point, first_stored["supervision_report_draft"]["sections"][0]["contentBlocks"][0]["textHtml"])
+            self.assertNotIn("SYNTHETIC-UNICODE-RAW-CACHE", first_bytes.decode("utf-8"))
+
+            updated = json_copy(payload)
+            updated["draft_id"] = draft_id
+            updated["session_topic"] = f"합성 대체 주제 😀{maximum_code_point}"
+            updated["supervision_report_draft"]["sections"][0]["contentBlocks"][0]["rows"][0]["검토"] = False
+            second = self.client.post("/api/notes/drafts", json=updated, headers=self.headers)
+            self.assertEqual(second.status_code, 200, second.text)
+            self.assertEqual(second.json()["draft_id"], draft_id)
+            second_bytes = owner_path.read_bytes()
+            self.assertNotEqual(second_bytes, first_bytes)
+            self.assertIn(maximum_code_point.encode("utf-8"), second_bytes)
+            self.assertEqual(list(owner_path.parent.glob("*.json")), [owner_path])
+            self.assertEqual(list(owner_path.parent.glob("*.tmp")), [])
+
+            url = f"/api/notes/drafts/{draft_id}"
+            detail = self.client.get(url, headers=self.headers)
+            listed = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(detail.status_code, 200, detail.text)
+            self.assertEqual(detail.json(), json.loads(second_bytes.decode("utf-8")))
+            self.assertEqual(listed.json(), [detail.json()])
+            self.assertEqual(detail.json()["session_topic"], updated["session_topic"])
+            block = detail.json()["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+            self.assertIs(block["rows"][0]["검토"], False)
+
+            other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+            self.assertEqual(self.client.get(url, headers=other).status_code, 404)
+            self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+            owner_before_other_save = owner_path.read_bytes()
+            other_payload = json_copy(updated)
+            other_payload["session_topic"] = f"합성 격리 주제 𝄞{maximum_code_point}"
+            other_save = self.client.post("/api/notes/drafts", json=other_payload, headers=other)
+            self.assertEqual(other_save.status_code, 200, other_save.text)
+            self.assertEqual(other_save.json()["draft_id"], draft_id)
+            other_path = Path(directory) / "synthetic-user-b" / f"{draft_id}.json"
+            self.assertTrue(other_path.is_file())
+            self.assertEqual(owner_path.read_bytes(), owner_before_other_save)
+            self.assertEqual(self.client.get(url, headers=self.headers).json()["session_topic"], updated["session_topic"])
+            self.assertEqual(self.client.get(url, headers=other).json()["session_topic"], other_payload["session_topic"])
+            self.assertEqual(len(self.client.get("/api/notes/drafts", headers=self.headers).json()), 1)
+            self.assertEqual(len(self.client.get("/api/notes/drafts", headers=other).json()), 1)
+            self.assertEqual(len(replacements), 3)
+            self.assertTrue(all(source.parent == destination.parent and source.suffix == ".tmp"
+                                for source, destination in replacements))
+            self.assertEqual(len(list(Path(directory).rglob("*.json"))), 2)
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
 
     def test_confirmed_string_object_sections_and_empty_values_survive_reconfirmation(self):
         for fields in ({"session_content": "Counselor string", "next_plan": ""},
