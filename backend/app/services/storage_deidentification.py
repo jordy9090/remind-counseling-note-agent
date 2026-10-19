@@ -14,6 +14,7 @@ or occupation mentions. Saving never fails because of this optional step.
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -231,8 +232,50 @@ def _generalized_occupation(match: re.Match[str], category: str) -> str:
     return category + particle
 
 
-def _candidate_is_present(candidate: str, text: str) -> bool:
-    return candidate in text
+def _present_candidates(candidates: Iterable[str], text: str) -> set[str]:
+    """Find literal candidates in one pass over text with an Aho-Corasick trie."""
+    remaining = set(candidates)
+    if not remaining or not text:
+        return set()
+
+    transitions: list[dict[str, int]] = [{}]
+    failures = [0]
+    outputs: list[set[str]] = [set()]
+    for candidate in remaining:
+        state = 0
+        for character in candidate:
+            next_state = transitions[state].get(character)
+            if next_state is None:
+                next_state = len(transitions)
+                transitions[state][character] = next_state
+                transitions.append({})
+                failures.append(0)
+                outputs.append(set())
+            state = next_state
+        outputs[state].add(candidate)
+
+    queue = deque(transitions[0].values())
+    while queue:
+        state = queue.popleft()
+        for character, next_state in transitions[state].items():
+            queue.append(next_state)
+            fallback = failures[state]
+            while fallback and character not in transitions[fallback]:
+                fallback = failures[fallback]
+            failures[next_state] = transitions[fallback].get(character, 0)
+            outputs[next_state].update(outputs[failures[next_state]])
+
+    found: set[str] = set()
+    state = 0
+    for character in text:
+        while state and character not in transitions[state]:
+            state = failures[state]
+        state = transitions[state].get(character, 0)
+        if outputs[state]:
+            found.update(outputs[state])
+            if len(found) == len(remaining):
+                break
+    return found
 
 
 def deidentify_texts(
@@ -274,18 +317,15 @@ def deidentify_texts(
         value = name.strip()
         if _NAME_TOKEN.match(value) and not is_masked_name(value):
             name_candidates.add(value)
-    extracted_names = {value for value in name_candidates if _candidate_is_present(value, joined)}
+    extracted_names = _present_candidates(name_candidates, joined)
 
     occupation_candidates: dict[str, str] = {}
     for mention in entities.occupations:
         value = mention.text.strip()
         if len(value) >= 2 and value not in OCCUPATION_CATEGORIES:
             occupation_candidates[value] = mention.category
-    occupations = {
-        value: category
-        for value, category in occupation_candidates.items()
-        if _candidate_is_present(value, joined)
-    }
+    present_occupations = _present_candidates(occupation_candidates, joined)
+    occupations = {value: occupation_candidates[value] for value in present_occupations}
 
     result: dict[str, str] = {}
     for key, text in baseline.items():

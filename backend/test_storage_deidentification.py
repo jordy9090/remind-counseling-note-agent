@@ -119,17 +119,47 @@ class MaskingRuleTests(unittest.TestCase):
         text = "최하늘은 하늘과 아동도예가 및 도예가로 일한다."
 
         with model_returns(entities), patch.object(
-            deid, "_candidate_is_present", wraps=deid._candidate_is_present,
-        ) as candidate_is_present:
+            deid, "_present_candidates", wraps=deid._present_candidates,
+        ) as present_candidates:
             result, report = deid.deidentify_texts({"memo": text})
 
         self.assertEqual(result["memo"], "최O늘은 하O과 예술가 및 예술가로 일한다.")
         self.assertEqual((report.names_masked, report.occupations_generalized), (2, 2))
-        self.assertEqual(candidate_is_present.call_count, 4)
+        self.assertEqual(present_candidates.call_count, 2)
         self.assertEqual(
-            {call.args[0] for call in candidate_is_present.call_args_list},
-            {"최하늘", "하늘", "아동도예가", "도예가"},
+            {frozenset(call.args[0]) for call in present_candidates.call_args_list},
+            {frozenset({"최하늘", "하늘"}), frozenset({"아동도예가", "도예가"})},
         )
+
+    def test_opt_in_extraction_scans_once_for_many_distinct_absent_candidates(self) -> None:
+        candidate_count = 10_000
+        baseline = "가" * 200_000
+        entities = deid._StorageEntities(
+            person_names=[
+                "가" + chr(0xAC00 + ((index + 1) // 11172)) + chr(0xAC00 + ((index + 1) % 11172))
+                for index in range(candidate_count)
+            ],
+            occupations=[
+                deid._OccupationMention(text=f"가합성직업{index:05d}", category="기타 직업군")
+                for index in range(candidate_count)
+            ],
+        )
+
+        with model_returns(entities), patch.object(
+            deid, "_present_candidates", wraps=deid._present_candidates,
+        ) as present_candidates, patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(result, {"memo": baseline})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 0))
+        self.assertEqual(present_candidates.call_count, 2)
+        self.assertEqual(
+            [len(call.args[0]) for call in present_candidates.call_args_list],
+            [10_000, 10_000],
+        )
+        self.assertEqual({len(call.args[1]) for call in present_candidates.call_args_list}, {200_007})
 
     def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
         with patch.object(settings, "allow_external_storage_entity_extraction", False):
