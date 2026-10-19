@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -53,9 +53,9 @@ class MaskingRuleTests(unittest.TestCase):
     def test_model_mentions_are_masked_and_generalized_in_text(self) -> None:
         with model_returns(ENTITIES):
             texts, report = deid.deidentify_texts({"memo": MEMO})
-        self.assertEqual(texts["memo"], "김O지 내담자는 교육자로 일한다. 민O가 동생 박O준과 다툰 뒤 예술가인 친구에게 연락했다.")
+        self.assertEqual(texts["memo"], "김O지 내담자는 교육자로 일한다. 민O가 동생 [PERSON]과 다툰 뒤 예술가인 친구에게 연락했다.")
         self.assertTrue(report.llm_used)
-        self.assertEqual((report.names_masked, report.occupations_generalized), (3, 2))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 2))
 
     def test_names_are_not_masked_inside_other_words_or_twice(self) -> None:
         entities = deid._StorageEntities(person_names=["지원", "홍O동"], occupations=[])
@@ -68,16 +68,438 @@ class MaskingRuleTests(unittest.TestCase):
             texts, report = deid.deidentify_texts({"memo": MEMO}, known_names=["김민지", "합성 가명"])
         self.assertIn("김O지 내담자", texts["memo"])
         self.assertIn("민O가", texts["memo"])
-        self.assertIn("초등학교 교사", texts["memo"], "free-text occupations need the model")
+        self.assertIn("교육자", texts["memo"])
+        self.assertFalse(report.llm_used)
+
+    def test_high_confidence_occupations_scan_each_text_field_once(self) -> None:
+        occupations = list(deid._HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS)
+        present = occupations[::2]
+        particles = ("로", "으로", "은", "는", "이", "가", "에서", "의")
+        segments = [
+            f" {occupation}{particles[index % len(particles)]} "
+            for index, occupation in enumerate(present)
+        ]
+        texts: dict[str, str] = {}
+        for field_index in range(4):
+            prefix = "".join(segments[field_index:] + segments[:field_index])
+            texts[f"field_{field_index}"] = prefix + "x" * (50_000 - len(prefix))
+
+        with model_returns(None), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(
+            deid,
+            "_generalize_high_confidence_occupations",
+            wraps=deid._generalize_high_confidence_occupations,
+        ) as generalize_occupations:
+            result, report = deid.deidentify_texts(texts)
+
+        self.assertEqual(sum(map(len, texts.values())), 200_000)
+        self.assertEqual(generalize_occupations.call_count, len(texts))
+        self.assertFalse(any(occupation in "\n".join(result.values()) for occupation in present))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 56))
+
+    def test_high_confidence_occupation_particle_adjustment_is_unchanged(self) -> None:
+        with model_returns(None), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ):
+            result, report = deid.deidentify_texts({
+                "memo": "초등학교 교사로 일하고 간호사로 일하며 대학생으로 지낸다.",
+            })
+
+        self.assertEqual(result["memo"], "교육자로 일하고 의료인으로 일하며 학생으로 지낸다.")
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 3))
+
+    def test_disabled_extraction_does_not_repeat_known_name_scan(self) -> None:
+        known_names = ["김민지", "박상담"]
+        texts = {"memo": "김민지와 박상담이 만났다.", "note": "민지와 상담 이야기"}
+
+        with model_returns(None), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern, patch.object(
+            deid, "_mask_extracted_names", wraps=deid._mask_extracted_names
+        ) as mask_names, patch.object(
+            deid, "_name_trie", wraps=deid._name_trie
+        ) as name_trie:
+            result, report = deid.deidentify_texts(texts, known_names=known_names)
+
+        self.assertEqual(result, {"memo": "김O지와 박O담이 만났다.", "note": "민O와 상담 이야기"})
+        self.assertEqual(report.names_masked, 3)
+        self.assertFalse(report.llm_used)
+        self.assertEqual(name_pattern.call_count, 0)
+        self.assertEqual(mask_names.call_count, len(texts))
+        self.assertEqual(name_trie.call_count, 1)
+
+    def test_known_name_masking_preserves_sequential_overlap_behavior(self) -> None:
+        with model_returns(None), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern:
+            result, report = deid.deidentify_texts(
+                {"memo": "가나다라"},
+                known_names=["가나다", "다라"],
+            )
+
+        self.assertEqual(result, {"memo": "가O다O"})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 0))
+        self.assertEqual(name_pattern.call_count, 3)
+
+    def test_opt_in_extraction_scans_only_new_names_on_the_second_pass(self) -> None:
+        known_names = ["김민지"]
+        texts = {"memo": "김민지와 최하늘은 도예가로 일한다.", "note": "민지와 최하늘 이야기"}
+        entities = deid._StorageEntities(
+            person_names=["김민지", "최하늘"],
+            occupations=[deid._OccupationMention(text="도예가", category="예술가")],
+        )
+        with model_returns(entities), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern, patch.object(
+            deid, "_mask_extracted_names", wraps=deid._mask_extracted_names
+        ) as mask_extracted_names, patch.object(
+            deid, "_name_trie", wraps=deid._name_trie
+        ) as name_trie:
+            result, report = deid.deidentify_texts(texts, known_names=known_names)
+
+        self.assertEqual(result, {
+            "memo": "김O지와 최O늘은 예술가로 일한다.",
+            "note": "민O와 최O늘 이야기",
+        })
+        self.assertEqual((report.names_masked, report.occupations_generalized), (4, 1))
+        self.assertTrue(report.llm_used)
+        self.assertEqual(name_pattern.call_count, 0)
+        self.assertNotIn("최하늘", [call.args[0] for call in name_pattern.call_args_list])
+        self.assertEqual(mask_extracted_names.call_count, len(texts) * 2)
+        self.assertEqual(name_trie.call_count, 2)
+
+    def test_opt_in_extraction_deduplicates_candidates_before_membership_checks(self) -> None:
+        entities = deid._StorageEntities(
+            person_names=["최하늘", "하늘"] * 100,
+            occupations=[
+                deid._OccupationMention(text="아동도예가", category="예술가"),
+                deid._OccupationMention(text="도예가", category="예술가"),
+            ] * 100,
+        )
+        text = "최하늘은 하늘과 아동도예가 및 도예가로 일한다."
+
+        with model_returns(entities), patch.object(
+            deid, "_present_candidates", wraps=deid._present_candidates,
+        ) as present_candidates:
+            result, report = deid.deidentify_texts({"memo": text})
+
+        self.assertEqual(result["memo"], "최O늘은 하O과 예술가 및 예술가로 일한다.")
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 2))
+        self.assertEqual(present_candidates.call_count, 2)
+        self.assertEqual(
+            {frozenset(call.args[0]) for call in present_candidates.call_args_list},
+            {frozenset({"최하늘", "하늘"}), frozenset({"아동도예가", "도예가"})},
+        )
+
+    def test_opt_in_extraction_scans_once_for_many_distinct_absent_candidates(self) -> None:
+        candidate_count = 10_000
+        baseline = "가" * 200_000
+        entities = deid._StorageEntities(
+            person_names=[
+                "가" + chr(0xAC00 + ((index + 1) // 11172)) + chr(0xAC00 + ((index + 1) % 11172))
+                for index in range(candidate_count)
+            ],
+            occupations=[
+                deid._OccupationMention(text=f"가합성직업{index:05d}", category="기타 직업군")
+                for index in range(candidate_count)
+            ],
+        )
+
+        with model_returns(entities), patch.object(
+            deid, "_present_candidates", wraps=deid._present_candidates,
+        ) as present_candidates, patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(result, {"memo": baseline})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 0))
+        self.assertEqual(present_candidates.call_count, 2)
+        self.assertEqual(
+            [len(call.args[0]) for call in present_candidates.call_args_list],
+            [10_000, 10_000],
+        )
+        self.assertEqual({len(call.args[1]) for call in present_candidates.call_args_list}, {200_007})
+
+    def test_opt_in_extraction_masks_many_overlapping_names_without_per_name_scans(self) -> None:
+        candidate_count = 1_000
+        full_names: list[str] = []
+        short_names: list[str] = []
+        tokens: list[str] = []
+        for index in range(candidate_count):
+            suffix = chr(0xAC00 + index // 11172) + chr(0xAC00 + index % 11172)
+            full_names.append("힣" + suffix)
+            short_names.append(suffix)
+            tokens.append("힣" + suffix)
+        core = " ".join(tokens)
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(person_names=full_names + short_names)
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", side_effect=AssertionError("per-name scan used")
+        ), patch.object(
+            deid, "_mask_extracted_names", wraps=deid._mask_extracted_names
+        ) as mask_extracted_names:
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(len(result["memo"]), len(baseline))
+        self.assertEqual(result["memo"].count("힣O"), candidate_count)
+        self.assertEqual((report.names_masked, report.occupations_generalized), (candidate_count, 0))
+        self.assertEqual(mask_extracted_names.call_count, 1)
+
+    def test_opt_in_extraction_preserves_sequential_name_overlap_behavior(self) -> None:
+        entities = deid._StorageEntities(person_names=["가나다", "다라"])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern:
+            result, report = deid.deidentify_texts({"memo": "가나다라"})
+
+        self.assertEqual(result, {"memo": "가O다O"})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (2, 0))
+        self.assertEqual(name_pattern.call_count, 2)
+
+    def test_opt_in_extraction_preserves_shifted_ascii_name_priority(self) -> None:
+        entities = deid._StorageEntities(person_names=["A.B", "B-CD"])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_name_pattern", wraps=deid._name_pattern
+        ) as name_pattern:
+            result, report = deid.deidentify_texts({"memo": "A.B-CD"})
+
+        self.assertEqual(result, {"memo": "A.BOOD"})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (1, 0))
+        self.assertEqual(name_pattern.call_count, 2)
+
+    def test_opt_in_extraction_generalizes_many_overlapping_occupations_without_per_value_scans(self) -> None:
+        candidate_count = 1_000
+        categories = [category for category in deid.OCCUPATION_CATEGORIES if len(category) == 6]
+        full_occupations: list[str] = []
+        short_occupations: list[str] = []
+        tokens: list[str] = []
+        mentions: list[deid._OccupationMention] = []
+        for index in range(candidate_count):
+            suffix = chr(0xAC00 + index // 11172) + chr(0xAC00 + index % 11172)
+            full = "합성직업" + suffix
+            short = "직업" + suffix
+            full_occupations.append(full)
+            short_occupations.append(short)
+            tokens.append(full)
+            mentions.extend((
+                deid._OccupationMention(text=full, category=categories[index % len(categories)]),
+                deid._OccupationMention(text=short, category=categories[(index + 1) % len(categories)]),
+            ))
+        core = " ".join(tokens)
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(occupations=mentions)
+
+        class NoSequentialScans(str):
+            def count(self, *_args, **_kwargs):
+                raise AssertionError("per-occupation count scan used")
+
+            def replace(self, *_args, **_kwargs):
+                raise AssertionError("per-occupation replacement scan used")
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (NoSequentialScans(text), [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_trie", wraps=deid._occupation_trie
+        ) as occupation_trie, patch.object(
+            deid, "_generalize_occupations_once", wraps=deid._generalize_occupations_once
+        ) as generalize_once:
+            result, report = deid.deidentify_texts({"memo": NoSequentialScans(baseline)})
+
+        self.assertEqual(len(result["memo"]), len(baseline))
+        self.assertFalse(any(value in result["memo"] for value in full_occupations + short_occupations))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, candidate_count))
+        self.assertEqual(occupation_trie.call_count, 3)
+        self.assertEqual(generalize_once.call_count, 0)
+
+    def test_opt_in_extraction_generalizes_distinct_occupation_lengths_in_two_passes(self) -> None:
+        candidates = [
+            chr(0x3400 + index) + "가" * (length - 1)
+            for index, length in enumerate(range(3, 131))
+        ]
+        core = " ".join(candidates)
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_matches", wraps=deid._occupation_matches
+        ) as occupation_matches, patch.object(
+            deid, "_generalize_occupations_once",
+            side_effect=AssertionError("distinct-length staged scan used"),
+        ):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertFalse(any(value in result["memo"] for value in candidates))
+        self.assertEqual(result["memo"].count("학생"), len(candidates))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, len(candidates)))
+        self.assertEqual(occupation_matches.call_count, 2)
+
+    def test_opt_in_extraction_bounds_nested_distinct_length_occupation_overlaps(self) -> None:
+        candidates = ["가" * length for length in range(3, 503)]
+        core = candidates[-1]
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_generalize_occupations_once",
+            side_effect=AssertionError("distinct-length staged scan used"),
+        ):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(result["memo"], "학생 " + baseline[len(core) + 1:])
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 1))
+
+    def test_opt_in_extraction_bounds_dense_repeated_prefix_occupation_matches(self) -> None:
+        candidates = ["가" * length for length in range(3, 503)]
+        baseline = "가" * 200_000
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_matches",
+            side_effect=AssertionError("dense output-link traversal used"),
+        ), patch.object(
+            deid, "_generalize_occupations_once",
+            side_effect=AssertionError("distinct-length staged scan used"),
+        ):
+            result, report = deid.deidentify_texts({"memo": baseline})
+
+        self.assertEqual(result["memo"], "학생" * 399)
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 399))
+
+    def test_repeated_prefix_occupations_skip_unused_tries_across_text_fields(self) -> None:
+        candidates = ["가" * length for length in range(3, 503)]
+        texts = {f"field_{index}": "가" * 50_000 for index in range(4)}
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_trie",
+            side_effect=AssertionError("unused occupation trie constructed"),
+        ):
+            result, report = deid.deidentify_texts(texts)
+
+        self.assertEqual(result, {key: "학생" * 100 for key in texts})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 400))
+
+    def test_opt_in_extraction_preserves_occupation_cascade_and_global_overlap_order(self) -> None:
+        cases = (
+            (
+                "초등학교 교사와 교육 분야",
+                [
+                    deid._OccupationMention(text="초등학교 교사", category="교육자"),
+                    deid._OccupationMention(text="교육", category="연구자"),
+                ],
+                "연구자자와 연구자 분야",
+                3,
+            ),
+            (
+                "abcde",
+                [
+                    deid._OccupationMention(text="abc", category="교육자"),
+                    deid._OccupationMention(text="bcde", category="의료인"),
+                ],
+                "a의료인",
+                1,
+            ),
+            (
+                "ab학|ab자a육자",
+                [
+                    deid._OccupationMention(text="ab학", category="의료인"),
+                    deid._OccupationMention(text="자a육자", category="학생"),
+                    deid._OccupationMention(text="ab", category="학생"),
+                    deid._OccupationMention(text="bc", category="학생"),
+                ],
+                "의료인|의료인생",
+                3,
+            ),
+        )
+
+        for text, occupations, expected, expected_count in cases:
+            with self.subTest(text=text), model_returns(deid._StorageEntities(occupations=occupations)), patch.object(
+                deid, "deidentify_text", side_effect=lambda value, **_: (value, [])
+            ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}):
+                result, report = deid.deidentify_texts({"memo": text})
+
+            self.assertEqual(result, {"memo": expected})
+            self.assertEqual((report.names_masked, report.occupations_generalized), (0, expected_count))
+
+    def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
+        with patch.object(settings, "allow_external_storage_entity_extraction", False):
+            texts, report = deid.deidentify_texts({"memo": "친구 박서준은 간호사로 일한다."})
+        self.assertEqual("친구 [PERSON]은 의료인으로 일한다.", texts["memo"])
         self.assertFalse(report.llm_used)
 
     def test_stub_mode_never_calls_the_provider(self) -> None:
-        with patch.object(settings, "use_stub", True), patch("app.services.llm.get_structured_llm",
+        with patch.object(settings, "allow_external_storage_entity_extraction", True), patch.object(settings, "use_stub", True), patch("app.services.llm.get_structured_llm",
                                                             side_effect=AssertionError("provider called")):
             self.assertIsNone(deid._extract_entities(MEMO))
 
+    def test_external_entity_extraction_is_disabled_by_default(self) -> None:
+        with patch.object(settings, "allow_external_storage_entity_extraction", False), patch.object(
+            settings, "use_stub", False
+        ), patch.object(settings, "openai_api_key", "synthetic-key"), patch(
+            "app.services.llm.get_structured_llm", side_effect=AssertionError("provider called")
+        ):
+            texts, report = deid.deidentify_texts(
+                {"memo": "이름: 김민지, 010-1234-5678, minji@example.com, 한빛고등학교"},
+                known_names=["김민지"],
+            )
+        self.assertFalse(report.llm_used)
+        for raw in ("김민지", "010-1234-5678", "minji@example.com", "한빛고등학교"):
+            self.assertNotIn(raw, texts["memo"])
+
+    def test_opt_in_extraction_receives_only_deterministically_masked_text(self) -> None:
+        captured: list[str] = []
+        runnable = Mock()
+        runnable.invoke.side_effect = lambda prompt: captured.append(prompt) or deid._StorageEntities()
+        with patch.object(settings, "allow_external_storage_entity_extraction", True), patch.object(
+            settings, "use_stub", False
+        ), patch.object(settings, "openai_api_key", "synthetic-key"), patch(
+            "app.services.llm.get_structured_llm", return_value=runnable
+        ):
+            deid.deidentify_texts(
+                {"memo": "최하늘 010-1234-5678 minji@example.com 한빛고등학교 싱어송라이터"},
+                known_names=["최하늘"],
+            )
+        self.assertEqual(1, runnable.invoke.call_count)
+        provider_text = captured[0].split("Text:\n", 1)[1]
+        for raw in ("최하늘", "010-1234-5678", "minji@example.com", "한빛고등학교", "싱어송라이터"):
+            self.assertNotIn(raw, provider_text)
+        self.assertIn("최O늘", provider_text)
+
     def test_provider_errors_fall_back_quietly(self) -> None:
-        with patch.object(settings, "use_stub", False), patch.object(settings, "openai_api_key", "synthetic-key"), \
+        with patch.object(settings, "allow_external_storage_entity_extraction", True), patch.object(settings, "use_stub", False), patch.object(settings, "openai_api_key", "synthetic-key"), \
                 patch("app.services.llm.get_structured_llm", side_effect=RuntimeError("synthetic outage")):
             self.assertIsNone(deid._extract_entities(MEMO))
 
@@ -92,6 +514,25 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual(result["form"]["key_issue_tags"], ["민O 갈등"])
         self.assertIn("교육자로", result["form"]["counselor_memo"])
         self.assertEqual(result["sections"][0]["content"], "민O는 교사가 꿈이었다.")
+
+    def test_json_payloads_preserve_only_curated_theory_source_urls(self) -> None:
+        payload = {
+            "result": {
+                "relational_insights": {
+                    "theory_sources": [{"url": "https://example.org/synthetic"}],
+                },
+            },
+            "content": "내담자 계정은 https://example.org/minji 이다.",
+        }
+
+        result, _ = deid.deidentify_json(payload)
+
+        self.assertEqual(
+            "https://example.org/synthetic",
+            result["result"]["relational_insights"]["theory_sources"][0]["url"],
+        )
+        self.assertNotIn("https://example.org/minji", result["content"])
+        self.assertIn("[ACCOUNT]", result["content"])
 
 
 class StorageEntryPointTests(unittest.TestCase):
@@ -114,16 +555,18 @@ class StorageEntryPointTests(unittest.TestCase):
         for raw in ("김민지", "민지가", "박서준", "초등학교 교사", "싱어송라이터"):
             self.assertNotIn(raw, text)
 
-    def test_generation_stores_only_deidentified_input_and_notes(self) -> None:
+    def test_generation_deidentifies_derived_storage_and_preserves_configured_original(self) -> None:
         response = self.client.post("/api/notes/generate", headers=self.headers,
                                     json={**INPUT, "client_alias": "김민지", "counselor_memo": MEMO})
         self.assertEqual(response.status_code, 200, response.text[:300])
         self.assertTrue(response.json()["persistence_report"]["stored"])
-        for table in ("sessions", "generated_notes", "cases"):
+        for table in ("generated_notes", "cases"):
             with self.subTest(table=table):
                 self.assert_deidentified(self.stored_text(table))
         session = self.store.tables["sessions"][0]
-        self.assertIn("김O지 내담자는 교육자로 일한다", json.loads(session["raw_input_text"])["counselor_memo"])
+        self.assertEqual(MEMO, json.loads(session["raw_input_text"])["counselor_memo"])
+        self.assert_deidentified(session["sanitized_input_text"])
+        self.assertIn("교육자로 일한다", session["sanitized_input_text"])
         self.assertEqual(self.store.tables["cases"][0]["case_alias"], "김O지")
 
     def test_client_profile_is_stored_with_masked_name_and_category(self) -> None:

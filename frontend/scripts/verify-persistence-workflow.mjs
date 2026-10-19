@@ -159,6 +159,20 @@ assert.deepEqual(fixture, originalFixture, 'saving must not mutate in-memory edi
 console.log('Temporary request allowlist, nested caches, applied input, edited reports, and non-mutating serialization: passed')
 
 {
+  const unicodeFixture = JSON.parse(fs.readFileSync('scripts/fixtures/temporary-draft-unicode.json', 'utf8'))
+  const maximumCodePoint = '\u{10FFFF}'
+  const unicodeSaved = temporaryDraftPayload(unicodeFixture)
+  const unicodeBlock = unicodeSaved.supervision_report_draft.sections[0].contentBlocks[0]
+  assert(!JSON.stringify(unicodeSaved).includes('SYNTHETIC-UNICODE-RAW-CACHE'))
+  assert.equal(unicodeSaved.attachments[0].filename, `합성-e\u0301-😀-${maximumCodePoint}.wav`)
+  assert.equal(unicodeSaved.final_document_sections[0].contentHtml, `<p>편집 <strong>😀𝄞${maximumCodePoint}</strong> &amp; 검토</p>`)
+  assert.equal(unicodeBlock.textHtml, `<p>표 <em>😀${maximumCodePoint}</em></p>`)
+  assert.deepEqual(unicodeBlock.rows, [{ [`열😀${maximumCodePoint}`]: '편집 셀 e\u0301 𝄞', 검토: true, 횟수: 0, 비고: null }])
+  assert.deepEqual(temporaryDraftPayload(unicodeSaved), unicodeSaved)
+  console.log('Temporary draft maximum-code-point Unicode projection and cache exclusion: passed')
+}
+
+{
   const insights = { status: 'generated', lens: 'psychodynamic_relational', notices: [],
     supervision_memo: 'The recorded wish to reassure may have shaped the next question; its influence remains uncertain.',
     cards: [{ id: 'synthetic', focus: 'counselor_reflection', observation: 'Recorded wish to reassure.',

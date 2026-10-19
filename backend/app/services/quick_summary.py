@@ -20,31 +20,18 @@ from collections import deque
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.services.deidentification import deidentify_text, render_counselor_text
+from app.graph.summary_core import PUBLIC_QUICK_POLICY, run_summary_core
+from app.schemas.note import SessionInput
+from app.services.deidentification import render_counselor_text
+from app.services.llm import estimate_generation_cost_usd
+from app.services.transcript_chunking import estimate_korean_tokens
 
 QUICK_SUMMARY_MAX_CHARS = 20_000
 QUICK_SUMMARY_MIN_CHARS = 20
 ANONYMOUS_LIMIT = (5, 60 * 60)  # 5 requests per hour per IP
 AUTHENTICATED_LIMIT = (60, 60 * 60)  # 60 requests per hour per user
-
-QUICK_SUMMARY_PROMPT = """당신은 심리상담사의 상담 기록 정리를 돕는 보조자입니다.
-아래 상담 내용을 읽고 다음 네 항목으로 간결하게 정리하세요.
-
-- main_content (주요 상담 내용): 이번 회기에서 다룬 핵심 주제와 호소 내용
-- client_response (내담자 반응): 내담자가 보인 정서·인지·행동 반응
-- counselor_intervention (상담자 개입): 상담자가 사용한 개입과 그 의도
-- next_plan (다음 회기 계획): 다음 회기에 이어갈 과제나 계획
-
-규칙:
-- 입력에 근거한 내용만 쓰고, 입력에 없는 내용은 "입력 내용에서 확인되지 않음"이라고 쓰세요.
-- 진단, 위험도 판정, 치료 권고를 하지 마세요.
-- [PERSON], [PHONE] 같은 가림 표시는 그대로 두세요.
-- 각 항목은 2~4문장의 한국어 서술형으로 작성하세요.
-
-상담 내용:
-{text}
-"""
-
+RATE_LIMIT_MAX_KEYS = 10_000
+_concurrency_guard = threading.BoundedSemaphore(settings.quick_summary_max_concurrent)
 
 class QuickSummaryRequest(BaseModel):
     text: str = Field(default="", max_length=QUICK_SUMMARY_MAX_CHARS + 1000)
@@ -59,13 +46,6 @@ class QuickSummaryResponse(BaseModel):
     stub: bool = False
 
 
-class _QuickSummaryDraft(BaseModel):
-    main_content: str = Field(description="주요 상담 내용")
-    client_response: str = Field(description="내담자 반응")
-    counselor_intervention: str = Field(description="상담자 개입")
-    next_plan: str = Field(description="다음 회기 계획")
-
-
 class QuickSummaryInputError(ValueError):
     """Input that cannot be summarized (empty, too short, or too long)."""
 
@@ -76,28 +56,55 @@ class QuickSummaryRateLimited(RuntimeError):
         self.retry_after = retry_after
 
 
+class QuickSummaryBusy(RuntimeError):
+    """This server instance has no public-summary execution slot available."""
+
+
+class QuickSummaryCostLimit(RuntimeError):
+    """The conservative request estimate exceeds the configured public budget."""
+
+
 class _SlidingWindowLimiter:
-    def __init__(self) -> None:
+    def __init__(self, *, max_keys: int = RATE_LIMIT_MAX_KEYS) -> None:
         self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
+        self._max_keys = max_keys
 
     def check(self, key: str, limit: int, window: int, now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
         with self._lock:
-            hits = self._hits.setdefault(key, deque())
+            hits = self._hits.get(key)
+            if hits is None:
+                if len(self._hits) >= self._max_keys:
+                    stale_keys = [
+                        existing_key
+                        for existing_key, existing_hits in self._hits.items()
+                        if not existing_hits or now - existing_hits[-1] >= window
+                    ]
+                    for stale_key in stale_keys:
+                        del self._hits[stale_key]
+                if len(self._hits) >= self._max_keys:
+                    raise QuickSummaryRateLimited(window)
+                hits = self._hits.setdefault(key, deque())
             while hits and now - hits[0] >= window:
                 hits.popleft()
             if len(hits) >= limit:
                 raise QuickSummaryRateLimited(max(1, int(window - (now - hits[0]))))
             hits.append(now)
-            if len(self._hits) > 10_000:
-                # Drop idle keys so the map cannot grow without bound.
-                for stale in [k for k, v in self._hits.items() if not v]:
-                    del self._hits[stale]
 
     def reset(self) -> None:
         with self._lock:
             self._hits.clear()
+
+    def refund(self, key: str) -> None:
+        """Remove one provisional hit after a caller crosses a stronger identity boundary."""
+        with self._lock:
+            hits = self._hits.get(key)
+            if not hits:
+                return
+            hits.pop()
+            if not hits:
+                del self._hits[key]
 
 
 rate_limiter = _SlidingWindowLimiter()
@@ -114,7 +121,14 @@ def rate_limit_key(*, client_ip: str, actor: str | None) -> tuple[str, int, int]
     return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limit, window
 
 
-def validate_quick_summary_text(text: str) -> str:
+def credential_rate_limit_key(authorization: str) -> tuple[str, int, int]:
+    """Bound authentication checks without retaining the bearer credential."""
+    limit, window = AUTHENTICATED_LIMIT
+    raw = f"credential:{authorization}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limit, window
+
+
+def _validate_quick_summary_input(text: str) -> tuple[str, int]:
     cleaned = re.sub(r"[ \t]+\n", "\n", (text or "").strip())
     if len(cleaned) < QUICK_SUMMARY_MIN_CHARS:
         raise QuickSummaryInputError(f"요약할 상담 내용을 {QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.")
@@ -122,39 +136,59 @@ def validate_quick_summary_text(text: str) -> str:
         raise QuickSummaryInputError(
             f"간편 요약은 {QUICK_SUMMARY_MAX_CHARS:,}자까지 입력할 수 있어요. 현재 {len(cleaned):,}자입니다."
         )
-    return cleaned
+    estimated_tokens = estimate_korean_tokens(cleaned)
+    if estimated_tokens > PUBLIC_QUICK_POLICY.max_estimated_input_tokens:
+        raise QuickSummaryInputError(
+            "간편 요약의 추정 입력 토큰 한도를 초과했어요. 내용을 줄여서 다시 시도해주세요."
+        )
+    return cleaned, estimated_tokens
+
+
+def validate_quick_summary_text(text: str) -> str:
+    return _validate_quick_summary_input(text)[0]
 
 
 def generate_quick_summary(text: str) -> QuickSummaryResponse:
-    """Mask PII, summarize into four items, and render placeholders for counselors."""
-    cleaned = validate_quick_summary_text(text)
-    masked, candidates = deidentify_text(cleaned, source="quick_summary")
-    categories = sorted({candidate.category for candidate in candidates})
-
-    if settings.stub_mode:
-        draft = _stub_summary(masked)
-    else:
-        from app.services.llm import get_structured_llm
-
-        llm = get_structured_llm(_QuickSummaryDraft)
-        draft = llm.invoke(QUICK_SUMMARY_PROMPT.format(text=masked))
+    """Run the public shared core and render its four-item compatibility response."""
+    cleaned, estimated_source_tokens = _validate_quick_summary_input(text)
+    _enforce_estimated_cost_limit(estimated_source_tokens)
+    acquired = _concurrency_guard.acquire(timeout=settings.quick_summary_concurrency_wait_seconds)
+    if not acquired:
+        raise QuickSummaryBusy("public summary capacity exhausted")
+    try:
+        core = run_summary_core(
+            {
+                "session_input": SessionInput(
+                    case_id="public-quick-summary",
+                    session_number=1,
+                    counselor_memo="",
+                    transcript_text=cleaned,
+                    persist=False,
+                    insight_lens="none",
+                )
+            },
+            policy=PUBLIC_QUICK_POLICY,
+        )
+    finally:
+        _concurrency_guard.release()
+    sanitized = core["sanitized_input"]
+    summary = core["session_summary_draft"]
+    categories = sorted({candidate.category for candidate in sanitized.sensitive_info_candidates})
 
     return QuickSummaryResponse(
-        main_content=render_counselor_text(draft.main_content.strip()),
-        client_response=render_counselor_text(draft.client_response.strip()),
-        counselor_intervention=render_counselor_text(draft.counselor_intervention.strip()),
-        next_plan=render_counselor_text(draft.next_plan.strip()),
+        main_content=render_counselor_text(summary.session_content.text.strip()),
+        client_response=render_counselor_text(summary.client_response.text.strip()),
+        counselor_intervention=render_counselor_text(summary.counselor_intervention.text.strip()),
+        next_plan=render_counselor_text(summary.next_plan.text.strip()),
         masked_categories=categories,
         stub=settings.stub_mode,
     )
 
 
-def _stub_summary(masked: str) -> _QuickSummaryDraft:
-    sentences = [part.strip() for part in re.split(r"(?<=[.!?。])\s+|\n+", masked) if part.strip()]
-    lead = " ".join(sentences[:2]) or masked[:200]
-    return _QuickSummaryDraft(
-        main_content=f"(데모 요약) {lead[:300]}",
-        client_response="(데모 요약) 내담자 반응은 실제 AI 연결 후 정리됩니다.",
-        counselor_intervention="(데모 요약) 상담자 개입은 실제 AI 연결 후 정리됩니다.",
-        next_plan="(데모 요약) 다음 회기 계획은 실제 AI 연결 후 정리됩니다.",
+def _enforce_estimated_cost_limit(estimated_source_tokens: int) -> None:
+    estimated_cost = estimate_generation_cost_usd(
+        input_tokens=(estimated_source_tokens + 4_000) * PUBLIC_QUICK_POLICY.max_core_provider_calls,
+        output_tokens=2_500 * PUBLIC_QUICK_POLICY.max_core_provider_calls,
     )
+    if estimated_cost is None or estimated_cost > settings.quick_summary_max_estimated_cost_usd:
+        raise QuickSummaryCostLimit("public summary estimated cost exceeds the configured maximum")

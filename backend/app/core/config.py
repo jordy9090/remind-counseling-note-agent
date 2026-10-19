@@ -1,6 +1,6 @@
 """설정 관리: 환경변수 로드 및 Pydantic 설정"""
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -15,10 +15,21 @@ class Settings(BaseSettings):
     # OPENAI_API_KEY 가 없어도 앱이 뜨도록 Optional 처리.
     # 키가 없으면 스텁(샘플 응답) 모드로 동작한다.
     openai_api_key: Optional[str] = None
+    llm_provider: Literal["openai", "openai_compatible"] = "openai"
     openai_model: str = "gpt-5.4"
+    openai_compatible_base_url: Optional[str] = None
+    openai_compatible_api_key: Optional[str] = None
     openai_reasoning_effort: Optional[str] = None
     openai_timeout_seconds: float = Field(default=60, gt=0, le=90)
+    llm_input_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
+    llm_cached_input_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
+    llm_output_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
+    allow_external_storage_entity_extraction: bool = False
     relational_insight_timeout_seconds: float = Field(default=60, ge=1, le=90)
+    quick_summary_max_concurrent: int = Field(default=2, ge=1, le=16)
+    quick_summary_concurrency_wait_seconds: float = Field(default=0.1, ge=0, le=5)
+    quick_summary_max_estimated_cost_usd: float = Field(default=0.30, gt=0, le=5)
+    trust_proxy_client_ip_headers: bool = False
 
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)
     use_stub: bool = False
@@ -54,6 +65,7 @@ class Settings(BaseSettings):
     raw_region_top_k: int = 5
     enable_hybrid_retrieval: bool = True
     embedding_model: str = "text-embedding-3-small"
+    embedding_input_cost_per_million_usd: Optional[float] = Field(default=None, ge=0)
     embedding_dimension: int = 1536
     embedding_cache_ttl_seconds: int = 300
     embedding_cache_max_entries: int = 256
@@ -62,11 +74,24 @@ class Settings(BaseSettings):
     class Config:
         env_file = str(BACKEND_ENV_FILE)
         env_file_encoding = "utf-8"
+        env_ignore_empty = True
 
     @property
     def stub_mode(self) -> bool:
         """API 키가 없거나 USE_STUB 가 켜져 있으면 스텁 모드"""
-        return self.use_stub or not self.openai_api_key
+        return self.use_stub or not self.llm_configured
+
+    @property
+    def llm_configured(self) -> bool:
+        if self.llm_provider == "openai_compatible":
+            return bool(self.openai_compatible_base_url)
+        return bool(self.openai_api_key)
+
+    @property
+    def effective_llm_api_key(self) -> str:
+        if self.llm_provider == "openai_compatible":
+            return self.openai_compatible_api_key or "local-openai-compatible"
+        return self.openai_api_key or ""
 
     @property
     def effective_supabase_key(self) -> str | None:

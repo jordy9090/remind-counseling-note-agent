@@ -29,7 +29,7 @@ class SessionInput(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    case_id: str
+    case_id: str = Field(max_length=80)
     client_alias: str = ""
     session_number: int = Field(validation_alias=AliasChoices("session_number", "session_no"))
     session_date: str = ""
@@ -243,7 +243,7 @@ class PersistenceReport(BaseModel):
 class ConfirmGeneratedNoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    note_id: str
+    note_id: str = Field(max_length=36)
     confirmed_note: dict[str, Any] = Field(default_factory=dict)
     counselor_edited: bool = True
     create_case_memory: bool = True
@@ -305,7 +305,7 @@ class TemporaryDraftSaveRequest(BaseModel):
     """Frontend workspace state saved by the counselor before final confirmation."""
 
     draft_id: str | None = None
-    case_id: str
+    case_id: str = Field(max_length=80)
     session_number: int
     session_date: str = ""
     counselor_name: str = ""

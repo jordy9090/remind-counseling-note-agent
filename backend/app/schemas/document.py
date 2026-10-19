@@ -94,7 +94,7 @@ class DocumentExportRequest(BaseModel):
 
     format: DocumentExportFormat
     document_type: DocumentExportType
-    case_id: str
+    case_id: str = Field(max_length=80)
     session_number: int = Field(ge=0)
     session_date: str = ""
     title: str

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Path as PathParameter, Query, Response
 
 ROOT_DIR = next(parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists())
 if str(ROOT_DIR / "backend") not in sys.path:
@@ -25,7 +25,7 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 async def record_or_policy(
     actor: PreviewActor,
     response: Response,
-    note_id: str | None = None,
+    note_id: Annotated[str | None, Query(max_length=36)] = None,
     scope: Literal["storage-policy"] | None = None,
 ) -> GeneratedNoteRecord | NoteStoragePolicy:
     if scope == "storage-policy":
@@ -43,7 +43,11 @@ async def storage_policy(actor: PreviewActor, response: Response) -> NoteStorage
 
 
 @app.get("/api/notes/records/{note_id}", response_model=GeneratedNoteRecord)
-async def record(note_id: str, actor: PreviewActor, response: Response) -> GeneratedNoteRecord:
+async def record(
+    note_id: Annotated[str, PathParameter(max_length=36)],
+    actor: PreviewActor,
+    response: Response,
+) -> GeneratedNoteRecord:
     return await get_note_record(note_id, actor, response)
 
 
@@ -54,7 +58,7 @@ async def record(note_id: str, actor: PreviewActor, response: Response) -> Gener
 async def record_input_deletion(
     actor: PreviewActor,
     response: Response,
-    note_id: str | None = None,
+    note_id: Annotated[str | None, Query(max_length=36)] = None,
     scope: Literal["input-deletion"] | None = None,
 ) -> SessionInputDeletionResponse:
     if scope != "input-deletion" or note_id is None:
@@ -63,5 +67,9 @@ async def record_input_deletion(
 
 
 @app.post("/api/notes/records/{note_id}/input-deletion", response_model=SessionInputDeletionResponse)
-async def input_deletion(note_id: str, actor: PreviewActor, response: Response) -> SessionInputDeletionResponse:
+async def input_deletion(
+    note_id: Annotated[str, PathParameter(max_length=36)],
+    actor: PreviewActor,
+    response: Response,
+) -> SessionInputDeletionResponse:
     return await delete_note_session_input(note_id, actor, response)

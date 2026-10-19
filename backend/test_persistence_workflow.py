@@ -23,8 +23,10 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.config import settings
+from app.schemas.note import TemporaryDraftSaveRequest
 from app.services.supabase_storage import SupabaseStorage, SupabaseStorageError
-from app.services import supabase_store
+from app.services import draft_store, supabase_store
+from app.services.temporary_draft_payload import temporary_draft_payload
 
 TOKEN = "synthetic-access-token"
 OTHER_TOKEN = "synthetic-other-token"
@@ -289,19 +291,238 @@ class PersistenceWorkflowTests(unittest.TestCase):
         self.assertNotIn("SYNTHETIC-RAW-CACHE", self.client.get("/api/notes/drafts", headers=self.headers).text)
         self.assertEqual(row["data"], legacy)
 
-    def test_local_disk_uses_the_same_temporary_storage_boundary(self):
-        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft.json"
+    def test_temporary_draft_round_trips_maximum_code_point_unicode(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
         payload = json.loads(fixture.read_text(encoding="utf-8"))
+        saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers)
+        self.assertEqual(saved.status_code, 200, saved.text)
+
+        stored = self.store.tables[settings.supabase_drafts_table][0]["data"]
+        maximum_code_point = "\U0010ffff"
+        self.assertNotIn("SYNTHETIC-UNICODE-RAW-CACHE", json.dumps(stored))
+        self.assertEqual(stored["attachments"][0]["filename"], f"합성-e\u0301-😀-{maximum_code_point}.wav")
+        self.assertEqual(
+            stored["final_document_sections"][0]["contentHtml"],
+            f"<p>편집 <strong>😀𝄞{maximum_code_point}</strong> &amp; 검토</p>",
+        )
+        block = stored["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+        self.assertEqual(block["textHtml"], f"<p>표 <em>😀{maximum_code_point}</em></p>")
+        self.assertEqual(
+            block["rows"],
+            [{f"열😀{maximum_code_point}": "편집 셀 e\u0301 𝄞", "검토": True, "횟수": 0, "비고": None}],
+        )
+
+        draft_id = saved.json()["draft_id"]
+        owner = self.client.get(f"/api/notes/drafts/{draft_id}", headers=self.headers)
+        self.assertEqual(owner.status_code, 200, owner.text)
+        self.assertEqual(owner.json(), stored)
+        other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+        self.assertEqual(self.client.get(f"/api/notes/drafts/{draft_id}", headers=other).status_code, 404)
+        self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+
+    def test_local_disk_atomically_replaces_unicode_drafts_per_actor(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        replacements = []
+        original_replace = Path.replace
+
+        def observed_replace(source, destination):
+            replacements.append((source, destination))
+            return original_replace(source, destination)
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
+                patch.object(supabase_store, "configured_for", return_value=False), \
+                patch.object(Path, "replace", observed_replace):
+            first = self.client.post("/api/notes/drafts", json=payload, headers=self.headers)
+            self.assertEqual(first.status_code, 200, first.text)
+            draft_id = first.json()["draft_id"]
+            owner_path = Path(directory) / "synthetic-user-a" / f"{draft_id}.json"
+            first_bytes = owner_path.read_bytes()
+            first_stored = json.loads(first_bytes.decode("utf-8"))
+            maximum_code_point = "\U0010ffff"
+            self.assertIn(maximum_code_point, first_stored["attachments"][0]["filename"])
+            self.assertIn(maximum_code_point, first_stored["supervision_report_draft"]["sections"][0]["contentBlocks"][0]["textHtml"])
+            self.assertNotIn("SYNTHETIC-UNICODE-RAW-CACHE", first_bytes.decode("utf-8"))
+
+            updated = json_copy(payload)
+            updated["draft_id"] = draft_id
+            updated["session_topic"] = f"합성 대체 주제 😀{maximum_code_point}"
+            updated["supervision_report_draft"]["sections"][0]["contentBlocks"][0]["rows"][0]["검토"] = False
+            second = self.client.post("/api/notes/drafts", json=updated, headers=self.headers)
+            self.assertEqual(second.status_code, 200, second.text)
+            self.assertEqual(second.json()["draft_id"], draft_id)
+            second_bytes = owner_path.read_bytes()
+            self.assertNotEqual(second_bytes, first_bytes)
+            self.assertIn(maximum_code_point.encode("utf-8"), second_bytes)
+            self.assertEqual(list(owner_path.parent.glob("*.json")), [owner_path])
+            self.assertEqual(list(owner_path.parent.glob("*.tmp")), [])
+
+            url = f"/api/notes/drafts/{draft_id}"
+            detail = self.client.get(url, headers=self.headers)
+            listed = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(detail.status_code, 200, detail.text)
+            self.assertEqual(detail.json(), json.loads(second_bytes.decode("utf-8")))
+            self.assertEqual(listed.json(), [detail.json()])
+            self.assertEqual(detail.json()["session_topic"], updated["session_topic"])
+            block = detail.json()["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+            self.assertIs(block["rows"][0]["검토"], False)
+
+            other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+            self.assertEqual(self.client.get(url, headers=other).status_code, 404)
+            self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+            owner_before_other_save = owner_path.read_bytes()
+            other_payload = json_copy(updated)
+            other_payload["session_topic"] = f"합성 격리 주제 𝄞{maximum_code_point}"
+            other_save = self.client.post("/api/notes/drafts", json=other_payload, headers=other)
+            self.assertEqual(other_save.status_code, 200, other_save.text)
+            self.assertEqual(other_save.json()["draft_id"], draft_id)
+            other_path = Path(directory) / "synthetic-user-b" / f"{draft_id}.json"
+            self.assertTrue(other_path.is_file())
+            self.assertEqual(owner_path.read_bytes(), owner_before_other_save)
+            self.assertEqual(self.client.get(url, headers=self.headers).json()["session_topic"], updated["session_topic"])
+            self.assertEqual(self.client.get(url, headers=other).json()["session_topic"], other_payload["session_topic"])
+            self.assertEqual(len(self.client.get("/api/notes/drafts", headers=self.headers).json()), 1)
+            self.assertEqual(len(self.client.get("/api/notes/drafts", headers=other).json()), 1)
+            self.assertEqual(len(replacements), 3)
+            self.assertTrue(all(source.parent == destination.parent and source.suffix == ".tmp"
+                                for source, destination in replacements))
+            self.assertEqual(len(list(Path(directory).rglob("*.json"))), 2)
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+
+    def test_local_disk_deidentifies_exact_budget_expanding_pii(self):
+        account = "@aaa"
+        client_name = "합성가명"
+        counselor_name = "모의상담"
+        repetitions = 10_000
+        unit = f"{account} {client_name} {counselor_name} "
+        payload = {
+            "draft_id": "draft_dense_pii_boundary",
+            "case_id": "SYNTHETIC-DENSE-PII",
+            "session_number": 1,
+            "form": {
+                "client_alias": client_name,
+                "counselor_name": counselor_name,
+                "counselor_memo": unit * repetitions,
+            },
+        }
+
+        def projected_with(filler_length):
+            candidate = json_copy(payload)
+            candidate["form"]["counselor_memo"] += "x" * filler_length
+            request = TemporaryDraftSaveRequest(**candidate)
+            return candidate, temporary_draft_payload(request.model_dump())
+
+        low, high = 0, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS + 1
+        while low + 1 < high:
+            middle = (low + high) // 2
+            _, projected = projected_with(middle)
+            if draft_store._value_exceeds_work_budget(projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS):
+                high = middle
+            else:
+                low = middle
+        accepted, accepted_projected = projected_with(low)
+        self.assertFalse(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS,
+        ))
+        self.assertTrue(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS - 1,
+        ))
+
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
                 patch.object(supabase_store, "configured_for", return_value=False):
-            saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers).json()
-            stored_files = list(Path(directory).rglob("*.json"))
-            self.assertEqual(len(stored_files), 1)
-            stored = json.loads(stored_files[0].read_text(encoding="utf-8"))
-            self.assertNotIn("SYNTHETIC-RAW-CACHE", json.dumps(stored))
-            self.assertEqual(stored["form"]["counselor_memo"], payload["form"]["counselor_memo"])
-            url = f'/api/notes/drafts/{saved["draft_id"]}'
-            self.assertEqual(self.client.get(url, headers=self.headers).json(), stored)
+            saved = self.client.post("/api/notes/drafts", json=accepted, headers=self.headers)
+            self.assertEqual(saved.status_code, 200, saved.text)
+            draft_id = saved.json()["draft_id"]
+            owner_path = Path(directory) / "synthetic-user-a" / f"{draft_id}.json"
+            disk_text = owner_path.read_text(encoding="utf-8")
+
+            detail = self.client.get(f"/api/notes/drafts/{draft_id}", headers=self.headers)
+            listed = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(detail.status_code, 200, detail.text)
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual(listed.json(), [detail.json()])
+
+            stored_memo = detail.json()["form"]["counselor_memo"]
+            raw_memo = accepted["form"]["counselor_memo"]
+            self.assertEqual(len(stored_memo), len(raw_memo) + (5 * repetitions))
+            self.assertEqual(stored_memo.count("[ACCOUNT]"), repetitions)
+            self.assertEqual(stored_memo.count("합OO명"), repetitions)
+            self.assertEqual(stored_memo.count("모OO담"), repetitions)
+            self.assertEqual(detail.json()["form"]["client_alias"], "합OO명")
+            self.assertEqual(detail.json()["form"]["counselor_name"], "모OO담")
+            for identifier in (account, client_name, counselor_name):
+                self.assertNotIn(identifier, disk_text)
+                self.assertNotIn(identifier, detail.text)
+                self.assertNotIn(identifier, listed.text)
+
+            self.assertEqual(list(Path(directory).rglob("*.json")), [owner_path])
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+            other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+            self.assertEqual(self.client.get(f"/api/notes/drafts/{draft_id}", headers=other).status_code, 404)
+            self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+            self.assertFalse((Path(directory) / "synthetic-user-b").exists())
+
+    def test_local_disk_rejects_one_unit_over_unicode_replacement_before_staging(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        payload["draft_id"] = "draft_budget_boundary"
+        maximum_code_point = "\U0010ffff"
+
+        def projected_with(filler_length):
+            candidate = json_copy(payload)
+            block = candidate["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+            block["rows"][0]["비고"] = maximum_code_point * filler_length
+            request = TemporaryDraftSaveRequest(**candidate)
+            return candidate, temporary_draft_payload(request.model_dump())
+
+        low, high = 0, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS + 1
+        while low + 1 < high:
+            middle = (low + high) // 2
+            _, projected = projected_with(middle)
+            if draft_store._value_exceeds_work_budget(projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS):
+                high = middle
+            else:
+                low = middle
+        accepted, accepted_projected = projected_with(low)
+        oversized, oversized_projected = projected_with(low + 1)
+        self.assertFalse(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS,
+        ))
+        self.assertTrue(draft_store._value_exceeds_work_budget(
+            accepted_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS - 1,
+        ))
+        self.assertTrue(draft_store._value_exceeds_work_budget(
+            oversized_projected, draft_store.TEMPORARY_DRAFT_MAX_WORK_UNITS,
+        ))
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"TEMP_DRAFT_DIR": directory}), \
+                patch.object(supabase_store, "configured_for", return_value=False):
+            created = self.client.post("/api/notes/drafts", json=accepted, headers=self.headers)
+            self.assertEqual(created.status_code, 200, created.text)
+            draft_id = created.json()["draft_id"]
+            owner_path = Path(directory) / "synthetic-user-a" / f"{draft_id}.json"
+            accepted_bytes = owner_path.read_bytes()
+            self.assertIn(maximum_code_point.encode("utf-8"), accepted_bytes)
+            before_list = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(before_list.status_code, 200, before_list.text)
+
+            with patch.object(draft_store, "deidentify_json") as deidentify, \
+                    patch.object(draft_store, "_write_to_disk") as disk_write, \
+                    patch.object(draft_store.tempfile, "NamedTemporaryFile") as staging:
+                rejected = self.client.post("/api/notes/drafts", json=oversized, headers=self.headers)
+            self.assertEqual(rejected.status_code, 413, rejected.text)
+            deidentify.assert_not_called()
+            disk_write.assert_not_called()
+            staging.assert_not_called()
+
+            after_list = self.client.get("/api/notes/drafts", headers=self.headers)
+            self.assertEqual(after_list.content, before_list.content)
+            self.assertEqual(owner_path.read_bytes(), accepted_bytes)
+            self.assertEqual(list(Path(directory).rglob("*.json")), [owner_path])
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+            other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+            self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+            self.assertFalse((Path(directory) / "synthetic-user-b").exists())
 
     def test_confirmed_string_object_sections_and_empty_values_survive_reconfirmation(self):
         for fields in ({"session_content": "Counselor string", "next_plan": ""},

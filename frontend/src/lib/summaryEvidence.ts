@@ -9,6 +9,10 @@ const summaryFields = {
   next_plan: 'next_plan',
 } as const
 
+export function sliceByCodePoint(text: string, start: number, end: number): string {
+  return Array.from(text).slice(start, end).join('')
+}
+
 export function riskInformation(result: NoteDraftResponse): SummarySection {
   const document = result.full_response?.session_note_draft
   const field = '위험 관련 확인 가능 정보'
@@ -56,6 +60,16 @@ export function summarySectionEvidence(result: NoteDraftResponse, sectionId: str
 
 function resolveSource(response: GenerateNoteResponse, ref: string): { type: EvidenceSourceType; text: string } | undefined {
   const sources = response.sanitized_input?.sources
+  const positionedSource = /^(transcript_text|counselor_memo)\.chars_(\d+)_(\d+)$/.exec(ref)
+  if (positionedSource) {
+    const sourceField = positionedSource[1] as 'transcript_text' | 'counselor_memo'
+    const start = Number(positionedSource[2])
+    const end = Number(positionedSource[3])
+    return {
+      type: sourceField === 'transcript_text' ? 'transcript' : 'counselor_memo',
+      text: sliceByCodePoint(sources?.[sourceField] || '', start, end),
+    }
+  }
   if (ref === 'transcript_text') return { type: 'transcript', text: sources?.transcript_text || '' }
   if (ref.startsWith('transcript.turn_')) {
     const line = Number(ref.slice('transcript.turn_'.length)) - 1

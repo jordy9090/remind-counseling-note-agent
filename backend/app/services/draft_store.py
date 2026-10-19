@@ -11,6 +11,7 @@ from threading import Lock
 from uuid import uuid4
 
 from app.core.config import settings
+from app.schemas.document import RICH_TEXT_MAX_LENGTH
 from app.schemas.note import (
     TemporaryDraftRecord,
     TemporaryDraftSaveRequest,
@@ -23,6 +24,12 @@ from app.services.temporary_draft_payload import temporary_draft_payload
 
 SAFE_DRAFT_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 _DRAFT_REPLACE_LOCK = Lock()
+TEMPORARY_DRAFT_MAX_WORK_UNITS = RICH_TEXT_MAX_LENGTH
+_VALUE_WORK_OVERHEAD = 8
+
+
+class TemporaryDraftLimitError(ValueError):
+    """Raised before de-identification when a draft exceeds the bounded work budget."""
 
 
 def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> TemporaryDraftSaveResponse:
@@ -30,6 +37,10 @@ def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> T
     draft_id = request.draft_id if _is_safe_draft_id(request.draft_id) else _new_draft_id()
     saved_at = datetime.now(UTC).isoformat()
     data = temporary_draft_payload(request.model_dump())
+    if _value_exceeds_work_budget(data, TEMPORARY_DRAFT_MAX_WORK_UNITS):
+        raise TemporaryDraftLimitError(
+            "임시저장 요청이 너무 큽니다. 저장할 내용을 줄인 뒤 다시 시도해주세요."
+        )
     # Drafts are stored too: names masked, occupations generalized (identifiers and enums untouched).
     form = data.get("form") if isinstance(data.get("form"), dict) else {}
     data, _ = deidentify_json(data, known_names=[str(form.get("client_alias") or ""), str(form.get("counselor_name") or "")])
@@ -121,3 +132,33 @@ def _new_draft_id() -> str:
 
 def _is_safe_draft_id(draft_id: str | None) -> bool:
     return bool(draft_id and SAFE_DRAFT_ID.fullmatch(draft_id))
+
+
+def _value_exceeds_work_budget(value: object, limit: int) -> bool:
+    """Bound nested payload bytes and per-value de-identification traversal work."""
+    remaining = limit
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        remaining -= _VALUE_WORK_OVERHEAD
+        if remaining < 0:
+            return True
+        if isinstance(current, dict):
+            remaining -= 2 + max(0, len(current) - 1)
+            for key, item in current.items():
+                remaining -= len(str(key)) + 3
+                pending.append(item)
+        elif isinstance(current, (list, tuple)):
+            remaining -= 2 + max(0, len(current) - 1)
+            pending.extend(current)
+        elif isinstance(current, str):
+            remaining -= len(current) + 2
+        elif current is None:
+            remaining -= 4
+        elif isinstance(current, bool):
+            remaining -= 4 if current else 5
+        else:
+            remaining -= len(str(current))
+        if remaining < 0:
+            return True
+    return False

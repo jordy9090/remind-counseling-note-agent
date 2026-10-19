@@ -68,6 +68,18 @@ SERVICE_KEY = "synthetic-service-key-must-not-be-used"
 CASES = {key: f"SYNTHETIC-CASE-{key.upper()}" for key in USERS}
 SESSIONS = {"a": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "b": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
 NOTES = {"a": "aaaaaaaa-0000-4000-8000-000000000001", "b": "bbbbbbbb-0000-4000-8000-000000000002"}
+
+
+def api_routes(application):
+    pending = list(application.routes)
+    while pending:
+        route = pending.pop()
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None:
+            pending.extend(included_router.routes)
 PRIVATE_B = "SYNTHETIC-PRIVATE-B-CONTENT"
 PUBLIC_A = "SYNTHETIC-A-SUBMITTED-CONTENT"
 DRAFT_ID = "draft_shared_synthetic"
@@ -305,6 +317,109 @@ class AccessBoundaryTests(unittest.TestCase):
                 self.assert_private(response)
         self.assertFalse(any(call["method"] != "GET" for call in self.transport.calls))
 
+    def test_oversized_confirmations_stop_before_deidentification_and_storage(self):
+        payloads = {
+            "plain-content": {"session_content": {"text": "x" * 200_001}},
+            "value-cardinality": {"extra": [""] * 20_000},
+        }
+        paths = [
+            ("backend", "/api/notes/confirm"),
+            ("confirm", "/api/notes/confirm"),
+            ("confirm", "/"),
+        ]
+        with (
+            patch(
+                "app.services.supabase_storage._storage_for_actor",
+                side_effect=AssertionError("Storage reached for oversized confirmation"),
+            ) as storage,
+            patch(
+                "app.services.supabase_storage.deidentify_json",
+                side_effect=AssertionError("De-identification reached for oversized confirmation"),
+            ) as deidentify,
+        ):
+            for payload_name, confirmed_note in payloads.items():
+                for app_name, path in paths:
+                    with self.subTest(payload=payload_name, app=app_name, path=path):
+                        response = self.request(app_name, "POST", path, json={
+                            "note_id": NOTES["a"],
+                            "confirmed_note": confirmed_note,
+                            "counselor_edited": True,
+                            "create_case_memory": False,
+                        })
+                        self.assertEqual(response.status_code, 413, response.text[:300])
+                        self.assertEqual(
+                            response.json()["detail"],
+                            "상담일지 확정 요청이 너무 큽니다. 확정할 내용을 줄인 뒤 다시 시도해주세요.",
+                        )
+                        self.assertLess(len(response.content), 200)
+            storage.assert_not_called()
+            deidentify.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
+    def test_oversized_note_ids_stop_before_confirmation_and_record_services(self):
+        oversized_note_id = "n" * 37
+        confirmation = {
+            "note_id": oversized_note_id,
+            "confirmed_note": {},
+            "counselor_edited": True,
+            "create_case_memory": False,
+        }
+        requests = [
+            ("backend", "POST", "/api/notes/confirm", {"json": confirmation}),
+            ("confirm", "POST", "/api/notes/confirm", {"json": confirmation}),
+            ("confirm", "POST", "/", {"json": confirmation}),
+            ("backend", "GET", f"/api/notes/records/{oversized_note_id}", {}),
+            ("record", "GET", f"/api/notes/records/{oversized_note_id}", {}),
+            ("record", "GET", "/api/notes/record", {"params": {"note_id": oversized_note_id}}),
+            ("record", "GET", "/", {"params": {"note_id": oversized_note_id}}),
+        ]
+        with (
+            patch(
+                "app.api.routes.notes.confirm_generated_note",
+                side_effect=AssertionError("Confirmation service reached for oversized note ID"),
+            ) as backend_confirm,
+            patch.object(
+                WRAPPER_MODULES["confirm"],
+                "confirm_generated_note",
+                side_effect=AssertionError("Confirmation service reached for oversized note ID"),
+            ) as wrapper_confirm,
+            patch(
+                "app.api.routes.notes.fetch_generated_note",
+                side_effect=AssertionError("Record service reached for oversized note ID"),
+            ) as fetch_record,
+        ):
+            for name, method, path, kwargs in requests:
+                with self.subTest(name=name, method=method, path=path):
+                    response = self.request(name, method, path, **kwargs)
+                    self.assertEqual(response.status_code, 422, response.text)
+            backend_confirm.assert_not_called()
+            wrapper_confirm.assert_not_called()
+            fetch_record.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
+    def test_oversized_note_ids_stop_before_session_input_deletion(self):
+        oversized_note_id = "n" * 37
+        requests = [
+            ("backend", f"/api/notes/records/{oversized_note_id}/input-deletion"),
+            ("record", "/api/notes/record", {"note_id": oversized_note_id, "scope": "input-deletion"}),
+            ("record", "/", {"note_id": oversized_note_id, "scope": "input-deletion"}),
+            ("record", f"/api/notes/records/{oversized_note_id}/input-deletion"),
+        ]
+        with patch(
+            "app.api.routes.notes.delete_session_input",
+            side_effect=AssertionError("Deletion service reached for oversized note ID"),
+        ) as delete_input:
+            for request in requests:
+                name, path, *params = request
+                with self.subTest(name=name, path=path):
+                    response = self.request(name, "POST", path, params=params[0] if params else None)
+                    self.assertEqual(response.status_code, 422, response.text)
+            delete_input.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
     def test_case_dashboard_aliases_deny_foreign_case(self):
         paths = [("backend", f'/api/cases/{CASES["b"]}/dashboard'),
                  ("cases", f'/api/cases/{CASES["b"]}/dashboard')]
@@ -315,6 +430,50 @@ class AccessBoundaryTests(unittest.TestCase):
                 response = self.request(name, "GET", path)
                 self.assertEqual(response.status_code, 404)
                 self.assert_private(response)
+
+    def test_oversized_case_ids_stop_before_case_services(self):
+        oversized_case_id = "C" * 81
+        summary = {
+            "main_content": "Synthetic summary",
+            "client_response": "Synthetic response",
+            "counselor_intervention": "Synthetic intervention",
+            "next_plan": "Synthetic plan",
+            "session_date": "2026-10-19",
+        }
+        requests = [
+            ("backend", "GET", f"/api/cases/{oversized_case_id}/dashboard", {}),
+            ("cases", "GET", f"/api/cases/{oversized_case_id}/dashboard", {}),
+            *[("cases", "GET", path, {"params": {"case_id": oversized_case_id}})
+              for path in ("/", "/api/cases", "/api/cases/dashboard")],
+            ("backend", "PATCH", f"/api/cases/{oversized_case_id}/profile",
+             {"json": {"case_alias": "Synthetic alias"}}),
+            ("cases", "PATCH", f"/api/cases/{oversized_case_id}/profile",
+             {"json": {"case_alias": "Synthetic alias"}}),
+            *[("cases", "PATCH", path, {
+                "params": {"case_id": oversized_case_id, "scope": "profile"},
+                "json": {"case_alias": "Synthetic alias"},
+            }) for path in ("/", "/api/cases/dashboard")],
+            ("backend", "PATCH", f"/api/cases/{oversized_case_id}/schedule",
+             {"json": {"total_scheduled_session_count": 9}}),
+            ("cases", "PATCH", f"/api/cases/{oversized_case_id}/schedule",
+             {"json": {"total_scheduled_session_count": 9}}),
+            *[("cases", "PATCH", path, {
+                "params": {"case_id": oversized_case_id, "scope": "schedule"},
+                "json": {"total_scheduled_session_count": 9},
+            }) for path in ("/", "/api/cases/dashboard")],
+            ("backend", "POST", f"/api/cases/{oversized_case_id}/quick-summary", {"json": summary}),
+            ("cases", "POST", f"/api/cases/{oversized_case_id}/quick-summary", {"json": summary}),
+            *[("cases", "POST", path, {
+                "params": {"case_id": oversized_case_id, "scope": "quick-summary"},
+                "json": summary,
+            }) for path in ("/", "/api/cases", "/api/cases/dashboard")],
+        ]
+        for name, method, path, kwargs in requests:
+            with self.subTest(name=name, method=method, path=path):
+                response = self.request(name, method, path, **kwargs)
+                self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
 
     def test_case_profile_and_schedule_aliases_cannot_mutate_foreign_case(self):
         for scope, payload in (("profile", {"case_alias": PUBLIC_A}), ("schedule", {"total_scheduled_session_count": 9})):
@@ -337,6 +496,114 @@ class AccessBoundaryTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assert_private(response)
                 self.assertNotIn(CASES["b"], response.text)
+
+    def test_oversized_case_ids_stop_before_draft_and_export_services(self):
+        oversized_case_id = "C" * 81
+        draft_payload = {"case_id": oversized_case_id, "session_number": 1}
+        document_payload = {**export_payload(), "case_id": oversized_case_id}
+        requests = [
+            ("backend", "POST", "/api/notes/drafts", {"json": draft_payload}),
+            ("drafts", "POST", "/", {"json": draft_payload}),
+            ("drafts", "POST", "/api/notes/drafts", {"json": draft_payload}),
+            ("backend", "GET", "/api/notes/drafts", {"params": {"case_id": oversized_case_id}}),
+            ("drafts", "GET", "/", {"params": {"case_id": oversized_case_id}}),
+            ("drafts", "GET", "/api/notes/drafts", {"params": {"case_id": oversized_case_id}}),
+            ("backend", "POST", "/api/documents/export", {"json": document_payload}),
+            ("export", "POST", "/", {"json": document_payload}),
+            ("export", "POST", "/api/documents/export", {"json": document_payload}),
+        ]
+        with ExitStack() as blockers:
+            spies = [
+                blockers.enter_context(patch("app.api.routes.notes.save_temporary_draft")),
+                blockers.enter_context(patch.object(WRAPPER_MODULES["drafts"], "save_temporary_draft")),
+                blockers.enter_context(patch("app.api.routes.notes.list_temporary_drafts")),
+                blockers.enter_context(patch.object(WRAPPER_MODULES["drafts"], "list_temporary_drafts")),
+                blockers.enter_context(patch("app.services.document_export.DocumentExportService.export")),
+            ]
+            for name, method, path, kwargs in requests:
+                with self.subTest(name=name, method=method, path=path):
+                    response = self.request(name, method, path, **kwargs)
+                    self.assertEqual(response.status_code, 422, response.text)
+            for spy in spies:
+                spy.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
+    def test_oversized_temporary_drafts_stop_before_deidentification_and_storage(self):
+        payloads = {
+            "plain-form-content": {
+                "case_id": CASES["a"], "session_number": 1,
+                "form": {"transcript_text": "x" * 200_001},
+            },
+            "form-cardinality": {
+                "case_id": CASES["a"], "session_number": 1,
+                "form": {"key_issue_tags": ["x"] * 20_000},
+            },
+        }
+        paths = [
+            ("backend", "/api/notes/drafts"),
+            ("drafts", "/"),
+            ("drafts", "/api/notes/drafts"),
+        ]
+        with (
+            patch.object(draft_store, "deidentify_json") as deidentify,
+            patch.object(supabase_store, "upsert_draft_row") as storage,
+            patch.object(draft_store, "_write_to_disk") as disk,
+        ):
+            for payload_name, payload in payloads.items():
+                for app_name, path in paths:
+                    with self.subTest(payload=payload_name, app=app_name, path=path):
+                        response = self.request(app_name, "POST", path, json=payload)
+                        self.assertEqual(response.status_code, 413, response.text[:300])
+                        self.assertEqual(
+                            response.json()["detail"],
+                            "임시저장 요청이 너무 큽니다. 저장할 내용을 줄인 뒤 다시 시도해주세요.",
+                        )
+                        self.assertLess(len(response.content), 200)
+            deidentify.assert_not_called()
+            storage.assert_not_called()
+            disk.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
+
+    def test_oversized_document_exports_stop_before_rendering(self):
+        base_payload = export_payload()
+        payloads = {
+            "plain-content": {
+                **base_payload,
+                "sections": [{"id": "body", "title": "Synthetic body", "content": "x" * 200_001}],
+            },
+            "metadata-cardinality": {
+                **base_payload,
+                "metadata": {f"key_{index:05d}": "x" for index in range(20_000)},
+            },
+        }
+        paths = [
+            ("backend", "/api/documents/export"),
+            ("export", "/"),
+            ("export", "/api/documents/export"),
+        ]
+        with (
+            patch(
+                "app.services.document_export.DocxDocumentExporter.export",
+                side_effect=AssertionError("Renderer reached for oversized export"),
+            ) as renderer,
+            patch("app.api.routes.documents.record_document_export") as export_log,
+        ):
+            for payload_name, payload in payloads.items():
+                for app_name, path in paths:
+                    with self.subTest(payload=payload_name, app=app_name, path=path):
+                        response = self.request(app_name, "POST", path, json=payload)
+                        self.assertEqual(response.status_code, 413, response.text[:300])
+                        self.assertEqual(
+                            response.json()["detail"],
+                            "문서 내보내기 요청은 최대 200,000자까지 처리할 수 있습니다.",
+                        )
+                        self.assertLess(len(response.content), 200)
+            renderer.assert_not_called()
+            export_log.assert_not_called()
+        self.assertEqual(self.transport.calls, [])
+        self.assert_b_unchanged()
 
     def test_case_create_cannot_claim_existing_foreign_id(self):
         for name, path in [("backend", "/api/cases"), ("cases", "/"), ("cases", "/api/cases"), ("cases", "/api/cases/dashboard")]:
@@ -373,6 +640,48 @@ class AccessBoundaryTests(unittest.TestCase):
             if call["method"] == "POST":
                 self.assertEqual(call["body"]["user_id"], USERS["a"])
                 self.assertEqual(call["body"]["draft_id"], supabase_store._scoped_draft_id(DRAFT_ID, user_id=USERS["a"]))
+
+    def test_draft_save_aliases_normalize_unsafe_ids_before_actor_scoped_storage(self):
+        paths = [("backend", "/api/notes/drafts"), ("drafts", "/"), ("drafts", "/api/notes/drafts")]
+        supplied_ids = {
+            "maximum-valid": "v" * 80,
+            "oversized": "o" * 81,
+            "invalid-character": "draft.invalid",
+        }
+        for shape, supplied_id in supplied_ids.items():
+            returned_ids = []
+            call_start = len(self.transport.calls)
+            for name, path in paths:
+                with self.subTest(shape=shape, name=name, path=path):
+                    response = self.request(name, "POST", path, json={
+                        "draft_id": supplied_id,
+                        "case_id": CASES["a"],
+                        "session_number": 1,
+                        "form": {"counselor_memo": PUBLIC_A},
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    returned_ids.append(response.json()["draft_id"])
+
+            storage_calls = self.transport.calls[call_start:]
+            self.assertEqual(len(storage_calls), len(paths))
+            for returned_id, call in zip(returned_ids, storage_calls, strict=True):
+                self.assertEqual(call["method"], "POST")
+                self.assertEqual(call["table"], "counseling_drafts")
+                self.assertEqual(call["body"]["user_id"], USERS["a"])
+                self.assertEqual(call["body"]["data"]["draft_id"], returned_id)
+                self.assertEqual(
+                    call["body"]["draft_id"],
+                    supabase_store._scoped_draft_id(returned_id, user_id=USERS["a"]),
+                )
+
+            if shape == "maximum-valid":
+                self.assertEqual(returned_ids, [supplied_id] * len(paths))
+            else:
+                self.assertEqual(len(set(returned_ids)), len(paths))
+                for returned_id in returned_ids:
+                    self.assertRegex(returned_id, r"^draft_[0-9a-f]{32}$")
+                    self.assertNotEqual(returned_id, supplied_id)
+        self.assert_b_unchanged()
 
     def test_generation_cannot_persist_over_foreign_case_or_retrieve_its_content(self):
         with patch.object(settings, "enable_rag", True):
@@ -443,9 +752,7 @@ class AccessBoundaryTests(unittest.TestCase):
         guarded = []
         public = set()
         for name, application in APPS.items():
-            for route in application.routes:
-                if not isinstance(route, APIRoute):
-                    continue
+            for route in api_routes(application):
                 if name == "backend" and route.path in {"/", "/health", "/api/health"}:
                     continue
                 if (name, route.path) in PUBLIC_ROUTES:

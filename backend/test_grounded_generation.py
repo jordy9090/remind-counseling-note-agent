@@ -171,7 +171,6 @@ class GroundedGenerationTests(unittest.TestCase):
         self.assertNotIn("source_ref", prompt)
 
     def test_exact_support_returns_supported(self) -> None:
-        settings.use_stub = False
         claim = GroundedClaim(
             claim_id="C1", need_id="N1", target_field="session_content",
             text="보고서 마감으로 거의 잠을 자지 못했다.", support_type="direct_evidence",
@@ -183,12 +182,13 @@ class GroundedGenerationTests(unittest.TestCase):
         )}
         runnable = unittest.mock.Mock()
         runnable.invoke.return_value = ClaimSupportValidation(verdict="supported", supported_evidence_ids=["R1"])
-        with patch("app.services.claim_support_validation.get_structured_llm", return_value=runnable):
+        with patch.object(settings, "use_stub", False), patch.object(
+            settings, "openai_api_key", "synthetic-key"
+        ), patch("app.services.claim_support_validation.get_structured_llm", return_value=runnable):
             verdict = validate_claim_support(claim=claim, evidence_by_id=evidence)
         self.assertEqual("supported", verdict.verdict)
 
     def test_partial_support_returns_partial(self) -> None:
-        settings.use_stub = False
         claim = GroundedClaim(
             claim_id="C1", need_id="N1", target_field="session_content",
             text="보고서 마감으로 수면이 부족했고 집중력도 크게 저하됐다.", support_type="direct_evidence",
@@ -202,7 +202,9 @@ class GroundedGenerationTests(unittest.TestCase):
         runnable.invoke.return_value = ClaimSupportValidation(
             verdict="partial", supported_evidence_ids=["R1"], category="missing_fact"
         )
-        with patch("app.services.claim_support_validation.get_structured_llm", return_value=runnable):
+        with patch.object(settings, "use_stub", False), patch.object(
+            settings, "openai_api_key", "synthetic-key"
+        ), patch("app.services.claim_support_validation.get_structured_llm", return_value=runnable):
             verdict = validate_claim_support(claim=claim, evidence_by_id=evidence)
         self.assertEqual("partial", verdict.verdict)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import traceback
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from app.api.security import require_preview_access
 from app.core.config import settings
@@ -29,6 +29,7 @@ from app.services.supabase_storage import (
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 PreviewActor = Annotated[str, Depends(require_preview_access)]
+CasePathId = Annotated[str, Path(max_length=80)]
 
 
 def _storage_error_status(error: SupabaseStorageError) -> int:
@@ -80,7 +81,7 @@ async def post_case(request: CaseCreateRequest, actor: PreviewActor) -> CaseDash
 
 @router.post("/{case_id}/quick-summary", response_model=QuickSummarySessionResponse, status_code=201)
 async def post_quick_summary_session(
-    case_id: str, request: QuickSummarySessionRequest, actor: PreviewActor
+    case_id: CasePathId, request: QuickSummarySessionRequest, actor: PreviewActor
 ) -> QuickSummarySessionResponse:
     """간편 요약을 소유한 내담자의 다음 회기(AI 초안)로 저장한다."""
     _require_storage(actor, "간편 요약 저장")
@@ -92,7 +93,7 @@ async def post_quick_summary_session(
 
 @router.patch("/{case_id}/profile", response_model=CaseDashboardResponse)
 async def patch_case_profile(
-    case_id: str, request: CaseProfileUpdateRequest, actor: PreviewActor
+    case_id: CasePathId, request: CaseProfileUpdateRequest, actor: PreviewActor
 ) -> CaseDashboardResponse:
     """내담자 프로필·이름·상태를 수정하고 갱신된 대시보드를 반환한다."""
     _require_storage(actor, "프로필 수정")
@@ -106,7 +107,7 @@ async def patch_case_profile(
 
 
 @router.get("/{case_id}/dashboard", response_model=CaseDashboardResponse)
-async def get_case_dashboard(case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
+async def get_case_dashboard(case_id: CasePathId, actor: PreviewActor) -> CaseDashboardResponse:
     """사례별 총 회기 수, 최초/최근 상담일, 회기 요약, 생성 문서 목록을 반환한다."""
     if not settings.supabase_configured and not getattr(actor, "access_token", ""):
         raise HTTPException(status_code=503, detail="Supabase가 설정되지 않아 사례 대시보드를 사용할 수 없습니다.")
@@ -121,7 +122,7 @@ async def get_case_dashboard(case_id: str, actor: PreviewActor) -> CaseDashboard
 
 @router.patch("/{case_id}/schedule", response_model=CaseDashboardResponse)
 async def patch_case_schedule(
-    case_id: str, request: CaseScheduleUpdateRequest, actor: PreviewActor
+    case_id: CasePathId, request: CaseScheduleUpdateRequest, actor: PreviewActor
 ) -> CaseDashboardResponse:
     """전체 예정 회기 수와 다음 상담 예정일을 수정하고 갱신된 대시보드를 반환한다."""
     if not settings.supabase_configured and not getattr(actor, "access_token", ""):

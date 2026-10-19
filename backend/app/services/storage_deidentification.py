@@ -6,19 +6,16 @@ Rules (product decision, 2026-10-16):
 - Occupations are replaced with a broad category that keeps the field but not the job, for example
   초등학교 교사 / 교수 → 교육자, 연예인 → 예술가.
 
-Names and occupations in free text are found with the OpenAI model (structured output). The model
-only returns the mentions; the replacement itself is deterministic and applies only to text that
-actually occurs in the input. When the model is unavailable (stub mode, missing key, timeout, or
-error), the deterministic fallback still masks the client alias and its given name and maps the
-profile occupation field through a keyword table; other free-text names and occupations are then
-left as they are and the report says so. Saving never fails because of this step.
-
-The extraction request sends the text as entered to the model provider; the generation pipeline
-afterwards receives the de-identified text.
+Direct identifiers and known aliases are masked deterministically before any optional entity
+extraction. External extraction is disabled by default. When an operator explicitly enables it,
+the configured provider receives only that deterministic baseline and can identify remaining name
+or occupation mentions. Saving never fails because of this optional step.
 """
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -26,6 +23,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.services.deidentification import deidentify_text, known_name_variants
 
 NAME_MASK_CHAR = "O"
 FALLBACK_OCCUPATION = "기타 직업군"
@@ -90,6 +88,41 @@ _KEYWORDS_LONGEST_FIRST = sorted(
 
 _HANGUL = re.compile(r"[가-힣]")
 _NAME_TOKEN = re.compile(r"^[가-힣]{2,5}$|^[A-Za-z][A-Za-z.'-]{1,20}$")
+_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS: dict[str, str] = {
+    "초등학교 교사": "교육자",
+    "중학교 교사": "교육자",
+    "고등학교 교사": "교육자",
+    "보육교사": "교육자",
+    "간호사": "의료인",
+    "약사": "의료인",
+    "한의사": "의료인",
+    "변호사": "법률 전문가",
+    "법무사": "법률 전문가",
+    "운동선수": "체육인",
+    "공무원": "공공 부문 종사자",
+    "소방관": "공공 부문 종사자",
+    "직업군인": "공공 부문 종사자",
+    "회사원": "사무직 종사자",
+    "개발자": "IT·기술직 종사자",
+    "프로그래머": "IT·기술직 종사자",
+    "연구원": "연구자",
+    "바리스타": "서비스직 종사자",
+    "승무원": "서비스직 종사자",
+    "대학생": "학생",
+    "대학원생": "학생",
+    "우주비행사": FALLBACK_OCCUPATION,
+    "싱어송라이터": "예술가",
+    "프로게이머": FALLBACK_OCCUPATION,
+    "유명인": FALLBACK_OCCUPATION,
+    "연예인": "예술가",
+    "국회의원": "공공 부문 종사자",
+    "외교관": "공공 부문 종사자",
+}
+_OCCUPATION_PARTICLES = r"은|는|이|가|을|를|과|와|로|으로|인|이며|이고|에서|에게|의|도|만|라고|라며"
+_HIGH_CONFIDENCE_OCCUPATION_PATTERN = re.compile(
+    rf"(?<![가-힣])(?P<occupation>{'|'.join(map(re.escape, _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS))})"
+    rf"(?P<particle>{_OCCUPATION_PARTICLES})?(?=\s|[,.;!?]|$)"
+)
 
 
 def mask_name(name: str) -> str:
@@ -159,8 +192,8 @@ class StorageDeidentificationReport:
 
 
 def _extract_entities(text: str) -> _StorageEntities | None:
-    """Ask the model for name and occupation mentions; None when the model is unavailable."""
-    if settings.stub_mode or not text.strip():
+    """Optionally extract residual mentions from a deterministically masked baseline."""
+    if not settings.allow_external_storage_entity_extraction or settings.stub_mode or not text.strip():
         return None
     try:
         from app.services.llm import get_structured_llm
@@ -184,13 +217,555 @@ def _alias_names(known_names: Iterable[str]) -> set[str]:
     """Deterministic names: each known alias that looks like a personal name, plus its given name."""
     names: set[str] = set()
     for raw in known_names:
-        value = (raw or "").strip()
-        if not value or is_masked_name(value) or not re.fullmatch(r"[가-힣]{2,5}", value):
-            continue
-        names.add(value)
-        if len(value) >= 3:
-            names.add(value[1:])  # 김민지 → 민지
+        for value in known_name_variants(raw):
+            if not is_masked_name(value) and re.fullmatch(r"[가-힣]{2,5}", value):
+                names.add(value)
     return names
+
+
+def _generalized_occupation(match: re.Match[str], category: str) -> str:
+    particle = match.group("particle") or ""
+    if particle in {"로", "으로"}:
+        final_index = (ord(category[-1]) - 0xAC00) % 28 if category and "가" <= category[-1] <= "힣" else 0
+        particle = "로" if final_index in {0, 8} else "으로"
+    return category + particle
+
+
+def _generalize_high_confidence_occupations(text: str) -> tuple[str, int]:
+    """Generalize deterministic occupation phrases in one pass over a text field."""
+    if not text or not _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS:
+        return text, 0
+
+    return _HIGH_CONFIDENCE_OCCUPATION_PATTERN.subn(
+        lambda match: _generalized_occupation(
+            match,
+            _HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS[match.group("occupation")],
+        ),
+        text,
+    )
+
+
+def _present_candidates(candidates: Iterable[str], text: str) -> set[str]:
+    """Find literal candidates in one pass over text with an Aho-Corasick trie."""
+    remaining = set(candidates)
+    if not remaining or not text:
+        return set()
+
+    transitions: list[dict[str, int]] = [{}]
+    failures = [0]
+    outputs: list[set[str]] = [set()]
+    for candidate in remaining:
+        state = 0
+        for character in candidate:
+            next_state = transitions[state].get(character)
+            if next_state is None:
+                next_state = len(transitions)
+                transitions[state][character] = next_state
+                transitions.append({})
+                failures.append(0)
+                outputs.append(set())
+            state = next_state
+        outputs[state].add(candidate)
+
+    queue = deque(transitions[0].values())
+    while queue:
+        state = queue.popleft()
+        for character, next_state in transitions[state].items():
+            queue.append(next_state)
+            fallback = failures[state]
+            while fallback and character not in transitions[fallback]:
+                fallback = failures[fallback]
+            failures[next_state] = transitions[fallback].get(character, 0)
+            outputs[next_state].update(outputs[failures[next_state]])
+
+    found: set[str] = set()
+    state = 0
+    for character in text:
+        while state and character not in transitions[state]:
+            state = failures[state]
+        state = transitions[state].get(character, 0)
+        if outputs[state]:
+            found.update(outputs[state])
+            if len(found) == len(remaining):
+                break
+    return found
+
+
+def _name_trie(names: Iterable[str]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = [{"next": {}, "name": None}]
+    for name in names:
+        state = 0
+        for character in name:
+            transitions: dict[str, int] = nodes[state]["next"]
+            state = transitions.setdefault(character, len(nodes))
+            if state == len(nodes):
+                nodes.append({"next": {}, "name": None})
+        nodes[state]["name"] = name
+    return nodes
+
+
+def _longest_name_at(text: str, start: int, trie: list[dict[str, Any]]) -> str | None:
+    first = text[start]
+    korean = bool(_HANGUL.match(first))
+    if korean:
+        if start and _HANGUL.match(text[start - 1]):
+            return None
+    elif first.isascii() and first.isalpha():
+        if start and text[start - 1].isascii() and text[start - 1].isalpha():
+            return None
+    else:
+        return None
+
+    state = 0
+    longest: str | None = None
+    index = start
+    while index < len(text):
+        next_state = trie[state]["next"].get(text[index])
+        if next_state is None:
+            break
+        state = next_state
+        index += 1
+        name = trie[state]["name"]
+        if name is not None and (
+            korean
+            or index == len(text)
+            or not (text[index].isascii() and text[index].isalpha())
+        ):
+            longest = name
+    return longest
+
+
+def _mask_names_once(text: str, trie: list[dict[str, Any]]) -> tuple[str, int, bool]:
+    selected: list[tuple[int, int, str]] = []
+    selected_end = 0
+    index = 0
+    crossing_overlap = False
+    while index < len(text):
+        name = _longest_name_at(text, index, trie)
+        if name is None:
+            index += 1
+            continue
+        end = index + len(name)
+        if index < selected_end:
+            crossing_overlap = True
+        else:
+            selected.append((index, end, name))
+            selected_end = end
+        index += 1
+    if not selected:
+        return text, 0, crossing_overlap
+
+    chunks: list[str] = []
+    cursor = 0
+    for start, end, name in selected:
+        chunks.extend((text[cursor:start], mask_name(name)))
+        cursor = end
+    chunks.append(text[cursor:])
+    return "".join(chunks), len(selected), crossing_overlap
+
+
+def _mask_extracted_names(
+    text: str,
+    names: set[str],
+    *,
+    trie: list[dict[str, Any]] | None = None,
+) -> tuple[str, int]:
+    """Mask many extracted names with bounded scans while retaining legacy overlap behavior."""
+    if not names or not text:
+        return text, 0
+
+    trie = trie or _name_trie(names)
+    masked, count, crossing_overlap = _mask_names_once(text, trie)
+    _, remaining, _ = _mask_names_once(masked, trie)
+    if not crossing_overlap and not remaining:
+        return masked, count
+
+    # Shifted overlaps can conflict with global longest-first priority, and a replacement can
+    # expose an overlapping name (for example 가나다 + 다라). Keep the established sequential
+    # behavior for those uncommon ambiguous cases.
+    masked = text
+    count = 0
+    for name in sorted(names, key=len, reverse=True):
+        masked, matches = _name_pattern(name).subn(mask_name(name), masked)
+        count += matches
+    return masked, count
+
+
+def _occupation_trie(occupations: Iterable[str]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = [{"next": {}, "occupation": None, "failure": 0, "output": None}]
+    for occupation in occupations:
+        state = 0
+        for character in occupation:
+            transitions: dict[str, int] = nodes[state]["next"]
+            state = transitions.setdefault(character, len(nodes))
+            if state == len(nodes):
+                nodes.append({"next": {}, "occupation": None, "failure": 0, "output": None})
+        nodes[state]["occupation"] = occupation
+
+    queue = deque(nodes[0]["next"].values())
+    while queue:
+        state = queue.popleft()
+        for character, next_state in nodes[state]["next"].items():
+            queue.append(next_state)
+            fallback = nodes[state]["failure"]
+            while fallback and character not in nodes[fallback]["next"]:
+                fallback = nodes[fallback]["failure"]
+            nodes[next_state]["failure"] = nodes[fallback]["next"].get(character, 0)
+            failure = nodes[next_state]["failure"]
+            nodes[next_state]["output"] = (
+                failure if nodes[failure]["occupation"] is not None else nodes[failure]["output"]
+            )
+    return nodes
+
+
+def _occupation_matches(
+    text: str,
+    trie: list[dict[str, Any]],
+) -> Iterable[tuple[int, int, str]]:
+    state = 0
+    for index, character in enumerate(text):
+        while state and character not in trie[state]["next"]:
+            state = trie[state]["failure"]
+        state = trie[state]["next"].get(character, 0)
+        output_state: int | None = state
+        while output_state:
+            occupation: str | None = trie[output_state]["occupation"]
+            if occupation is not None:
+                yield index - len(occupation) + 1, index + 1, occupation
+            output_state = trie[output_state]["output"]
+
+
+def _generalize_occupations_once(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+) -> tuple[str, int, bool, list[tuple[int, int, str]]]:
+    chunks: list[str] = []
+    cursor = 0
+    selected_end = 0
+    count = 0
+    crossing_overlap = False
+    selected: list[tuple[int, int, str]] = []
+    for start, end, occupation in _occupation_matches(text, trie):
+        if start < selected_end:
+            crossing_overlap = True
+            continue
+        selected_end = end
+        chunks.extend((text[cursor:start], occupations[occupation]))
+        cursor = end
+        count += 1
+        selected.append((start, end, occupation))
+    if not count:
+        return text, 0, crossing_overlap, selected
+    chunks.append(text[cursor:])
+    return "".join(chunks), count, crossing_overlap, selected
+
+
+def _introduces_later_occupation(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+    selected: list[tuple[int, int, str]],
+) -> bool:
+    if not selected:
+        return False
+
+    width = max(map(len, occupations))
+    priority = {occupation: index for index, occupation in enumerate(occupations)}
+
+    def rendered_occurrence(index: int, current_priority: int) -> str:
+        occupation = selected[index][2]
+        return occupations[occupation] if priority[occupation] <= current_priority else occupation
+
+    for selected_index, (start, end, occupation) in enumerate(selected):
+        current_priority = priority[occupation]
+        remaining = width - 1
+        left = ""
+        position = start
+        neighbor = selected_index - 1
+        while remaining and position:
+            gap_start = selected[neighbor][1] if neighbor >= 0 else 0
+            piece = text[gap_start:position]
+            take = piece[-remaining:]
+            left = take + left
+            remaining -= len(take)
+            if remaining == 0 or neighbor < 0:
+                break
+            piece = rendered_occurrence(neighbor, current_priority)
+            take = piece[-remaining:]
+            left = take + left
+            remaining -= len(take)
+            position = selected[neighbor][0]
+            neighbor -= 1
+
+        remaining = width - 1
+        right = ""
+        position = end
+        neighbor = selected_index + 1
+        while remaining and position < len(text):
+            gap_end = selected[neighbor][0] if neighbor < len(selected) else len(text)
+            piece = text[position:gap_end]
+            take = piece[:remaining]
+            right += take
+            remaining -= len(take)
+            if remaining == 0 or neighbor >= len(selected):
+                break
+            piece = rendered_occurrence(neighbor, current_priority)
+            take = piece[:remaining]
+            right += take
+            remaining -= len(take)
+            position = selected[neighbor][1]
+            neighbor += 1
+
+        replacement = occupations[occupation]
+        local = left + replacement + right
+        replacement_start = len(left)
+        replacement_end = replacement_start + len(replacement)
+        for match_start, match_end, matched in _occupation_matches(local, trie):
+            if (
+                match_start < replacement_end
+                and match_end > replacement_start
+                and priority[matched] > current_priority
+            ):
+                return True
+    return False
+
+
+def _replacement_can_introduce_occupation(occupations: Mapping[str, str]) -> bool:
+    candidate_characters = {
+        character
+        for occupation in occupations
+        for character in occupation
+    }
+    return any(
+        any(character in candidate_characters for character in category)
+        for category in occupations.values()
+    )
+
+
+def _repeated_character_occupation_plans(
+    occupations: Mapping[str, str],
+) -> dict[str, tuple[list[int], dict[int, str]]] | None:
+    """Prepare safe repeated-character replacements without building matcher tries."""
+    if not occupations:
+        return None
+
+    plans: dict[str, dict[int, str]] = {}
+    for occupation, category in occupations.items():
+        if not occupation:
+            return None
+        character = occupation[0]
+        if occupation.count(character) != len(occupation):
+            return None
+        plans.setdefault(character, {})[len(occupation)] = category
+
+    candidate_characters = set(plans)
+    if any(
+        any(character in candidate_characters for character in category)
+        for category in occupations.values()
+    ):
+        return None
+
+    return {
+        character: (sorted(replacements), replacements)
+        for character, replacements in plans.items()
+    }
+
+
+def _generalize_repeated_character_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    *,
+    plans: dict[str, tuple[list[int], dict[int, str]]] | None = None,
+) -> tuple[str, int] | None:
+    """Collapse repeated-character runs when categories cannot create another candidate."""
+    plans = plans or _repeated_character_occupation_plans(occupations)
+    if plans is None:
+        return None
+
+    chunks: list[str] = []
+    cursor = 0
+    index = 0
+    count = 0
+    while index < len(text):
+        character = text[index]
+        plan = plans.get(character)
+        if plan is None:
+            index += 1
+            continue
+
+        run_end = index + 1
+        while run_end < len(text) and text[run_end] == character:
+            run_end += 1
+        chunks.append(text[cursor:index])
+        remaining = run_end - index
+        lengths, replacements = plan
+        while remaining >= lengths[0]:
+            length = lengths[bisect_right(lengths, remaining) - 1]
+            matches, remaining = divmod(remaining, length)
+            chunks.append(replacements[length] * matches)
+            count += matches
+        if remaining:
+            chunks.append(character * remaining)
+        cursor = run_end
+        index = run_end
+
+    if not count:
+        return text, 0
+    chunks.append(text[cursor:])
+    return "".join(chunks), count
+
+
+def _generalize_prioritized_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+) -> tuple[str, int] | None:
+    """Resolve bounded overlaps by global priority when replacements cannot create later matches."""
+    match_limit = max(len(text) * 2, len(occupations))
+    matches: dict[str, list[tuple[int, int]]] = {occupation: [] for occupation in occupations}
+    match_count = 0
+    for start, end, occupation in _occupation_matches(text, trie):
+        match_count += 1
+        if match_count > match_limit:
+            return None
+        matches[occupation].append((start, end))
+
+    prioritized = dict(sorted(occupations.items(), key=lambda item: len(item[0]), reverse=True))
+    # A Fenwick tree keeps each overlap query logarithmic while selected spans cover at most
+    # the original input once.
+    coverage = [0] * (len(text) + 1)
+
+    def covered(end: int) -> int:
+        total = 0
+        while end:
+            total += coverage[end]
+            end -= end & -end
+        return total
+
+    def mark(start: int, end: int) -> None:
+        for position in range(start + 1, end + 1):
+            index = position
+            while index < len(coverage):
+                coverage[index] += 1
+                index += index & -index
+
+    selected: list[tuple[int, int, str]] = []
+    for occupation in prioritized:
+        for start, end in matches[occupation]:
+            if covered(end) != covered(start):
+                continue
+            selected.append((start, end, occupation))
+            mark(start, end)
+
+    if not selected:
+        return text, 0
+
+    selected.sort()
+    max_width = len(next(iter(prioritized)))
+    if len(selected) * max_width > max(len(text) * 4, len(occupations)):
+        return None
+    if _replacement_can_introduce_occupation(prioritized) and _introduces_later_occupation(
+        text, prioritized, trie, selected
+    ):
+        return None
+
+    chunks: list[str] = []
+    cursor = 0
+    for start, end, occupation in selected:
+        chunks.extend((text[cursor:start], occupations[occupation]))
+        cursor = end
+    chunks.append(text[cursor:])
+    generalized = "".join(chunks)
+    if next(iter(_occupation_matches(generalized, trie)), None) is not None:
+        return None
+    return generalized, len(selected)
+
+
+def _generalize_non_overlapping_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+) -> tuple[str, int] | None:
+    """Apply all lengths together when replacements cannot make rule order observable."""
+    chunks: list[str] = []
+    cursor = 0
+    selected_end = 0
+    count = 0
+    selected: list[tuple[int, int, str]] = []
+    for start, end, occupation in _occupation_matches(text, trie):
+        if start < selected_end:
+            return None
+        selected_end = end
+        chunks.extend((text[cursor:start], occupations[occupation]))
+        cursor = end
+        count += 1
+        selected.append((start, end, occupation))
+    if not count:
+        return text, 0
+
+    chunks.append(text[cursor:])
+    generalized = "".join(chunks)
+    prioritized = dict(sorted(occupations.items(), key=lambda item: len(item[0]), reverse=True))
+    if _replacement_can_introduce_occupation(prioritized) and _introduces_later_occupation(
+        text, prioritized, trie, selected
+    ):
+        return None
+    if next(iter(_occupation_matches(generalized, trie)), None) is not None:
+        return None
+    return generalized, count
+
+
+def _generalize_extracted_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    *,
+    trie: list[dict[str, Any]] | None = None,
+    groups: list[tuple[dict[str, str], list[dict[str, Any]]]] | None = None,
+) -> tuple[str, int]:
+    """Generalize occupations with bounded scans while retaining legacy cascade behavior."""
+    if not occupations or not text:
+        return text, 0
+
+    generalized = _generalize_repeated_character_occupations(text, occupations)
+    if generalized is not None:
+        return generalized
+
+    trie = trie or _occupation_trie(occupations)
+    generalized = _generalize_non_overlapping_occupations(text, occupations, trie)
+    if generalized is not None:
+        return generalized
+    generalized = _generalize_prioritized_occupations(text, occupations, trie)
+    if generalized is not None:
+        return generalized
+
+    if groups is None:
+        by_length: dict[int, dict[str, str]] = {}
+        for occupation, category in occupations.items():
+            by_length.setdefault(len(occupation), {})[occupation] = category
+        groups = [
+            (group, _occupation_trie(group))
+            for _, group in sorted(by_length.items(), reverse=True)
+        ]
+
+    total = 0
+    for group, trie in groups:
+        before_group = text
+        generalized, count, crossing_overlap, selected = _generalize_occupations_once(text, group, trie)
+        if crossing_overlap or _introduces_later_occupation(text, group, trie, selected):
+            # A category can expose another candidate of the same length, and shifted overlaps
+            # can make stable ordering significant. Preserve the sequential behavior for those
+            # uncommon ambiguous cases.
+            generalized = before_group
+            count = 0
+            for occupation in group:
+                matches = generalized.count(occupation)
+                if matches:
+                    generalized = generalized.replace(occupation, group[occupation])
+                    count += matches
+        text = generalized
+        total += count
+    return text, total
 
 
 def deidentify_texts(
@@ -199,34 +774,80 @@ def deidentify_texts(
     known_names: Iterable[str] = (),
 ) -> tuple[dict[str, str], StorageDeidentificationReport]:
     """Return the texts with names masked and occupations generalized, plus a value-free report."""
-    joined = "\n\n".join(f"[{key}]\n{value}" for key, value in texts.items() if value and value.strip())
-    entities = _extract_entities(joined)
     names = _alias_names(known_names)
-    occupations: dict[str, str] = {}
-    if entities is not None:
-        for name in entities.person_names:
-            value = name.strip()
-            if _NAME_TOKEN.match(value) and not is_masked_name(value) and value in joined:
-                names.add(value)
-        for mention in entities.occupations:
-            value = mention.text.strip()
-            if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
-                occupations[value] = mention.category
-
+    known_name_trie = _name_trie(names) if names else None
     names_masked = 0
     occupations_generalized = 0
-    result: dict[str, str] = {}
+    baseline: dict[str, str] = {}
     for key, value in texts.items():
         text = value or ""
-        # Longest first, so 김민지 is handled before 민지 and 초등학교 교사 before 교사.
-        for occupation in sorted(occupations, key=len, reverse=True):
-            count = text.count(occupation)
-            if count:
-                text = text.replace(occupation, occupations[occupation])
-                occupations_generalized += count
-        for name in sorted(names, key=len, reverse=True):
-            text, count = _name_pattern(name).subn(mask_name(name), text)
+        text, count = _generalize_high_confidence_occupations(text)
+        occupations_generalized += count
+        text = deidentify_text(text, source=key)[0]
+        if known_name_trie is not None:
+            text, count = _mask_extracted_names(text, names, trie=known_name_trie)
             names_masked += count
+        baseline[key] = text
+
+    joined = "\n\n".join(f"[{key}]\n{value}" for key, value in baseline.items() if value and value.strip())
+    entities = _extract_entities(joined)
+    if entities is None:
+        return baseline, StorageDeidentificationReport(
+            llm_used=False,
+            names_masked=names_masked,
+            occupations_generalized=occupations_generalized,
+        )
+
+    name_candidates: set[str] = set()
+    for name in entities.person_names:
+        value = name.strip()
+        if _NAME_TOKEN.match(value) and not is_masked_name(value):
+            name_candidates.add(value)
+    extracted_names = _present_candidates(name_candidates, joined)
+
+    occupation_candidates: dict[str, str] = {}
+    for mention in entities.occupations:
+        value = mention.text.strip()
+        if len(value) >= 2 and value not in OCCUPATION_CATEGORIES:
+            occupation_candidates[value] = mention.category
+    present_occupations = _present_candidates(occupation_candidates, joined)
+    occupations = {value: occupation_candidates[value] for value in present_occupations}
+    extracted_name_trie = _name_trie(extracted_names) if extracted_names else None
+    repeated_occupation_plans = _repeated_character_occupation_plans(occupations)
+    if occupations and repeated_occupation_plans is None:
+        occupations_by_length: dict[int, dict[str, str]] = {}
+        for occupation, category in occupations.items():
+            occupations_by_length.setdefault(len(occupation), {})[occupation] = category
+        extracted_occupation_groups = [
+            (group, _occupation_trie(group))
+            for _, group in sorted(occupations_by_length.items(), reverse=True)
+        ]
+        extracted_occupation_trie = _occupation_trie(occupations)
+    else:
+        extracted_occupation_groups = []
+        extracted_occupation_trie = None
+
+    result: dict[str, str] = {}
+    for key, text in baseline.items():
+        # Longest first, so 김민지 is handled before 민지 and 초등학교 교사 before 교사.
+        if repeated_occupation_plans is not None:
+            repeated_result = _generalize_repeated_character_occupations(
+                text,
+                occupations,
+                plans=repeated_occupation_plans,
+            )
+            assert repeated_result is not None
+            text, count = repeated_result
+        else:
+            text, count = _generalize_extracted_occupations(
+                text,
+                occupations,
+                trie=extracted_occupation_trie,
+                groups=extracted_occupation_groups,
+            )
+        occupations_generalized += count
+        text, count = _mask_extracted_names(text, extracted_names, trie=extracted_name_trie)
+        names_masked += count
         result[key] = text
     return result, StorageDeidentificationReport(
         llm_used=entities is not None,
@@ -247,6 +868,14 @@ _STRUCTURAL_KEYS = frozenset({
     "appliedTargets", "confidence", "severity", "sectionId", "blockId", "reportDate", "sessionNumber",
     "workspace_note_id", "confirmation_status", "note_type", "field", "category",
 })
+_CURATED_THEORY_SOURCE_URL = re.compile(
+    r"^/result/relational_insights/theory_sources/\d+/url$"
+)
+
+
+def _is_structural_string(path: str, key: str) -> bool:
+    child_path = f"{path}/{key}"
+    return key in _STRUCTURAL_KEYS or bool(_CURATED_THEORY_SOURCE_URL.fullmatch(child_path))
 
 
 def deidentify_json(value: Any, *, known_names: Iterable[str] = ()) -> tuple[Any, StorageDeidentificationReport]:
@@ -256,7 +885,7 @@ def deidentify_json(value: Any, *, known_names: Iterable[str] = ()) -> tuple[Any
     def collect(node: Any, path: str) -> None:
         if isinstance(node, dict):
             for key, item in node.items():
-                if key not in _STRUCTURAL_KEYS:
+                if not _is_structural_string(path, key):
                     collect(item, f"{path}/{key}")
         elif isinstance(node, list):
             for index, item in enumerate(node):
@@ -271,7 +900,10 @@ def deidentify_json(value: Any, *, known_names: Iterable[str] = ()) -> tuple[Any
 
     def rebuild(node: Any, path: str) -> Any:
         if isinstance(node, dict):
-            return {key: item if key in _STRUCTURAL_KEYS else rebuild(item, f"{path}/{key}") for key, item in node.items()}
+            return {
+                key: item if _is_structural_string(path, key) else rebuild(item, f"{path}/{key}")
+                for key, item in node.items()
+            }
         if isinstance(node, list):
             return [rebuild(item, f"{path}/{index}") for index, item in enumerate(node)]
         if isinstance(node, str) and path in replaced:

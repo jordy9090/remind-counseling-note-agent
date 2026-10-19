@@ -55,7 +55,9 @@ class StoragePolicyTests(unittest.TestCase):
                             data=response.json()
                             self.assertEqual(data,{"persistence_enabled":enabled,"save_original_input":original,"save_raw_input":raw,"account_store_original_input":True,"generated_note_raw_input_mode":expected,"temporary_drafts_apply_input_policy":False,"existing_records_deleted":False})
                             self.assertEqual(response.headers["cache-control"],"private, no-store")
-                            self.assertEqual(response.headers["vary"],"Authorization")
+                            vary = {item.strip() for item in response.headers["vary"].split(",")}
+                            self.assertIn("Authorization",vary)
+                            self.assertNotIn("*",vary)
                             self.assertNotIn("SECRET",response.text)
                             self.assertNotIn("synthetic-owner",response.text)
                             self.assertNotIn("synthetic-valid-token",response.text)

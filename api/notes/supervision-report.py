@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.security import require_preview_access  # noqa: E402
 from app.graph.supervision_report import run_supervision_report_pipeline  # noqa: E402
 from app.schemas.note import SupervisionReportDraft, SupervisionReportRequest  # noqa: E402
+from app.services.llm import observe_llm_request  # noqa: E402
 
 app = FastAPI(title="Re:mind Supervision Report API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -29,7 +30,8 @@ async def generate_supervision_report(
     actor: PreviewActor,
 ) -> SupervisionReportDraft:
     try:
-        return run_supervision_report_pipeline(request)
+        with observe_llm_request("supervision_report", max_calls=4):
+            return run_supervision_report_pipeline(request)
     except Exception as error:
         raise HTTPException(
             status_code=500,

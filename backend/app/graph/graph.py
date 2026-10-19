@@ -14,17 +14,15 @@ from app.graph.nodes import (
     formulate_retrieval_query,
     fuse_and_rerank,
     generate_grounded_document,
-    generate_summary,
-    map_evidence,
     retrieve_authoritative_kb,
     retrieve_case_memory,
     retrieve_raw_evidence_regions,
     sanitize_input,
-    structure_session,
     transform_document_preview,
     validate_claim_sources,
     verify_output,
 )
+from app.graph.summary_core import summary_core_node
 from app.schemas.evidence import CandidateTranscriptRegion
 from app.schemas.grounding import (
     EvidenceNeed,
@@ -52,6 +50,7 @@ from app.schemas.note import (
 class NoteGraphState(TypedDict, total=False):
     actor: str
     session_input: SessionInput
+    input_budget_prevalidated: bool
     requested_section_ids: list[str]
     session_topic: str
     sanitized_input: SanitizedInput
@@ -71,6 +70,7 @@ class NoteGraphState(TypedDict, total=False):
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
     verification_report: VerificationReport
+    core_verification_report: VerificationReport
     initial_verification_report: VerificationReport
     revision_attempted: bool
     revision_needs_reverify: bool
@@ -96,9 +96,7 @@ def create_note_graph():
     workflow.add_node("retrieve_authoritative_kb", retrieve_authoritative_kb)
     workflow.add_node("fuse_and_rerank", fuse_and_rerank)
     workflow.add_node("assemble_generation_grounding", assemble_generation_grounding)
-    workflow.add_node("structure_session", structure_session)
-    workflow.add_node("map_evidence", map_evidence)
-    workflow.add_node("generate_summary", generate_summary)
+    workflow.add_node("summary_core", summary_core_node)
     workflow.add_node("generate_grounded_document", generate_grounded_document)
     workflow.add_node("validate_claim_sources", validate_claim_sources)
     workflow.add_node("verify_output", verify_output)
@@ -113,10 +111,8 @@ def create_note_graph():
     workflow.add_edge("retrieve_case_memory", "retrieve_authoritative_kb")
     workflow.add_edge("retrieve_authoritative_kb", "assemble_generation_grounding")
     workflow.add_edge("assemble_generation_grounding", "fuse_and_rerank")
-    workflow.add_edge("fuse_and_rerank", "structure_session")
-    workflow.add_edge("structure_session", "map_evidence")
-    workflow.add_edge("map_evidence", "generate_summary")
-    workflow.add_edge("generate_summary", "generate_grounded_document")
+    workflow.add_edge("fuse_and_rerank", "summary_core")
+    workflow.add_edge("summary_core", "generate_grounded_document")
     workflow.add_edge("generate_grounded_document", "validate_claim_sources")
     workflow.add_edge("validate_claim_sources", "verify_output")
     workflow.add_edge("verify_output", "conditional_revision")
@@ -141,14 +137,16 @@ def run_note_pipeline(
     session_topic: str = "",
     *,
     actor: str = "",
+    input_budget_prevalidated: bool = False,
 ) -> GenerateNoteResponse:
     # Demo output must be explicitly requested; a missing key is a configuration
     # failure, not permission to generate and store a sample counseling record.
-    if not settings.use_stub and not settings.openai_api_key:
+    if not settings.use_stub and not settings.llm_configured:
         raise RuntimeError("AI 회기요약 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.")
     initial_state: NoteGraphState = {
         "session_input": session_input,
         "actor": actor or settings.remind_preview_actor,
+        "input_budget_prevalidated": input_budget_prevalidated,
     }
     if requested_section_ids is not None:
         initial_state["requested_section_ids"] = requested_section_ids

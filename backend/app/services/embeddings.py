@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
+from app.services.llm import record_external_ai_call
 
 
 class EmbeddingError(RuntimeError):
@@ -49,6 +50,7 @@ class OpenAIEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        started = time.perf_counter()
         body = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
         request = Request(
             "https://api.openai.com/v1/embeddings",
@@ -66,8 +68,26 @@ class OpenAIEmbeddingProvider:
             # Upstream bodies and reason strings may contain submitted text.
             status_code = error.code
             error.close()
+            record_external_ai_call(
+                stage="embedding",
+                provider="openai",
+                model=self.model,
+                latency_ms=_elapsed_ms(started),
+                success=False,
+                retry_count=0,
+                error_type="HTTPError",
+            )
             raise EmbeddingError(f"OpenAI embeddings failed with HTTP {status_code}.") from None
         except (URLError, TimeoutError):
+            record_external_ai_call(
+                stage="embedding",
+                provider="openai",
+                model=self.model,
+                latency_ms=_elapsed_ms(started),
+                success=False,
+                retry_count=0,
+                error_type="NetworkError",
+            )
             raise EmbeddingError("OpenAI embeddings network request failed.") from None
 
         rows = sorted(payload.get("data", []), key=lambda row: row.get("index", 0))
@@ -78,6 +98,24 @@ class OpenAIEmbeddingProvider:
                     f"Embedding dimension {len(embedding)} does not match "
                     f"EMBEDDING_DIMENSION={settings.embedding_dimension}."
                 )
+        usage = payload.get("usage") or {}
+        input_tokens = usage.get("prompt_tokens") if isinstance(usage.get("prompt_tokens"), int) else None
+        estimated_cost = None
+        if input_tokens is not None and settings.embedding_input_cost_per_million_usd is not None:
+            estimated_cost = round(
+                input_tokens * settings.embedding_input_cost_per_million_usd / 1_000_000,
+                8,
+            )
+        record_external_ai_call(
+            stage="embedding",
+            provider="openai",
+            model=self.model,
+            latency_ms=_elapsed_ms(started),
+            success=True,
+            input_tokens=input_tokens,
+            retry_count=0,
+            estimated_cost_usd=estimated_cost,
+        )
         return embeddings
 
 
@@ -165,3 +203,7 @@ def _hash_embedding(text: str, dimension: int) -> list[float]:
     vector = values[:dimension]
     norm = math.sqrt(sum(value * value for value in vector)) or 1.0
     return [value / norm for value in vector]
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))

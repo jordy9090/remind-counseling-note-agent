@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from typing import Annotated
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -20,7 +20,12 @@ from app.schemas.note import (  # noqa: E402
     TemporaryDraftSaveRequest,
     TemporaryDraftSaveResponse,
 )
-from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft  # noqa: E402
+from app.services.draft_store import (  # noqa: E402
+    TemporaryDraftLimitError,
+    get_temporary_draft,
+    list_temporary_drafts,
+    save_temporary_draft,
+)
 
 app = FastAPI(title="Re:mind Temporary Draft API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -32,14 +37,17 @@ async def save_note_draft(
     draft: TemporaryDraftSaveRequest,
     actor: PreviewActor,
 ) -> TemporaryDraftSaveResponse:
-    return save_temporary_draft(draft, actor=actor)
+    try:
+        return save_temporary_draft(draft, actor=actor)
+    except TemporaryDraftLimitError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
 
 
 @app.get("/", response_model=list[TemporaryDraftRecord])
 @app.get("/api/notes/drafts", response_model=list[TemporaryDraftRecord])
 async def list_note_drafts(
     actor: PreviewActor,
-    case_id: str | None = None,
+    case_id: Annotated[str | None, Query(max_length=80)] = None,
 ) -> list[TemporaryDraftRecord]:
     return list_temporary_drafts(actor=actor, case_id=case_id)
 

@@ -11,10 +11,17 @@ from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from string import Template
-from typing import Iterable
+from typing import Any, Iterable
 from urllib.parse import quote
 
-from app.schemas.document import DocumentContentBlock, DocumentExportRequest, DocumentSection
+from pydantic import BaseModel
+
+from app.schemas.document import (
+    RICH_TEXT_MAX_LENGTH,
+    DocumentContentBlock,
+    DocumentExportRequest,
+    DocumentSection,
+)
 from app.services.rich_text import RichParagraph, parse_rich_text
 
 
@@ -32,6 +39,7 @@ REVIEW_NOTICE = (
 )
 
 SUPERVISION_PLACEHOLDER = "[상담사 확인 필요]"
+DOCUMENT_EXPORT_MAX_REQUEST_CHARACTERS = RICH_TEXT_MAX_LENGTH
 
 BLOCKED_METADATA_KEYS = {
     "missing_items",
@@ -55,6 +63,10 @@ class UnsupportedExportFormat(DocumentExportError):
 
 class DocumentExportValidationError(DocumentExportError):
     """Raised when an export request has no renderable document body."""
+
+
+class DocumentExportLimitError(DocumentExportError):
+    """Raised before rendering when aggregate request work exceeds the export budget."""
 
 
 class DocumentExportRuntimeError(DocumentExportError):
@@ -236,6 +248,7 @@ class DocumentExportService:
         }
 
     def export(self, request: DocumentExportRequest) -> DocumentExportResult:
+        validate_document_export_budget(request)
         exporter = self._exporters[request.format]
         sections = list(renderable_sections(request.sections))
         if not sections:
@@ -258,6 +271,57 @@ class DocumentExportService:
                 "reason": "Verified HWPX template is not configured.",
             },
         }
+
+
+def validate_document_export_budget(request: DocumentExportRequest) -> None:
+    """Bound aggregate renderer work, including collection and metadata overhead."""
+    if _value_exceeds_character_budget(request, DOCUMENT_EXPORT_MAX_REQUEST_CHARACTERS):
+        raise DocumentExportLimitError(
+            f"문서 내보내기 요청은 최대 {DOCUMENT_EXPORT_MAX_REQUEST_CHARACTERS:,}자까지 처리할 수 있습니다."
+        )
+
+
+def _value_exceeds_character_budget(value: Any, limit: int) -> bool:
+    """Return early once a normalized JSON-like value exceeds ``limit`` work units."""
+    remaining = limit
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, BaseModel):
+            fields = current.__class__.model_fields
+            remaining -= 2 + max(0, len(fields) - 1)
+            if remaining < 0:
+                return True
+            for name in fields:
+                remaining -= len(name) + 3
+                if remaining < 0:
+                    return True
+                pending.append(getattr(current, name))
+        elif isinstance(current, dict):
+            remaining -= 2 + max(0, len(current) - 1)
+            if remaining < 0:
+                return True
+            for key, item in current.items():
+                remaining -= len(str(key)) + 3
+                if remaining < 0:
+                    return True
+                pending.append(item)
+        elif isinstance(current, (list, tuple)):
+            remaining -= 2 + max(0, len(current) - 1)
+            if remaining < 0:
+                return True
+            pending.extend(current)
+        elif isinstance(current, str):
+            remaining -= len(current) + 2
+        elif current is None:
+            remaining -= 4
+        elif isinstance(current, bool):
+            remaining -= 4 if current else 5
+        else:
+            remaining -= len(str(current))
+        if remaining < 0:
+            return True
+    return False
 
 
 def build_metadata_rows(request: DocumentExportRequest) -> list[tuple[str, str]]:

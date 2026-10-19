@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from typing import Annotated, Any
-from fastapi import Body, Depends, FastAPI, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Path as PathParameter, Query, Response
 from pydantic import ValidationError
 
 ROOT_DIR = next(
@@ -43,6 +43,9 @@ from app.schemas.note import (  # noqa: E402
 
 app = FastAPI(title="Re:mind Case API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
+CasePathId = Annotated[str, PathParameter(max_length=80)]
+CaseQueryId = Annotated[str, Query(max_length=80)]
+OptionalCaseQueryId = Annotated[str | None, Query(max_length=80)]
 
 
 def _validation_error(error: ValidationError) -> HTTPException:
@@ -54,7 +57,7 @@ def _validation_error(error: ValidationError) -> HTTPException:
 @app.get("/api/cases/dashboard")
 async def list_or_dashboard(
     actor: PreviewActor,
-    case_id: str | None = None,
+    case_id: OptionalCaseQueryId = None,
     scope: str | None = None,
 ) -> CaseListResponse | CaseDashboardResponse:
     """case_id가 없거나 scope=list면 소유 케이스 목록, 있으면 해당 케이스 대시보드."""
@@ -64,7 +67,7 @@ async def list_or_dashboard(
 
 
 @app.get("/api/cases/{case_id}/dashboard", response_model=CaseDashboardResponse)
-async def dashboard(case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
+async def dashboard(case_id: CasePathId, actor: PreviewActor) -> CaseDashboardResponse:
     return await get_case_dashboard(case_id, actor)
 
 
@@ -73,7 +76,7 @@ async def dashboard(case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
 @app.post("/api/cases/dashboard", status_code=201)
 async def create(
     actor: PreviewActor,
-    case_id: str | None = None,
+    case_id: OptionalCaseQueryId = None,
     scope: str | None = None,
     payload: dict[str, Any] = Body(default_factory=dict),
 ) -> CaseDashboardResponse | QuickSummarySessionResponse:
@@ -91,7 +94,7 @@ async def create(
 # vercel.json rewrites /api/cases/:case_id/quick-summary to /api/cases/dashboard?case_id=...&scope=quick-summary.
 @app.post("/api/cases/{case_id}/quick-summary", response_model=QuickSummarySessionResponse, status_code=201)
 async def quick_summary_session(
-    request: QuickSummarySessionRequest, case_id: str, actor: PreviewActor
+    request: QuickSummarySessionRequest, case_id: CasePathId, actor: PreviewActor
 ) -> QuickSummarySessionResponse:
     return await post_quick_summary_session(case_id, request, actor)
 
@@ -99,7 +102,7 @@ async def quick_summary_session(
 @app.patch("/", response_model=CaseDashboardResponse)
 @app.patch("/api/cases/dashboard", response_model=CaseDashboardResponse)
 async def patch_by_scope(
-    case_id: str,
+    case_id: CaseQueryId,
     actor: PreviewActor,
     response: Response,
     scope: str | None = None,
@@ -115,10 +118,14 @@ async def patch_by_scope(
 
 
 @app.patch("/api/cases/{case_id}/schedule", response_model=CaseDashboardResponse)
-async def schedule(request: CaseScheduleUpdateRequest, case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
+async def schedule(
+    request: CaseScheduleUpdateRequest, case_id: CasePathId, actor: PreviewActor
+) -> CaseDashboardResponse:
     return await patch_case_schedule(case_id, request, actor)
 
 
 @app.patch("/api/cases/{case_id}/profile", response_model=CaseDashboardResponse)
-async def profile(request: CaseProfileUpdateRequest, case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
+async def profile(
+    request: CaseProfileUpdateRequest, case_id: CasePathId, actor: PreviewActor
+) -> CaseDashboardResponse:
     return await patch_case_profile(case_id, request, actor)
