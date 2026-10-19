@@ -641,6 +641,48 @@ class AccessBoundaryTests(unittest.TestCase):
                 self.assertEqual(call["body"]["user_id"], USERS["a"])
                 self.assertEqual(call["body"]["draft_id"], supabase_store._scoped_draft_id(DRAFT_ID, user_id=USERS["a"]))
 
+    def test_draft_save_aliases_normalize_unsafe_ids_before_actor_scoped_storage(self):
+        paths = [("backend", "/api/notes/drafts"), ("drafts", "/"), ("drafts", "/api/notes/drafts")]
+        supplied_ids = {
+            "maximum-valid": "v" * 80,
+            "oversized": "o" * 81,
+            "invalid-character": "draft.invalid",
+        }
+        for shape, supplied_id in supplied_ids.items():
+            returned_ids = []
+            call_start = len(self.transport.calls)
+            for name, path in paths:
+                with self.subTest(shape=shape, name=name, path=path):
+                    response = self.request(name, "POST", path, json={
+                        "draft_id": supplied_id,
+                        "case_id": CASES["a"],
+                        "session_number": 1,
+                        "form": {"counselor_memo": PUBLIC_A},
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    returned_ids.append(response.json()["draft_id"])
+
+            storage_calls = self.transport.calls[call_start:]
+            self.assertEqual(len(storage_calls), len(paths))
+            for returned_id, call in zip(returned_ids, storage_calls, strict=True):
+                self.assertEqual(call["method"], "POST")
+                self.assertEqual(call["table"], "counseling_drafts")
+                self.assertEqual(call["body"]["user_id"], USERS["a"])
+                self.assertEqual(call["body"]["data"]["draft_id"], returned_id)
+                self.assertEqual(
+                    call["body"]["draft_id"],
+                    supabase_store._scoped_draft_id(returned_id, user_id=USERS["a"]),
+                )
+
+            if shape == "maximum-valid":
+                self.assertEqual(returned_ids, [supplied_id] * len(paths))
+            else:
+                self.assertEqual(len(set(returned_ids)), len(paths))
+                for returned_id in returned_ids:
+                    self.assertRegex(returned_id, r"^draft_[0-9a-f]{32}$")
+                    self.assertNotEqual(returned_id, supplied_id)
+        self.assert_b_unchanged()
+
     def test_generation_cannot_persist_over_foreign_case_or_retrieve_its_content(self):
         with patch.object(settings, "enable_rag", True):
             for name, path in [("backend", "/api/notes/generate"), ("generate", "/"), ("generate", "/api/notes/generate")]:
