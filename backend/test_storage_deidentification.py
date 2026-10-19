@@ -321,6 +321,25 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual(result["memo"], "학생" * 399)
         self.assertEqual((report.names_masked, report.occupations_generalized), (0, 399))
 
+    def test_repeated_prefix_occupations_skip_unused_tries_across_text_fields(self) -> None:
+        candidates = ["가" * length for length in range(3, 503)]
+        texts = {f"field_{index}": "가" * 50_000 for index in range(4)}
+        entities = deid._StorageEntities(occupations=[
+            deid._OccupationMention(text=value, category="학생")
+            for value in candidates
+        ])
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (text, [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_trie",
+            side_effect=AssertionError("unused occupation trie constructed"),
+        ):
+            result, report = deid.deidentify_texts(texts)
+
+        self.assertEqual(result, {key: "학생" * 100 for key in texts})
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, 400))
+
     def test_opt_in_extraction_preserves_occupation_cascade_and_global_overlap_order(self) -> None:
         cases = (
             (

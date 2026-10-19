@@ -522,11 +522,13 @@ def _replacement_can_introduce_occupation(occupations: Mapping[str, str]) -> boo
     )
 
 
-def _generalize_repeated_character_occupations(
-    text: str,
+def _repeated_character_occupation_plans(
     occupations: Mapping[str, str],
-) -> tuple[str, int] | None:
-    """Collapse repeated-character runs when categories cannot create another candidate."""
+) -> dict[str, tuple[list[int], dict[int, str]]] | None:
+    """Prepare safe repeated-character replacements without building matcher tries."""
+    if not occupations:
+        return None
+
     plans: dict[str, dict[int, str]] = {}
     for occupation, category in occupations.items():
         if not occupation:
@@ -543,17 +545,30 @@ def _generalize_repeated_character_occupations(
     ):
         return None
 
-    ordered_plans = {
+    return {
         character: (sorted(replacements), replacements)
         for character, replacements in plans.items()
     }
+
+
+def _generalize_repeated_character_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    *,
+    plans: dict[str, tuple[list[int], dict[int, str]]] | None = None,
+) -> tuple[str, int] | None:
+    """Collapse repeated-character runs when categories cannot create another candidate."""
+    plans = plans or _repeated_character_occupation_plans(occupations)
+    if plans is None:
+        return None
+
     chunks: list[str] = []
     cursor = 0
     index = 0
     count = 0
     while index < len(text):
         character = text[index]
-        plan = ordered_plans.get(character)
+        plan = plans.get(character)
         if plan is None:
             index += 1
             continue
@@ -781,24 +796,38 @@ def deidentify_texts(
     present_occupations = _present_candidates(occupation_candidates, joined)
     occupations = {value: occupation_candidates[value] for value in present_occupations}
     extracted_name_trie = _name_trie(extracted_names) if extracted_names else None
-    occupations_by_length: dict[int, dict[str, str]] = {}
-    for occupation, category in occupations.items():
-        occupations_by_length.setdefault(len(occupation), {})[occupation] = category
-    extracted_occupation_groups = [
-        (group, _occupation_trie(group))
-        for _, group in sorted(occupations_by_length.items(), reverse=True)
-    ]
-    extracted_occupation_trie = _occupation_trie(occupations) if occupations else None
+    repeated_occupation_plans = _repeated_character_occupation_plans(occupations)
+    if occupations and repeated_occupation_plans is None:
+        occupations_by_length: dict[int, dict[str, str]] = {}
+        for occupation, category in occupations.items():
+            occupations_by_length.setdefault(len(occupation), {})[occupation] = category
+        extracted_occupation_groups = [
+            (group, _occupation_trie(group))
+            for _, group in sorted(occupations_by_length.items(), reverse=True)
+        ]
+        extracted_occupation_trie = _occupation_trie(occupations)
+    else:
+        extracted_occupation_groups = []
+        extracted_occupation_trie = None
 
     result: dict[str, str] = {}
     for key, text in baseline.items():
         # Longest first, so 김민지 is handled before 민지 and 초등학교 교사 before 교사.
-        text, count = _generalize_extracted_occupations(
-            text,
-            occupations,
-            trie=extracted_occupation_trie,
-            groups=extracted_occupation_groups,
-        )
+        if repeated_occupation_plans is not None:
+            repeated_result = _generalize_repeated_character_occupations(
+                text,
+                occupations,
+                plans=repeated_occupation_plans,
+            )
+            assert repeated_result is not None
+            text, count = repeated_result
+        else:
+            text, count = _generalize_extracted_occupations(
+                text,
+                occupations,
+                trie=extracted_occupation_trie,
+                groups=extracted_occupation_groups,
+            )
         occupations_generalized += count
         text, count = _mask_extracted_names(text, extracted_names, trie=extracted_name_trie)
         names_masked += count
