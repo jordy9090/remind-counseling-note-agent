@@ -289,6 +289,35 @@ class PersistenceWorkflowTests(unittest.TestCase):
         self.assertNotIn("SYNTHETIC-RAW-CACHE", self.client.get("/api/notes/drafts", headers=self.headers).text)
         self.assertEqual(row["data"], legacy)
 
+    def test_temporary_draft_round_trips_maximum_code_point_unicode(self):
+        fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft-unicode.json"
+        payload = json.loads(fixture.read_text(encoding="utf-8"))
+        saved = self.client.post("/api/notes/drafts", json=payload, headers=self.headers)
+        self.assertEqual(saved.status_code, 200, saved.text)
+
+        stored = self.store.tables[settings.supabase_drafts_table][0]["data"]
+        maximum_code_point = "\U0010ffff"
+        self.assertNotIn("SYNTHETIC-UNICODE-RAW-CACHE", json.dumps(stored))
+        self.assertEqual(stored["attachments"][0]["filename"], f"합성-e\u0301-😀-{maximum_code_point}.wav")
+        self.assertEqual(
+            stored["final_document_sections"][0]["contentHtml"],
+            f"<p>편집 <strong>😀𝄞{maximum_code_point}</strong> &amp; 검토</p>",
+        )
+        block = stored["supervision_report_draft"]["sections"][0]["contentBlocks"][0]
+        self.assertEqual(block["textHtml"], f"<p>표 <em>😀{maximum_code_point}</em></p>")
+        self.assertEqual(
+            block["rows"],
+            [{f"열😀{maximum_code_point}": "편집 셀 e\u0301 𝄞", "검토": True, "횟수": 0, "비고": None}],
+        )
+
+        draft_id = saved.json()["draft_id"]
+        owner = self.client.get(f"/api/notes/drafts/{draft_id}", headers=self.headers)
+        self.assertEqual(owner.status_code, 200, owner.text)
+        self.assertEqual(owner.json(), stored)
+        other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+        self.assertEqual(self.client.get(f"/api/notes/drafts/{draft_id}", headers=other).status_code, 404)
+        self.assertEqual(self.client.get("/api/notes/drafts", headers=other).json(), [])
+
     def test_local_disk_uses_the_same_temporary_storage_boundary(self):
         fixture = Path(__file__).resolve().parent.parent / "frontend/scripts/fixtures/temporary-draft.json"
         payload = json.loads(fixture.read_text(encoding="utf-8"))

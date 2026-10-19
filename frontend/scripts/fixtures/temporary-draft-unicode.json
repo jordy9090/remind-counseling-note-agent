@@ -1,0 +1,45 @@
+{
+  "case_id": "SYNTHETIC-UNICODE-DRAFT", "session_number": 9, "session_date": "2026-10-19", "counselor_name": "",
+  "screen": "final_document", "session_topic": "합성 주제 \ud83d\ude00", "is_deidentified": true,
+  "selected_previous_session_ids": [], "visible_section_ids": ["unicode-section"], "final_document_type": "supervision_report",
+  "form": {
+    "case_id": "SYNTHETIC-UNICODE-DRAFT", "client_alias": "", "session_number": 9, "session_date": "2026-10-19",
+    "counselor_name": "", "counselor_memo": "합성 메모 \ud83d\ude00", "transcript_text": "", "previous_session_summary": ""
+  },
+  "attachments": [{
+    "id": "unicode-material", "kind": "audio", "filename": "합성-e\u0301-\ud83d\ude00-\udbff\udfff.wav", "mediaType": "audio/wav",
+    "status": "transcribed", "appliedTargets": ["transcript_text"], "dirtySinceApply": true,
+    "warnings": ["SYNTHETIC-UNICODE-RAW-CACHE"], "extractedText": "SYNTHETIC-UNICODE-RAW-CACHE",
+    "segments": [{"text": "SYNTHETIC-UNICODE-RAW-CACHE"}]
+  }],
+  "draft_sections": [{
+    "id": "unicode-section", "title": "편집 섹션 \ud83d\ude00", "content": "편집 본문 e\u0301 \udbff\udfff", "visible": true,
+    "groundingItems": [{"text": "SYNTHETIC-UNICODE-RAW-CACHE"}]
+  }],
+  "final_document_sections": [{
+    "id": "unicode-final", "title": "최종 편집 \ud83d\ude00", "content": "최종 본문 \udbff\udfff",
+    "contentHtml": "<p>편집 <strong>\ud83d\ude00\ud834\udd1e\udbff\udfff</strong> &amp; 검토</p>", "contentKind": "paragraph",
+    "groundingItems": [{"text": "SYNTHETIC-UNICODE-RAW-CACHE"}]
+  }],
+  "supervision_report_draft": {
+    "reportId": "synthetic-unicode-report", "caseId": "SYNTHETIC-UNICODE-DRAFT",
+    "reportType": "personal_counseling_supervision", "title": "합성 수퍼비전 \ud83d\ude00",
+    "meta": {"clientAlias": "", "sessionNumber": 9, "reportDate": "2026-10-19", "counselorName": ""},
+    "sections": [{
+      "id": "unicode-report-section", "title": "합성 표 섹션 \ud83d\ude00", "level": 1, "status": "partial",
+      "contentBlocks": [{
+        "id": "unicode-table", "type": "table", "text": "편집 표", "textHtml": "<p>표 <em>\ud83d\ude00\udbff\udfff</em></p>",
+        "rows": [{"열\ud83d\ude00\udbff\udfff": "편집 셀 e\u0301 \ud834\udd1e", "검토": true, "횟수": 0, "비고": null}],
+        "speakerTurns": [{"turnId": "unicode-turn", "speaker": "client", "text": "합성 발화 \ud83d\ude00\udbff\udfff", "silenceSeconds": 0}],
+        "warnings": ["합성 검토 경고 \ud83d\ude00"], "segments": [{"text": "SYNTHETIC-UNICODE-RAW-CACHE"}],
+        "aiGenerated": false, "reviewStatus": "edited"
+      }]
+    }],
+    "aiReview": {
+      "completionChecklist": [], "missingFields": [], "demoInputs": [], "needsHumanReview": [], "unsupportedClaims": [],
+      "suggestedSupervisionQuestions": [], "caution": "합성 검토 \ud83d\ude00\udbff\udfff"
+    },
+    "evidenceIndex": {"hidden": {"text": "SYNTHETIC-UNICODE-RAW-CACHE"}}
+  },
+  "unknownCache": "SYNTHETIC-UNICODE-RAW-CACHE"
+}
