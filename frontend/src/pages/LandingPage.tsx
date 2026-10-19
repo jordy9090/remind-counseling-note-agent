@@ -35,6 +35,11 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             // 새로 요약하기 also drops a summary waiting for login.
             if (!next) clearPendingQuickSummary()
           }}
+          onEditResult={(next) => {
+            setResult(next)
+            // Do not leave an older, pre-edit result waiting to be saved after a later login.
+            clearPendingQuickSummary()
+          }}
           canExtractDocuments={false}
           privacyNote="입력한 내용과 요약 결과는 저장되지 않아요. '로그인 후 저장하기'를 누르면 로그인한 뒤 고른 내담자의 회기로 요약 결과만 저장돼요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요."
           saveAction={{

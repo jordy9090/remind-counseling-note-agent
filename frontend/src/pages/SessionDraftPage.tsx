@@ -72,7 +72,7 @@ import { GhostButton, OutlineButton, PrimaryButton } from '../components/app-she
 import CaseDashboardPanel, { type StartSessionInput } from '../components/case-dashboard/CaseDashboardPanel'
 import ClientFormModal, { type ClientFormInitial } from '../components/clients/ClientFormModal'
 import ClientPickerModal from '../components/clients/ClientPickerModal'
-import QuickSummaryWorkspace from '../components/quick-summary/QuickSummaryWorkspace'
+import QuickSummaryWorkspace, { type QuickSummarySaveState } from '../components/quick-summary/QuickSummaryWorkspace'
 import { isQuickSummaryDraft, type QuickSummaryResult } from '../lib/quickSummary'
 import DocumentArchivePage from '../components/documents/DocumentArchivePage'
 import SettingsPage from '../components/settings/SettingsPage'
@@ -404,6 +404,11 @@ export default function SessionDraftPage({
   const [quickSaveError, setQuickSaveError] = useState<string | null>(null)
   // Signed-in quick summary shown on the 간편 요약하기 screen; kept while moving between screens.
   const [quickResult, setQuickResult] = useState<QuickSummaryResult | null>(null)
+  // Kept with quickResult so edits after sidebar navigation update the same temporary draft.
+  const [quickDraftId, setQuickDraftId] = useState<string | null>(null)
+  const [quickDraftSaveState, setQuickDraftSaveState] = useState<QuickSummarySaveState>(null)
+  // Shared across Quick workspace mounts so late responses cannot replace a newer summary's draft id.
+  const quickDraftSaveRun = useRef(0)
   // 새 회기 기록 모달을 닫을 때 돌아갈 화면
   const [inputReturnScreen, setInputReturnScreen] = useState<AppScreen>('home')
   // 'new': a session that does not exist yet. 'existing': re-summarizing a stored session, which
@@ -1064,6 +1069,9 @@ export default function SessionDraftPage({
       setQuickPickerOpen(false)
       setQuickClientSave(null)
       setQuickResult(null)
+      setQuickDraftId(null)
+      quickDraftSaveRun.current += 1
+      setQuickDraftSaveState(null)
       await loadCaseList()
       setDetailRefreshKey((value) => value + 1)
       openClientDetail(caseId)
@@ -1724,6 +1732,11 @@ export default function SessionDraftPage({
           <QuickSummaryWorkspace
             result={quickResult}
             onResult={(next) => { setQuickResult(next); setQuickSaveError(null) }}
+            draftId={quickDraftId}
+            onDraftId={setQuickDraftId}
+            saveState={quickDraftSaveState}
+            onSaveState={setQuickDraftSaveState}
+            saveRun={quickDraftSaveRun}
             onSaveToClient={requestQuickClientSave}
             saveError={quickSaveError}
           />

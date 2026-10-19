@@ -28,6 +28,14 @@ assert(/storePendingQuickSummary\(summary\)\s*onLogin\(\)/.test(landing), '로�
 assert(/if \(!next\) clearPendingQuickSummary\(\)/.test(landing), '새로 요약하기 drops a summary waiting for login')
 const panel = read('src/components/quick-summary/QuickSummaryPanel.tsx')
 assert(!/'저장하기'/.test(panel) && /saveAction\?:/.test(panel), 'The panel has no fixed save button, only an optional save action')
+assert(/입력 원문과 비교하기/.test(panel) && /setSourceText\(text\)/.test(panel),
+  'A fresh quick summary must let the counselor compare its in-memory source text')
+assert(/onEditResult\(edited\)/.test(panel) && /요약 수정하기/.test(panel) && /수정 완료/.test(panel),
+  'The counselor must be able to review and commit edits to all quick-summary sections')
+assert(/onClick=\{startOver\} disabled=\{editDisabled\}/.test(panel),
+  'A summary cannot be reopened and overwritten while its reviewed draft is still saving')
+assert(/saveAction\.onSave\(result\)\} disabled=\{editDisabled\}/.test(panel),
+  'A summary cannot leave the quick workspace for client storage while its reviewed draft is still saving')
 const quickWorkspace = read('src/components/quick-summary/QuickSummaryWorkspace.tsx')
 assert(/saveTemporaryDraft\(temporaryDraftPayload\(quickSummaryDraftPayload\(next\)\)\)/.test(quickWorkspace),
   'Signed-in quick summaries must be saved automatically')
@@ -35,7 +43,14 @@ assert(/const pending = takePendingQuickSummary\(\)[\s\S]{0,200}handleResult\(pe
   'A summary waiting for login must be saved through the same auto-save path')
 assert(/label: '내담자에 저장하기', onSave: onSaveToClient/.test(quickWorkspace), 'Signed-in users can save a summary to a client')
 assert(/handleResult\(pending\)\s*onSaveToClient\(pending\)/.test(quickWorkspace), 'A summary waiting for login opens the client picker')
+assert(/editDisabled=\{saveState === 'saving'\}/.test(quickWorkspace) && /draft_id: existingDraftId/.test(quickWorkspace),
+  'A reviewed signed-in summary must update its existing temporary draft instead of creating one per edit')
 const page = read('src/pages/SessionDraftPage.tsx')
+assert(/const \[quickDraftId, setQuickDraftId\]/.test(page) && /draftId=\{quickDraftId\}/.test(page),
+  'The quick-summary draft id must survive sidebar navigation with its result')
+assert(/const quickDraftSaveRun = useRef\(0\)/.test(page) && /saveRun=\{quickDraftSaveRun\}/.test(page)
+    && /saveState=\{quickDraftSaveState\}/.test(page),
+  'The quick-summary save generation and pending state must survive sidebar navigation')
 assert(/const cancelQuickClientSave = \(\) => \{[^}]*setQuickClientSave\(null\)/.test(page) && /onClose=\{cancelQuickClientSave\}/.test(page),
   'Closing the client picker abandons the quick-summary save')
 assert(/clientModal\.purpose === 'quick-summary' \? quickClientSave : null/.test(page),
