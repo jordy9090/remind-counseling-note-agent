@@ -208,6 +208,81 @@ class MaskingRuleTests(unittest.TestCase):
         self.assertEqual((report.names_masked, report.occupations_generalized), (2, 0))
         self.assertEqual(name_pattern.call_count, 2)
 
+    def test_opt_in_extraction_generalizes_many_overlapping_occupations_without_per_value_scans(self) -> None:
+        candidate_count = 1_000
+        categories = [category for category in deid.OCCUPATION_CATEGORIES if len(category) == 6]
+        full_occupations: list[str] = []
+        short_occupations: list[str] = []
+        tokens: list[str] = []
+        mentions: list[deid._OccupationMention] = []
+        for index in range(candidate_count):
+            suffix = chr(0xAC00 + index // 11172) + chr(0xAC00 + index % 11172)
+            full = "합성직업" + suffix
+            short = "직업" + suffix
+            full_occupations.append(full)
+            short_occupations.append(short)
+            tokens.append(full)
+            mentions.extend((
+                deid._OccupationMention(text=full, category=categories[index % len(categories)]),
+                deid._OccupationMention(text=short, category=categories[(index + 1) % len(categories)]),
+            ))
+        core = " ".join(tokens)
+        baseline = core + " " + "x" * (200_000 - len(core) - 1)
+        entities = deid._StorageEntities(occupations=mentions)
+
+        class NoSequentialScans(str):
+            def count(self, *_args, **_kwargs):
+                raise AssertionError("per-occupation count scan used")
+
+            def replace(self, *_args, **_kwargs):
+                raise AssertionError("per-occupation replacement scan used")
+
+        with model_returns(entities), patch.object(
+            deid, "deidentify_text", side_effect=lambda text, **_: (NoSequentialScans(text), [])
+        ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}), patch.object(
+            deid, "_occupation_trie", wraps=deid._occupation_trie
+        ) as occupation_trie, patch.object(
+            deid, "_generalize_occupations_once", wraps=deid._generalize_occupations_once
+        ) as generalize_once:
+            result, report = deid.deidentify_texts({"memo": NoSequentialScans(baseline)})
+
+        self.assertEqual(len(result["memo"]), len(baseline))
+        self.assertFalse(any(value in result["memo"] for value in full_occupations + short_occupations))
+        self.assertEqual((report.names_masked, report.occupations_generalized), (0, candidate_count))
+        self.assertEqual(occupation_trie.call_count, 2)
+        self.assertEqual(generalize_once.call_count, 2)
+
+    def test_opt_in_extraction_preserves_occupation_cascade_and_global_overlap_order(self) -> None:
+        cases = (
+            (
+                "초등학교 교사와 교육 분야",
+                [
+                    deid._OccupationMention(text="초등학교 교사", category="교육자"),
+                    deid._OccupationMention(text="교육", category="연구자"),
+                ],
+                "연구자자와 연구자 분야",
+                3,
+            ),
+            (
+                "abcde",
+                [
+                    deid._OccupationMention(text="abc", category="교육자"),
+                    deid._OccupationMention(text="bcde", category="의료인"),
+                ],
+                "a의료인",
+                1,
+            ),
+        )
+
+        for text, occupations, expected, expected_count in cases:
+            with self.subTest(text=text), model_returns(deid._StorageEntities(occupations=occupations)), patch.object(
+                deid, "deidentify_text", side_effect=lambda value, **_: (value, [])
+            ), patch.object(deid, "_HIGH_CONFIDENCE_FREE_TEXT_OCCUPATIONS", {}):
+                result, report = deid.deidentify_texts({"memo": text})
+
+            self.assertEqual(result, {"memo": expected})
+            self.assertEqual((report.names_masked, report.occupations_generalized), (0, expected_count))
+
     def test_default_fallback_masks_contextual_third_party_name_and_common_occupation(self) -> None:
         with patch.object(settings, "allow_external_storage_entity_extraction", False):
             texts, report = deid.deidentify_texts({"memo": "친구 박서준은 간호사로 일한다."})

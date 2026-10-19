@@ -369,6 +369,180 @@ def _mask_extracted_names(
     return masked, count
 
 
+def _occupation_trie(occupations: Iterable[str]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = [{"next": {}, "occupation": None, "failure": 0}]
+    for occupation in occupations:
+        state = 0
+        for character in occupation:
+            transitions: dict[str, int] = nodes[state]["next"]
+            state = transitions.setdefault(character, len(nodes))
+            if state == len(nodes):
+                nodes.append({"next": {}, "occupation": None, "failure": 0})
+        nodes[state]["occupation"] = occupation
+
+    queue = deque(nodes[0]["next"].values())
+    while queue:
+        state = queue.popleft()
+        for character, next_state in nodes[state]["next"].items():
+            queue.append(next_state)
+            fallback = nodes[state]["failure"]
+            while fallback and character not in nodes[fallback]["next"]:
+                fallback = nodes[fallback]["failure"]
+            nodes[next_state]["failure"] = nodes[fallback]["next"].get(character, 0)
+    return nodes
+
+
+def _occupation_matches(
+    text: str,
+    trie: list[dict[str, Any]],
+    width: int,
+) -> Iterable[tuple[int, int, str]]:
+    state = 0
+    for index, character in enumerate(text):
+        while state and character not in trie[state]["next"]:
+            state = trie[state]["failure"]
+        state = trie[state]["next"].get(character, 0)
+        occupation: str | None = trie[state]["occupation"]
+        if occupation is not None:
+            yield index - width + 1, index + 1, occupation
+
+
+def _generalize_occupations_once(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+) -> tuple[str, int, bool, list[tuple[int, int, str]]]:
+    chunks: list[str] = []
+    cursor = 0
+    selected_end = 0
+    count = 0
+    crossing_overlap = False
+    selected: list[tuple[int, int, str]] = []
+    width = len(next(iter(occupations)))
+    for start, end, occupation in _occupation_matches(text, trie, width):
+        if start < selected_end:
+            crossing_overlap = True
+            continue
+        selected_end = end
+        chunks.extend((text[cursor:start], occupations[occupation]))
+        cursor = end
+        count += 1
+        selected.append((start, end, occupation))
+    if not count:
+        return text, 0, crossing_overlap, selected
+    chunks.append(text[cursor:])
+    return "".join(chunks), count, crossing_overlap, selected
+
+
+def _introduces_later_occupation(
+    text: str,
+    occupations: Mapping[str, str],
+    trie: list[dict[str, Any]],
+    selected: list[tuple[int, int, str]],
+) -> bool:
+    if not selected:
+        return False
+
+    width = len(next(iter(occupations)))
+    priority = {occupation: index for index, occupation in enumerate(occupations)}
+
+    def rendered_occurrence(index: int, current_priority: int) -> str:
+        occupation = selected[index][2]
+        return occupations[occupation] if priority[occupation] <= current_priority else occupation
+
+    for selected_index, (start, end, occupation) in enumerate(selected):
+        current_priority = priority[occupation]
+        remaining = width - 1
+        left = ""
+        position = start
+        neighbor = selected_index - 1
+        while remaining and position:
+            gap_start = selected[neighbor][1] if neighbor >= 0 else 0
+            piece = text[gap_start:position]
+            take = piece[-remaining:]
+            left = take + left
+            remaining -= len(take)
+            if remaining == 0 or neighbor < 0:
+                break
+            piece = rendered_occurrence(neighbor, current_priority)
+            take = piece[-remaining:]
+            left = take + left
+            remaining -= len(take)
+            position = selected[neighbor][0]
+            neighbor -= 1
+
+        remaining = width - 1
+        right = ""
+        position = end
+        neighbor = selected_index + 1
+        while remaining and position < len(text):
+            gap_end = selected[neighbor][0] if neighbor < len(selected) else len(text)
+            piece = text[position:gap_end]
+            take = piece[:remaining]
+            right += take
+            remaining -= len(take)
+            if remaining == 0 or neighbor >= len(selected):
+                break
+            piece = rendered_occurrence(neighbor, current_priority)
+            take = piece[:remaining]
+            right += take
+            remaining -= len(take)
+            position = selected[neighbor][1]
+            neighbor += 1
+
+        replacement = occupations[occupation]
+        local = left + replacement + right
+        replacement_start = len(left)
+        replacement_end = replacement_start + len(replacement)
+        for match_start, match_end, matched in _occupation_matches(local, trie, width):
+            if (
+                match_start < replacement_end
+                and match_end > replacement_start
+                and priority[matched] > current_priority
+            ):
+                return True
+    return False
+
+
+def _generalize_extracted_occupations(
+    text: str,
+    occupations: Mapping[str, str],
+    *,
+    groups: list[tuple[dict[str, str], list[dict[str, Any]]]] | None = None,
+) -> tuple[str, int]:
+    """Generalize occupations with bounded scans while retaining legacy cascade behavior."""
+    if not occupations or not text:
+        return text, 0
+
+    if groups is None:
+        by_length: dict[int, dict[str, str]] = {}
+        for occupation, category in occupations.items():
+            by_length.setdefault(len(occupation), {})[occupation] = category
+        groups = [
+            (group, _occupation_trie(group))
+            for _, group in sorted(by_length.items(), reverse=True)
+        ]
+
+    total = 0
+    for group, trie in groups:
+        before_group = text
+        generalized, count, crossing_overlap, selected = _generalize_occupations_once(text, group, trie)
+        if crossing_overlap or _introduces_later_occupation(text, group, trie, selected):
+            # A category can expose another candidate of the same length, and shifted overlaps
+            # can make stable ordering significant. Preserve the sequential behavior for those
+            # uncommon ambiguous cases.
+            generalized = before_group
+            count = 0
+            for occupation in group:
+                matches = generalized.count(occupation)
+                if matches:
+                    generalized = generalized.replace(occupation, group[occupation])
+                    count += matches
+        text = generalized
+        total += count
+    return text, total
+
+
 def deidentify_texts(
     texts: Mapping[str, str],
     *,
@@ -418,15 +592,23 @@ def deidentify_texts(
     present_occupations = _present_candidates(occupation_candidates, joined)
     occupations = {value: occupation_candidates[value] for value in present_occupations}
     extracted_name_trie = _name_trie(extracted_names) if extracted_names else None
+    occupations_by_length: dict[int, dict[str, str]] = {}
+    for occupation, category in occupations.items():
+        occupations_by_length.setdefault(len(occupation), {})[occupation] = category
+    extracted_occupation_groups = [
+        (group, _occupation_trie(group))
+        for _, group in sorted(occupations_by_length.items(), reverse=True)
+    ]
 
     result: dict[str, str] = {}
     for key, text in baseline.items():
         # Longest first, so 김민지 is handled before 민지 and 초등학교 교사 before 교사.
-        for occupation in sorted(occupations, key=len, reverse=True):
-            count = text.count(occupation)
-            if count:
-                text = text.replace(occupation, occupations[occupation])
-                occupations_generalized += count
+        text, count = _generalize_extracted_occupations(
+            text,
+            occupations,
+            groups=extracted_occupation_groups,
+        )
+        occupations_generalized += count
         text, count = _mask_extracted_names(text, extracted_names, trie=extracted_name_trie)
         names_masked += count
         result[key] = text
