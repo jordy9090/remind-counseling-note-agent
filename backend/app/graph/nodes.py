@@ -111,8 +111,10 @@ def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
     sanitized: SanitizedInput = state["sanitized_input"]
     session_input: SessionInput = state["session_input"]
     actor_storage = _storage_for_actor(state.get("actor") or settings.remind_preview_actor)
-    report = RetrievalReport(enabled=settings.enable_rag)
-    if not settings.enable_rag:
+    report = RetrievalReport(enabled=settings.enable_rag and state.get("allow_retrieval", True))
+    if state.get("allow_retrieval") is False:
+        report.notices.append("Retrieval is off for this request (quick summary).")
+    elif not settings.enable_rag:
         report.notices.append("ENABLE_RAG is false; retrieval skipped.")
     elif not actor_storage.configured:
         report.notices.append("Supabase credentials are missing; retrieval continued with empty context.")
@@ -136,7 +138,7 @@ def formulate_grounding_needs(state: dict[str, Any]) -> dict[str, Any]:
 
 def retrieve_raw_evidence_regions(state: dict[str, Any]) -> dict[str, Any]:
     """Retrieve existing PR3 raw regions for raw-factual EvidenceNeeds."""
-    if not settings.enable_raw_region_grounding:
+    if not settings.enable_raw_region_grounding or state.get("allow_retrieval") is False:
         return {"raw_regions_by_need": {}}
     report: RetrievalReport = state.get("retrieval_report") or RetrievalReport(enabled=settings.enable_rag)
     if not settings.enable_rag or not settings.enable_dense_retrieval:
@@ -173,7 +175,7 @@ def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
     case_context: list[RetrievedCaseContextItem] = []
     chunks: list[Any] = []
 
-    if not settings.enable_rag:
+    if not settings.enable_rag or state.get("allow_retrieval") is False:
         return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
 
     try:
@@ -220,7 +222,7 @@ def retrieve_authoritative_kb(state: dict[str, Any]) -> dict[str, Any]:
     actor = state.get("actor") or settings.remind_preview_actor
     actor_storage = _storage_for_actor(actor)
 
-    if not settings.enable_rag:
+    if not settings.enable_rag or state.get("allow_retrieval") is False:
         return {
             "retrieved_template_context": template_context,
             "retrieved_privacy_context": privacy_context,

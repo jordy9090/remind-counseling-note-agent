@@ -202,10 +202,14 @@ export const extractDocumentMaterial = async (file: File): Promise<DocumentExtra
 }
 
 /** Public quick summary: works without login; the server masks PII and stores nothing. */
-export const requestQuickSummary = async (text: string): Promise<QuickSummaryResult> => {
+/**
+ * Public quick summary: the regular summary pipeline without login. The server de-identifies the
+ * input, stores nothing, and returns the same response as a signed-in generation.
+ */
+export const requestQuickSummary = async (text: string): Promise<NoteDraftResponse> => {
   try {
-    const response = await client.post<QuickSummaryResult>('/api/notes/quick-summary', { text })
-    return response.data
+    const response = await client.post<GenerateNoteResponse>('/api/notes/quick-summary', { text })
+    return toNoteDraftResponse(response.data)
   } catch (error) {
     throw normalizeApiError(error, '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
   }
@@ -435,12 +439,10 @@ export const createCase = async (payload: CaseCreateRequest): Promise<CaseDashbo
 /** 간편 요약을 그 내담자의 다음 회기(AI 초안)로 저장한다. Only the four summary items are sent. */
 export const saveQuickSummaryToClient = async (
   caseId: string,
-  summary: Pick<QuickSummaryResult, 'main_content' | 'client_response' | 'counselor_intervention' | 'next_plan'>,
+  summary: Pick<QuickSummaryResult, 'sections'>,
 ): Promise<QuickSummarySessionResponse> => {
-  const { main_content, client_response, counselor_intervention, next_plan } = summary
-  const response = await client.post<QuickSummarySessionResponse>(`/api/cases/${encodeURIComponent(caseId)}/quick-summary`, {
-    main_content, client_response, counselor_intervention, next_plan,
-  })
+  const sections = summary.sections.map(({ id, title, content }) => ({ id, title, content }))
+  const response = await client.post<QuickSummarySessionResponse>(`/api/cases/${encodeURIComponent(caseId)}/quick-summary`, { sections })
   return response.data
 }
 

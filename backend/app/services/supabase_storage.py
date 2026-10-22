@@ -40,7 +40,10 @@ from app.schemas.note import (
     SupervisionReportRequest,
 )
 from app.services.deidentification import deidentify_text
-from app.services.storage_deidentification import deidentify_case_profile, deidentify_json, deidentify_texts
+from app.services.storage_deidentification import deidentify_json, mask_name
+
+# Summary-screen section ids that map onto a different SessionSummaryDraft field.
+QUICK_SUMMARY_FIELD_BY_SECTION = {"main_issue": "presenting_problem", "supervision_memo": "reflection"}
 from app.services.embeddings import EmbeddingError, content_hash, get_embedding_provider
 from app.services.supabase_errors import read_error_code
 
@@ -1173,12 +1176,11 @@ def save_quick_summary_session(
     # Korea has no daylight saving time, so a fixed offset avoids depending on installed tz data.
     session_date = request.session_date or datetime.now(timezone(timedelta(hours=9))).date().isoformat()
     alias = str(case_row.get("case_alias") or "")
-    texts, _ = deidentify_texts({
-        "main_content": request.main_content,
-        "client_response": request.client_response,
-        "counselor_intervention": request.counselor_intervention,
-        "next_plan": request.next_plan,
-    }, known_names=[alias])
+    # The summary items are documents: names and other identifying details are replaced.
+    sections, _ = deidentify_json([section.model_dump() for section in request.sections], known_names=[alias])
+    if not any(str(section.get("content") or "").strip() for section in sections):
+        raise SupabaseStorageError("저장할 요약 내용이 비어 있습니다.")
+    by_field = {QUICK_SUMMARY_FIELD_BY_SECTION.get(section["id"], section["id"]): str(section.get("content") or "") for section in sections}
 
     session_rows = actor_storage.insert("sessions", [{
         "case_id": case_id,
@@ -1194,22 +1196,28 @@ def save_quick_summary_session(
     if not session_id:
         raise SupabaseStorageError("회기를 저장하지 못했습니다.")
 
-    def section(text: str) -> SummarySection:
-        return SummarySection(text=text.strip(), evidence_type="model_inference" if text.strip() else "needs_review",
-                              requires_review=True)
+    def section(field: str) -> SummarySection:
+        text = by_field.get(field, "").strip()
+        return SummarySection(text=text, evidence_type="model_inference" if text else "needs_review", requires_review=True)
 
     draft = SessionSummaryDraft(
-        session_info=SessionInfo(case_id=case_id, client_alias=alias, session_number=session_number, session_date=session_date),
-        session_theme=section(""),
-        presenting_problem=section(""),
-        session_content=section(texts["main_content"]),
-        counselor_intervention=section(texts["counselor_intervention"]),
-        client_response=section(texts["client_response"]),
-        reflection=section(""),
-        next_plan=section(texts["next_plan"]),
+        session_info=SessionInfo(case_id=case_id, client_alias=mask_name(alias) if alias else "", session_number=session_number,
+                                 session_date=session_date),
+        session_theme=section("session_theme"),
+        presenting_problem=section("presenting_problem"),
+        session_content=section("session_content"),
+        counselor_intervention=section("counselor_intervention"),
+        client_response=section("client_response"),
+        reflection=section("reflection"),
+        next_plan=section("next_plan"),
     )
     draft_json = draft.model_dump(mode="json")
     draft_json["source"] = "quick_summary"
+    # Reopening the session shows exactly the items of the quick summary, in the same order.
+    draft_json["workspace_sections"] = [
+        {"id": section["id"], "title": section["title"], "content": str(section.get("content") or ""), "visible": True}
+        for section in sections
+    ]
     note_rows = actor_storage.insert("generated_notes", [{
         "case_id": case_id,
         "session_id": session_id,
@@ -1235,20 +1243,16 @@ def create_case(request: CaseCreateRequest, *, actor: str = "server_demo_actor")
     if existing:
         raise SupabaseStorageError("이미 사용 중인 케이스 ID입니다. 다른 ID를 입력해주세요.")
     now = datetime.now(UTC).isoformat()
-    # Stored name: middle characters masked (홍O동); occupation: broad category (교육자).
-    alias, occupation, notes, _ = deidentify_case_profile(
-        case_alias=request.case_alias, client_occupation=request.client_occupation, client_notes=request.client_notes,
-    )
+    # The client profile is the counselor's own management screen and keeps the name and details
+    # as entered; de-identification applies to documents (summaries, notes, drafts, exports).
     row = {
         "id": case_id,
-        "case_alias": alias,
+        "case_alias": request.case_alias,
         "counselor_id": actor or None,
         "user_id": actor,
         "status": "active",
         "updated_at": now,
         **{column: getattr(request, column) for column in PROFILE_COLUMNS},
-        "client_occupation": occupation,
-        "client_notes": notes,
     }
     try:
         actor_storage.insert("cases", [row], return_representation=False)
@@ -1274,16 +1278,6 @@ def update_case_profile(
 
     _require_owned_case(actor_storage, case_id, actor)
     payload = request.model_dump(exclude_unset=True)
-    deidentified_fields = ("case_alias", "client_occupation", "client_notes")
-    if any(field in payload for field in deidentified_fields):
-        alias, occupation, notes, _ = deidentify_case_profile(
-            case_alias=payload.get("case_alias"),
-            client_occupation=payload.get("client_occupation"),
-            client_notes=payload.get("client_notes"),
-        )
-        for field, value in zip(deidentified_fields, (alias, occupation, notes)):
-            if field in payload:
-                payload[field] = value
     if payload:
         payload["updated_at"] = datetime.now(UTC).isoformat()
         try:

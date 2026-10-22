@@ -22,7 +22,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.security import require_preview_access  # noqa: E402
 from app.api.routes.notes import _run_pipeline_with_stub_fallback, run_quick_summary  # noqa: E402
 from app.schemas.note import GenerateNoteResponse, SessionInput  # noqa: E402
-from app.services.quick_summary import QuickSummaryRequest, QuickSummaryResponse  # noqa: E402
+from app.services.quick_summary import QuickSummaryRequest  # noqa: E402
 
 QUICK_SUMMARY_PATH = "/api/notes/quick-summary"
 
@@ -54,10 +54,10 @@ async def generate_note(
     return _run_pipeline_with_stub_fallback(session_input, actor=actor)
 
 
-@app.post(QUICK_SUMMARY_PATH, response_model=QuickSummaryResponse)
+@app.post(QUICK_SUMMARY_PATH, response_model=GenerateNoteResponse)
 async def quick_summary(
     payload: QuickSummaryRequest,
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> QuickSummaryResponse:
+) -> GenerateNoteResponse:
     return run_quick_summary(payload, request=request, authorization=authorization)

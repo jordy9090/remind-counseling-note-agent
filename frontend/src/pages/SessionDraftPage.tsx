@@ -1722,6 +1722,7 @@ export default function SessionDraftPage({
 
         {backgroundScreen === 'quick_summary' && (
           <QuickSummaryWorkspace
+            toResult={quickSummaryResultFromNote}
             result={quickResult}
             onResult={(next) => { setQuickResult(next); setQuickSaveError(null) }}
             onSaveToClient={requestQuickClientSave}
@@ -3533,6 +3534,14 @@ function SourceBadge({ interactive = false, type }: { interactive?: boolean; typ
 function emptyRestoredSection(id: string): DraftSection {
   return { id, title: id, content: '', visible: true, editable: true, toggleable: true,
     sourceBadges: ['editable', 'needs_review'], confidence: 'low', evidence: [], groundingItems: [] }
+}
+
+/** Quick summary items, built exactly like the regular summary screen's sections. */
+export function quickSummaryResultFromNote(note: NoteDraftResponse): QuickSummaryResult {
+  const sections = buildDocumentSections(note, initialForm, '', defaultVisibleSectionIds)
+    .filter((section) => section.visible && section.content.trim())
+    .map(({ id, title, content }) => ({ id, title, content }))
+  return { sections, deidentified: true, stub: Boolean(note.full_response?.stub) }
 }
 
 function buildDocumentSections(

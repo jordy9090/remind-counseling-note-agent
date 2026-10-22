@@ -5,21 +5,23 @@ import { extractDocumentMaterial, requestQuickSummary } from '../../api/client'
 import {
   QUICK_SUMMARY_MAX_CHARS,
   QUICK_SUMMARY_MIN_CHARS,
-  QUICK_SUMMARY_SECTIONS,
   quickSummaryText,
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
+import type { NoteDraftResponse } from '../../types/session'
 
 const ACCEPTED_FILES = '.txt,.pdf,.docx'
 
 /**
  * "간편 요약하기" body shared by the public landing and the signed-in workspace:
- * input (typing or file) → AI four-item summary → copy. Signed-in summaries are saved
- * automatically by the workspace; the landing offers 로그인 후 저장하기 through `saveAction`.
+ * input (typing or file) → the regular AI summary (same items as the summary screen) → copy.
+ * Signed-in summaries are saved automatically by the workspace; the landing offers
+ * 로그인 후 저장하기 through `saveAction`.
  */
 export default function QuickSummaryPanel({
   result,
   onResult,
+  toResult,
   canExtractDocuments,
   privacyNote,
   resultStatus,
@@ -29,6 +31,8 @@ export default function QuickSummaryPanel({
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
+  /** Builds the summary items exactly as the regular summary screen does. */
+  toResult: (note: NoteDraftResponse) => QuickSummaryResult
   /** PDF/DOCX extraction is a protected API, so only signed-in users can upload those. */
   canExtractDocuments: boolean
   /** What happens to the input and the summary, shown under the input box. */
@@ -57,7 +61,7 @@ export default function QuickSummaryPanel({
     setError(null)
     setLoading(true)
     try {
-      onResult(await requestQuickSummary(text))
+      onResult(toResult(await requestQuickSummary(text)))
       setCopied(false)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
@@ -118,23 +122,24 @@ export default function QuickSummaryPanel({
         {result ? 'AI 요약이 완성됐어요' : '상담 내용을 빠르게 정리해보세요'}
       </h1>
       <p className="mt-2 text-center text-base text-[#1f2a4d] sm:text-lg">
-        {result ? '입력 내용을 바탕으로 회기 내용을 4가지 항목으로 정리했어요.' : '내담자를 등록하지 않아도 AI 요약을 할 수 있어요.'}
+        {result ? '입력 내용을 바탕으로 회기 요약과 같은 항목으로 정리했어요.' : '내담자를 등록하지 않아도 AI 요약을 할 수 있어요.'}
       </p>
 
       {notice && <div className="mt-6 w-full">{notice}</div>}
 
       {result ? (
         <article aria-label="AI 요약 결과" className="mt-10 w-full rounded-2xl border border-primary-100 bg-white p-5 shadow-card sm:p-6">
-          <div className="space-y-5">
-            {QUICK_SUMMARY_SECTIONS.map(({ key, title }) => (
-              <section key={key}>
-                <h2 className="text-sm font-bold text-grey-900">{title}</h2>
-                <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-grey-700">{result[key]}</p>
+          <div className="divide-y divide-grey-100">
+            {result.sections.map((section) => (
+              <section key={section.id} className="py-4 first:pt-0 last:pb-0">
+                {/* Same title box as the regular summary screen (주요 호소, 회기 주제, ...). */}
+                <h2 className="inline-flex h-7 items-center rounded-[6px] bg-primary-50 px-2.5 text-sm font-bold text-primary-400">{section.title}</h2>
+                <p className="mt-3 whitespace-pre-line px-2 text-sm leading-7 text-grey-800">{section.content}</p>
               </section>
             ))}
           </div>
-          {result.masked_categories.length > 0 && (
-            <p className="mt-5 rounded-lg bg-primary-50 px-3 py-2 text-xs text-primary-900">연락처·이름 등 개인정보로 보이는 내용은 가린 뒤 AI에 보냈어요.</p>
+          {result.deidentified && (
+            <p className="mt-5 rounded-lg bg-primary-50 px-3 py-2 text-xs text-primary-900">이름·기관·나이·연락처 등 개인을 알아볼 수 있는 내용은 바꾼 뒤 AI에 보냈어요.</p>
           )}
           {result.stub && <p className="mt-3 text-xs text-grey-500">데모 모드로 생성된 요약입니다.</p>}
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">

@@ -56,8 +56,9 @@ export default function ClientFormModal({
   const update = (field: keyof FormState, value: string) => setForm((prev) => ({ ...prev, [field]: value }))
   const ageNumber = form.client_age.trim() === '' ? null : Number(form.client_age)
   const ageInvalid = ageNumber !== null && (!Number.isInteger(ageNumber) || ageNumber < 0 || ageNumber > 150)
-  const requiredMissing = !form.case_alias.trim() || !form.client_gender || ageNumber === null || !form.client_occupation.trim()
-    || !form.marital_status || !form.family_composition
+  // Only the name is required; gender, age, occupation, marital status and family are optional,
+  // like 특이사항.
+  const requiredMissing = !form.case_alias.trim()
   const canSubmit = !requiredMissing && !ageInvalid && !submitting
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -91,23 +92,23 @@ export default function ClientFormModal({
             <input className="rm-input" value={form.case_alias} onChange={(event) => update('case_alias', event.target.value)} placeholder="홍길동" maxLength={100} required />
           </label>
           <label className="block">
-            <span className="rm-label">성별<span className="req">*</span></span>
+            <span className="rm-label">성별</span>
             <SelectField ariaLabel="성별" value={form.client_gender} onChange={(value) => update('client_gender', value)} options={GENDERS} />
           </label>
           <label className="block">
-            <span className="rm-label">나이<span className="req">*</span></span>
-            <input className="rm-input" inputMode="numeric" value={form.client_age} onChange={(event) => update('client_age', event.target.value.replace(/[^0-9]/g, ''))} placeholder="25세" maxLength={3} required />
+            <span className="rm-label">나이</span>
+            <input className="rm-input" inputMode="numeric" value={form.client_age} onChange={(event) => update('client_age', event.target.value.replace(/[^0-9]/g, ''))} placeholder="25세" maxLength={3} />
           </label>
           <label className="block">
-            <span className="rm-label">직업<span className="req">*</span></span>
-            <input className="rm-input" value={form.client_occupation} onChange={(event) => update('client_occupation', event.target.value)} placeholder="직장인, 학생 등" maxLength={100} required />
+            <span className="rm-label">직업</span>
+            <input className="rm-input" value={form.client_occupation} onChange={(event) => update('client_occupation', event.target.value)} placeholder="직장인, 학생 등" maxLength={100} />
           </label>
           <label className="block">
-            <span className="rm-label">결혼 상태<span className="req">*</span></span>
+            <span className="rm-label">결혼 상태</span>
             <SelectField ariaLabel="결혼 상태" value={form.marital_status} onChange={(value) => update('marital_status', value)} options={MARITAL} />
           </label>
           <label className="block">
-            <span className="rm-label">가족 구성<span className="req">*</span></span>
+            <span className="rm-label">가족 구성</span>
             <SelectField ariaLabel="가족 구성" value={form.family_composition} onChange={(value) => update('family_composition', value)} options={FAMILY} />
           </label>
         </div>

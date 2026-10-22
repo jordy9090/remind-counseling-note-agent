@@ -12,7 +12,7 @@ import {
   takePendingQuickSummary,
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
-import type { TemporaryDraftRecord } from '../../types/session'
+import type { NoteDraftResponse, TemporaryDraftRecord } from '../../types/session'
 import QuickSummaryPanel from './QuickSummaryPanel'
 
 const RECENT_LIMIT = 3
@@ -28,10 +28,12 @@ type SaveState = 'saving' | 'saved' | 'failed' | null
 export default function QuickSummaryWorkspace({
   result,
   onResult,
+  toResult,
   onSaveToClient,
   saveError,
 }: {
   result: QuickSummaryResult | null
+  toResult: (note: NoteDraftResponse) => QuickSummaryResult
   onResult: (result: QuickSummaryResult | null) => void
   /** Opens the client picker for this summary. */
   onSaveToClient: (result: QuickSummaryResult) => void
@@ -129,6 +131,7 @@ export default function QuickSummaryWorkspace({
     <div className="quick-summary-bg flex min-h-screen flex-col justify-center">
       <QuickSummaryPanel
         result={result}
+        toResult={toResult}
         onResult={(next) => {
           setNotice(null)
           handleResult(next)
