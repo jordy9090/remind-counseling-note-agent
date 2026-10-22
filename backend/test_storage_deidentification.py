@@ -81,6 +81,52 @@ class MaskingRuleTests(unittest.TestCase):
                 patch("app.services.llm.get_structured_llm", side_effect=RuntimeError("synthetic outage")):
             self.assertIsNone(deid._extract_entities(MEMO))
 
+    def test_organizations_ages_places_birth_dates_and_contacts(self) -> None:
+        entities = deid._StorageEntities(
+            person_names=["김민지"],
+            occupations=[deid._OccupationMention(text="초등학교 교사", category="교육자")],
+            organizations=[deid._OrganizationMention(text="가상초등학교", kind="초등학교"),
+                           deid._OrganizationMention(text="한빛전자", kind="회사")],
+            ages=[deid._AgeMention(text="스물여덟 살", band="20대")],
+            locations=["행복동 푸른아파트"],
+            birth_dates=["1998년 3월 2일"],
+        )
+        text = ("김민지(28세)는 가상초등학교 초등학교 교사다. 스물여덟 살 동생은 고2이고 한빛전자에 다닌다. "
+                "행복동 푸른아파트에 산다. 생일은 1998년 3월 2일, 연락처 010-1234-5678.")
+        with model_returns(entities):
+            texts, report = deid.deidentify_texts({"memo": text})
+        self.assertEqual(texts["memo"], "김O지(20대)는 초등학교 교육자다. 20대 동생은 고등학생이고 회사에 다닌다. "
+                                        "[지역]에 산다. 생일은 [생년월일], 연락처 연락처 정보 비공개.")
+        self.assertEqual((report.organizations_generalized, report.ages_generalized, report.locations_masked,
+                          report.birth_dates_masked, report.contacts_masked), (2, 3, 1, 1, 1))
+
+    def test_explicit_ages_and_grades_without_the_model(self) -> None:
+        with model_returns(None):
+            texts, _ = deid.deidentify_texts({"memo": "(만 34세) 나이: 15 / 중학교 3학년, 초4, 대학교 2학년. 최고2위, 7살 때 이사."})
+        self.assertEqual(texts["memo"], "(30대) 나이: 10대 / 중학생, 초등학생, 대학생. 최고2위, 7살 때 이사.")
+        self.assertEqual([deid.age_band(age) for age in (9, 10, 79, 80, 95)], ["10세 미만", "10대", "70대", "80세 이상", "80세 이상"])
+
+    def test_exported_documents_are_deidentified(self) -> None:
+        from io import BytesIO
+
+        from docx import Document
+
+        from app.schemas.document import DocumentExportRequest
+        from app.services.document_export import DocumentExportService
+
+        request = DocumentExportRequest.model_validate({
+            "format": "docx", "document_type": "session_note", "case_id": "SYNTHETIC-EXPORT", "session_number": 1,
+            "title": "상담일지", "metadata": {"client_alias": "홍길동", "counselor_name": "합성 상담사"},
+            "sections": [{"id": "s", "title": "상담 내용", "content": "홍길동은 길동이로 불린다. 연락처 010-1234-5678."}],
+        })
+        with model_returns(None):
+            content = DocumentExportService().export(request).content
+        document = Document(BytesIO(content))
+        text = "\n".join([p.text for p in document.paragraphs] + [c.text for t in document.tables for r in t.rows for c in r.cells])
+        self.assertNotIn("홍길동", text)
+        self.assertNotIn("010-1234-5678", text)
+        self.assertIn("홍O동", text)
+
     def test_json_payloads_keep_identifiers_and_enums(self) -> None:
         payload = {"draft_id": "draft_김민지", "case_id": "case_1", "screen": "session_input",
                    "form": {"counselor_memo": MEMO, "key_issue_tags": ["민지 갈등"]},
@@ -119,24 +165,26 @@ class StorageEntryPointTests(unittest.TestCase):
                                     json={**INPUT, "client_alias": "김민지", "counselor_memo": MEMO})
         self.assertEqual(response.status_code, 200, response.text[:300])
         self.assertTrue(response.json()["persistence_report"]["stored"])
-        for table in ("sessions", "generated_notes", "cases"):
+        for table in ("sessions", "generated_notes"):
             with self.subTest(table=table):
                 self.assert_deidentified(self.stored_text(table))
         session = self.store.tables["sessions"][0]
         self.assertIn("김O지 내담자는 교육자로 일한다", json.loads(session["raw_input_text"])["counselor_memo"])
-        self.assertEqual(self.store.tables["cases"][0]["case_alias"], "김O지")
+        # The client profile is the counselor's management screen and keeps the name as entered.
+        self.assertEqual(self.store.tables["cases"][0]["case_alias"], "김민지")
+        note = self.store.tables["generated_notes"][0]["draft_json"]
+        self.assertEqual(note["session_info"]["client_alias"], "김O지")
 
-    def test_client_profile_is_stored_with_masked_name_and_category(self) -> None:
+    def test_client_profile_keeps_the_name_and_details_as_entered(self) -> None:
         created = self.client.post("/api/cases", headers=self.headers, json={
             "case_alias": "홍길동", "client_age": 30, "client_occupation": "연예인", "client_notes": MEMO})
         self.assertEqual(created.status_code, 201, created.text[:300])
         row = self.store.tables["cases"][0]
-        self.assertEqual((row["case_alias"], row["client_occupation"]), ("홍O동", "예술가"))
-        self.assert_deidentified(row["client_notes"])
+        self.assertEqual((row["case_alias"], row["client_occupation"], row["client_notes"]), ("홍길동", "연예인", MEMO))
         updated = self.client.patch(f'/api/cases/{created.json()["case_id"]}/profile', headers=self.headers,
                                     json={"case_alias": "홍길동삼", "client_occupation": "교수"})
         self.assertEqual(updated.status_code, 200, updated.text[:300])
-        self.assertEqual((updated.json()["case_alias"], updated.json()["client_occupation"]), ("홍OO삼", "교육자"))
+        self.assertEqual((updated.json()["case_alias"], updated.json()["client_occupation"]), ("홍길동삼", "교수"))
 
     def test_temporary_drafts_and_confirmations_are_stored_deidentified(self) -> None:
         saved = self.client.post("/api/notes/drafts", headers=self.headers, json={

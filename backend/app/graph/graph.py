@@ -51,6 +51,8 @@ from app.schemas.note import (
 
 class NoteGraphState(TypedDict, total=False):
     actor: str
+    # False for the public quick summary: no case memory, raw evidence or KB lookups (no storage access).
+    allow_retrieval: bool
     session_input: SessionInput
     requested_section_ids: list[str]
     session_topic: str
@@ -141,6 +143,7 @@ def run_note_pipeline(
     session_topic: str = "",
     *,
     actor: str = "",
+    allow_retrieval: bool = True,
 ) -> GenerateNoteResponse:
     # Demo output must be explicitly requested; a missing key is a configuration
     # failure, not permission to generate and store a sample counseling record.
@@ -149,6 +152,7 @@ def run_note_pipeline(
     initial_state: NoteGraphState = {
         "session_input": session_input,
         "actor": actor or settings.remind_preview_actor,
+        "allow_retrieval": allow_retrieval,
     }
     if requested_section_ids is not None:
         initial_state["requested_section_ids"] = requested_section_ids

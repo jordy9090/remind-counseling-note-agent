@@ -172,8 +172,8 @@ class CaseListRouteTests(unittest.TestCase):
 
         listed = self.client.get("/api/cases", headers=self.headers_a).json()
         self.assertEqual(listed["cases"][0]["case_id"], case_id)
-        # Occupations are stored as a broad category (직장인 → 사무직 종사자).
-        self.assertEqual(listed["cases"][0]["client_occupation"], "사무직 종사자")
+        # The profile keeps the occupation as entered; generalization applies to documents.
+        self.assertEqual(listed["cases"][0]["client_occupation"], "직장인")
         self.assertEqual(listed["recent_documents"], [])
 
         updated = self.client.patch(f"/api/cases/{case_id}/profile", headers=self.headers_a,
@@ -267,8 +267,15 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual(client.patch(f"/api/cases/dashboard?case_id={case_id}&scope=schedule", json={"total_scheduled_session_count": -1}, headers=self.headers_a).status_code, 422)
 
     def test_quick_summary_becomes_the_clients_next_session(self) -> None:
-        summary = {"main_content": "합성 내담자는 발표 불안을 이야기했다.", "client_response": "긴장했지만 계속 이야기했다.",
-                   "counselor_intervention": "불안할 때 떠오르는 생각을 함께 정리했다.", "next_plan": "짧은 발표 연습을 해보기로 했다."}
+        summary = {"sections": [
+            {"id": "main_issue", "title": "주요 호소", "content": "발표 상황에서 긴장이 심해진다."},
+            {"id": "session_theme", "title": "회기 주제", "content": "발표 불안 탐색"},
+            {"id": "session_content", "title": "상담 내용", "content": "합성 내담자는 발표 불안을 이야기했다."},
+            {"id": "counselor_intervention", "title": "상담자 개입", "content": "불안할 때 떠오르는 생각을 함께 정리했다."},
+            {"id": "client_response", "title": "내담자 반응", "content": "긴장했지만 계속 이야기했다."},
+            {"id": "next_plan", "title": "다음 계획", "content": "짧은 발표 연습을 해보기로 했다."},
+            {"id": "risk_signal", "title": "위험 신호", "content": "확인된 위험 신호 없음."},
+        ]}
         case_id = self.client.post("/api/cases", json={"case_alias": "합성 가명"}, headers=self.headers_a).json()["case_id"]
         saved = self.client.post(f"/api/cases/{case_id}/quick-summary", json={**summary, "session_date": "2026-10-17"},
                                  headers=self.headers_a)
@@ -282,8 +289,12 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual(record["session_number"], 1)
         self.assertEqual(record["session_date"], "2026-10-17")
         self.assertEqual(record["confirmation_status"], "draft")
-        self.assertEqual(record["draft_json"]["session_content"]["text"], summary["main_content"])
-        self.assertEqual(record["draft_json"]["next_plan"]["text"], summary["next_plan"])
+        self.assertEqual(record["draft_json"]["session_content"]["text"], "합성 내담자는 발표 불안을 이야기했다.")
+        self.assertEqual(record["draft_json"]["presenting_problem"]["text"], "발표 상황에서 긴장이 심해진다.")
+        self.assertEqual(record["draft_json"]["next_plan"]["text"], "짧은 발표 연습을 해보기로 했다.")
+        # Reopening shows every item of the quick summary, including ones without a draft field.
+        self.assertEqual([section["id"] for section in record["draft_json"]["workspace_sections"]],
+                         [section["id"] for section in summary["sections"]])
         self.assertEqual(record["draft_json"]["source"], "quick_summary")
         self.assertIsNone(record["session_input"], "a quick summary stores no session input")
 
@@ -297,7 +308,9 @@ class CaseListRouteTests(unittest.TestCase):
         sessions_before = len(self.store.tables["sessions"])
         self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json=summary, headers=self.headers_b).status_code, 404)
         self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json=summary).status_code, 401)
-        self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json={**summary, "main_content": ""},
+        empty = {"sections": [{"id": "session_content", "title": "상담 내용", "content": "  "}]}
+        self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json=empty, headers=self.headers_a).status_code, 422)
+        self.assertEqual(self.client.post(f"/api/cases/{case_id}/quick-summary", json={"sections": []},
                                           headers=self.headers_a).status_code, 422)
         self.assertEqual(len(self.store.tables["sessions"]), sessions_before)
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

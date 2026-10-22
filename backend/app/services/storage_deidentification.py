@@ -1,20 +1,34 @@
-"""De-identify counseling text before it is saved: mask personal names and generalize occupations.
+"""De-identify counseling documents before they are saved or exported.
 
-Rules (product decision, 2026-10-16):
-- Names keep their first and last character and hide the middle: 홍길동 → 홍O동, 홍길동삼 → 홍OO삼,
-  two-character names hide the second character (민지 → 민O).
-- Occupations are replaced with a broad category that keeps the field but not the job, for example
-  초등학교 교사 / 교수 → 교육자, 연예인 → 예술가.
+What is replaced (product decision 2026-10-16, extended 2026-10-22 after reviewing the sources below):
+- Personal names keep the first and last character: 홍길동 → 홍O동, 홍길동삼 → 홍OO삼, 민지 → 민O.
+- Occupations become one of the broad categories below (초등학교 교사 → 교육자, 연예인 → 예술가).
+- Names of schools, workplaces, hospitals and other organizations become their type (OO고등학교 → 고등학교).
+- A person's current age becomes a 10-year band (28세 → 20대, 80세 이상 top-coded); school grades become
+  the school level (고2 → 고등학생).
+- Specific places of residence, work or study (addresses, neighborhoods, apartment names) → [지역].
+- Birth dates → [생년월일]; phone numbers, e-mail, accounts/URLs, resident or student numbers and
+  street addresses → the existing counselor-readable "비공개" labels.
 
-Names and occupations in free text are found with the OpenAI model (structured output). The model
-only returns the mentions; the replacement itself is deterministic and applies only to text that
-actually occurs in the input. When the model is unavailable (stub mode, missing key, timeout, or
-error), the deterministic fallback still masks the client alias and its given name and maps the
-profile occupation field through a keyword table; other free-text names and occupations are then
-left as they are and the report says so. Saving never fails because of this step.
+Sources: 개인정보 보호법 제2조 제1호 나목 (information identifiable when easily combined with other
+information is personal information); 개인정보보호위원회 「가명정보 처리 가이드라인」(2024.2) — text data:
+names, addresses, phone numbers and context-identifying information are deleted or replaced (p.55),
+identifiable-in-combination information is judged in context (p.48), ages are generalized to 10-year
+bands with top coding and addresses to 시군구 level (pp.29-32), character data is categorized to a
+higher concept (p.94); 한국상담심리학회 상담심리사 윤리규정 5-가-4, 5-가-5, 5-마-1, 7-라-6 (no
+identifiable client information in reports, lectures or consultations; change or delete personal
+details for education, research and publication).
+
+Mentions in free text are found with the OpenAI model (structured output). The model only returns the
+mentions; replacement is deterministic and applies only to text that occurs in the input. Contact
+details, explicit ages ("(28세)", "나이: 28") and school grades are also handled by regular expressions.
+When the model is unavailable (stub mode, missing key, timeout, or error), the deterministic rules still
+apply and the client alias and its given name are masked; other free-text mentions then stay unchanged
+and the report says so. Saving never fails because of this step.
 
 The extraction request sends the text as entered to the model provider; the generation pipeline
-afterwards receives the de-identified text.
+afterwards receives the de-identified text. Sensitive content that is the subject of counseling
+(health, sexual life, beliefs; 개인정보 보호법 제23조) is not removed, because it is the record itself.
 """
 from __future__ import annotations
 
@@ -125,26 +139,60 @@ class _OccupationMention(BaseModel):
     category: OccupationCategory
 
 
+OrganizationKind = Literal[
+    "초등학교", "중학교", "고등학교", "대학교", "대학원", "학원", "회사", "병원", "상담기관", "공공기관",
+    "종교기관", "군부대", "기관",
+]
+AgeBand = Literal["10세 미만", "10대", "20대", "30대", "40대", "50대", "60대", "70대", "80세 이상"]
+
+
+class _OrganizationMention(BaseModel):
+    text: str = Field(description="The organization's proper name exactly as written, without particles.")
+    kind: OrganizationKind
+
+
+class _AgeMention(BaseModel):
+    text: str = Field(description="The age expression exactly as written, for example '28세' or '스물여덟 살'.")
+    band: AgeBand
+
+
 class _StorageEntities(BaseModel):
     person_names: list[str] = Field(
         default_factory=list,
         description="Every personal name exactly as written (full names, given names, nicknames), without particles.",
     )
     occupations: list[_OccupationMention] = Field(default_factory=list)
+    organizations: list[_OrganizationMention] = Field(default_factory=list)
+    ages: list[_AgeMention] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    birth_dates: list[str] = Field(default_factory=list)
 
 
 _EXTRACTION_PROMPT = """You prepare Korean counseling records for storage. Find identifying mentions in the text below.
+Copy every mention verbatim, without particles. Return empty lists when there is nothing to report.
 
-person_names: every name of a real person (client, family members, friends, counselor, any third party),
-exactly as it appears. Include full names, given names and nicknames as separate entries (for example
-"김민지" and "민지"). Remove trailing particles (민지가 → 민지, 철수는 → 철수). Do not include role words
-(엄마, 선생님, 내담자, 상담사), placeholders such as [PERSON], or names already masked with "O" (홍O동).
+person_names: every name of a real person (client, family members, friends, counselor, any third party).
+Include full names, given names and nicknames as separate entries (for example "김민지" and "민지").
+Remove trailing particles (민지가 → 민지). Do not include role words (엄마, 선생님, 내담자, 상담사),
+placeholders such as [PERSON], or names already masked with "O" (홍O동).
 
-occupations: every job or occupation of a person, exactly as written (for example "초등학교 교사",
-"싱어송라이터", "간호사"), each with the broadest fitting category from the allowed list. Use
-"기타 직업군" only when no other category fits. Do not include workplaces, school names or hobbies.
+occupations: every job or occupation of a person (for example "초등학교 교사", "싱어송라이터", "간호사"),
+each with the broadest fitting category from the allowed list. Use "기타 직업군" only when no other
+category fits. Do not include workplaces, school names or hobbies.
 
-Return empty lists when there is nothing to report. Do not paraphrase; copy the mentions verbatim.
+organizations: proper names of schools, academies, companies, hospitals, counseling centers, public
+offices, churches/temples, military units or other organizations a person belongs to (for example
+"가상고등학교", "한빛전자", "서울OO병원"), each with its kind. Do not include generic words such as
+"학교" or "회사" without a proper name.
+
+ages: expressions of a person's current age (for example "28세", "만 28세", "스물여덟 살"), each with its
+10-year band. Do not include ages that describe when a past event happened ("7살 때").
+
+locations: specific places that point to where a person lives, works or studies: street addresses,
+neighborhoods (동, 읍, 면), apartment or building names, nearby stations or landmarks. Do not include
+countries, provinces or large cities (서울, 부산, 경기도).
+
+birth_dates: birth dates or birthdays of a person.
 
 Text:
 {text}
@@ -156,10 +204,39 @@ class StorageDeidentificationReport:
     llm_used: bool
     names_masked: int
     occupations_generalized: int
+    organizations_generalized: int = 0
+    ages_generalized: int = 0
+    locations_masked: int = 0
+    birth_dates_masked: int = 0
+    contacts_masked: int = 0
+
+
+LOCATION_LABEL = "[지역]"
+BIRTH_DATE_LABEL = "[생년월일]"
+_CONTACT_CATEGORIES = frozenset({"email", "url_or_account", "resident_registration_number", "student_id", "phone", "address"})
+_EXPLICIT_AGE_PATTERNS = (
+    re.compile(r"\(\s*만?\s*(\d{1,3})\s*세\s*\)"),
+    re.compile(r"(?:나이|연령)\s*[:：]?\s*만?\s*(\d{1,3})(?:\s*(?:세|살))?"),
+)
+_GRADE_PATTERNS = (
+    (re.compile(r"(?<![가-힣])(?:초등학교\s*[1-6]\s*학년|초\s?[1-6](?![0-9]))"), "초등학생"),
+    (re.compile(r"(?<![가-힣])(?:중학교\s*[1-3]\s*학년|중\s?[1-3](?![0-9]))"), "중학생"),
+    (re.compile(r"(?<![가-힣])(?:고등학교\s*[1-3]\s*학년|고\s?[1-3](?![0-9]))"), "고등학생"),
+    (re.compile(r"(?<![가-힣])대학교?\s*[1-6]\s*학년"), "대학생"),
+)
+
+
+def age_band(age: int) -> str:
+    """10-year band with top and bottom coding (가명정보 처리 가이드라인 p.32)."""
+    if age < 10:
+        return "10세 미만"
+    if age >= 80:
+        return "80세 이상"
+    return f"{age // 10 * 10}대"
 
 
 def _extract_entities(text: str) -> _StorageEntities | None:
-    """Ask the model for name and occupation mentions; None when the model is unavailable."""
+    """Ask the model for identifying mentions; None when the model is unavailable."""
     if settings.stub_mode or not text.strip():
         return None
     try:
@@ -169,7 +246,7 @@ def _extract_entities(text: str) -> _StorageEntities | None:
         result = llm.invoke(_EXTRACTION_PROMPT.format(text=text))
         return result if isinstance(result, _StorageEntities) else _StorageEntities.model_validate(result)
     except Exception:
-        # Never surface provider errors or input text; the deterministic fallback still applies.
+        # Never surface provider errors or input text; the deterministic rules still apply.
         return None
 
 
@@ -193,46 +270,124 @@ def _alias_names(known_names: Iterable[str]) -> set[str]:
     return names
 
 
+def _mask_contacts(text: str) -> tuple[str, int]:
+    from app.services.deidentification import COUNSELOR_PLACEHOLDER_LABELS, MASK_RULES
+
+    count = 0
+    for rule in MASK_RULES:
+        if rule.category in _CONTACT_CATEGORIES:
+            label = COUNSELOR_PLACEHOLDER_LABELS.get(rule.placeholder, "비식별 처리됨")
+            text, hits = rule.pattern.subn(label, text)
+            count += hits
+    return text, count
+
+
+def _replace_all(text: str, mapping: Mapping[str, str]) -> tuple[str, int]:
+    """Replace each mention with its label, longest mentions first."""
+    count = 0
+    for mention in sorted(mapping, key=len, reverse=True):
+        hits = text.count(mention)
+        if hits:
+            text = text.replace(mention, mapping[mention])
+            count += hits
+    return text, count
+
+
+def _generalize_explicit_ages(text: str) -> tuple[str, int]:
+    """"(28세)" → "(20대)", "나이: 28세" → "나이: 20대"."""
+    parenthesized, labeled = _EXPLICIT_AGE_PATTERNS
+    text, first = parenthesized.subn(lambda match: f"({age_band(int(match.group(1)))})", text)
+
+    def keep_label(match: re.Match[str]) -> str:
+        prefix = match.group(0)[: match.start(1) - match.start(0)]
+        return prefix + age_band(int(match.group(1)))
+
+    text, second = labeled.subn(keep_label, text)
+    return text, first + second
+
+
+def _generalize_grades(text: str) -> tuple[str, int]:
+    count = 0
+    for pattern, label in _GRADE_PATTERNS:
+        text, hits = pattern.subn(label, text)
+        count += hits
+    return text, count
+
+
 def deidentify_texts(
     texts: Mapping[str, str],
     *,
     known_names: Iterable[str] = (),
 ) -> tuple[dict[str, str], StorageDeidentificationReport]:
-    """Return the texts with names masked and occupations generalized, plus a value-free report."""
+    """Return the texts with identifying details replaced, plus a value-free report."""
     joined = "\n\n".join(f"[{key}]\n{value}" for key, value in texts.items() if value and value.strip())
     entities = _extract_entities(joined)
     names = _alias_names(known_names)
     occupations: dict[str, str] = {}
+    organizations: dict[str, str] = {}
+    ages: dict[str, str] = {}
+    locations: dict[str, str] = {}
+    birth_dates: dict[str, str] = {}
     if entities is not None:
+        def present(value: str, minimum: int = 2) -> bool:
+            return len(value) >= minimum and value in joined
+
         for name in entities.person_names:
             value = name.strip()
             if _NAME_TOKEN.match(value) and not is_masked_name(value) and value in joined:
                 names.add(value)
         for mention in entities.occupations:
             value = mention.text.strip()
-            if len(value) >= 2 and value in joined and value not in OCCUPATION_CATEGORIES:
+            if present(value) and value not in OCCUPATION_CATEGORIES:
                 occupations[value] = mention.category
+        for mention in entities.organizations:
+            value = mention.text.strip()
+            if present(value) and value != mention.kind:
+                organizations[value] = mention.kind
+        for mention in entities.ages:
+            value = mention.text.strip()
+            digits = re.search(r"\d{1,3}", value)
+            if present(value):
+                ages[value] = age_band(int(digits.group(0))) if digits else mention.band
+        for value in (item.strip() for item in entities.locations):
+            if present(value):
+                locations[value] = LOCATION_LABEL
+        for value in (item.strip() for item in entities.birth_dates):
+            if present(value, 4):
+                birth_dates[value] = BIRTH_DATE_LABEL
 
-    names_masked = 0
-    occupations_generalized = 0
+    totals = dict.fromkeys(("names", "occupations", "organizations", "ages", "locations", "birth_dates", "contacts"), 0)
     result: dict[str, str] = {}
     for key, value in texts.items():
         text = value or ""
-        # Longest first, so 김민지 is handled before 민지 and 초등학교 교사 before 교사.
-        for occupation in sorted(occupations, key=len, reverse=True):
-            count = text.count(occupation)
-            if count:
-                text = text.replace(occupation, occupations[occupation])
-                occupations_generalized += count
+        text, totals["contacts"] = _accumulate(totals["contacts"], _mask_contacts(text))
+        text, totals["birth_dates"] = _accumulate(totals["birth_dates"], _replace_all(text, birth_dates))
+        text, totals["locations"] = _accumulate(totals["locations"], _replace_all(text, locations))
+        # Organizations before names and occupations: a proper name may contain either.
+        text, totals["organizations"] = _accumulate(totals["organizations"], _replace_all(text, organizations))
+        text, totals["occupations"] = _accumulate(totals["occupations"], _replace_all(text, occupations))
+        text, totals["ages"] = _accumulate(totals["ages"], _replace_all(text, ages))
+        text, totals["ages"] = _accumulate(totals["ages"], _generalize_explicit_ages(text))
+        text, totals["ages"] = _accumulate(totals["ages"], _generalize_grades(text))
         for name in sorted(names, key=len, reverse=True):
             text, count = _name_pattern(name).subn(mask_name(name), text)
-            names_masked += count
+            totals["names"] += count
         result[key] = text
     return result, StorageDeidentificationReport(
         llm_used=entities is not None,
-        names_masked=names_masked,
-        occupations_generalized=occupations_generalized,
+        names_masked=totals["names"],
+        occupations_generalized=totals["occupations"],
+        organizations_generalized=totals["organizations"],
+        ages_generalized=totals["ages"],
+        locations_masked=totals["locations"],
+        birth_dates_masked=totals["birth_dates"],
+        contacts_masked=totals["contacts"],
     )
+
+
+def _accumulate(total: int, replaced: tuple[str, int]) -> tuple[str, int]:
+    text, count = replaced
+    return text, total + count
 
 
 # --- JSON payloads (confirmed notes, temporary drafts, supervision reports) ------------------------
@@ -246,6 +401,8 @@ _STRUCTURAL_KEYS = frozenset({
     "source_ref", "source_refs", "evidenceIds", "visible_section_ids", "selected_previous_session_ids",
     "appliedTargets", "confidence", "severity", "sectionId", "blockId", "reportDate", "sessionNumber",
     "workspace_note_id", "confirmation_status", "note_type", "field", "category",
+    # Source references (e.g. literature links in relational insights), not counseling text.
+    "url", "href", "locator",
 })
 
 
@@ -308,20 +465,25 @@ def deidentify_session_input(session_input):
     return session_input.model_copy(update=update), report
 
 
-def deidentify_case_profile(
-    *,
-    case_alias: str | None,
-    client_occupation: str | None,
-    client_notes: str | None,
-) -> tuple[str | None, str | None, str | None, StorageDeidentificationReport]:
-    """Client name and notes masked; the occupation field becomes its broad category."""
-    texts = {"case_alias": case_alias or "", "client_occupation": client_occupation or "", "client_notes": client_notes or ""}
-    known = [case_alias or ""]
-    entities_texts, report = deidentify_texts(texts, known_names=known)
-    alias = entities_texts["case_alias"] if case_alias is not None else None
-    notes = entities_texts["client_notes"] if client_notes is not None else None
-    occupation = None
-    if client_occupation is not None:
-        # The model may already have replaced the whole field with a category; otherwise use the table.
-        occupation = occupation_category(entities_texts["client_occupation"])
-    return alias, occupation, notes, report
+def deidentify_export_request(request):
+    """An export request with names and other identifying details replaced in every document field.
+
+    The editor keeps what the counselor typed; the downloaded document is de-identified.
+    """
+    metadata = dict(request.metadata or {})
+    known = [str(metadata.get(key) or "") for key in ("client_alias", "counselor_name", "supervisor")]
+    payload = {
+        "title": request.title,
+        "metadata": metadata,
+        "sections": [section.model_dump() for section in request.sections],
+    }
+    replaced, _ = deidentify_json(payload, known_names=known)
+    for key in ("client_alias", "counselor_name", "supervisor"):
+        value = str(replaced["metadata"].get(key) or "").strip()
+        if value and re.fullmatch(r"[가-힣]{2,5}", value):
+            replaced["metadata"][key] = mask_name(value)
+    return request.model_copy(update={
+        "title": replaced["title"],
+        "metadata": replaced["metadata"],
+        "sections": [type(request.sections[0]).model_validate(item) for item in replaced["sections"]] if request.sections else [],
+    })

@@ -375,7 +375,8 @@ class PersistenceWorkflowTests(unittest.TestCase):
         record = self.client.get(f"/api/notes/records/{note_id}", headers=self.headers).json()
         self.assertFalse(record["session_input_is_original"])
         self.assertNotIn("010-1234-5678", json.dumps(record, ensure_ascii=False))
-        self.assertIn("[PHONE]", record["session_input"]["counselor_memo"])
+        # Contact details are replaced before anything is stored (storage de-identification).
+        self.assertIn("연락처 정보 비공개", record["session_input"]["counselor_memo"])
 
         # A SAVE_RAW_INPUT payload (no marker) is never presented as the original.
         with patch.object(settings, "save_original_input", False), patch.object(settings, "save_raw_input", True):
@@ -384,16 +385,15 @@ class PersistenceWorkflowTests(unittest.TestCase):
         record = self.client.get(f"/api/notes/records/{note_id}", headers=self.headers).json()
         self.assertFalse(record["session_input_is_original"])
 
-        # Default: the input is stored as entered for the owner; the sanitized copy used for
-        # retrieval/evidence is unchanged.
+        # Default: the input is stored as entered (after storage de-identification) for the owner.
         self.assertTrue(settings.save_original_input)
         note_id = self.client.post("/api/notes/generate", json=sensitive, headers=self.headers).json()["persistence_report"]["note_id"]
-        self.assertIn("010-1234-5678", row["raw_input_text"])
+        self.assertNotIn("010-1234-5678", row["raw_input_text"])
         self.assertNotIn("010-1234-5678", row["sanitized_input_text"])
         url = f"/api/notes/records/{note_id}"
         record = self.client.get(url, headers=self.headers).json()
         self.assertTrue(record["session_input_is_original"])
-        self.assertEqual(record["session_input"]["counselor_memo"], sensitive["counselor_memo"])
+        self.assertEqual(record["session_input"]["counselor_memo"], "보호자 연락처 연락처 정보 비공개 로 안내함.")
         self.assertEqual(record["session_input"]["transcript_text"], sensitive["transcript_text"])
         other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
         self.assertEqual(self.client.get(url, headers=other).status_code, 404)
@@ -401,7 +401,7 @@ class PersistenceWorkflowTests(unittest.TestCase):
         row["raw_input_text"] = json.dumps({"masked": False, "transcript_text": 5})
         record = self.client.get(url, headers=self.headers).json()
         self.assertFalse(record["session_input_is_original"])
-        self.assertIn("[PHONE]", record["session_input"]["counselor_memo"])
+        self.assertIn("연락처 정보 비공개", record["session_input"]["counselor_memo"])
 
     def test_detail_rejects_broken_session_case_chain(self):
         result = self.generate()

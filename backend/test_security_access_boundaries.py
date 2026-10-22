@@ -481,17 +481,19 @@ class AccessBoundaryTests(unittest.TestCase):
     def test_public_quick_summary_serves_guests_without_reaching_storage_or_other_users(self):
         from app.services.quick_summary import rate_limiter
 
+        # The quick summary runs the regular pipeline with retrieval off, so even with retrieval
+        # enabled for signed-in requests a guest reaches no storage.
         with ExitStack() as blockers:
+            blockers.enter_context(patch.multiple(settings, enable_rag=True, enable_dense_retrieval=True,
+                                                  enable_raw_region_grounding=True))
             spies = [blockers.enter_context(patch(target, side_effect=AssertionError("Protected service reached by a guest")))
-                     for target in ("app.api.routes.notes.run_note_pipeline", "app.api.routes.notes.save_temporary_draft",
-                                    "app.api.routes.notes.persist_generated_note")]
+                     for target in ("app.api.routes.notes.save_temporary_draft", "app.api.routes.notes.persist_generated_note")]
             for name, path in sorted(PUBLIC_ROUTES):
                 rate_limiter.reset()
                 with self.subTest(name=name, path=path):
                     response = self.clients[name].post(path, json={"text": QUICK_SUMMARY_TEXT})
                     self.assertEqual(response.status_code, 200, response.text)
-                    self.assertLessEqual({"main_content", "client_response", "counselor_intervention", "next_plan"},
-                                         set(response.json()))
+                    self.assertIn("session_summary_draft", response.json())
                     self.assert_private(response)
             for spy in spies:
                 spy.assert_not_called()

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import QuickSummaryPanel from '../components/quick-summary/QuickSummaryPanel'
+import { quickSummaryResultFromNote } from './SessionDraftPage'
 import { clearPendingQuickSummary, storePendingQuickSummary, type QuickSummaryResult } from '../lib/quickSummary'
 
 interface LandingPageProps {
@@ -30,6 +31,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
       <div className="flex min-h-[calc(100vh-73px)] flex-col justify-center">
         <QuickSummaryPanel
           result={result}
+          toResult={quickSummaryResultFromNote}
           onResult={(next) => {
             setResult(next)
             // 새로 요약하기 also drops a summary waiting for login.

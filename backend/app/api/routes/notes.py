@@ -29,7 +29,6 @@ from app.services.quick_summary import (
     QuickSummaryInputError,
     QuickSummaryRateLimited,
     QuickSummaryRequest,
-    QuickSummaryResponse,
     generate_quick_summary,
     rate_limit_key,
     rate_limiter,
@@ -67,12 +66,12 @@ async def generate_note(session_input: SessionInput, actor: PreviewActor) -> Gen
     return _run_pipeline_with_stub_fallback(session_input, actor=actor)
 
 
-@router.post("/quick-summary", response_model=QuickSummaryResponse)
+@router.post("/quick-summary", response_model=GenerateNoteResponse)
 async def quick_summary(
     payload: QuickSummaryRequest,
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> QuickSummaryResponse:
+) -> GenerateNoteResponse:
     return run_quick_summary(payload, request=request, authorization=authorization)
 
 
@@ -177,10 +176,10 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
     Explicit demo mode still runs the configured stub. A failed real generation
     must never switch shared settings or replace a user's record with demo text.
     """
-    if session_input.persist and settings.enable_persistence:
-        # Everything stored for this session derives from the de-identified input:
-        # names masked (홍O동), occupations generalized (교육자).
-        session_input, _ = deidentify_session_input(session_input)
+    # Summaries are documents: the pipeline (and everything stored from it) only sees the
+    # de-identified input. The client profile keeps the alias as entered.
+    original_alias = session_input.client_alias
+    session_input, _ = deidentify_session_input(session_input)
     try:
         result = run_note_pipeline(session_input, actor=actor)
     except SummaryQualityError as error:
@@ -190,7 +189,9 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
             status_code=502,
             detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
         ) from error
-    result.persistence_report = persist_generated_note(session_input, result, actor=actor)
+    result.persistence_report = persist_generated_note(
+        session_input.model_copy(update={"client_alias": original_alias}), result, actor=actor,
+    )
     return result
 
 
@@ -220,7 +221,7 @@ def run_quick_summary(
     *,
     request: Request,
     authorization: str | None,
-) -> QuickSummaryResponse:
+) -> GenerateNoteResponse:
     """Public quick summary. The input text is never stored or logged."""
     actor = _optional_actor(authorization)
     key, limit, window = rate_limit_key(client_ip=client_ip(request), actor=actor)

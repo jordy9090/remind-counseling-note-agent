@@ -426,13 +426,18 @@ class CaseDashboardExport(BaseModel):
     created_at: str | None = None
 
 
-class QuickSummarySessionRequest(BaseModel):
-    """A quick summary (간편 요약) saved as a client's next session."""
+class QuickSummarySection(BaseModel):
+    """One summary item as shown in the summary screen (주요 호소, 회기 주제, ...)."""
 
-    main_content: str = Field(min_length=1, max_length=4000)
-    client_response: str = Field(default="", max_length=4000)
-    counselor_intervention: str = Field(default="", max_length=4000)
-    next_plan: str = Field(default="", max_length=4000)
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = Field(min_length=1, max_length=60)
+    content: str = Field(default="", max_length=8000)
+
+
+class QuickSummarySessionRequest(BaseModel):
+    """A quick summary (간편 요약) saved as a client's next session, with every summary item."""
+
+    sections: list[QuickSummarySection] = Field(min_length=1, max_length=20)
     # YYYY-MM-DD; empty means today in Asia/Seoul.
     session_date: str = Field(default="", pattern=r"^(\d{4}-\d{2}-\d{2})?$")
 

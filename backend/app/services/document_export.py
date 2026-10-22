@@ -236,6 +236,10 @@ class DocumentExportService:
         }
 
     def export(self, request: DocumentExportRequest) -> DocumentExportResult:
+        # Downloaded documents are de-identified (names, organizations, ages, places, contacts).
+        from app.services.storage_deidentification import deidentify_export_request
+
+        request = deidentify_export_request(request)
         exporter = self._exporters[request.format]
         sections = list(renderable_sections(request.sections))
         if not sections:

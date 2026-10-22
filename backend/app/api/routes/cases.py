@@ -39,6 +39,8 @@ def _storage_error_status(error: SupabaseStorageError) -> int:
         return 403
     if "이미 사용 중인" in message:
         return 409
+    if "비어 있습니다" in message:
+        return 422
     if "아직 준비되지 않았습니다" in message:
         return 503
     if "credentials are missing" in message:
