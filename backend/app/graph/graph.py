@@ -53,6 +53,7 @@ class NoteGraphState(TypedDict, total=False):
     actor: str
     # False for the public quick summary: no case memory, raw evidence or KB lookups (no storage access).
     allow_retrieval: bool
+    use_summary_skill: bool
     session_input: SessionInput
     requested_section_ids: list[str]
     session_topic: str
@@ -88,6 +89,25 @@ def _route_after_revision(state: NoteGraphState) -> str:
     return "reverify" if state.get("revision_needs_reverify") else "preview"
 
 
+def _route_summary_core(state: NoteGraphState) -> str:
+    return "skill" if state.get("use_summary_skill") and not settings.stub_mode else "standard"
+
+
+def generate_skill_summary(state: NoteGraphState) -> dict[str, Any]:
+    """Generate a public draft without fabricating an independent evidence extraction."""
+    from app.services.summary_skill import run_summary_skill
+
+    result = run_summary_skill(state["sanitized_input"])
+    report = state.get("retrieval_report") or RetrievalReport()
+    report.generation_latency_ms += result.latency_ms
+    return {
+        "session_summary_draft": result.summary,
+        "structured_case_data": StructuredCaseData(),
+        "evidence_mapped_data": EvidenceMappedData(),
+        "retrieval_report": report,
+    }
+
+
 def create_note_graph():
     workflow = StateGraph(NoteGraphState)
     workflow.add_node("sanitize_input", sanitize_input)
@@ -101,6 +121,7 @@ def create_note_graph():
     workflow.add_node("structure_session", structure_session)
     workflow.add_node("map_evidence", map_evidence)
     workflow.add_node("generate_summary", generate_summary)
+    workflow.add_node("generate_skill_summary", generate_skill_summary)
     workflow.add_node("generate_grounded_document", generate_grounded_document)
     workflow.add_node("validate_claim_sources", validate_claim_sources)
     workflow.add_node("verify_output", verify_output)
@@ -115,10 +136,14 @@ def create_note_graph():
     workflow.add_edge("retrieve_case_memory", "retrieve_authoritative_kb")
     workflow.add_edge("retrieve_authoritative_kb", "assemble_generation_grounding")
     workflow.add_edge("assemble_generation_grounding", "fuse_and_rerank")
-    workflow.add_edge("fuse_and_rerank", "structure_session")
+    workflow.add_conditional_edges(
+        "fuse_and_rerank", _route_summary_core,
+        {"skill": "generate_skill_summary", "standard": "structure_session"},
+    )
     workflow.add_edge("structure_session", "map_evidence")
     workflow.add_edge("map_evidence", "generate_summary")
     workflow.add_edge("generate_summary", "generate_grounded_document")
+    workflow.add_edge("generate_skill_summary", "generate_grounded_document")
     workflow.add_edge("generate_grounded_document", "validate_claim_sources")
     workflow.add_edge("validate_claim_sources", "verify_output")
     workflow.add_edge("verify_output", "conditional_revision")
@@ -144,15 +169,22 @@ def run_note_pipeline(
     *,
     actor: str = "",
     allow_retrieval: bool = True,
+    use_summary_skill: bool = False,
 ) -> GenerateNoteResponse:
     # Demo output must be explicitly requested; a missing key is a configuration
     # failure, not permission to generate and store a sample counseling record.
     if not settings.use_stub and not settings.openai_api_key:
         raise RuntimeError("AI 회기요약 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+    if use_summary_skill and (
+        allow_retrieval or session_input.persist or session_input.previous_session_summary.strip()
+        or requested_section_ids or session_topic or session_input.target_document_type != "session_note"
+    ):
+        raise ValueError("The summary Skill is limited to non-persistent, current-session quick summaries.")
     initial_state: NoteGraphState = {
         "session_input": session_input,
         "actor": actor or settings.remind_preview_actor,
         "allow_retrieval": allow_retrieval,
+        "use_summary_skill": use_summary_skill,
     }
     if requested_section_ids is not None:
         initial_state["requested_section_ids"] = requested_section_ids

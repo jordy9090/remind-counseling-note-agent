@@ -1,4 +1,4 @@
-"""Opt-in, single-call session-summary skill; not connected to production routes.
+"""Single-call session-summary Skill used by public quick summaries.
 
 Callers must supply the same already-deidentified input used by the baseline.
 This replaces only extraction and summary, not upstream masking, verification,
@@ -95,8 +95,8 @@ def build_summary_skill_request(sanitized: SanitizedInput) -> SummarySkillReques
 def run_summary_skill(sanitized: SanitizedInput) -> SummarySkillResult:
     """Make exactly one structured call, with no repair, retry or mock fallback.
 
-    Live callers are responsible for explicit authorization and identical upstream
-    de-identification in comparison runs. This function neither reads raw input
+    Callers retain upstream de-identification and downstream verification.
+    Comparison runs require identical sanitized input. This function neither reads raw input
     files nor connects to storage. Usage is provider-reported or unavailable.
     """
     if settings.use_stub or not settings.openai_api_key:

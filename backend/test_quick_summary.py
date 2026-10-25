@@ -57,7 +57,7 @@ class QuickSummaryTest(unittest.TestCase):
             response = self.client.post("/api/notes/quick-summary", json={"text": SAMPLE})
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("010-1234-5678", response.text)
-        self.assertEqual(calls["kwargs"], {"actor": "", "allow_retrieval": False})
+        self.assertEqual(calls["kwargs"], {"actor": "", "allow_retrieval": False, "use_summary_skill": True})
         self.assertNotIn("010-1234-5678", calls["input"].counselor_memo)
         self.assertFalse(calls["input"].persist)
 

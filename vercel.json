@@ -46,7 +46,8 @@
   ],
   "functions": {
     "api/notes/generate.py": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "backend/app/skills/**"
     },
     "api/materials/documents/extract.py": {
       "maxDuration": 60

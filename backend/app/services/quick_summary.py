@@ -1,8 +1,9 @@
-"""Quick summary: the regular session summary pipeline, available without signing in.
+"""Quick summary: a single-call summary core with the regular downstream checks.
 
-The only difference from the signed-in summary is where it is started. The same graph runs on the same
-de-identified session input and returns the same response, with retrieval switched off (no case
-memory, raw evidence or KB lookups, so a guest request never touches storage).
+The regular graph runs on de-identified input with retrieval switched off. Its
+extraction and summary stages are replaced by the session-summary Skill; semantic
+verification, document previews and optional relational insights remain. The
+public draft does not claim to contain an independently extracted evidence map.
 
 Guarantees for this public path:
 - The input is never stored (no DB, disk, or log writes of the text).
@@ -112,8 +113,8 @@ def quick_summary_session_input(text: str) -> SessionInput:
 
 
 def generate_quick_summary(text: str) -> GenerateNoteResponse:
-    """Run the regular summary pipeline on the de-identified text, without retrieval or storage."""
+    """Run the Skill core and existing checks without retrieval or storage."""
     from app.graph.graph import run_note_pipeline
 
     session_input, _ = deidentify_session_input(quick_summary_session_input(text))
-    return run_note_pipeline(session_input, actor="", allow_retrieval=False)
+    return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True)

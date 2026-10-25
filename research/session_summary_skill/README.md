@@ -1,5 +1,20 @@
 # Single-call session-summary Skill
 
+## Release integration
+
+Public quick summary now selects the Skill core explicitly through
+`run_note_pipeline(..., use_summary_skill=True)`. Normal authenticated generation
+keeps its existing extraction path. The opt-in rejects persistence, retrieval,
+prior-session input, custom sections/topic and non-session-note targets.
+Downstream semantic verification, document previews and relational insights
+remain. The quick response keeps the existing schema but returns empty
+`structured_case_data` and `evidence_mapped_data`: the summary is not relabelled
+as independently extracted source evidence. The quick save path continues to
+store displayed sections only. Frontend code and storage/auth policies are
+unchanged. Vercel explicitly bundles the Skill Markdown with the generation
+function. The measurements below describe the earlier core comparison; they do
+not claim the entire public request takes 16 seconds or one total model call.
+
 This candidate implements the mentoring proposal as executable product code: a
 task-specific `SKILL.md` is loaded only when session summarization is requested,
 then one structured model call creates the existing seven summary sections. It
