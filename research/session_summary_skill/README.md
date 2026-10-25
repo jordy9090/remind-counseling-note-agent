@@ -99,4 +99,56 @@ tokens across the three calls would cost about **US$0.45** at standard GPT-5.4
 rates of US$2.50/1M input and US$15/1M output. This is a budget assumption, not
 measured consumption, a spending cap, or a guaranteed bill. Pricing checked on
 2026-10-25 against the [official model page](https://developers.openai.com/api/docs/models/gpt-5.4).
-No live comparison was authorized or executed by this change.
+The user subsequently authorized this three-call comparison and supplied a test
+credential. The credential was accepted through hidden terminal input, used only
+in process memory and never written to a file. An earlier missing-key preflight
+was resolved; no Vercel Secret protection or deployment configuration was changed.
+
+`compare_live.py` prepares the fixed-model run, caps each completion at 6,000
+tokens, allows only two baseline calls and one Skill call, and records a ledger
+before provider invocation. A repeated output directory cannot automatically
+repeat a live run. Its syntax, missing-key preflight and one authorized live run
+passed. Supply `OPENAI_API_KEY` through the process environment, never a
+committed file or a command-line argument:
+
+```powershell
+& '<existing-python.exe>' -I research/session_summary_skill/compare_live.py --baseline-response '<synthetic-live-response.json>' --output '<new-live-results-directory>' --execute
+```
+
+## Authorized live result, 2026-10-26
+
+Run: 00:06:26–00:07:40 KST, exactly three calls, no repair or retry.
+Both arms used the same sanitized synthetic case, `gpt-5.4-2026-03-05`, low
+reasoning, a 6,000-token completion cap per call and the same section contracts.
+The independent arms ran concurrently; baseline extraction and summary remained
+sequential. Latency below is elapsed time within each core arm, not whole-product
+browser latency. Token counts are provider-reported; costs apply standard rates
+to those counts and are not a reconciled billing invoice. Cached input was zero.
+
+| Metric | Existing extraction + summary | Skill |
+|---|---:|---:|
+| Model calls | 2 | 1 |
+| Input tokens | 20,295 | 9,329 |
+| Output tokens | 6,205 | 978 |
+| Total tokens | 26,500 | 10,307 |
+| Core elapsed seconds | 68.937 | 16.386 |
+| Cost at standard rates, USD | 0.143813 | 0.037992 |
+| Required source facts retained (manual rubric, 6 items) | 4/6 | 5/6 |
+| Forbidden-claim checks passed (8 items) | 8/8 | 8/8 |
+
+For this one case, the candidate reduced total tokens by 61.1%, calculated cost
+by 73.6% and core elapsed time by 76.2%. Combined experiment cost: US$0.181805.
+These are single-case observations, not expected savings over all sessions.
+
+Manual source-turn review found no major speaker reversal or unsupported claim
+in either output. The Skill preserved the recent expansion of work duties that
+the baseline omitted. Both omitted the client's explicitly chosen priority of
+recovering evening personal time rather than eliminating meeting anxiety. Thus
+the Skill still needs a counselor's goal clarification; the baseline needs that
+plus the missing work context. These are reviewer-identified edits, not measured
+counselor editing time. No prompt was changed after observing these results.
+
+Evidence is retained in the local validation directory's `live/` folder:
+`live-comparison.json`, `baseline-summary.json`, `skill-summary.json`, and
+`quality-comparison.md`. No Production request, DB access, deployment, account or
+persistent credential file was created. The model process exited successfully.
