@@ -208,7 +208,7 @@ export const extractDocumentMaterial = async (file: File): Promise<DocumentExtra
  */
 export const requestQuickSummary = async (text: string): Promise<NoteDraftResponse> => {
   try {
-    const response = await client.post<GenerateNoteResponse>('/api/notes/quick-summary', { text })
+    const response = await client.post<GenerateNoteResponse>('/api/notes/quick-summary', { text }, { timeout: 310000 })
     return toNoteDraftResponse(response.data)
   } catch (error) {
     throw normalizeApiError(error, '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
