@@ -11,7 +11,8 @@ const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const root = fileURLToPath(new URL('../dist/', import.meta.url))
 const port = 4187
-const origin = process.env.TARGET_URL || ('http://127.0.0.1:' + port)
+const entryUrl = process.env.TARGET_URL || ('http://127.0.0.1:' + port)
+const origin = new URL(entryUrl).origin
 const marker = '합성 회기 인계 확인 문장'
 const section = text => ({ text, evidence_type: 'reported', source_refs: [], needs_review: false })
 const draft = { session_info: { case_id: 'synthetic', session_number: 1, session_date: '2026-10-27', counselor_name: '' } }
@@ -72,7 +73,7 @@ try {
       return route.continue()
     })
     try {
-      await page.goto(origin)
+      await page.goto(entryUrl)
       await page.getByLabel('요약할 상담 내용', { exact: true }).fill('상담사: 오늘은 어떠셨나요? 내담자: 합성사례이며 회의 뒤 긴장한 마음을 이야기했습니다.')
       await page.getByRole('button', { name: '요약하기', exact: true }).click()
       await page.getByRole('checkbox').check()
