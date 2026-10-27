@@ -57,18 +57,14 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       setAuthOpen(true)
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
     }
-    void Promise.all([supabase.auth.getSession(), getAvailableOAuthProviders()]).then(([auth, available]) => {
-      const current = auth.data.session
-      if (current?.user?.is_anonymous) {
-        void client.auth.signOut()
-        setSession(null)
-      } else {
-        setSession(current)
-      }
-      setProviders(available)
-      setLoading(false)
+    let active = true
+    // INITIAL_SESSION and later auth events own session state. Provider discovery can
+    // finish after login, so it must never restore an earlier session snapshot.
+    void getAvailableOAuthProviders().then((available) => {
+      if (active) setProviders(available)
     })
     const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return
       // 과거 익명 세션이 브라우저에 남아 있으면 워크스페이스를 열지 않고 정리한다 (API도 익명 토큰을 거부함)
       if (nextSession?.user?.is_anonymous) {
         void client.auth.signOut()
@@ -84,7 +80,10 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       }
       setLoading(false)
     })
-    return () => data.subscription.unsubscribe()
+    return () => {
+      active = false
+      data.subscription.unsubscribe()
+    }
   }, [])
 
   const openAuth = (nextMode: AuthMode) => {

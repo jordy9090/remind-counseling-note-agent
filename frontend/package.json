@@ -16,6 +16,7 @@
     "verify:persistence-browser": "node scripts/verify-persistence-browser.mjs",
     "verify:persistence-workflow": "node scripts/verify-persistence-workflow.mjs",
     "verify:auth-flow": "node scripts/verify-auth-flow.mjs",
+    "verify:quick-summary-login-browser": "node scripts/verify-quick-summary-login-browser.mjs",
     "verify:case-list": "node scripts/verify-case-list.mjs",
     "verify:deidentification-review": "node scripts/verify-deidentification-review.mjs",
     "preview": "vite preview"
