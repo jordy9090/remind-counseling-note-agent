@@ -17,6 +17,7 @@
     "verify:persistence-workflow": "node scripts/verify-persistence-workflow.mjs",
     "verify:auth-flow": "node scripts/verify-auth-flow.mjs",
     "verify:case-list": "node scripts/verify-case-list.mjs",
+    "verify:deidentification-review": "node scripts/verify-deidentification-review.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

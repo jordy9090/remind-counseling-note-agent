@@ -81,6 +81,8 @@ import RichTextField from '../components/final-document/RichTextField'
 import { hasRichFormatting, plainTextToRichHtml, sanitizeRichHtml } from '../lib/richText'
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
+import DeidentificationReviewModal, { type DeidReviewResult } from '../components/deidentification/DeidentificationReviewModal'
+import { SESSION_REVIEW_FIELDS, sessionReviewSources, type DeidSource } from '../lib/deidentificationReview'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
 import ClientListPage from './ClientListPage'
 import { getMaterialText, getUnappliedReadyMaterials } from '../lib/materialWorkflow'
@@ -309,6 +311,10 @@ export default function SessionDraftPage({
   )
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
+  // Pre-generation de-identification review: open while the counselor checks what goes to the AI.
+  const [reviewSources, setReviewSources] = useState<DeidSource[] | null>(null)
+  // Reviewed texts of the last generation, reused for later AI calls on the same input (supervision report).
+  const reviewedInput = useRef<{ original: Record<string, string>; texts: Record<string, string> } | null>(null)
   const materialsRef = useRef(materials)
   materialsRef.current = materials
   const objectUrlsRef = useRef<Set<string>>(new Set())
@@ -941,6 +947,25 @@ export default function SessionDraftPage({
       return
     }
     if (result && !window.confirm(`저장된 ${form.session_number}회기 요약이 새 요약으로 교체되고, 현재 화면의 편집 내용이 사라집니다. 계속할까요?`)) return
+    setError(null)
+    const transcriptFiles = materials.filter((material) => material.appliedTargets.includes('transcript_text'))
+    setReviewSources(sessionReviewSources(form, transcriptFiles.length === 1 ? transcriptFiles[0].filename : undefined))
+  }
+
+  /** The last reviewed texts, as long as the counselor has not changed the input since. */
+  const reviewedFormFor = (input: SessionInput): SessionInput => {
+    const reviewed = reviewedInput.current
+    if (!reviewed) return input
+    const unchanged = SESSION_REVIEW_FIELDS.every(([key]) => (input[key] ?? '') === reviewed.original[key])
+    return unchanged ? { ...input, ...reviewed.texts } : input
+  }
+
+  /** Runs generation with the texts the counselor confirmed in the review step. */
+  const generateReviewed = async (review: DeidReviewResult) => {
+    setReviewSources(null)
+    const original = Object.fromEntries(SESSION_REVIEW_FIELDS.map(([key]) => [key, form[key] ?? '']))
+    reviewedInput.current = { original, texts: review.texts }
+    const reviewedForm: SessionInput = { ...form, ...review.texts }
     setHasSubmitted(true)
     setError(null)
     setPersistenceError(null)
@@ -952,7 +977,7 @@ export default function SessionDraftPage({
       setLoading: setIsLoading,
       generate: () => isLocalGroundingDemo && groundingDemoNote && !devGroundingDemo?.liveGeneration
         ? Promise.resolve(groundingDemoNote)
-        : generateNoteDraft({ ...form, persist: !isLocalGroundingDemo }),
+        : generateNoteDraft({ ...reviewedForm, persist: !isLocalGroundingDemo }),
       onSuccess: showGeneratedDraft,
       onError: (requestError) => {
         setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
@@ -1294,7 +1319,7 @@ export default function SessionDraftPage({
         const latestSummary = applyCounselorEditsToSummary(originalSummary, draftSections)
 
         const report = await generateSupervisionReport({
-          session_input: { ...form, target_document_type: 'supervision_report', persist: false },
+          session_input: { ...reviewedFormFor(form), target_document_type: 'supervision_report', persist: false },
           session_summary_draft: latestSummary,
           client_alias: getClientAlias(form),
           transcript_mode: form.transcript_text.trim() ? 'full' : 'summary',
@@ -1956,6 +1981,15 @@ export default function SessionDraftPage({
       )}
       </fieldset>
       <GeneratingOverlay active={isLoading} />
+      {reviewSources && (
+        <DeidentificationReviewModal
+          sources={reviewSources}
+          context={{ clientName: getClientAlias(form), counselorName: form.counselor_name }}
+          onBack={() => setReviewSources(null)}
+          onAddMaterial={() => setReviewSources(null)}
+          onConfirm={(review) => void generateReviewed(review)}
+        />
+      )}
     </main>
   )
 }

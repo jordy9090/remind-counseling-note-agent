@@ -118,6 +118,7 @@ jobs:
           pnpm verify:persistence-workflow
           pnpm verify:auth-flow
           pnpm verify:case-list
+          pnpm verify:deidentification-review
 
       - name: Build frontend
         working-directory: frontend

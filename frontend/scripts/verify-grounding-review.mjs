@@ -176,7 +176,8 @@ function findGenerateCallback(node) {
 }
 findGenerateCallback(pageAst)
 assert(generateCallback, 'normal submit must provide the generation callback')
-const invokeGenerate = new Function('isLocalGroundingDemo', 'groundingDemoNote', 'devGroundingDemo', 'generateNoteDraft', 'form', `return (${generateCallback})()`)
+// Generation sends the input as confirmed in the de-identification review step (`reviewedForm`).
+const invokeGenerate = new Function('isLocalGroundingDemo', 'groundingDemoNote', 'devGroundingDemo', 'generateNoteDraft', 'reviewedForm', `return (${generateCallback})()`)
 for (const scenario of [
   { name: 'normal submit', demo: false, live: false, expectedPersist: true },
   { name: 'offline demo', demo: true, live: false, expectedPersist: null },

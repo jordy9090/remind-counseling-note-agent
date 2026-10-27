@@ -9,8 +9,10 @@ import {
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse } from '../../types/session'
+import DeidentificationReviewModal, { type DeidReviewResult } from '../deidentification/DeidentificationReviewModal'
 
 const ACCEPTED_FILES = '.txt,.pdf,.docx'
+const QUICK_SOURCE_KEY = 'quick_summary_text'
 
 /**
  * "간편 요약하기" body shared by the public landing and the signed-in workspace:
@@ -46,6 +48,7 @@ export default function QuickSummaryPanel({
 }) {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -54,14 +57,20 @@ export default function QuickSummaryPanel({
   const length = text.trim().length
   const overLimit = length > QUICK_SUMMARY_MAX_CHARS
 
-  const summarize = async () => {
+  /** Validates, then opens the review step; generation starts from the modal. */
+  const summarize = () => {
     if (loading) return
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
     if (overLimit) return setError(`간편 요약은 ${QUICK_SUMMARY_MAX_CHARS.toLocaleString()}자까지 입력할 수 있어요.`)
     setError(null)
+    setReviewing(true)
+  }
+
+  const summarizeReviewed = async (review: DeidReviewResult) => {
+    setReviewing(false)
     setLoading(true)
     try {
-      onResult(toResult(await requestQuickSummary(text)))
+      onResult(toResult(await requestQuickSummary(review.texts[QUICK_SOURCE_KEY] ?? text)))
       setCopied(false)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
@@ -195,7 +204,7 @@ export default function QuickSummaryPanel({
             </div>
             <button
               type="button"
-              onClick={() => void summarize()}
+              onClick={summarize}
               disabled={loading || extracting}
               className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-6 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-60"
             >
@@ -209,6 +218,15 @@ export default function QuickSummaryPanel({
       {!result && <p className="mt-4 w-full text-center text-xs leading-5 text-grey-500">{privacyNote}</p>}
 
       {below && <div className="mt-6 w-full">{below}</div>}
+
+      {reviewing && (
+        <DeidentificationReviewModal
+          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text }]}
+          context={{}}
+          onBack={() => setReviewing(false)}
+          onConfirm={(review) => void summarizeReviewed(review)}
+        />
+      )}
     </section>
   )
 }
