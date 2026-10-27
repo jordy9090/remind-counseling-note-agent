@@ -30,7 +30,11 @@ SECTION_GUIDANCE = {
     "B-2": ["합의된 목표, 상담자의 임상적 목표, 목표 달성을 위한 구체적 전략을 각각 구분합니다."],
     "B-3": ["상담사가 수퍼비전에서 도움받고 싶은 점을 구체적으로 직접 수정합니다."],
     "C-1": ["최대 회기 수와 상담일·시간·주제, 취소·지각·결석 및 이전 수퍼비전을 시간순으로 기록합니다."],
-    "C-2": ["완전 축어록은 원문과 침묵시간을 보존하고, 축약 요약은 사건·인지·감정·행동·개입·반응을 구분합니다."],
+    "C-2": [
+        "완전 축어록은 원문과 침묵시간을 보존하고, 화자별로 번호를 매깁니다(내1, 상1).",
+        "축약 회기는 내담자에게 일어난 사건, 그에 대한 인지적 평가, 결과로 일어난 감정과 행동반응이 드러나게 요약합니다.",
+        "상담자의 개입방향 설명과 내적 경험은 회기 내용에 넣지 않고 아래 박스에 3줄 이내로 정리합니다.",
+    ],
 }
 
 
@@ -194,16 +198,25 @@ def generate_section_C(state: SupervisionReportState) -> dict[str, Any]:
     if request.transcript_mode == "full" and transcript:
         content_blocks.append(SupervisionContentBlock(id="C-2.transcript", type="transcript", label="완전 축어록", speakerTurns=transcript, evidenceIds=[turn.turnId for turn in transcript], reviewStatus="needs_human_input", evidenceStatus="direct", warnings=["원문 발화와 침묵시간을 제출 전 대조하세요."]))
     # Keep the counselor's current summary visible alongside the source transcript.
+    # Form: the condensed session describes the client's events, appraisal, emotions and behavior;
+    # the counselor's intervention direction and inner experience go into the box after it.
     if summary is not None or request.transcript_mode != "full" or not transcript:
-        content_blocks.append(SupervisionContentBlock(id="C-2.summary", type="table", label="회기 축약 요약", rows=[{
-            "주요 사건": _soften_clinical_language(summary.session_content.text) if summary else PLACEHOLDER,
-            "인지적 평가": PLACEHOLDER,
-            "관련 감정": PLACEHOLDER,
-            "행동 반응": PLACEHOLDER,
-            "상담자의 개입": _soften_clinical_language(summary.counselor_intervention.text) if summary else PLACEHOLDER,
-            "내담자의 반응": _soften_clinical_language(summary.client_response.text) if summary else PLACEHOLDER,
-        }], evidenceIds=_existing(state, "current_summary.session_content", "current_summary.counselor_intervention", "current_summary.client_response"), reviewStatus="needs_human_input", evidenceStatus="ai_organized" if summary else "missing", missingInputs=[] if summary else ["회기요약 또는 축어록"]))
-    content_blocks.append(SupervisionContentBlock(id="C-2.reflection", type="reflection_box", label="상담자 reflection", text=_soften_clinical_language(summary.reflection.text) if summary else PLACEHOLDER, evidenceIds=_existing(state, "current_summary.reflection"), reviewStatus="needs_human_input", evidenceStatus="clinical_review" if summary and summary.reflection.text != PLACEHOLDER else "missing", missingInputs=["상담자의 실제 내적 경험과 개입 의도"] if not summary or summary.reflection.text == PLACEHOLDER else [], warnings=["상담자의 내적 경험과 개입 방향은 회기 본문과 분리해 검토합니다."]))
+        condensed = "\n".join(text for text in (
+            _summary_text(summary, "session_content"), _summary_text(summary, "client_response"),
+        ) if text) or PLACEHOLDER
+        content_blocks.append(_paragraph(
+            "C-2.summary", condensed,
+            _existing(state, "current_summary.session_content", "current_summary.client_response"),
+            ["사건에 대한 내담자의 인지적 평가와 그 결과로 일어난 감정·행동반응이 드러나는지 확인하세요."],
+            "needs_human_input", label="회기 축약 내용",
+            evidence_status="ai_organized" if condensed != PLACEHOLDER else "missing",
+            missing_inputs=[] if condensed != PLACEHOLDER else ["회기요약 또는 축어록"],
+        ))
+    intervention, inner = _summary_text(summary, "counselor_intervention"), _summary_text(summary, "reflection")
+    reflection = "\n".join(line for line in (
+        f"개입방향: {intervention}" if intervention else "", f"내적 경험: {inner}" if inner else "",
+    ) if line) or PLACEHOLDER
+    content_blocks.append(SupervisionContentBlock(id="C-2.reflection", type="reflection_box", label="상담자 reflection", text=reflection, evidenceIds=_existing(state, "current_summary.counselor_intervention", "current_summary.reflection"), reviewStatus="needs_human_input", evidenceStatus="clinical_review" if inner else "missing", missingInputs=[] if inner else ["상담자의 실제 내적 경험과 개입 의도"], warnings=["상담자의 개입방향과 내적 경험은 회기 본문과 분리해 3줄 이내로 정리합니다."]))
     return {"sections_c": [
         _heading("C", "C. 상담진행 과정과 상담내용"),
         _section("C-1", "C-1. 상담진행 과정 및 회기주제", [
@@ -409,6 +422,12 @@ def _parse_transcript(text: str) -> list[dict[str, Any]]:
 def _sentences(text: str) -> list[str]:
     compact = " ".join((text or "").split())
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+|(?<=다\.)\s+", compact) if part.strip()]
+
+
+def _summary_text(summary: SessionSummaryDraft | None, field: str) -> str:
+    """Softened summary text, or "" when the field is empty or still a placeholder."""
+    text = (getattr(summary, field).text if summary else "").strip()
+    return "" if not text or text == PLACEHOLDER else _soften_clinical_language(text)
 
 
 def _soften_clinical_language(text: str) -> str:

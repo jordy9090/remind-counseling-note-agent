@@ -47,3 +47,23 @@ export function applyCounselorEditsToSummary(
     },
   }
 }
+
+/**
+ * Transcript labels as the supervision form numbers them: each speaker has its own count
+ * ("상1", "내1", "상2", "내2", ...). Other speakers keep a plain "기타".
+ */
+export function transcriptTurnLabels(turns: { speaker: string }[]): string[] {
+  let counselor = 0
+  let client = 0
+  return turns.map((turn) => {
+    if (turn.speaker === 'client') return `내${++client}`
+    if (turn.speaker === 'counselor') return `상${++counselor}`
+    return '기타'
+  })
+}
+
+/** Speaker of an edited transcript line: "내1", "내담자", "client" → client; everything else → counselor. */
+export function transcriptLineSpeaker(label: string): 'client' | 'counselor' {
+  const value = label.trim().toLowerCase()
+  return value.startsWith('내') || value.includes('client') ? 'client' : 'counselor'
+}

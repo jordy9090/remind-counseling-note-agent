@@ -424,10 +424,9 @@ def _reportlab_block(block: DocumentContentBlock, body, label_style) -> list[obj
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         elements.append(table)
-    for turn in block.speaker_turns:
-        speaker = {"client": "내담자", "counselor": "상담자", "other": "기타"}.get(turn.speaker, "기타")
+    for label, turn in zip(transcript_turn_labels(block.speaker_turns), block.speaker_turns):
         silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds else ""
-        elements.append(Paragraph(f"<b>{speaker}:</b> {html.escape(turn.text)}{silence}", body))
+        elements.append(Paragraph(f"<b>{label}:</b> {html.escape(turn.text)}{silence}", body))
     rich = block_rich_paragraphs(block)
     if rich is not None:
         elements.extend(_reportlab_rich(rich, body))
@@ -487,6 +486,20 @@ def _list_prefix(paragraph: RichParagraph) -> str:
     if paragraph.list_kind == "number":
         return f"{paragraph.number or 1}. "
     return ""
+
+
+def transcript_turn_labels(turns: Iterable[object]) -> list[str]:
+    """Labels as the supervision form numbers them: per speaker ("상1", "내1", "상2", ...)."""
+    counts = {"client": 0, "counselor": 0}
+    labels: list[str] = []
+    for turn in turns:
+        speaker = getattr(turn, "speaker", "")
+        if speaker in counts:
+            counts[speaker] += 1
+            labels.append(f"{'내' if speaker == 'client' else '상'}{counts[speaker]}")
+        else:
+            labels.append("기타")
+    return labels
 
 
 def humanize_metadata_key(key: str) -> str:
@@ -678,10 +691,9 @@ def add_block_to_docx(document, block: DocumentContentBlock, font_name: str) -> 
         add_table_block_to_docx(document, block.rows, font_name)
         return
     if block.type == "transcript" and block.speaker_turns:
-        for index, turn in enumerate(block.speaker_turns, 1):
-            label = "내담자" if turn.speaker == "client" else "상담자" if turn.speaker == "counselor" else "화자"
+        for label, turn in zip(transcript_turn_labels(block.speaker_turns), block.speaker_turns):
             silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds is not None else ""
-            add_docx_text_line(document, f"{index}. {label}: {turn.text}{silence}", font_name)
+            add_docx_text_line(document, f"{label}: {turn.text}{silence}", font_name)
         return
     rich = block_rich_paragraphs(block)
     if block.type == "reflection_box":
@@ -915,12 +927,11 @@ def render_block_html(block: DocumentContentBlock) -> str:
         return f"{label_html}<table class=\"content-table\"><thead><tr>{header_html}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
     if block.type == "transcript" and block.speaker_turns:
         turns = []
-        for index, turn in enumerate(block.speaker_turns, 1):
-            label = "내담자" if turn.speaker == "client" else "상담자" if turn.speaker == "counselor" else "화자"
+        for label, turn in zip(transcript_turn_labels(block.speaker_turns), block.speaker_turns):
             silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds is not None else ""
             turns.append(
                 "<div class=\"transcript-turn\">"
-                f"<strong>{index}. {escape_text(label)}</strong>"
+                f"<strong>{escape_text(label)}:</strong>"
                 f"<span>{escape_text(turn.text + silence)}</span>"
                 "</div>"
             )

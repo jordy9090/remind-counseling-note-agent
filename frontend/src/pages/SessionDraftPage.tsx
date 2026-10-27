@@ -93,7 +93,7 @@ import {
   type GroundingReviewItem,
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
-import { applyCounselorEditsToSummary } from '../lib/supervisionDraft'
+import { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } from '../lib/supervisionDraft'
 import { riskInformation, summarySectionEvidence } from '../lib/summaryEvidence'
 import { formatRelationalSupervisionMemo } from '../lib/relationalInsights'
 import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord, sessionThemeText } from '../lib/persistenceWorkflow'
@@ -1892,6 +1892,9 @@ export default function SessionDraftPage({
                       setEditingSupervisionText(text)
                       setEditingSupervisionHtml(html ?? null)
                     }}
+                    onChangeMeta={(field, value) => setSupervisionReportDraft((current) => (
+                      current ? { ...current, meta: { ...current.meta, [field]: value } } : current
+                    ))}
                     onCommitEdit={commitEditSupervisionBlock}
                     onToggleEvidence={setExpandedSupervisionEvidenceId}
                   />
@@ -2522,6 +2525,14 @@ function FinalDocumentWorkspace({
   )
 }
 
+type SupervisionHeaderField = 'counselorName' | 'institution' | 'supervisor' | 'supervisionDatePlace'
+
+/** Header table of the 수퍼비전 보고서 form: two rows of (label, field) pairs. */
+const SUPERVISION_HEADER_ROWS: [string, SupervisionHeaderField][][] = [
+  [['상담자', 'counselorName'], ['소속 상담기관', 'institution']],
+  [['수퍼바이저', 'supervisor'], ['수퍼비전 일시 및 장소', 'supervisionDatePlace']],
+]
+
 function SupervisionReportWorkspace({
   editingBlockId,
   editingHtml,
@@ -2531,6 +2542,7 @@ function SupervisionReportWorkspace({
   isLoading,
   onBeginEdit,
   onChangeEditingText,
+  onChangeMeta,
   onCommitEdit,
   onToggleEvidence,
   report,
@@ -2542,6 +2554,7 @@ function SupervisionReportWorkspace({
   expandedEvidenceId: string | null
   isLoading: boolean
   onBeginEdit: (block: SupervisionContentBlock) => void
+  onChangeMeta: (field: SupervisionHeaderField, value: string) => void
   onChangeEditingText: (value: string, html?: string) => void
   onCommitEdit: () => void
   onToggleEvidence: (blockId: string | null) => void
@@ -2589,16 +2602,21 @@ function SupervisionReportWorkspace({
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[620px] border-collapse text-[12px] sm:text-[13px]">
             <tbody>
-              {[
-                ['상담자', report.meta.counselorName, '소속 상담기관', report.meta.institution],
-                ['수퍼바이저', report.meta.supervisor, '수퍼비전 일시 및 장소', report.meta.supervisionDatePlace],
-              ].map((row) => (
-                <tr key={row[0]}>
-                  {row.map((value, index) => index % 2 === 0 ? (
-                    <th key={`${row[0]}-${index}`} className="w-[18%] border border-slate-500 bg-slate-100 px-2 py-2 text-left font-bold">{value}</th>
-                  ) : (
-                    <td key={`${row[0]}-${index}`} className="w-[32%] border border-slate-500 px-2 py-2 font-semibold">{cleanSupervisionText(value)}</td>
-                  ))}
+              {SUPERVISION_HEADER_ROWS.map((row) => (
+                <tr key={row[0][0]}>
+                  {row.map(([label, field]) => [
+                    <th key={`${field}-label`} className="w-[18%] border border-slate-500 bg-slate-100 px-2 py-2 text-left font-bold">{label}</th>,
+                    // The form's header cells are filled in by the counselor; the export reads report.meta.
+                    <td key={field} className="w-[32%] border border-slate-500 p-0 font-semibold">
+                      <input
+                        aria-label={label}
+                        className="h-full w-full bg-transparent px-2 py-2 outline-none placeholder:font-normal placeholder:text-slate-400 focus:bg-primary-50"
+                        placeholder="입력"
+                        value={cleanSupervisionText(report.meta[field])}
+                        onChange={(event) => onChangeMeta(field, event.target.value)}
+                      />
+                    </td>,
+                  ])}
                 </tr>
               ))}
             </tbody>
@@ -2808,11 +2826,12 @@ function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) 
   }
 
   if (block.type === 'transcript' && block.speakerTurns?.length) {
+    const labels = transcriptTurnLabels(block.speakerTurns)
     return (
       <div className="space-y-2">
         {block.speakerTurns.map((turn, index) => (
-          <div key={turn.turnId} className="grid gap-2 border-b border-slate-200 px-2 py-2 text-[13px] font-semibold leading-5 last:border-b-0 sm:grid-cols-[88px_minmax(0,1fr)]">
-            <span className="text-slate-800">{index + 1}. {turn.speaker === 'client' ? '내담자' : '상담자'}</span>
+          <div key={turn.turnId} className="grid gap-2 border-b border-slate-200 px-2 py-2 text-[13px] font-semibold leading-5 last:border-b-0 sm:grid-cols-[56px_minmax(0,1fr)]">
+            <span className="text-slate-800">{labels[index]}:</span>
             <span className="text-slate-900">{turn.text}{turn.silenceSeconds != null ? ` (침묵 ${turn.silenceSeconds}초)` : ''}</span>
           </div>
         ))}
@@ -3865,9 +3884,8 @@ function supervisionBlockToEditableText(block: SupervisionContentBlock): string 
     return [headers.join('\t'), ...block.rows.map((row) => headers.map((header) => cleanSupervisionText(row[header])).join('\t'))].join('\n')
   }
   if (block.type === 'transcript' && block.speakerTurns?.length) {
-    return block.speakerTurns
-      .map((turn) => `${turn.speaker === 'client' ? '내담자' : '상담자'}: ${turn.text}`)
-      .join('\n')
+    const labels = transcriptTurnLabels(block.speakerTurns)
+    return block.speakerTurns.map((turn, index) => `${labels[index]}: ${turn.text}`).join('\n')
   }
   return cleanSupervisionText(block.text)
 }
@@ -3932,7 +3950,7 @@ function parseSupervisionTranscriptText(text: string, blockId: string) {
     .map((line, index) => {
       const [speakerRaw, ...rest] = line.split(':')
       const textValue = rest.join(':').trim() || line
-      const speaker = speakerRaw.includes('내담') || speakerRaw.toLowerCase().includes('client') ? 'client' : 'counselor'
+      const speaker = transcriptLineSpeaker(speakerRaw)
       return {
         turnId: `${blockId}.edited_${index + 1}`,
         speaker,
