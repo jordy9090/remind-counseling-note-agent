@@ -215,6 +215,26 @@ export const requestQuickSummary = async (text: string): Promise<NoteDraftRespon
   }
 }
 
+export interface DeidPreviewItem {
+  original: string
+  replacement: string
+  category: 'name' | 'occupation' | 'organization' | 'age' | 'location' | 'birth_date'
+}
+
+/** Model-detected identifiers for the pre-generation review step. Public (guests use it before a quick summary). */
+export const requestDeidentificationPreview = async (payload: {
+  texts: string[]
+  client_name?: string
+  counselor_name?: string
+}): Promise<DeidPreviewItem[]> => {
+  try {
+    const response = await client.post<{ items: DeidPreviewItem[] }>('/api/notes/deidentification-preview', payload, { timeout: 60000 })
+    return response.data.items
+  } catch (error) {
+    throw normalizeApiError(error, '식별 정보를 찾지 못했어요. 직접 확인해주세요.')
+  }
+}
+
 export const getAudioCapabilities = async (): Promise<AudioCapabilitiesResponse> => {
   const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities')
   return response.data
