@@ -57,6 +57,7 @@ try {
       if (pathname.endsWith('/auth/v1/user')) return reply(user)
       if (url.origin !== origin) return route.abort()
       if (pathname === '/api/notes/quick-summary') return reply(response)
+      if (pathname === '/api/notes/deidentification-preview') return reply({ items: [] })
       if (pathname === '/api/notes/drafts') {
         if (req.method() === 'POST') {
           draftWrites.push(req.postDataJSON())
