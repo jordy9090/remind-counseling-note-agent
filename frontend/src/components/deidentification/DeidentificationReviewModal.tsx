@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Loader2, PenLine, Plus, Sparkles, X } from 'lucide-react'
 
+import { requestDeidentificationPreview } from '../../api/client'
 import ModalShell from '../app-shell/ModalShell'
 import { OutlineButton, PrimaryButton } from '../app-shell/ui'
 import {
@@ -53,6 +54,7 @@ export default function DeidentificationReviewModal({
 }) {
   const [items, setItems] = useState<DeidItem[]>([])
   const [detecting, setDetecting] = useState(true)
+  const [remoteFailed, setRemoteFailed] = useState(false)
   const [tab, setTab] = useState<'original' | 'ai'>('original')
   const [activeKey, setActiveKey] = useState(sources[0]?.key ?? '')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -67,8 +69,16 @@ export default function DeidentificationReviewModal({
 
   useEffect(() => {
     let cancelled = false
-    detectDeidentificationItems(sources.map((source) => source.text), context)
-      .then((detected) => { if (!cancelled) setItems(detected) })
+    detectDeidentificationItems(sources.map((source) => source.text), context, (texts, known) => requestDeidentificationPreview({
+      texts,
+      client_name: known.clientName ?? '',
+      counselor_name: known.counselorName ?? '',
+    }))
+      .then((detected) => {
+        if (cancelled) return
+        setItems(detected.items)
+        setRemoteFailed(detected.remoteFailed)
+      })
       .catch(() => { if (!cancelled) setItems([]) })
       .finally(() => { if (!cancelled) setDetecting(false) })
     return () => { cancelled = true }
@@ -220,6 +230,11 @@ export default function DeidentificationReviewModal({
           </span>
           {!detecting && reviewCount > 0 && (
             <span className="inline-flex h-9 items-center rounded-[10px] bg-danger-50 px-3 text-sm font-bold text-danger-500">확인 필요 {reviewCount}건</span>
+          )}
+          {!detecting && remoteFailed && (
+            <p role="status" className="flex items-center text-xs text-grey-500">
+              이름·기관·지역 등 일부 항목을 자동으로 찾지 못했어요. 원문을 보고 직접 추가해주세요.
+            </p>
           )}
         </div>
 

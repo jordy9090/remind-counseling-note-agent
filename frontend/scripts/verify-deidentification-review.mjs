@@ -20,7 +20,8 @@ const transcript = [
 ].join('\n')
 
 {
-  const items = await lib.detectDeidentificationItems([transcript], { clientName: '가나다', counselorName: '' })
+  const { items, remoteFailed } = await lib.detectDeidentificationItems([transcript], { clientName: '가나다', counselorName: '' })
+  assert.equal(remoteFailed, false)
   const byOriginal = Object.fromEntries(items.map((item) => [item.original, item]))
   assert.equal(byOriginal['가나다'].replacement, '내담자 A')
   assert.equal(byOriginal['나다'].replacement, '내담자 A')
@@ -41,6 +42,34 @@ const transcript = [
   assert.ok(sent.includes('[010********]'))
   assert.ok(sent.includes('7살 때'))
   console.log('replacement: passed')
+}
+
+{
+  // Server items (anyone's name, organizations, ...) are merged; local rules win on duplicates.
+  const text = '내담자: 가나다예요. 친구 마바사랑 한빛소프트에 다녀요. 32세예요.'
+  const remote = async (texts, context) => {
+    assert.deepEqual(texts, [text])
+    assert.equal(context.clientName, '가나다')
+    return [
+      { original: '가나다', replacement: '다른 라벨' },
+      { original: '마바사', replacement: '인물 B' },
+      { original: '한빛소프트', replacement: '회사' },
+      { original: '32세', replacement: '30대' },
+      { original: '본문에없음', replacement: 'X' },
+    ]
+  }
+  const merged = await lib.detectDeidentificationItems([text], { clientName: '가나다' }, remote)
+  const byOriginal = Object.fromEntries(merged.items.map((item) => [item.original, item.replacement]))
+  assert.equal(byOriginal['가나다'], '내담자 A')
+  assert.equal(byOriginal['마바사'], '인물 B')
+  assert.equal(byOriginal['한빛소프트'], '회사')
+  assert.equal(merged.items.filter((item) => item.original === '32세').length, 1)
+  assert.equal(byOriginal['본문에없음'], undefined)
+
+  const failed = await lib.detectDeidentificationItems([text], { clientName: '가나다' }, async () => { throw new Error('offline') })
+  assert.equal(failed.remoteFailed, true)
+  assert.deepEqual(failed.items.map((item) => item.original).sort(), ['32세', '가나다'])
+  console.log('server merge: passed')
 }
 
 {

@@ -34,6 +34,14 @@ from app.services.quick_summary import (
     rate_limiter,
 )
 from app.services.storage_deidentification import deidentify_session_input
+from app.services.deidentification_preview import (
+    ANONYMOUS_PREVIEW_LIMIT,
+    AUTHENTICATED_PREVIEW_LIMIT,
+    DeidentificationPreviewInputError,
+    DeidentificationPreviewRequest,
+    DeidentificationPreviewResponse,
+    preview_items,
+)
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
@@ -73,6 +81,15 @@ async def quick_summary(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> GenerateNoteResponse:
     return run_quick_summary(payload, request=request, authorization=authorization)
+
+
+@router.post("/deidentification-preview", response_model=DeidentificationPreviewResponse)
+async def deidentification_preview(
+    payload: DeidentificationPreviewRequest,
+    request: Request,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> DeidentificationPreviewResponse:
+    return run_deidentification_preview(payload, request=request, authorization=authorization)
 
 
 @router.post("/confirm", response_model=ConfirmGeneratedNoteResponse)
@@ -214,6 +231,32 @@ def _optional_actor(authorization: str | None) -> str | None:
         return str(_require_supabase_user(authorization))
     except HTTPException:
         return None
+
+
+def run_deidentification_preview(
+    payload: DeidentificationPreviewRequest,
+    *,
+    request: Request,
+    authorization: str | None,
+) -> DeidentificationPreviewResponse:
+    """Public like the quick summary (guests review before summarizing). Nothing is stored or logged."""
+    actor = _optional_actor(authorization)
+    key, _, _ = rate_limit_key(client_ip=client_ip(request), actor=actor)
+    limit, window = AUTHENTICATED_PREVIEW_LIMIT if actor else ANONYMOUS_PREVIEW_LIMIT
+    try:
+        rate_limiter.check(f"deid-preview:{key}", limit, window)
+    except QuickSummaryRateLimited as error:
+        raise HTTPException(
+            status_code=429,
+            detail="확인 요청이 너무 많아요. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
+    try:
+        return preview_items(payload.texts, client_name=payload.client_name, counselor_name=payload.counselor_name)
+    except DeidentificationPreviewInputError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception:
+        raise HTTPException(status_code=502, detail="식별 정보를 찾지 못했어요. 직접 확인해주세요.") from None
 
 
 def run_quick_summary(
