@@ -127,8 +127,63 @@ class SupervisionFormTests(unittest.TestCase):
         ))
         blocks = {block.id: block for item in report.sections for block in item.contentBlocks}
         self.assertIn("C-2.transcript", blocks)
-        self.assertEqual(blocks["C-2.summary"].rows[0]["주요 사건"], "상담사가 수정한 합성 회기 내용")
-        self.assertEqual(blocks["C-2.summary"].rows[0]["상담자의 개입"], "")
+        self.assertEqual(blocks["C-2.summary"].type, "paragraph")
+        self.assertEqual(blocks["C-2.summary"].text, "상담사가 수정한 합성 회기 내용")
+
+    def test_condensed_session_keeps_counselor_intervention_in_the_reflection_box(self):
+        # Form C-2 4): the counselor's intervention direction and inner experience are not part of the
+        # condensed session content; they follow it in a box.
+        section = lambda text: {"text": text, "evidence_type": "direct", "source_refs": []}
+        summary = {
+            "session_info": {"case_id": "CASE-TEST", "session_number": 1,
+                             "session_date": "2026-09-14", "counselor_name": "합성 상담사"},
+            "session_theme": section("합성 주제"),
+            "presenting_problem": section("합성 호소"),
+            "session_content": section("합성 사건 요약"),
+            "counselor_intervention": section("합성 개입 내용"),
+            "client_response": section("합성 내담자 반응"),
+            "reflection": section("합성 내적 경험"),
+            "next_plan": section("합성 계획"),
+        }
+        report = run_supervision_report_pipeline(request_for(session_summary_draft=summary))
+        blocks = {block.id: block for item in report.sections for block in item.contentBlocks}
+        condensed, box = blocks["C-2.summary"], blocks["C-2.reflection"]
+        self.assertEqual(condensed.text, "합성 사건 요약\n합성 내담자 반응")
+        self.assertNotIn("합성 개입 내용", condensed.text)
+        self.assertEqual(box.type, "reflection_box")
+        self.assertEqual(box.text, "개입방향: 합성 개입 내용\n내적 경험: 합성 내적 경험")
+
+    def test_transcript_uses_per_speaker_numbers_in_every_export(self):
+        export_request = DocumentExportRequest(
+            format="docx",
+            document_type="supervision_report",
+            case_id="CASE-TEST",
+            session_number=1,
+            session_date="2026-08-22",
+            title="개인상담(공개상담) 사례 수퍼비전 보고서",
+            metadata={"counselor_name": "상담자", "institution": "기관", "supervisor": "합성 수퍼바이저",
+                      "supervision_date_place": "2026-09-01 상담실"},
+            sections=[{"id": "C-2", "title": "C-2. 상담회기 내용", "level": 2, "contentBlocks": [{
+                "id": "C-2.transcript", "type": "transcript", "label": "완전 축어록",
+                "speakerTurns": [
+                    {"turnId": "t1", "speaker": "client", "text": "합성 발화 하나", "silenceSeconds": 5},
+                    {"turnId": "t2", "speaker": "counselor", "text": "합성 발화 둘"},
+                    {"turnId": "t3", "speaker": "client", "text": "합성 발화 셋"},
+                ],
+            }]}],
+        )
+        lines = [paragraph.text for paragraph in Document(BytesIO(DocxDocumentExporter().export(export_request))).paragraphs]
+        self.assertIn("내1: 합성 발화 하나 (침묵 5초)", lines)
+        self.assertIn("상1: 합성 발화 둘", lines)
+        self.assertIn("내2: 합성 발화 셋", lines)
+        html = render_pdf_html(export_request)
+        self.assertIn("<strong>내2:</strong>", html)
+        self.assertNotIn("내담자", html.split("transcript-turn", 1)[-1].split("</div>", 1)[0])
+        document = Document(BytesIO(DocxDocumentExporter().export(export_request)))
+        self.assertEqual(document.tables[0].cell(1, 1).text, "합성 수퍼바이저")
+        self.assertEqual(document.tables[0].cell(1, 3).text, "2026-09-01 상담실")
+        pdf = PdfDocumentExporter().export(export_request.model_copy(update={"format": "pdf"}))
+        self.assertTrue(pdf.startswith(b"%PDF-"))
 
     def test_full_transcript_accepts_counselor_label_used_by_the_ui(self):
         request = request_for(transcript_mode="full")

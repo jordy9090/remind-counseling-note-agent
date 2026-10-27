@@ -16,7 +16,7 @@ const transpiled = ts.transpileModule(source, {
 })
 fs.writeFileSync(outputPath, transpiled.outputText, 'utf8')
 
-const { applyCounselorEditsToSummary } = await import(pathToFileURL(outputPath).href)
+const { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } = await import(pathToFileURL(outputPath).href)
 const section = (text, sourceRefs) => ({
   text,
   evidence_type: 'mixed',
@@ -56,5 +56,12 @@ const pageSource = fs.readFileSync(path.resolve('src/pages/SessionDraftPage.tsx'
 assert(pageSource.includes('applyCounselorEditsToSummary(originalSummary, draftSections)'), 'supervision request must use current draftSections')
 assert(pageSource.includes('markGroundingItemsStale(section.groundingItems)'), 'counselor edits must still mark grounding stale')
 assert(pageSource.includes('rows: block.rows || []'), 'supervision export must normalize nullable rows')
+
+// Supervision form C-2: transcript turns are numbered per speaker (내1, 상1, 내2).
+const turnLabels = transcriptTurnLabels([{ speaker: 'counselor' }, { speaker: 'client' }, { speaker: 'counselor' }, { speaker: 'client' }, { speaker: 'other' }])
+assert(turnLabels.join(',') === '상1,내1,상2,내2,기타', `per-speaker transcript labels: ${turnLabels.join(',')}`)
+for (const label of ['내1', '내담자', 'client']) assert(transcriptLineSpeaker(label) === 'client', `client label: ${label}`)
+for (const label of ['상1', '상담자', '상담사']) assert(transcriptLineSpeaker(label) === 'counselor', `counselor label: ${label}`)
+assert(pageSource.includes('onChangeMeta={(field, value)'), 'supervision header cells must be editable')
 
 console.log('Counselor edit -> supervision request regression verification passed.')

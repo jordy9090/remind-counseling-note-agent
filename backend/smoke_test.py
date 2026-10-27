@@ -1679,7 +1679,9 @@ def main() -> None:
         supervision_docx_text = _extract_docx_text(supervision_docx_response.content)
         assert "개인상담 사례 수퍼비전 보고서" in supervision_docx_text
         assert "수정된 pending edit" in supervision_docx_text
-        assert "내담자: 계속 망했다는 생각이 들어요." in supervision_docx_text
+        # Supervision form C-2: per-speaker numbering (내1, 상1).
+        assert "내1: 계속 망했다는 생각이 들어요." in supervision_docx_text
+        assert "상1: 그 생각의 근거를 함께 보겠습니다." in supervision_docx_text
         assert "영역" in supervision_docx_text
         assert "불안 80" in supervision_docx_text
 
