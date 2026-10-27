@@ -90,20 +90,61 @@ export function ageBand(age: number): string {
   return `${Math.floor(age / 10) * 10}대`
 }
 
-function personNameForms(name: string): string[] {
+function countOf(text: string, needle: string): number {
+  return needle ? text.split(needle).length - 1 : 0
+}
+
+/** The name, plus its given-name form when that also appears on its own ("길동이", "길동 씨"). */
+function personNameForms(name: string, text: string): string[] {
   const trimmed = name.trim()
   if (trimmed.length < 2) return []
   const forms = [trimmed]
-  // Korean three-letter names are often used without the family name ("길동이", "길동 씨").
-  if (/^[가-힣]{3}$/.test(trimmed)) forms.push(trimmed.slice(1))
+  if (/^[가-힣]{3}$/.test(trimmed) && countOf(text, trimmed.slice(1)) > countOf(text, trimmed)) forms.push(trimmed.slice(1))
   return forms
 }
 
+/** Model-detected item from the server (names of anyone, organizations, places, occupations, ...). */
+export interface RemoteDeidItem {
+  original: string
+  replacement: string
+}
+
+export type RemoteDeidDetector = (texts: string[], context: DeidDetectionContext) => Promise<RemoteDeidItem[]>
+
+export interface DeidDetection {
+  items: DeidItem[]
+  /** The server detection failed; only the local rules ran. */
+  remoteFailed: boolean
+}
+
 /**
- * Local detection on the given texts. Each distinct expression becomes one item; the same
- * expression in several sources shares the item.
+ * Local rules plus, when given, the server's model detection. Each distinct expression becomes one
+ * item (local rules win on duplicates); the same expression in several sources shares the item.
  */
-export async function detectDeidentificationItems(texts: string[], context: DeidDetectionContext = {}): Promise<DeidItem[]> {
+export async function detectDeidentificationItems(
+  texts: string[],
+  context: DeidDetectionContext = {},
+  remote?: RemoteDeidDetector,
+): Promise<DeidDetection> {
+  const items = detectLocalDeidItems(texts, context)
+  if (!remote) return { items, remoteFailed: false }
+  try {
+    const joined = texts.join('\n')
+    const known = new Set(items.map((item) => item.original))
+    for (const found of await remote(texts, context)) {
+      const original = found.original.trim()
+      if (original.length < 2 || known.has(original) || !joined.includes(original) || !found.replacement.trim()) continue
+      known.add(original)
+      items.push({ id: newDeidItemId(), original, replacement: found.replacement.trim(), kind: 'auto', origin: 'detected' })
+    }
+    return { items, remoteFailed: false }
+  } catch {
+    return { items, remoteFailed: true }
+  }
+}
+
+/** Deterministic rules only (registered names, contacts, exact dates, current ages). */
+export function detectLocalDeidItems(texts: string[], context: DeidDetectionContext = {}): DeidItem[] {
   const found = new Map<string, DeidItem>()
   const add = (original: string, replacement: string, kind: DeidItemKind) => {
     const key = original.trim()
@@ -112,10 +153,10 @@ export async function detectDeidentificationItems(texts: string[], context: Deid
   }
   const joined = texts.join('\n')
 
-  for (const form of personNameForms(context.clientName ?? '')) {
+  for (const form of personNameForms(context.clientName ?? '', joined)) {
     if (joined.includes(form)) add(form, '내담자 A', 'auto')
   }
-  for (const form of personNameForms(context.counselorName ?? '')) {
+  for (const form of personNameForms(context.counselorName ?? '', joined)) {
     if (joined.includes(form)) add(form, '상담자', 'auto')
   }
   for (const match of joined.matchAll(RESIDENT_NUMBER)) add(match[0], '******-*******', 'auto')

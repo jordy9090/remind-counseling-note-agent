@@ -8,6 +8,10 @@
       "destination": "/api/notes/generate?scope=quick"
     },
     {
+      "source": "/api/notes/deidentification-preview",
+      "destination": "/api/notes/generate?scope=deid-preview"
+    },
+    {
       "source": "/api/cases/:case_id/quick-summary",
       "destination": "/api/cases/dashboard?case_id=:case_id&scope=quick-summary"
     },

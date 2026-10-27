@@ -59,7 +59,10 @@ WRAPPER_MODULES = {
 APPS = {"backend": app, **{name: module.app for name, module in WRAPPER_MODULES.items()}}
 # Routes that intentionally work without login. Each one must be listed in
 # docs/security/data-inventory-and-access-matrix.md and covered by its own guest test below.
-PUBLIC_ROUTES = {("backend", "/api/notes/quick-summary"), ("generate", "/api/notes/quick-summary")}
+QUICK_SUMMARY_ROUTES = {("backend", "/api/notes/quick-summary"), ("generate", "/api/notes/quick-summary")}
+# The review step before summarizing is public too: guests review before a quick summary.
+DEID_PREVIEW_ROUTES = {("backend", "/api/notes/deidentification-preview"), ("generate", "/api/notes/deidentification-preview")}
+PUBLIC_ROUTES = QUICK_SUMMARY_ROUTES | DEID_PREVIEW_ROUTES
 QUICK_SUMMARY_TEXT = "Synthetic counseling note for the public quick summary boundary test."
 USERS = {"a": "11111111-1111-4111-8111-111111111111", "b": "22222222-2222-4222-8222-222222222222"}
 TOKENS = {"a": "synthetic-access-a", "b": "synthetic-access-b"}
@@ -488,12 +491,19 @@ class AccessBoundaryTests(unittest.TestCase):
                                                   enable_raw_region_grounding=True))
             spies = [blockers.enter_context(patch(target, side_effect=AssertionError("Protected service reached by a guest")))
                      for target in ("app.api.routes.notes.save_temporary_draft", "app.api.routes.notes.persist_generated_note")]
-            for name, path in sorted(PUBLIC_ROUTES):
+            for name, path in sorted(QUICK_SUMMARY_ROUTES):
                 rate_limiter.reset()
                 with self.subTest(name=name, path=path):
                     response = self.clients[name].post(path, json={"text": QUICK_SUMMARY_TEXT})
                     self.assertEqual(response.status_code, 200, response.text)
                     self.assertIn("session_summary_draft", response.json())
+                    self.assert_private(response)
+            for name, path in sorted(DEID_PREVIEW_ROUTES):
+                rate_limiter.reset()
+                with self.subTest(name=name, path=path):
+                    response = self.clients[name].post(path, json={"texts": [QUICK_SUMMARY_TEXT]})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertIn("items", response.json())
                     self.assert_private(response)
             for spy in spies:
                 spy.assert_not_called()
