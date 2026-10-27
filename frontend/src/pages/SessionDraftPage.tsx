@@ -952,6 +952,9 @@ export default function SessionDraftPage({
     setReviewSources(sessionReviewSources(form, transcriptFiles.length === 1 ? transcriptFiles[0].filename : undefined))
   }
 
+  /** The client's name as registered in the client list (stored records only keep the masked form). */
+  const registeredClientName = (caseId: string) => caseList.find((entry) => entry.case_id === caseId)?.case_alias?.trim() || ''
+
   /** The last reviewed texts, as long as the counselor has not changed the input since. */
   const reviewedFormFor = (input: SessionInput): SessionInput => {
     const reviewed = reviewedInput.current
@@ -1574,7 +1577,9 @@ export default function SessionDraftPage({
         : ' 이 회기에는 저장된 입력 자료가 없습니다.'
       const nextForm: SessionInput = {
         ...initialForm, case_id: record.case_id, session_number: record.session_number, session_date: record.session_date,
-        client_alias: typeof info.client_alias === 'string' ? info.client_alias : '',
+        // session_info holds the masked alias (홍O동); prefer the registered name so a re-summary
+        // neither misses the name in the review step nor overwrites the client's name with the mask.
+        client_alias: registeredClientName(record.case_id) || (typeof info.client_alias === 'string' ? info.client_alias : ''),
         counselor_name: typeof info.counselor_name === 'string' ? info.counselor_name : '',
         // Stored (de-identified) session input, so the 첨부 자료 tab is not empty after reopening.
         ...restoredInput,
@@ -1984,7 +1989,7 @@ export default function SessionDraftPage({
       {reviewSources && (
         <DeidentificationReviewModal
           sources={reviewSources}
-          context={{ clientName: getClientAlias(form), counselorName: form.counselor_name }}
+          context={{ clientName: registeredClientName(form.case_id) || getClientAlias(form), counselorName: form.counselor_name }}
           onBack={() => setReviewSources(null)}
           onAddMaterial={() => setReviewSources(null)}
           onConfirm={(review) => void generateReviewed(review)}
