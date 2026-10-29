@@ -75,6 +75,7 @@ import ClientPickerModal from '../components/clients/ClientPickerModal'
 import QuickSummaryWorkspace from '../components/quick-summary/QuickSummaryWorkspace'
 import { isQuickSummaryDraft, type QuickSummaryResult } from '../lib/quickSummary'
 import DocumentArchivePage from '../components/documents/DocumentArchivePage'
+import VoucherWorkspace from '../components/documents/VoucherWorkspace'
 import SettingsPage from '../components/settings/SettingsPage'
 import FinalDocumentEditor from '../components/final-document/FinalDocumentEditor'
 import RichTextField from '../components/final-document/RichTextField'
@@ -359,6 +360,7 @@ export default function SessionDraftPage({
   const persistenceLock = useRef(false)
   const [savedDraft, setSavedDraft] = useState<{ id: string; caseId: string; sessionNumber: number } | null>(null)
   const [storedNoteId, setStoredNoteId] = useState<string | null>(null)
+  const [voucherContext, setVoucherContext] = useState<{ caseId?: string; noteId?: string | null } | null>(null)
   const [storedNote, setStoredNote] = useState<GeneratedNoteRecord | null>(null)
   const [confirmedFingerprint, setConfirmedFingerprint] = useState<string | null>(null)
   const [persistenceError, setPersistenceError] = useState<string | null>(null)
@@ -1799,7 +1801,10 @@ export default function SessionDraftPage({
           />
         )}
         {backgroundScreen === 'documents' && (
+          <>
+          <div className="mx-auto max-w-[1240px] px-6 pt-5"><button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700" onClick={() => setVoucherContext({})}>전마투 기록지·계획서 작성</button></div>
           <DocumentArchivePage documents={recentDocuments} loading={isCaseListLoading} onOpenDocument={openDocument} />
+          </>
         )}
         {backgroundScreen === 'settings' && <SettingsPage />}
 
@@ -1858,6 +1863,11 @@ export default function SessionDraftPage({
             )}
 
             {currentScreen === 'document_transform' && result && (
+              <>
+              <div className="mx-auto max-w-[1240px] px-6 pt-5">
+                <button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700 disabled:opacity-40" disabled={!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)} onClick={() => setVoucherContext({ caseId: form.case_id, noteId: storedNoteId })}>전마투 기록지·계획서 작성</button>
+                {(!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)) && <p className="mt-2 text-sm text-slate-500">현재 회기 요약을 저장하고 검토 완료한 뒤 가져올 수 있습니다.</p>}
+              </div>
               <DocumentTransformWorkspace
                 preview={result.full_response?.document_transform_preview}
                 selectedType={finalDocumentType}
@@ -1866,6 +1876,7 @@ export default function SessionDraftPage({
                 onSelectType={setFinalDocumentType}
                 onCreateFinal={openFinalDocument}
               />
+              </>
             )}
 
             {currentScreen === 'final_document' && result && (
@@ -1924,6 +1935,8 @@ export default function SessionDraftPage({
           </div>
         )}
       </div>
+
+      {voucherContext && <VoucherWorkspace cases={caseList} initialCaseId={voucherContext.caseId} initialNoteId={voucherContext.noteId} onClose={() => setVoucherContext(null)} />}
 
       {pickerOpen && (
         <ClientPickerModal

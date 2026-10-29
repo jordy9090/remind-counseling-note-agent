@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "source_url": "https://www.gangnam.go.kr/board/B_000060/1071230/view.do?mid=ID03_01",
+  "assets": {
+    "compiled/form10.pdf": "ebd50a8d47911a8f1c660b24788bf2255b687a82dc3996523fe6c0d8b6099c3e",
+    "compiled/form26.pdf": "0143b62ce31a690a6254f5380d14777aacc58fb6b9fb930fa36dee5f4e95a953",
+    "compiled/NanumGothic.ttf": "76f45ef4a6bcff344c837c95a7dcc26e017e38b5846d5ae0cdcb5b86be2e2d31",
+    "source/form10.hwpx": "f4d8f6b685d59e26d18637c75c9354ad39502975ace2cc7fda440e715033bda7",
+    "source/form10.pdf": "73dd258b9f9f688d09136dca92560d0c357412ef6a0ce3591947e278d2b99bf4",
+    "source/form26.hwpx": "d148137bd7bec2e3d3d7ad2b5366175fc0c5ca503e7be49f58445afe386842be",
+    "source/form26.pdf": "cf268333be44e5f58e64c38df963fac12ca380e423a5ffff51d708ed7a66b85c"
+  },
+  "qualification": {
+    "pdf": true,
+    "hwpx": false
+  },
+  "hwpx_pending": "Hancom open/edit/save qualification required",
+  "layout": "Official grid retained; text re-typeset with bundled OFL Nanum Gothic. Example content removed from PDF text layer.",
+  "license_review": "Publisher page labels KOGL type 4; the forms themselves allow institution-specific modifications. Commercial template redistribution terms remain unresolved."
+}

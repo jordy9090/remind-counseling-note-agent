@@ -18,6 +18,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.api.security import require_preview_access  # noqa: E402
+from app.api.routes.vouchers import router as voucher_router  # noqa: E402
 from app.schemas.document import DocumentExportRequest  # noqa: E402
 from app.services.document_export import (  # noqa: E402
     DocumentExportRuntimeError,
@@ -27,6 +28,7 @@ from app.services.document_export import (  # noqa: E402
 )
 
 app = FastAPI(title="Re:mind Document Export API")
+app.include_router(voucher_router)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 document_export_service = DocumentExportService()
 
@@ -50,3 +52,12 @@ async def export_document(
         media_type=result.content_type,
         headers=result.headers,
     )
+
+@app.middleware("http")
+async def voucher_dispatch(request, call_next):
+    path = request.query_params.get("voucher_path")
+    if path is not None:
+        # Vercel rewrites all voucher routes into this existing Python function.
+        request.scope["path"] = "/api/documents/vouchers/" + path
+        request.scope["raw_path"] = request.scope["path"].encode("utf-8")
+    return await call_next(request)

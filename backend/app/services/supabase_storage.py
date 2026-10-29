@@ -435,13 +435,13 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     )
 
 
-def fetch_generated_note(note_id: str, *, actor: str) -> GeneratedNoteRecord:
+def fetch_generated_note(note_id: str, *, actor: str, include_input: bool = True) -> GeneratedNoteRecord:
     """Read a note through the same actor/RLS and ownership chain as confirmation."""
     actor_storage = _storage_for_actor(actor)
     if not getattr(actor_storage, "configured", settings.supabase_configured):
         raise NoteConfirmationError(503, "저장소 연결을 확인할 수 없습니다.")
     note = _fetch_generated_note(note_id, actor=actor, actor_storage=actor_storage)
-    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage, include_input=True)
+    session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage, include_input=include_input)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
     stored_input, is_original = _stored_session_input(session)

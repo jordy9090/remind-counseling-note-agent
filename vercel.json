@@ -4,6 +4,10 @@
   "outputDirectory": "frontend/dist",
   "rewrites": [
     {
+      "source": "/api/documents/vouchers/:path*",
+      "destination": "/api/documents/export?voucher_path=:path*"
+    },
+    {
       "source": "/api/notes/quick-summary",
       "destination": "/api/notes/generate?scope=quick"
     },
@@ -55,6 +59,10 @@
     },
     "api/materials/documents/extract.py": {
       "maxDuration": 60
+    },
+    "api/documents/export.py": {
+      "maxDuration": 60,
+      "includeFiles": "backend/app/templates/vouchers/**"
     }
   }
 }
