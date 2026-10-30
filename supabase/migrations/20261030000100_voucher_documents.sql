@@ -1,5 +1,5 @@
--- Review candidates are immutable; editing creates a new snapshot. Only the
--- authenticated backend service may insert or acknowledge a reviewed snapshot.
+-- Review candidates are immutable; editing creates a new snapshot. The backend
+-- forwards the verified user's JWT, matching existing counseling persistence.
 create table public.voucher_documents (
   id uuid primary key default gen_random_uuid(),
   case_id text not null references public.cases(id) on delete cascade,
@@ -18,16 +18,23 @@ create table public.voucher_documents (
 );
 create index voucher_documents_owner_case on public.voucher_documents(user_id, case_id, created_at desc);
 alter table public.voucher_documents enable row level security;
-create policy voucher_documents_owner on public.voucher_documents for select to authenticated
-  using (user_id = (select auth.uid()));
+create policy voucher_documents_owner on public.voucher_documents for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
 revoke all on public.voucher_documents from anon, authenticated;
-grant select on public.voucher_documents to authenticated;
+grant select, insert, update, delete on public.voucher_documents to authenticated;
 grant all on public.voucher_documents to service_role;
 
 create function public.guard_voucher_snapshot() returns trigger language plpgsql set search_path = '' as $$
 declare source_id text;
 begin
   if tg_op = 'INSERT' then
+    if new.reviewed_at is not null or new.reviewed_by is not null then
+      raise exception 'voucher requires a separate review acknowledgement';
+    end if;
+    if jsonb_typeof(new.snapshot->'sources') is distinct from 'object' then
+      raise exception 'voucher sources must be an object';
+    end if;
     if not exists (select 1 from public.cases c where c.id = new.case_id and c.user_id = new.user_id::text) then
       raise exception 'voucher owner mismatch';
     end if;
@@ -40,6 +47,10 @@ begin
   elsif (to_jsonb(new) - 'reviewed_at' - 'reviewed_by') is distinct from
         (to_jsonb(old) - 'reviewed_at' - 'reviewed_by') or old.reviewed_at is not null then
     raise exception 'voucher snapshot is immutable';
+  elsif new.reviewed_at is null or new.reviewed_by is distinct from new.user_id then
+    raise exception 'voucher review acknowledgement required';
+  else
+    new.reviewed_at := now();
   end if;
   return new;
 end $$;

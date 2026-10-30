@@ -83,7 +83,7 @@ class VoucherDocuments:
         return {'rows': rows, 'source_hashes': hashes}
 
     def get(self, actor, document_id):
-        row = db.storage.maybe_single(TABLE, {'id': f'eq.{document_id}', 'user_id': f'eq.{actor}'})
+        row = db._storage_for_actor(actor).maybe_single(TABLE, {'id': f'eq.{document_id}', 'user_id': f'eq.{actor}'})
         if not row:
             raise VoucherError('DOCUMENT_NOT_FOUND', '문서를 찾을 수 없습니다.', 404)
         self.owned_case(actor, row['case_id'])
@@ -91,13 +91,14 @@ class VoucherDocuments:
 
     def list(self, actor, case_id):
         self.owned_case(actor, case_id)
-        return db.storage.select(TABLE, {'case_id': f'eq.{case_id}', 'user_id': f'eq.{actor}', 'select': 'id,template,created_at,reviewed_at', 'order': 'created_at.desc', 'limit': 100})
+        return db._storage_for_actor(actor).select(TABLE, {'case_id': f'eq.{case_id}', 'user_id': f'eq.{actor}', 'select': 'id,template,created_at,reviewed_at', 'order': 'created_at.desc', 'limit': 100})
 
     def prepare(self, actor, request):
         case = self.owned_case(actor, request.case_id)
+        actor_storage = db._storage_for_actor(actor)
         request_hash = digest(request.model_dump(mode='json'))
         query = {'user_id': f'eq.{actor}', 'operation_key': f'eq.{request.operation_key}'}
-        previous = db.storage.maybe_single(TABLE, query)
+        previous = actor_storage.maybe_single(TABLE, query)
         if previous:
             if previous['request_hash'] != request_hash:
                 raise VoucherError('IDEMPOTENCY_KEY_REUSED', '변경된 내용은 새로 미리보기를 만들어주세요.', 409)
@@ -126,10 +127,10 @@ class VoucherDocuments:
                'request_hash': request_hash, 'template': form.template, 'snapshot': snapshot, 'fingerprint': digest(snapshot),
                'privacy_status': 'applied' if report.llm_used else 'degraded'}
         try:
-            return db.storage.insert(TABLE, [row])[0]
+            return actor_storage.insert(TABLE, [row])[0]
         except db.SupabaseStorageError:
             # Concurrent identical requests may race on the durable unique key.
-            existing = db.storage.maybe_single(TABLE, query)
+            existing = actor_storage.maybe_single(TABLE, query)
             if existing and existing['request_hash'] == request_hash:
                 return existing
             raise
@@ -147,7 +148,7 @@ class VoucherDocuments:
         if hashes != row['snapshot']['sources']:
             raise VoucherError('SOURCE_CHANGED', '확정 기록이 바뀌었습니다. 새 미리보기를 만들어주세요.', 409)
         values = {'reviewed_at': datetime.now(timezone.utc).isoformat(), 'reviewed_by': str(actor)}
-        rows = db.storage.update(TABLE, values, query={'id': f'eq.{document_id}', 'user_id': f'eq.{actor}', 'reviewed_at': 'is.null'})
+        rows = db._storage_for_actor(actor).update(TABLE, values, query={'id': f'eq.{document_id}', 'user_id': f'eq.{actor}', 'reviewed_at': 'is.null'})
         return rows[0] if rows else self.get(actor, document_id)
 
     def export(self, actor, document_id, format, preview=False):
@@ -158,13 +159,13 @@ class VoucherDocuments:
         if digest(snapshot) != row['fingerprint'] or snapshot['template_bundle'] != digest(manifest()):
             raise VoucherError('TEMPLATE_VERSION_UNAVAILABLE', '이 문서 버전의 서식을 확인할 수 없습니다.', 409)
         if format == 'hwpx' and not manifest()['qualification']['hwpx']:
-            raise VoucherError('FORMAT_NOT_QUALIFIED', '한글 앱 호환성 확인 후 제공할 예정입니다.', 503)
+            raise VoucherError('FORMAT_NOT_QUALIFIED', '문서 편집기 호환성 확인 후 제공할 예정입니다.', 503)
         form = VoucherForm.model_validate(snapshot['form'])
         return render_pdf(form) if format == 'pdf' else render_hwpx(form)
 
     def delete(self, actor, document_id):
         self.get(actor, document_id)
-        db.storage.delete(TABLE, query={'id': f'eq.{document_id}', 'user_id': f'eq.{actor}'})
+        db._storage_for_actor(actor).delete(TABLE, query={'id': f'eq.{document_id}', 'user_id': f'eq.{actor}'})
 
 
 service = VoucherDocuments()

@@ -146,7 +146,7 @@ class ServiceTests(TestCase):
         self.memory = MemoryStorage()
         self.source = note()
         self.patches = [
-            patch('app.services.voucher_documents.db.storage', self.memory),
+            patch('app.services.voucher_documents.db._storage_for_actor', side_effect=lambda actor: self.memory if str(actor) == str(OWNER) else self.fail_owner()),
             patch.object(service, 'owned_case', side_effect=lambda actor, case_id: {'case_alias': '합성내담자'} if str(actor) == str(OWNER) and case_id == CASE else self.fail_owner()),
             patch('app.services.voucher_documents.db.fetch_generated_note', side_effect=lambda *a, **kw: deepcopy(self.source)),
             patch('app.services.storage_deidentification._extract_entities', return_value=None),
@@ -186,6 +186,28 @@ class ServiceTests(TestCase):
             fetch.assert_called_once_with(NOTE, actor=OWNER, include_input=False)
         self.source.case_id = 'other'
         with self.assertRaises(VoucherError): service.map_sources(OWNER, req)
+
+    def test_all_snapshot_operations_forward_user_token_without_admin_key(self):
+        from app.services import supabase_storage as db
+        self.patches[0].stop()
+        calls = []
+
+        def request(client, method, path, *, query=None, body=None, **kwargs):
+            self.assertEqual(client.access_token, OWNER.access_token)
+            calls.append(method)
+            if method == 'GET': return self.memory.select(path, query)
+            if method == 'POST': return self.memory.insert(path, body)
+            if method == 'PATCH': return self.memory.update(path, body, query)
+            if method == 'DELETE': return self.memory.delete(path, query)
+            self.fail(method)
+
+        with patch.object(db.SupabaseStorage, '_request', request):
+            row, _ = self.prepared()
+            self.review(row)
+            self.assertEqual(len(service.list(OWNER, CASE)), 1)
+            service.export(OWNER, row['id'], 'pdf')
+            service.delete(OWNER, row['id'])
+        self.assertEqual(set(calls), {'GET', 'POST', 'PATCH', 'DELETE'})
 
     def test_source_mutation_and_wrong_actor_and_fingerprint_fail(self):
         row, req = self.prepared()

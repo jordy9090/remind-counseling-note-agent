@@ -1,6 +1,6 @@
 # Voucher document export
 
-Implemented against `9161b60b1c597c8d580d7b24b5c126f51c32be32` on 2026-10-30 (Asia/Seoul). Production is unchanged. This feature is off by default.
+Implemented against `9161b60b1c597c8d580d7b24b5c126f51c32be32` on 2026-10-30 (Asia/Seoul). The database migration was applied to project `bgjapctiawosgpjcyfuq` at approximately 21:20 KST through its authenticated SQL Editor and recorded as `20261030000100`. The application feature remains off until deployment qualification.
 
 ## Delivered flow
 
@@ -18,18 +18,18 @@ The supplied v1.0 specification correctly identifies the current code and offici
 1. One immutable `voucher_documents` table replaces separate episode, draft, revision and operation tables. `user_id + operation_key` gives prepare-request idempotency. There is no voucher billing ledger, episode lifecycle, cross-document duplicate-session enforcement, or government-portal submission.
 2. Form 10 maps only confirmed `session_content`, `counselor_intervention` and `client_response`. `workspace_sections` is authoritative, including visibility, deletion and deliberate empty text. Drafts, raw transcripts, reflection, supervision and relational insights are excluded. Existing confirmed records can be read without fetching the original session input. Test scores are entered explicitly; they are not inferred.
 3. The PDF grid comes from the official PDF. All original text is removed before fixed labels are re-typeset with bundled OFL Nanum Gothic. This removes example content from the searchable text layer, not merely behind a white rectangle. The source PDF's empty second page in Form 10 is omitted.
-4. HWPX generation fills designated XML cells in the original archive, but its public capability stays false until an actual Hancom open/edit/save and rendering check. XML validity is not application compatibility. The source preview image is still a blank/example-form preview, not a rendered preview of the current values; this also needs resolution before HWPX release.
+4. HWPX generation fills designated XML cells in the original archive, but its public capability stays false until an actual editor open/edit/save and rendering check. The user selected Polaris Office for qualification; a Polaris pass must not be described as a Hancom pass. XML validity is not application compatibility. The source preview image is still a blank/example-form preview, not a rendered preview of the current values; this also needs resolution before HWPX release.
 5. Source hashes are checked at preparation and review. This is not an atomic revision lock across concurrent note edits. A previously reviewed export intentionally remains the reviewed historical snapshot; it does not silently adopt a later note revision.
 6. Saved candidates appear in the voucher workspace, not in the existing generic `document_exports` attempt log. There is no automatic retention expiry. Explicit document deletion and case/account/source-note deletion are supported by the service and migration.
 
 ## Security and runtime
 
 - All voucher routes require a verified `AuthenticatedActor`; shared preview tokens cannot access stored voucher data.
-- Reads check user and case ownership. Source reads additionally follow the existing authenticated note/session/case ownership chain. Snapshot writes use the existing backend service credential, never a browser credential.
-- The migration grants authenticated users owner-only SELECT; direct client INSERT/UPDATE/DELETE are revoked. The service owns writes. Immutable snapshots accept only the review acknowledgement update.
-- Case/account foreign keys cascade; a source-note deletion trigger removes derived documents. Insert-time source row locks serialize source deletion against snapshot insertion. Database execution of these policies and triggers still requires a test database.
+- All snapshot operations forward the verified user's JWT through the existing actor-scoped storage client. Production has no service-role key; this feature requires none. Source reads additionally follow the existing authenticated note/session/case ownership chain.
+- RLS permits authenticated users to select, insert, acknowledge and delete only their own snapshots. Insert triggers check case/source ownership and reject pre-reviewed rows. Update triggers allow only the first review acknowledgement. The fingerprint detects accidental changes; it is not a server signature. A user with their own JWT can write their own rows through the Data API; privacy status is an application processing report, not a tamper-proof certification.
+- Case/account foreign keys cascade; a source-note deletion trigger removes derived documents. Insert-time source row locks serialize source deletion against snapshot insertion. These policies and both insert/delete race orders passed in an isolated PostgreSQL 17.11 cluster with synthetic rows.
 - PDFs and JSON responses use private/no-store. Downloads use UUID-only filenames, authenticated binary responses and no public storage URLs. Templates are fixed local files with pinned hashes; user content is escaped, with no uploaded templates or remote resource fetching.
-- `ENABLE_VOUCHER_DOCUMENTS=1` enables the routes only after the migration and release checks. Default is disabled. No Production environment or database was changed.
+- `ENABLE_VOUCHER_DOCUMENTS=1` enables the routes only after the migration and release checks. Default is disabled. The additive migration is compatible with the previous application deployment.
 - The existing deidentification service can use its configured model during preparation. Mapping and rendering do not call a model. Tests disabled entity extraction and used only synthetic content; they do not prove live model quality.
 - Any change to the privacy policy requires a new `POLICY` version. Retain template bundles needed by existing snapshots before upgrading templates; this first version fails closed when the bundle fingerprint differs.
 
@@ -39,7 +39,7 @@ Official source: [Gangnam District provider documents](https://www.gangnam.go.kr
 
 The publisher page has a KOGL Type 4 notice, while the forms themselves permit institution-specific changes. The scope of commercial template redistribution has not been resolved here. This is a release follow-up, not a claim that completing or using the form is prohibited. No external publication was performed.
 
-`backend/compile_voucher_templates.py` reproducibly extracts fixed-text positions and recompiles the PDF backgrounds. Extraction uses the already installed local PDF authoring environment (`pdfplumber`); runtime needs only existing ReportLab, pypdf and lxml dependencies. Do not install a Hancom substitute or add a remote conversion service to work around the remaining HWPX check.
+`backend/compile_voucher_templates.py` reproducibly extracts fixed-text positions and recompiles the PDF backgrounds. Extraction uses the already installed local PDF authoring environment (`pdfplumber`); runtime needs only existing ReportLab, pypdf and lxml dependencies. No remote document conversion service is used.
 
 ## Validation ledger
 
@@ -54,9 +54,10 @@ Local working-tree candidate, base SHA above; no deployment ID. Results recorded
 | `VOUCHER_SCENARIO=preview_retry node scripts/verify-voucher-browser.mjs` | PASS | Focused test after the preview retry change: sanitized candidate reused; failure clears the old PDF and prevents approval; retry succeeds without duplicate snapshots. |
 | `npm run verify:persistence-workflow`; `node node_modules/typescript/bin/tsc --noEmit` | PASS | Existing frontend persistence regressions and final TypeScript check. |
 | PDF visual inspection | PASS | Both synthetic forms; original grids preserved, values inside cells, identity/signature cells blank, no sample bank account. Form 10 second source page confirmed blank. |
-| Scoped manual security diff review | PASS with database qualification pending | Reviewed routes, ownership chain, fixed renderers, snapshot storage, migration, UI and local test harness. No repository-wide scan or external reporting integration. |
-| PostgreSQL migration/RLS/cascade/concurrency execution | NOT RUN | No local PostgreSQL/Docker/psql found; no operational database accessed. |
-| Hancom HWPX open/edit/save and PDF comparison | NOT RUN | Hancom runtime unavailable; HWPX capability false. |
+| Scoped manual security diff review | PASS after actor-JWT/RLS revision | Reviewed routes, ownership chain, fixed renderers, snapshot storage, migration, UI and local test harness. Tested database enforcement and documented the distinction between owner-editable Data API input and server privacy certification. No repository-wide scan or external reporting integration. |
+| PostgreSQL migration/RLS/cascade/concurrency execution | PASS, 2026-10-30 | `python backend/tests/verify_voucher_postgres.py --psql <portable-psql> --port 55439`; PostgreSQL 17.11, local synthetic schema. Owner CRUD/review, other-user/anonymous isolation, forged ownership/source/pre-review rejection, immutability, idempotency, source/case/account cascades, both insert/delete race orders. Zero fixture rows after cleanup; server stopped. |
+| Actor-JWT regression | PASS, 2026-10-30 | 15 voucher tests plus `ServiceTests.test_all_snapshot_operations_forward_user_token_without_admin_key`; GET/POST/PATCH/DELETE forward the authenticated token. Browser flow rerun once after storage change; zero synthetic snapshots after cleanup. |
+| Polaris HWPX open/edit/save and PDF comparison | BLOCKED | Installed Polaris app found, but native control returned off-monitor capture and stale-element errors. Actual document rendering not verified; HWPX capability false. |
 | Preview/Production deployment and live model | NOT RUN | No deployment or external inference performed. |
 
 The first HTTP test attempt was blocked in Windows' sandboxed asyncio loopback socket creation; rerunning with local socket access passed. Two initial browser locator attempts failed after successful import because implicit textarea labels included text; explicit accessible field names and matching selectors resolved this. These were not model or database successes.
@@ -65,6 +66,6 @@ Cleanup: all browser-created in-memory snapshots were deleted and zero remaining
 
 ## Before enabling a deployed version
 
-1. Apply the migration to an isolated test database; verify owner/other-user/anonymous SELECT boundaries, rejected client writes, immutable review, idempotency, and source/case/account deletion including concurrent insert/delete.
-2. Confirm the template reuse terms. Qualify HWPX in Hancom separately; PDF can remain the only enabled format.
+1. Apply the locally tested migration to the verified deployment database, then verify the actor-JWT persistence path using synthetic records.
+2. Confirm the template reuse terms. Qualify HWPX in Polaris separately; PDF can remain the only enabled format.
 3. Deploy this exact tested code to Preview, set the feature flag there, and run one real persistence flow using synthetic records. Enable Production only after the user-authorized release checks; retain the current healthy deployment for rollback.
