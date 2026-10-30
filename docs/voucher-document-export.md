@@ -1,6 +1,14 @@
 # Voucher document export
 
-Implemented against `9161b60b1c597c8d580d7b24b5c126f51c32be32` on 2026-10-30 (Asia/Seoul). The database migration was applied to project `bgjapctiawosgpjcyfuq` at approximately 21:20 KST through its authenticated SQL Editor and recorded as `20261030000100`. The application feature remains off until deployment qualification.
+Implemented against `9161b60b1c597c8d580d7b24b5c126f51c32be32` on 2026-10-30 (Asia/Seoul). Migration `20261030000100` was applied to project `bgjapctiawosgpjcyfuq`. PDF export was enabled in Production at commit `23f2d96` (deployment `dpl_62r96JbcTpZ1FmM8YnVAULsioRuB`), after real synthetic persistence and Production smoke checks. The disposable account and all related rows were removed, with zero remaining users, Auth sessions, cases, sessions, notes and vouchers verified.
+
+## PDF preview compatibility repair
+
+The native `<iframe>` PDF viewer produced a blank preview in the Codex in-app browser. `VoucherPdfPreview` now renders the authenticated response bytes locally with pinned PDF.js 6.4.299 and a same-origin bundled worker. No PDF content goes to an external viewer. The component exposes loading/failure states, cancels stale work on replacement/unmount and permits review only after all pages render successfully.
+
+The existing synthetic browser test now checks nonblank canvas pixels, both official forms, reviewed download/reopening, and an invalid-PDF response that must clear old content and block review even when both acknowledgments are checked. Build, the complete local flow, and the focused preview retry/render-error scenario passed. DB and Auth checks from the released commit are reused because those paths did not change. React hook/lifecycle and scoped security review cover only the changed renderer and its integration; no authentication, database or model configuration changed.
+
+The generated Form 10 HWPX was opened and visually rendered by the official Polaris Office Tools web engine on 2026-10-30. This is an actual renderer check, but not an editor save/reopen qualification. Desktop Polaris window capture remains unavailable; the web editor origin was denied by browser access control. HWPX remains disabled pending both-form edit/save/reopen checks and resolution of its stale preview image.
 
 ## Delivered flow
 

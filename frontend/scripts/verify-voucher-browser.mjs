@@ -40,6 +40,15 @@ const open = async () => {
   await page.getByRole('heading', { name: '검토 완료된 회기 가져오기' }).waitFor()
 }
 const approve = async () => {
+  const canvas = page.getByRole('img', { name: '전마투 PDF 1 / 1페이지', exact: true })
+  await canvas.waitFor()
+  assert.equal(await page.locator('iframe').count(), 0, 'preview must not depend on the browser PDF plugin')
+  assert.ok(await canvas.evaluate(el => {
+    const pixels = el.getContext('2d').getImageData(0, 0, el.width, el.height).data
+    let ink = 0
+    for (let i = 0; i < pixels.length; i += 4) if (pixels[i+3] && pixels[i] < 200 && pixels[i+1] < 200 && pixels[i+2] < 200) ink++
+    return ink > 1000
+  }), 'the PDF canvas must contain actual rendered text/grid pixels')
   await page.getByRole('checkbox', { name: '미리보기의 내용과 남아 있는 식별정보를 확인했습니다.' }).check()
   await page.getByRole('checkbox', { name: '기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.' }).check()
   await page.getByRole('button', { name: '내용 검토 완료', exact: true }).click()
@@ -70,6 +79,16 @@ try {
     await page.getByRole('button', { name: '출력 내용 확인', exact: true }).click()
     await page.getByTitle('실제 출력될 전마투 PDF').waitFor()
     assert.equal(ids.size, 1, 'retrying sanitized preview must reuse the candidate')
+    await page.route('**/vouchers/saved/*/preview', route => route.fulfill({ status: 200, contentType: 'application/pdf', body: 'invalid synthetic PDF' }), { times: 1 })
+    await page.getByRole('button', { name: '출력 내용 확인', exact: true }).click()
+    await page.getByText(/PDF를 표시하지 못했습니다/).waitFor()
+    await page.getByRole('checkbox', { name: '미리보기의 내용과 남아 있는 식별정보를 확인했습니다.' }).check()
+    await page.getByRole('checkbox', { name: '기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.' }).check()
+    assert.equal(await page.getByRole('button', { name: '내용 검토 완료', exact: true }).isDisabled(), true)
+    assert.equal(await page.locator('canvas').count(), 0, 'a render failure must clear old content')
+    await page.getByRole('button', { name: '출력 내용 확인', exact: true }).click()
+    await page.getByTitle('실제 출력될 전마투 PDF').waitFor()
+    await approve()
     console.log('PASS: sanitized preview retry reuses snapshot; failed preview clears stale PDF and blocks approval')
   } else {
   await open()
