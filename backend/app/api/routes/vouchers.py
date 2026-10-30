@@ -18,7 +18,7 @@ def private_response(response: Response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
 
 
-router = APIRouter(prefix='/api/documents/vouchers', dependencies=[Depends(private_response)])
+router = APIRouter(prefix='/api/documents/vouchers', dependencies=[Depends(require_preview_access), Depends(private_response)])
 def require_voucher_actor(actor: Annotated[str, Depends(require_preview_access)]):
     if not isinstance(actor, AuthenticatedActor):
         raise HTTPException(401, detail='로그인이 필요합니다.')

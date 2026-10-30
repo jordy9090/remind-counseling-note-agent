@@ -989,6 +989,16 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     for migration_path in (root / "supabase" / "migrations").glob("*.sql"):
         sql = migration_path.read_text(encoding="utf-8").lower()
+        if migration_path.name == "20261030000100_voucher_documents.sql":
+            # Defining this source-deletion trigger does not delete existing rows.
+            # Exempt only its exact scoped body; migration-time deletes remain banned.
+            cleanup = """create function public.delete_note_voucher_documents() returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  delete from public.voucher_documents where snapshot->'sources' ? old.id::text;
+  return old;
+end $$;"""
+            assert sql.count(cleanup) == 1
+            sql = sql.replace(cleanup, "")
         assert "drop table" not in sql
         assert "drop schema" not in sql
         assert "truncate " not in sql
