@@ -32,6 +32,11 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
   const clearReview = () => { setCandidate(null); setPreview(null); setPreviewReady(false); setPrivacy(false); setOffline(false); operationKey.current = crypto.randomUUID() }
   const change = (next: VoucherForm) => { setForm(next); clearReview() }
 
+  const firstCaseId = cases[0]?.case_id
+  useEffect(() => {
+    if (!caseId && firstCaseId) setCaseId(firstCaseId)
+  }, [caseId, firstCaseId])
+
   useEffect(() => {
     let cancelled = false
     voucherApi<NonNullable<typeof caps>>('capabilities').then(value => { if (!cancelled) setCaps(value) }).catch(e => { if (!cancelled) setError(e.message) })
