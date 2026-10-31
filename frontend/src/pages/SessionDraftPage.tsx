@@ -1802,7 +1802,7 @@ export default function SessionDraftPage({
         )}
         {backgroundScreen === 'documents' && (
           <>
-          <div className="mx-auto max-w-[1240px] px-6 pt-5"><button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700" onClick={() => setVoucherContext({})}>전마투 기록지·계획서 작성</button></div>
+          <div className="mx-auto max-w-[1240px] px-6 pt-5"><button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700" onClick={() => setVoucherContext({})}>전마투 기록지·계약서·계획서 작성</button></div>
           <DocumentArchivePage documents={recentDocuments} loading={isCaseListLoading} onOpenDocument={openDocument} />
           </>
         )}
@@ -1865,7 +1865,7 @@ export default function SessionDraftPage({
             {currentScreen === 'document_transform' && result && (
               <>
               <div className="mx-auto max-w-[1240px] px-6 pt-5">
-                <button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700 disabled:opacity-40" disabled={!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)} onClick={() => setVoucherContext({ caseId: form.case_id, noteId: storedNoteId })}>전마투 기록지·계획서 작성</button>
+                <button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700 disabled:opacity-40" disabled={!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)} onClick={() => setVoucherContext({ caseId: form.case_id, noteId: storedNoteId })}>전마투 기록지·계약서·계획서 작성</button>
                 {(!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)) && <p className="mt-2 text-sm text-slate-500">현재 회기 요약을 저장하고 검토 완료한 뒤 가져올 수 있습니다.</p>}
               </div>
               <DocumentTransformWorkspace

@@ -35,6 +35,14 @@ def plan():
     return VoucherForm(template='form26', report_month='2026-10', purpose='정서 이해를 돕는다.', content='감정과 대처방식을 탐색한다.', plan_left='상담 목표를 함께 정한다.')
 
 
+def contract():
+    return VoucherForm(template='form25', report_month='2026-11', contract_period='2026.11.01 ~ 2026.12.31',
+                       content='합성 계약: 정서 이해와 대처방식 탐색', schedule='총 8회, 회당 50분, 매주 1회',
+                       price='회당 서비스가격 80,000원 / 정부지원금 72,000원 / 본인부담금 8,000원',
+                       additional_cost='없음', refund_terms='제공받은 횟수에 따라 정산하고 미제공분 본인부담금을 반환한다.',
+                       other_terms='일정 변경은 사전에 협의한다.')
+
+
 def note(payload=None):
     return SimpleNamespace(note_id=NOTE, session_id='synthetic-session', case_id=CASE, note_type='session_note', confirmation_status='confirmed',
                            confirmed_json=payload if payload is not None else {'session_content': '합성사례: 업무 중 긴장을 탐색함.', 'counselor_intervention': '감정을 구분함.', 'client_response': '호흡을 연습함.'})
@@ -106,6 +114,50 @@ class MappingTests(TestCase):
 
 
 class RendererTests(TestCase):
+    def test_contract_contains_all_terms_clauses_attribution_and_editable_text(self):
+        from app.services.voucher_contract import FIELDS, layout, ATTRIBUTION, LICENSE
+        form = contract()
+        pdf = PdfReader(BytesIO(render_pdf(form)))
+        text = ''.join(p.extract_text() for p in pdf.pages)
+        compact = lambda value: ''.join(value.split())
+        self.assertEqual(len(pdf.pages), len(layout(form)))
+        self.assertGreaterEqual(len(pdf.pages), 3)
+        with ZipFile(BytesIO(render_hwpx(form))) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.infolist()[0].filename, 'mimetype')
+            self.assertEqual(archive.infolist()[0].compress_type, 0)
+            self.assertNotIn('Preview/PrvImage.png', archive.namelist())
+            xml = ET.fromstring(archive.read('Contents/section0.xml'))
+            editable = ''.join(xml.xpath('//hp:t/text()', namespaces=NS))
+            self.assertEqual(len(xml.xpath('//hp:p[@pageBreak="1"]', namespaces=NS)), len(pdf.pages)-1)
+            for value in [*(getattr(form, key) for key in FIELDS), ATTRIBUTION, LICENSE, '성명:', '대표자:', '계약 체결일:']:
+                self.assertIn(compact(value), compact(text))
+                self.assertIn(compact(value), compact(editable))
+            for n in range(1, 10):
+                self.assertIn(f'제{n}조(', text)
+                self.assertIn(f'제{n}조(', editable)
+            self.assertIn('Apache License', archive.read('META-INF/LICENSE-python-hwpx.txt').decode())
+
+    def test_contract_rejects_hidden_fields_missing_terms_and_oversized_text(self):
+        base = contract().model_dump(mode='json')
+        for key, value in [('content', ''), ('price', ' '), ('refund_terms', ''), ('rows', record().model_dump(mode='json')['rows']), ('purpose', 'hidden')]:
+            with self.subTest(key=key), self.assertRaises(ValidationError):
+                VoucherForm.model_validate({**base, key: value})
+        for value, code in [('긴 계약 문장 ' * 200, 'LAYOUT_OVERFLOW'), ('😀', 'UNSUPPORTED_GLYPH')]:
+            form = contract(); form.other_terms = value
+            with self.assertRaises(VoucherError) as error:
+                render_pdf(form)
+            self.assertEqual(error.exception.code, code)
+            self.assertEqual(error.exception.field, 'other_terms')
+
+    def test_contract_literal_markup_is_text_in_both_formats(self):
+        form = contract(); form.other_terms = '<script>alert(1)</script> & 합성'
+        self.assertIn(form.other_terms, ''.join(p.extract_text() for p in PdfReader(BytesIO(render_pdf(form))).pages))
+        with ZipFile(BytesIO(render_hwpx(form))) as archive:
+            root = ET.fromstring(archive.read('Contents/section0.xml'))
+            self.assertIn(form.other_terms, ''.join(root.xpath('//hp:t/text()', namespaces=NS)))
+            self.assertEqual(root.findall('.//script'), [])
+
     def test_pdf_is_one_page_contains_input_and_no_example_account(self):
         for form in [record(), plan()]:
             with self.subTest(template=form.template):
@@ -188,6 +240,33 @@ class ServiceTests(TestCase):
         self.assertEqual(before, after)
         self.assertEqual(service.get(OWNER, row['id'])['snapshot'], row['snapshot'])
         self.assertEqual(len(self.memory.rows), 1)
+
+    def test_contract_without_notes_review_download_reopen_and_cleanup(self):
+        with patch('app.services.voucher_documents.db.fetch_generated_note', side_effect=AssertionError('contract must not read notes')):
+            row, request = self.prepared(contract())
+            self.assertEqual(row['snapshot']['sources'], {})
+            before = service.export(OWNER, row['id'], 'pdf', preview=True)
+            with self.assertRaises(VoucherError):
+                service.export(OWNER, row['id'], 'hwpx')
+            self.review(row)
+            with patch('app.services.voucher_documents.deidentify_texts', side_effect=AssertionError('no second transformation')):
+                self.assertEqual(before, service.export(OWNER, row['id'], 'pdf'))
+                self.assertIn(row['id'], [d['id'] for d in service.list(OWNER, CASE)])
+                self.assertEqual(service.get(OWNER, row['id'])['snapshot']['form']['price'], request.form.price)
+            service.delete(OWNER, row['id'])
+            self.assertEqual(self.memory.rows, [])
+
+    def test_contract_bundle_change_fails_closed_without_invalidating_old_forms(self):
+        from app.services.voucher_renderer import manifest as real_manifest
+        row, _ = self.prepared(contract())
+        changed = real_manifest('form25'); changed['assets']['source/form25-clauses.json'] = '0'*64
+        with patch('app.services.voucher_documents.manifest', side_effect=lambda template=None: changed if template == 'form25' else real_manifest()):
+            with self.assertRaises(VoucherError) as error:
+                self.review(row)
+            self.assertEqual(error.exception.code, 'POLICY_VERSION_CHANGED')
+            old, _ = self.prepared(plan())
+            self.review(old)
+            self.assertTrue(service.export(OWNER, old['id'], 'pdf'))
 
     def test_released_snapshots_remain_reviewable_and_exportable_after_qualification(self):
         # Fingerprint from the manifest shipped in 12d5fcc, before HWPX qualification.

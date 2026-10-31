@@ -1,0 +1,18 @@
+{
+  "version": "form25-1.0.0",
+  "source_url": "https://welfare.dobong.go.kr/dobongBokji/bbs/BMSR00004/view.do?boardId=1771&menuNo=200113",
+  "source_sha256": "f76b0615e28225e4e58e68f4ddbf83a3bbb7fbc21e7c3b466abf234572ddc2d4",
+  "pages": "156-158 (PDF pages 162-164)",
+  "license": "KOGL Type 1; attribution and modified layout notice included in both exports",
+  "skeleton_commit": "3e5197c4c00c775b12dafe3a62942c3a8aa0941e",
+  "layout": "Shared explicit line wrapping and pagination; Nanum Gothic 10pt body; blank identity/signature fields; nine original clauses",
+  "qualification": {
+    "pdf": true,
+    "hwpx": true
+  },
+  "assets": {
+    "source/form25-blank.hwpx": "d0045ba99dff98737a3f6ba3a0173bc63f5c4ebffe390a40a732f02cd32625dd",
+    "source/form25-clauses.json": "e848715ee3bc6bd2a3037663eac0399f93214490bab730ab44307e5d19ceae9e",
+    "compiled/NanumGothic.ttf": "76f45ef4a6bcff344c837c95a7dcc26e017e38b5846d5ae0cdcb5b86be2e2d31"
+  }
+}

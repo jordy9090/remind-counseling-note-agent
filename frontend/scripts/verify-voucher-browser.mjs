@@ -36,7 +36,7 @@ await page.route('**/*', async route => {
 const open = async () => {
   await page.goto(origin)
   await page.getByRole('button', { name: '문서 보관함', exact: true }).click()
-  await page.getByRole('button', { name: '전마투 기록지·계획서 작성', exact: true }).click()
+  await page.getByRole('button', { name: '전마투 기록지·계약서·계획서 작성', exact: true }).click()
   await page.getByRole('heading', { name: '검토 완료된 회기 가져오기' }).waitFor()
 }
 const approve = async () => {

@@ -4,10 +4,11 @@ import { fetchCaseDashboard } from '../../api/client'
 import type { CaseDashboardResponse, CaseListItem } from '../../types/session'
 import { voucherApi, type VoucherDocument, type VoucherForm, type VoucherRow, type VoucherTemplate } from '../../lib/voucherApi'
 
-const label = { form10: '서비스 제공기록지 · 제10호', form26: '서비스 제공계획서 · 제26호' }
+const label = { form10: '서비스 제공기록지 · 제10호', form25: '서비스 제공(이용)계약서 · 제25호', form26: '서비스 제공계획서 · 제26호' }
 const monthNow = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit' }).format(new Date())
-const blank = (template: VoucherTemplate): VoucherForm => ({ template, report_month: monthNow(), service_tier: '', rows: [], general_comment: '', purpose: '', content: '', schedule: '', price: '', contract_period: '', plan_left: '', plan_right: '' })
+const blank = (template: VoucherTemplate): VoucherForm => ({ template, report_month: monthNow(), service_tier: '', rows: [], general_comment: '', purpose: '', content: '', schedule: '', price: '', contract_period: '', plan_left: '', plan_right: '', additional_cost: '', refund_terms: '', other_terms: '' })
 const fieldLabels = { purpose: '서비스 목적', content: '서비스 내용', schedule: '제공 횟수·시간·일정', price: '서비스가격·정부지원금·본인부담금', contract_period: '계약기간', plan_left: '서비스 제공계획', plan_right: '추가 제공계획' } as const
+const contractLabels = { contract_period: '계약기간', content: '서비스 종류·내용', schedule: '제공시간·횟수·일정', price: '계약금액 (서비스가격·정부지원금·본인부담금)', additional_cost: '추가비용 발생여부·금액', refund_terms: '계약 해제·해지에 따른 환불규정', other_terms: '기타 합의사항 (선택)' } as const
 
 export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, onClose }: {
   cases: CaseListItem[]; initialCaseId?: string; initialNoteId?: string | null; onClose: () => void
@@ -59,7 +60,7 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
     try { await fn() } catch (e) { setError(e instanceof Error ? e.message : '요청을 완료하지 못했습니다.') } finally { setBusy(false) }
   }
   const openPreview = async (doc: VoucherDocument) => {
-    setPreview(null); setPreviewReady(false); setCandidate(doc); setForm(doc.snapshot.form); setHashes(doc.snapshot.sources); setPrivacy(false); setOffline(false)
+    setPreview(null); setPreviewReady(false); setCandidate(doc); setForm({ ...blank(doc.template), ...doc.snapshot.form }); setHashes(doc.snapshot.sources); setPrivacy(false); setOffline(false)
     const blob = await voucherApi<Blob>(`saved/${doc.id}/preview`, 'GET', undefined, true)
     setPreview(blob)
   }
@@ -107,6 +108,12 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
             <p className="text-xs text-slate-500">검사값을 추정해 넣지 마세요. 아직 종결 전이라면 사후 검사결과는 비워둘 수 있습니다.</p>
           </section>}
           {form.template === 'form26' && <div className="mt-4 grid gap-4 sm:grid-cols-2"><p className="text-sm text-slate-600 sm:col-span-2">첫 회기 전에도 직접 작성할 수 있습니다. 모르는 일정·금액은 비워두고 기관에서 보완해주세요.</p>{Object.entries(fieldLabels).map(([key, title]) => <label key={key}>{title}<textarea aria-label={title} className="rm-textarea min-h-24" value={form[key as keyof typeof fieldLabels]} onChange={e => change({ ...form, [key]: e.target.value })} /></label>)}</div>}
+          {form.template === 'form25' && <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <p className="text-sm text-slate-600 sm:col-span-2">상담 기록 없이 작성할 수 있습니다. 이용자와 합의한 조건을 입력하고, 금액은 서비스가격·정부지원금·본인부담금을 구분해 주세요. 추가비용이 없으면 ‘없음’으로 작성해 주세요. 성명·주소·연락처·서명은 내려받은 문서에 기관에서 기입합니다.</p>
+            {Object.entries(contractLabels).map(([key, title]) => <label key={key}>{title}<textarea aria-label={title} className="rm-textarea min-h-24" value={form[key as keyof typeof contractLabels]} onChange={e => change({ ...form, [key]: e.target.value })} /></label>)}
+            <p className="text-sm text-slate-600 sm:col-span-2">원문 제1~9조가 함께 출력됩니다. 미리보기에서 계약조건과 모든 조항을 확인한 뒤 검토를 완료해 주세요. 전자서명이나 전자바우처시스템 계약 등록은 포함되지 않습니다.</p>
+            <p className="text-xs text-slate-500 sm:col-span-2">출처: 보건복지부 2026년 정신건강 심리상담 바우처사업 안내 제25호 · <a className="underline" href="https://welfare.dobong.go.kr/dobongBokji/bbs/BMSR00004/view.do?boardId=1771&menuNo=200113" target="_blank" rel="noreferrer">도봉복지로 공개본</a> · 공공누리 제1유형(출처표시). 작성란·배치는 리마인드에서 재구성했습니다.</p>
+          </div>}
           <button type="button" className="mt-5 rounded bg-blue-600 px-5 py-3 font-bold text-white disabled:opacity-40" disabled={!caseId || (form.template === 'form10' && !form.rows.length)} onClick={() => task(async () => {
             const doc = candidate || await voucherApi<VoucherDocument>('prepare', 'POST', { case_id: caseId, operation_key: operationKey.current, form, source_hashes: hashes }); await openPreview(doc)
           })}>{busy ? '처리 중…' : '출력 내용 확인'}</button>

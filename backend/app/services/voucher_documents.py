@@ -22,7 +22,11 @@ def digest(value):
     return sha256(unicodedata.normalize('NFC', json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))).encode()).hexdigest()
 
 
-def template_fingerprint():
+def template_fingerprint(template=None):
+    if template == 'form25':
+        bundle = {**manifest('form25')}
+        bundle.pop('qualification', None)
+        return digest(bundle)
     bundle = {**manifest()}
     # Readiness flags do not change rendered content. Retain their initial
     # released values in the identity so existing reviewed PDFs stay available.
@@ -129,9 +133,9 @@ class VoucherDocuments:
             else:
                 data[key] = value
         form = VoucherForm.model_validate(data)
-        verify_assets()
+        verify_assets(form.template)
         paragraphs(form)
-        snapshot = {'form': form.model_dump(mode='json'), 'sources': hashes, 'policy': POLICY, 'template_bundle': template_fingerprint()}
+        snapshot = {'form': form.model_dump(mode='json'), 'sources': hashes, 'policy': POLICY, 'template_bundle': template_fingerprint(form.template)}
         row = {'id': str(uuid4()), 'case_id': request.case_id, 'user_id': str(actor), 'operation_key': str(request.operation_key),
                'request_hash': request_hash, 'template': form.template, 'snapshot': snapshot, 'fingerprint': digest(snapshot),
                'privacy_status': 'applied' if report.llm_used else 'degraded'}
@@ -150,7 +154,7 @@ class VoucherDocuments:
             raise VoucherError('REVIEW_CHANGED', '출력 내용을 다시 확인해주세요.', 409)
         if row.get('reviewed_at'):
             return row
-        if row['snapshot']['policy'] != POLICY or row['snapshot']['template_bundle'] != template_fingerprint():
+        if row['snapshot']['policy'] != POLICY or row['snapshot']['template_bundle'] != template_fingerprint(row['template']):
             raise VoucherError('POLICY_VERSION_CHANGED', '출력 정책이 바뀌었습니다. 새 미리보기를 만들어주세요.', 409)
         form = VoucherForm.model_validate(row['snapshot']['form'])
         _, hashes = self.sources(actor, row['case_id'], form.rows)
@@ -165,9 +169,10 @@ class VoucherDocuments:
         if not preview and not row.get('reviewed_at'):
             raise VoucherError('REVIEW_REQUIRED', '먼저 출력 내용 검토를 완료해주세요.', 409)
         snapshot = row['snapshot']
-        if digest(snapshot) != row['fingerprint'] or snapshot['template_bundle'] != template_fingerprint():
+        if digest(snapshot) != row['fingerprint'] or snapshot['template_bundle'] != template_fingerprint(row['template']):
             raise VoucherError('TEMPLATE_VERSION_UNAVAILABLE', '이 문서 버전의 서식을 확인할 수 없습니다.', 409)
-        if format == 'hwpx' and not manifest()['qualification']['hwpx']:
+        bundle = manifest('form25') if row['template'] == 'form25' else manifest()
+        if format == 'hwpx' and not bundle['qualification']['hwpx']:
             raise VoucherError('FORMAT_NOT_QUALIFIED', '문서 편집기 호환성 확인 후 제공할 예정입니다.', 503)
         form = VoucherForm.model_validate(snapshot['form'])
         return render_pdf(form) if format == 'pdf' else render_hwpx(form)

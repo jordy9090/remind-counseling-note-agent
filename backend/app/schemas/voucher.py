@@ -29,7 +29,7 @@ class RecordRow(SourceSelection):
 
 
 class VoucherForm(StrictModel):
-    template: Literal["form10", "form26"]
+    template: Literal["form10", "form25", "form26"]
     report_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     service_tier: Literal["", "type_1", "type_2"] = ""
     rows: list[RecordRow] = Field(default_factory=list, max_length=8)
@@ -42,9 +42,15 @@ class VoucherForm(StrictModel):
     contract_period: str = Field(default="", max_length=1000)
     plan_left: str = Field(default="", max_length=3000)
     plan_right: str = Field(default="", max_length=3000)
+    additional_cost: str = Field(default="", max_length=1000)
+    refund_terms: str = Field(default="", max_length=2000)
+    other_terms: str = Field(default="", max_length=2000)
 
     @model_validator(mode="after")
     def check_record(self):
+        contract_only = ('additional_cost', 'refund_terms', 'other_terms')
+        if self.template != 'form25' and any(getattr(self, key) for key in contract_only):
+            raise ValueError("현재 서식에서 출력할 수 없는 항목이 있습니다.")
         if self.template == "form10":
             if any(getattr(self, key) for key in ('purpose', 'content', 'schedule', 'price', 'contract_period', 'plan_left', 'plan_right')):
                 raise ValueError("현재 서식에서 출력할 수 없는 항목이 있습니다.")
@@ -59,6 +65,11 @@ class VoucherForm(StrictModel):
                     raise ValueError("같은 달의 회기만 선택해주세요.")
                 if not row.content_left.strip():
                     raise ValueError("각 회기의 서비스 내용을 작성해주세요.")
+        elif self.template == 'form25':
+            if self.rows or any(getattr(self, key) for key in ('general_comment', 'service_tier', 'purpose', 'plan_left', 'plan_right')):
+                raise ValueError("현재 서식에서 출력할 수 없는 항목이 있습니다.")
+            if any(not getattr(self, key).strip() for key in ('contract_period', 'content', 'schedule', 'price', 'additional_cost', 'refund_terms')):
+                raise ValueError("계약기간·내용·시간·횟수·금액·추가비용·환불규정을 작성해주세요.")
         elif self.rows or self.general_comment or self.service_tier or not self.purpose.strip() or not self.content.strip() or not self.plan_left.strip():
             raise ValueError("계획서의 목적·내용·제공계획을 작성해주세요.")
         return self

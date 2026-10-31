@@ -65,12 +65,13 @@ def field_values(form):
     return values
 
 
-def manifest():
-    return json.loads((ROOT / 'manifest.json').read_text('utf-8'))
+def manifest(template=None):
+    name = 'form25-manifest.json' if template == 'form25' else 'manifest.json'
+    return json.loads((ROOT / name).read_text('utf-8'))
 
 
-def verify_assets():
-    for name, digest in manifest()['assets'].items():
+def verify_assets(template=None):
+    for name, digest in manifest(template)['assets'].items():
         if sha256((ROOT / name).read_bytes()).hexdigest() != digest:
             raise VoucherError('TEMPLATE_BINDING_MISMATCH', '서식 파일을 확인할 수 없습니다.', 503)
 
@@ -82,6 +83,9 @@ def font():
 
 
 def paragraphs(form):
+    if form.template == 'form25':
+        from app.services.voucher_contract import layout
+        return layout(form)
     face = font().face
     result = []
     for key, value in field_values(form).items():
@@ -101,7 +105,10 @@ def paragraphs(form):
 
 
 def render_pdf(form):
-    verify_assets()
+    verify_assets(form.template)
+    if form.template == 'form25':
+        from app.services.voucher_contract import render_pdf as contract_pdf
+        return contract_pdf(form)
     overlay = BytesIO()
     canvas = Canvas(overlay, pagesize=(595, 841), invariant=1)
     for paragraph, (x, y, _, _), height in paragraphs(form):
@@ -117,7 +124,10 @@ def render_pdf(form):
 
 
 def render_hwpx(form):
-    verify_assets()
+    verify_assets(form.template)
+    if form.template == 'form25':
+        from app.services.voucher_contract import render_hwpx as contract_hwpx
+        return contract_hwpx(form)
     paragraphs(form)
     source = ZipFile(ROOT / f'source/{form.template}.hwpx')
     parser = ET.XMLParser(resolve_entities=False, no_network=True)
