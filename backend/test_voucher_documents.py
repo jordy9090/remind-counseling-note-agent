@@ -140,6 +140,16 @@ class RendererTests(TestCase):
                 self.assertNotIn('000-0000-000-00', text)
                 self.assertNotIn('0000제공기관', text)
 
+    def test_hwpx_omits_stale_source_thumbnail_and_keeps_current_preview_text(self):
+        for form in [record(), plan()]:
+            with self.subTest(template=form.template), ZipFile(BytesIO(render_hwpx(form))) as archive:
+                self.assertNotIn('Preview/PrvImage.png', archive.namelist())
+                expected = form.rows[0].content_left if form.rows else form.purpose
+                self.assertIn(expected, archive.read('Preview/PrvText.txt').decode('utf-8'))
+                for name in archive.namelist():
+                    if name.endswith(('.xml', '.hpf', '.rdf')):
+                        self.assertNotIn(b'PrvImage.png', archive.read(name), name)
+
 
 class ServiceTests(TestCase):
     def setUp(self):

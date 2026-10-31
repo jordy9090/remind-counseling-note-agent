@@ -152,6 +152,10 @@ def render_hwpx(form):
     output = BytesIO()
     with ZipFile(output, 'w') as archive:
         for entry in source.infolist():
+            # The source thumbnail predates the filled values; omit it instead of
+            # presenting a blank or example form as the generated document.
+            if entry.filename == 'Preview/PrvImage.png':
+                continue
             data = source.read(entry.filename)
             if entry.filename == 'Contents/section0.xml':
                 data = ET.tostring(root, encoding='UTF-8', xml_declaration=True)
@@ -159,6 +163,5 @@ def render_hwpx(form):
                 data = ET.tostring(header, encoding='UTF-8', xml_declaration=True)
             elif entry.filename == 'Preview/PrvText.txt':
                 data = '\n'.join(values.values()).encode('utf-8')
-            # Keep only the pristine empty-form image; it never contains user data.
             archive.writestr(entry, data)
     return output.getvalue()
