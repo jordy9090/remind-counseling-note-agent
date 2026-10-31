@@ -12,9 +12,8 @@
   },
   "qualification": {
     "pdf": true,
-    "hwpx": false
+    "hwpx": true
   },
-  "hwpx_pending": "Hancom open/edit/save qualification required",
   "layout": "Official grid retained; text re-typeset with bundled OFL Nanum Gothic. Example content removed from PDF text layer.",
   "license_review": "Publisher page labels KOGL type 4; the forms themselves allow institution-specific modifications. Commercial template redistribution terms remain unresolved."
 }

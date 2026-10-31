@@ -16,7 +16,7 @@ from lxml import etree as ET
 from app.api.security import AuthenticatedActor, require_preview_access
 from app.schemas.voucher import VoucherForm, MapRequest, PrepareRequest, ReviewRequest
 from app.services.voucher_documents import service, confirmed_fields, digest
-from app.services.voucher_renderer import VoucherError, render_pdf, render_hwpx, paragraphs, NS
+from app.services.voucher_renderer import VoucherError, render_pdf, render_hwpx, paragraphs, manifest, NS
 
 NOTE = '00000000-0000-4000-8000-000000000010'
 OWNER = AuthenticatedActor('00000000-0000-4000-8000-000000000001', 'synthetic-only')
@@ -189,6 +189,50 @@ class ServiceTests(TestCase):
         self.assertEqual(service.get(OWNER, row['id'])['snapshot'], row['snapshot'])
         self.assertEqual(len(self.memory.rows), 1)
 
+    def test_released_snapshots_remain_reviewable_and_exportable_after_qualification(self):
+        # Fingerprint from the manifest shipped in 12d5fcc, before HWPX qualification.
+        released_bundle = '1d19fc6fb00cf7e604d8d718f56a4ede711feda5a41b604a94d9ab5cdced9641'
+        for form in [record(), plan()]:
+            with self.subTest(template=form.template):
+                row, _ = self.prepared(form)
+                self.assertEqual(row['snapshot']['template_bundle'], released_bundle)
+                before = service.export(OWNER, row['id'], 'pdf', preview=True)
+                self.review(row)
+                self.assertEqual(service.export(OWNER, row['id'], 'pdf'), before)
+                with ZipFile(BytesIO(service.export(OWNER, row['id'], 'hwpx'))) as archive:
+                    self.assertNotIn('Preview/PrvImage.png', archive.namelist())
+                    expected = form.rows[0].content_left if form.rows else form.purpose
+                    self.assertIn(expected, archive.read('Preview/PrvText.txt').decode('utf-8'))
+                self.assertEqual(service.get(OWNER, row['id'])['fingerprint'], row['fingerprint'])
+
+    def test_disabling_hwpx_does_not_invalidate_reviewed_pdf(self):
+        row, _ = self.prepared()
+        self.review(row)
+        before = service.export(OWNER, row['id'], 'pdf')
+        disabled = manifest()
+        disabled['qualification']['hwpx'] = False
+        with patch('app.services.voucher_documents.manifest', return_value=disabled):
+            self.assertEqual(service.export(OWNER, row['id'], 'pdf'), before)
+            with self.assertRaises(VoucherError) as error:
+                service.export(OWNER, row['id'], 'hwpx')
+            self.assertEqual(error.exception.code, 'FORMAT_NOT_QUALIFIED')
+
+    def test_rendering_bundle_changes_still_invalidate_saved_snapshot(self):
+        row, _ = self.prepared()
+        for field in ['assets', 'version', 'layout']:
+            changed = manifest()
+            if field == 'assets':
+                changed['assets']['compiled/form10.pdf'] = '0' * 64
+            else:
+                changed[field] += '-changed'
+            with self.subTest(field=field), patch('app.services.voucher_documents.manifest', return_value=changed):
+                with self.assertRaises(VoucherError) as error:
+                    self.review(row)
+                self.assertEqual(error.exception.code, 'POLICY_VERSION_CHANGED')
+                with self.assertRaises(VoucherError) as error:
+                    service.export(OWNER, row['id'], 'pdf', preview=True)
+                self.assertEqual(error.exception.code, 'TEMPLATE_VERSION_UNAVAILABLE')
+
     def test_no_raw_input_read_and_no_other_case_mapping(self):
         req = MapRequest(case_id=CASE, sources=[selection()])
         with patch('app.services.voucher_documents.db.fetch_generated_note', return_value=self.source) as fetch:
@@ -235,7 +279,7 @@ class ServiceTests(TestCase):
         self.assertEqual(row['privacy_status'], 'degraded')
         self.review(row)
         self.assertTrue(service.export(OWNER, row['id'], 'pdf'))
-        with self.assertRaises(VoucherError): service.export(OWNER, row['id'], 'hwpx')
+        self.assertTrue(service.export(OWNER, row['id'], 'hwpx'))
         service.delete(OWNER, row['id'])
         self.assertEqual(self.memory.rows, [])
 
@@ -252,6 +296,7 @@ class ServiceTests(TestCase):
             app.dependency_overrides[require_preview_access] = lambda: OWNER
             self.addCleanup(app.dependency_overrides.clear)
             with patch.dict('os.environ', {'ENABLE_VOUCHER_DOCUMENTS': '1'}):
+                self.assertTrue(client.get(prefix+'capabilities').json()['formats']['hwpx'])
                 request = PrepareRequest(case_id=CASE, operation_key=uuid4(), form=plan()).model_dump(mode='json')
                 row = client.post(prefix+'prepare', json=request)
                 self.assertEqual(row.status_code, 200, row.text)
@@ -259,10 +304,18 @@ class ServiceTests(TestCase):
                 preview = client.get(base+'/preview')
                 self.assertEqual(preview.status_code, 200)
                 self.assertEqual(preview.headers['cache-control'], 'private, no-store')
+                self.assertEqual(client.post(base+'/export', json={'format': 'hwpx'}).status_code, 409)
                 review = client.post(base+'/review', json={'fingerprint': row['fingerprint'], 'human_privacy_reviewed': True, 'acknowledged_offline_completion': True})
                 self.assertEqual(review.status_code, 200)
                 download = client.post(base+'/export', json={'format': 'pdf'})
                 self.assertEqual(download.content, preview.content)
+                hwpx = client.post(base+'/export', json={'format': 'hwpx'})
+                self.assertEqual(hwpx.status_code, 200)
+                self.assertEqual(hwpx.headers['content-type'], 'application/hwp+zip')
+                self.assertEqual(hwpx.headers['cache-control'], 'private, no-store')
+                self.assertIn('.hwpx', hwpx.headers['content-disposition'])
+                with ZipFile(BytesIO(hwpx.content)) as archive:
+                    self.assertIn('정서 이해를 돕는다.', archive.read('Preview/PrvText.txt').decode('utf-8'))
                 self.assertEqual(client.delete(base).status_code, 204)
                 self.assertEqual(client.get(base).status_code, 404)
                 app.dependency_overrides[require_preview_access] = lambda: 'shared-preview'

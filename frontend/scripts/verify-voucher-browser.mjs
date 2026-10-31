@@ -54,11 +54,11 @@ const approve = async () => {
   await page.getByRole('button', { name: '내용 검토 완료', exact: true }).click()
   await page.getByText('검토 완료 · 기관 보완 필요', { exact: true }).waitFor()
 }
-const download = async () => {
+const download = async (format = 'pdf') => {
   const event = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'PDF 다운로드', exact: true }).click()
+  await page.getByRole('button', { name: `${format.toUpperCase()} 다운로드`, exact: true }).click()
   const data = await fs.readFile(await (await event).path())
-  assert.equal(data.subarray(0, 5).toString(), '%PDF-')
+  assert.equal(data.subarray(0, format === 'pdf' ? 5 : 2).toString(), format === 'pdf' ? '%PDF-' : 'PK')
   return data
 }
 try {
@@ -106,7 +106,8 @@ try {
   await approve()
   const first = await download()
   await page.screenshot({ path: path.resolve('../tmp_ab/voucher-browser-record.png'), fullPage: true })
-  assert.equal(await page.getByRole('button', { name: 'HWPX 다운로드', exact: true }).isDisabled(), true)
+  assert.equal(await page.getByRole('button', { name: 'HWPX 다운로드', exact: true }).isDisabled(), false)
+  await download('hwpx')
   await open()
   await page.getByRole('button', { name: /서비스 제공기록지 · 제10호 · 검토 완료/ }).click()
   await page.getByTitle('실제 출력될 전마투 PDF').waitFor()
@@ -126,7 +127,8 @@ try {
   await page.getByTitle('실제 출력될 전마투 PDF').waitFor()
   await approve(); await download()
   await page.screenshot({ path: path.resolve('../tmp_ab/voucher-browser-plan.png'), fullPage: true })
-  console.log('PASS: real React UI -> API -> in-memory snapshot -> PDF review -> download -> reopen -> edit/review; manual plan without source notes; HWPX gated')
+  await download('hwpx')
+  console.log('PASS: real React UI -> API -> in-memory snapshot -> PDF review -> PDF/HWPX download -> reopen -> edit/review; manual plan without source notes')
   }
   assert.deepEqual(errors, [])
 } catch (error) {
