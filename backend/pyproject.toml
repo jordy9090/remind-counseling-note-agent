@@ -43,6 +43,13 @@ audio-whisperx = [
     "numpy>=1.26,<3",
 ]
 
+[dependency-groups]
+# Run synthetic STT regressions without installing optional model runtimes.
+dev = [
+    "numpy>=2.1,<3",
+    "rapidfuzz>=3.14,<4",
+]
+
 [tool.uv]
 # Allow prerelease packages when resolving this MVP demo environment.
 prerelease = "allow"
