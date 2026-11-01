@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.graph import nodes
 from app.schemas.note import SessionSummaryDraft
 from app.services.summary_verification import SummaryVerification
+from app.services.summary_corrections import SourceRefReview
 from app.services import summary_rules, summary_skill
 from app.services.summary_quality import summary_quality_issues, summary_quote_issues
 from test_summary_quality import _state, _summary
@@ -144,8 +145,12 @@ class SessionSummaryMemoryTests(unittest.TestCase):
         self.assertTrue(summary.client_response.requires_review)
         self.assertEqual("needs_review", summary.client_response.evidence_type)
         state["session_summary_draft"] = summary
+        assessment = SummaryVerification(source_ref_reviews=[
+            SourceRefReview(field=field, keep_source_refs=section.source_refs)
+            for field, section in summary if field != "session_info"
+        ])
         with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key"), patch.object(
-            nodes, "get_structured_llm", return_value=Mock(invoke=Mock(return_value=SummaryVerification())),
+            nodes, "get_structured_llm", return_value=Mock(invoke=Mock(return_value=assessment)),
         ):
             report = nodes.verify_output(state)["verification_report"]
         self.assertTrue(any("직접 인용" in item.reason for item in report.unsupported_or_risky_claims))

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_quality import QUOTED_TEXT, SECTION_LIMITS
+from app.services.summary_corrections import SourceRefReview, TextCorrection
 
 
 class PlanEvidence(BaseModel):
@@ -23,6 +24,9 @@ class SummaryVerification(VerificationReport):
     """Private verifier output; the existing verifier call also checks temporal scope."""
 
     next_plan_assessment: PlanAssessment = Field(default_factory=PlanAssessment)
+    text_corrections: list[TextCorrection] = Field(default_factory=list, max_length=14)
+    source_ref_reviews: list[SourceRefReview] = Field(default_factory=list, max_length=7)
+    correction_validated: bool = False
 
 
 def _literal(value: str) -> str:
@@ -48,7 +52,7 @@ def apply_summary_verification(
     Literal evidence is an anchor, not a semantic approval. The independent model
     must also support future scope, speaker, action, conditions and agreement.
     """
-    report = VerificationReport.model_validate(result.model_dump(exclude={"next_plan_assessment"}))
+    report = VerificationReport.model_validate(result.model_dump(include=set(VerificationReport.model_fields)))
 
     def flag(field: str, reason: str) -> None:
         section = getattr(summary, field)
@@ -75,9 +79,15 @@ def apply_summary_verification(
             and any(_literal(item.quote) in line for line in cited_lines([item.source_ref], catalog))
             for item in assessment.evidence
         )
-        if supported:
+        if supported and result.source_ref_reviews:
+            # Keep the reviewed citation subset; plan anchors cannot restore a
+            # reference that the complete per-section review removed.
+            retained_lines = cited_lines(plan.source_refs, catalog)
+            supported = all(any(_literal(item.quote) in line for line in retained_lines)
+                            for item in assessment.evidence)
+        if supported and not result.source_ref_reviews:
             plan.source_refs = list(dict.fromkeys(item.source_ref for item in assessment.evidence))
-        else:
+        if not supported:
             flag("next_plan", "회기 이후 계획의 시점·조건·합의와 원문 근거를 확인할 수 없습니다.")
             plan.text = ("[자료에서 확인되지 않음]" if assessment.status in {"in_session_only", "not_documented"}
                          else "[다음 계획은 원문 확인 필요]")

@@ -15,6 +15,7 @@ from app.schemas.note import (
     SessionInfo, SessionInput, SessionSummaryDraft, StructuredCaseData,
 )
 from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryVerification
+from app.services.summary_corrections import SourceRefReview
 from app.services import quick_summary
 from app.services.summary_skill import SummarySkillResult
 from test_quick_summary import _load_vercel_generate
@@ -75,6 +76,8 @@ class SummarySkillPipelineTests(unittest.TestCase):
             output = _summary()
         elif schema is SummaryVerification:
             output = self.verification.model_copy(deep=True)
+            output.source_ref_reviews = [SourceRefReview(field=field, keep_source_refs=section.source_refs)
+                                         for field, section in _summary() if field != "session_info"]
             output.next_plan_assessment = PlanAssessment(status="supported_future", evidence=[
                 PlanEvidence(source_ref="transcript.turn_4", quote="다음 회기에 시험 전날의 걱정을 다시 살펴볼까요?"),
             ])

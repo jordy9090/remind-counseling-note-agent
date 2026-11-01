@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.graph.nodes import _apply_verification_consistency, _source_catalog, transform_document_preview, verify_output
 from app.schemas.note import CounselorReviewField, GroundedItem, ReviewableClaim, SessionInput, VerificationReport
 from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryVerification, apply_summary_verification
+from app.services.summary_corrections import SourceRefReview
 from test_summary_quality import _state, _summary
 
 
@@ -22,7 +23,10 @@ class SummaryVerificationTests(unittest.TestCase):
             "상담자: 잠깐 일어나서 해볼까요?\n내담자: 서서 하는 건 싫어요.\n상담자: 네. 앉아 있을게요."
         )
         self.state["session_summary_draft"] = self.summary
-        assessment = SummaryVerification(next_plan_assessment=PlanAssessment(status="in_session_only"))
+        assessment = SummaryVerification(next_plan_assessment=PlanAssessment(status="in_session_only"), source_ref_reviews=[
+            SourceRefReview(field=field, keep_source_refs=section.source_refs)
+            for field, section in self.summary if field != "session_info"
+        ])
         with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=Mock(return_value=assessment))) as llm:
             result = verify_output(self.state)
         llm.assert_called_once_with(SummaryVerification)
