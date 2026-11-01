@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_quality import QUOTED_TEXT, SECTION_LIMITS
-from app.services.summary_corrections import SourceRefReview, TextCorrection
+from app.services.summary_corrections import SourceRefRestoration, SourceRefReview, TextCorrection
 
 
 class PlanEvidence(BaseModel):
@@ -20,14 +20,20 @@ class PlanAssessment(BaseModel):
     evidence: list[PlanEvidence] = Field(default_factory=list)
 
 
-class SummaryCorrectionValidation(VerificationReport):
-    """Approve or reject a fixed candidate; never propose another edit."""
+class SummaryAssessment(VerificationReport):
+    """Private semantic assessment shared by initial and final verification."""
 
     next_plan_assessment: PlanAssessment = Field(default_factory=PlanAssessment)
     correction_validated: bool = False
 
 
-class SummaryVerification(SummaryCorrectionValidation):
+class SummaryCorrectionValidation(SummaryAssessment):
+    """Validate corrections and cancel only removals that lose required evidence."""
+
+    source_ref_restorations: list[SourceRefRestoration] = Field(default_factory=list, max_length=7)
+
+
+class SummaryVerification(SummaryAssessment):
     """Private initial verifier output with bounded correction proposals."""
 
     text_corrections: list[TextCorrection] = Field(default_factory=list, max_length=14)

@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from app.core.config import settings
 from app.graph.nodes import _source_catalog, verify_output
 from app.schemas.note import SessionSummaryDraft, VerificationReport
-from app.services.summary_corrections import SourceRefReview, TextCorrection, correct_summary, introduced_script_fields
+from app.services.summary_corrections import SourceRefRestoration, SourceRefReview, TextCorrection, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.summary_quality import SummaryQualityError
 from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification
 from test_summary_quality import _state, _summary
@@ -120,6 +120,31 @@ class SummaryCorrectionTests(unittest.TestCase):
         ))
         apply_summary_verification(self.summary, assessment, self.catalog)
         self.assertEqual(["transcript.turn_4"], self.summary.next_plan.source_refs)
+
+    def test_final_validation_can_cancel_only_required_reference_removals(self):
+        self.summary.session_content.text = "두 결정은 अलग개로 나눔."
+        self.summary.session_theme.source_refs = ["transcript.turn_1", "transcript.turn_4"]
+        decisions = reviews(self.summary)
+        next(item for item in decisions if item.field == "session_theme").keep_source_refs = ["transcript.turn_1"]
+        first = SummaryVerification(source_ref_reviews=decisions, text_corrections=[
+            TextCorrection(field="session_content", original="अलग개로", replacement="별개로")])
+        final = SummaryCorrectionValidation(correction_validated=True, source_ref_restorations=[
+            SourceRefRestoration(field="session_theme", source_refs=["transcript.turn_4"])])
+        self.state["session_summary_draft"] = self.summary
+        invoke = Mock(side_effect=[first, final])
+        with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)):
+            result = verify_output(self.state)
+        self.assertEqual(2, invoke.call_count)
+        self.assertEqual("두 결정은 별개로 나눔.", result["session_summary_draft"].session_content.text)
+        self.assertEqual(self.summary.session_theme.source_refs, result["session_summary_draft"].session_theme.source_refs)
+
+    def test_restoration_cannot_add_new_or_duplicate_references(self):
+        self.summary.session_theme.source_refs = ["transcript.turn_1", "transcript.turn_4"]
+        candidate = self.summary.model_copy(deep=True)
+        candidate.session_theme.source_refs = ["transcript.turn_1"]
+        for refs in (["transcript.turn_2"], ["transcript.turn_1"], ["unknown"], ["transcript.turn_4", "transcript.turn_4"]):
+            with self.subTest(refs=refs), self.assertRaises(SummaryQualityError):
+                retain_required_refs(self.summary, candidate, [SourceRefRestoration(field="session_theme", source_refs=refs)], self.catalog)
 
 
 if __name__ == "__main__":

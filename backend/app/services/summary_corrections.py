@@ -23,6 +23,30 @@ class SourceRefReview(BaseModel):
     keep_source_refs: list[str] = Field(default_factory=list)
 
 
+class SourceRefRestoration(BaseModel):
+    field: SummaryField
+    source_refs: list[str] = Field(default_factory=list)
+
+
+def retain_required_refs(original: SessionSummaryDraft, candidate: SessionSummaryDraft,
+                         restorations: list[SourceRefRestoration], catalog: dict[str, str]) -> SessionSummaryDraft:
+    """Cancel only reviewed removals; final verification cannot invent new references."""
+    result = candidate.model_copy(deep=True)
+    seen: set[str] = set()
+    for decision in restorations:
+        before = getattr(original, decision.field).source_refs
+        section = getattr(result, decision.field)
+        removed = set(before) - set(section.source_refs)
+        if (decision.field in seen or len(set(decision.source_refs)) != len(decision.source_refs)
+                or not set(decision.source_refs) <= removed
+                or any(ref not in catalog for ref in decision.source_refs)):
+            raise SummaryQualityError()
+        seen.add(decision.field)
+        keep = set(section.source_refs) | set(decision.source_refs)
+        section.source_refs = [ref for ref in before if ref in keep]
+    return result
+
+
 def introduced_script_fields(summary: SessionSummaryDraft, catalog: dict[str, str]) -> list[str]:
     """Detect generated foreign-script fragments absent from the supplied sources.
 

@@ -40,7 +40,7 @@ from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
 from app.services.summary_rules import labeled_summary_input, session_summary_writing_rules
 from app.services.summary_verification import SummaryCorrectionValidation, SummaryVerification, apply_summary_verification
-from app.services.summary_corrections import SourceRefReview, correct_summary, introduced_script_fields
+from app.services.summary_corrections import SourceRefReview, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
 from app.services.session_materials import separate_session_materials
@@ -461,19 +461,24 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
                                            final_correction_check=True)
         recheck += f"""
 This is the single final validation after a bounded correction. Assess ONLY the current summary above.
-Set correction_validated=true only if the edits below preserve facts, speaker, negation, time,
-conditions and direct quotations, fix lexical errors, and remove only unnecessary references.
+Check each proposed removal separately. If a removed reference is required for ANY clause, timing,
+speaker, condition or direct quotation, cancel that removal in source_ref_restorations. Only IDs
+removed from that SAME field in the audit can be restored. Never add new IDs, delete more IDs or edit text.
+Set correction_validated=true only if the corrected wording and the retained/restored references
+together preserve facts, speaker, negation, time, conditions and direct quotations, fix lexical
+errors, and leave only unnecessary references removed. Assess the final report against that result.
 The previous draft below is change-audit data, NOT source evidence and NOT the current draft.
 Do not repeat warnings about errors already corrected. Retain unrelated semantic/safety warnings.
-If any clear typo or unnecessary reference remains, or an edit loses required evidence, set
-correction_validated=false and explain why in requires_counselor_review. There is no further repair pass.
+If the result remains unsafe after the allowed restorations, set correction_validated=false and
+explain why in requires_counselor_review. There is no further model call or repair pass.
 Correction audit:
 {_json(audit)}
 """
         final = get_structured_llm(SummaryCorrectionValidation).invoke(recheck)
         if not final.correction_validated:
             raise SummaryQualityError()
-        assessment = SummaryVerification(**final.model_dump(), source_ref_reviews=[
+        candidate = retain_required_refs(summary, candidate, final.source_ref_restorations, catalog)
+        assessment = SummaryVerification(**final.model_dump(exclude={"source_ref_restorations"}), source_ref_reviews=[
             SourceRefReview(field=field, keep_source_refs=getattr(candidate, field).source_refs)
             for field in SessionSummaryDraft.model_fields if field != "session_info"
         ])
@@ -1218,8 +1223,9 @@ def _build_verification_prompt(
 ) -> str:
     privacy_context = privacy_context or []
     correction_rules = """
-This is a final assessment of a fixed candidate. Approve or reject the supplied corrections;
-do not propose a new citation set or rewrite. Assess the retained references against the ENTIRE
+This is a final assessment of supplied corrections. Approve or reject them; you may cancel a
+proposed reference removal using source_ref_restorations, but cannot propose new references,
+further removals or rewrites. Assess the retained references against the ENTIRE
 section: a reference needed for another clause, speaker or temporal context must remain even
 when it does not contain the direct quotation. Distinguish unnecessary evidence from necessary context.
 """ if final_correction_check else """

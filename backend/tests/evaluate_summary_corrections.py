@@ -23,6 +23,7 @@ from app.graph import nodes
 from app.schemas.note import EvidenceMappedData, SanitizedInput, SessionSummaryDraft, StructuredCaseData
 from app.services.summary_corrections import introduced_script_fields
 from app.services.summary_quality import summary_quote_issues
+from app.services.quick_summary import generate_quick_summary
 
 
 def run() -> None:
@@ -90,11 +91,25 @@ def run() -> None:
             item.update(passed=False, failure_type=type(error).__name__)
         item["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         report["cases"].append(item)
-    report["passed"] = all(item["passed"] for item in report["cases"])
+    started = time.perf_counter()
+    try:
+        raw = (fixtures.parent / "interview_case_b.txt").read_text(encoding="utf-8").strip()
+        response = generate_quick_summary(raw)
+        assert not response.stub
+        catalog = nodes._source_catalog(response.sanitized_input, [])
+        assert not introduced_script_fields(response.session_summary_draft, catalog)
+        assert not summary_quote_issues(response.session_summary_draft, catalog)
+        report["fresh_full_b"] = {"passed": True, "response": response.model_dump(mode="json"),
+                                  "input_characters": len(raw), "input_sha256": hashlib.sha256(raw.encode()).hexdigest()}
+    except Exception as error:
+        report["fresh_full_b"] = {"passed": False, "failure_type": type(error).__name__}
+    report["fresh_full_b"]["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+    report["passed"] = all(item["passed"] for item in report["cases"]) and report["fresh_full_b"]["passed"]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"passed": report["passed"], "cases": [
-        {key: item[key] for key in ("case", "passed", "elapsed_seconds")} for item in report["cases"]]}))
+        {key: item[key] for key in ("case", "passed", "elapsed_seconds")} for item in report["cases"]],
+        "fresh_full_b_passed": report["fresh_full_b"]["passed"]}))
 
 
 if __name__ == "__main__":
