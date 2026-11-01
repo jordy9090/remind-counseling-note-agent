@@ -38,7 +38,7 @@ from app.schemas.note import (
 )
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
-from app.services.summary_rules import session_summary_writing_rules
+from app.services.summary_rules import labeled_summary_input, session_summary_writing_rules
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
 from app.services.session_materials import separate_session_materials
@@ -1182,8 +1182,8 @@ for that exact checklist configuration. Avoid relying on omitted sections for es
 For non-requested sections, keep them brief and grounded because they may be hidden by the frontend.
 Counselor-selected session topic, if provided: {session_topic or "not provided"}
 
-Sanitized input:
-{_json(sanitized)}
+Sanitized input (transcript lines are prefixed with canonical source_refs; do not recount them):
+{_json(labeled_summary_input(sanitized))}
 
 Evidence reference index (reference metadata only; summarize the original material above):
 {_json(evidence_index)}
@@ -1217,8 +1217,8 @@ Warning behavior: use retrieved privacy, ethics, and security rules only to flag
 raw audio storage risk, access-control risk, unsupported claims, and counselor-review-needed fields.
 Failure behavior: when uncertain, add a reviewable claim instead of approving the claim.
 
-Sanitized input:
-{_json(sanitized)}
+Sanitized input (each transcript line is prefixed with its canonical source_ref):
+{_json(labeled_summary_input(sanitized))}
 
 Structured data:
 {_json(structured)}

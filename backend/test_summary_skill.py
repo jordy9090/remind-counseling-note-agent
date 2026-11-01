@@ -56,7 +56,10 @@ class SummarySkillTests(unittest.TestCase):
         self.sanitized.sources.transcript_text = "내담자: SYNTH-TRANSCRIPT-ONCE\n상담자: 어떤 마음인가요?"
         request = summary_skill.build_summary_skill_request(self.sanitized)
         body = json.loads(request.messages[1].content)
-        self.assertEqual(self.sanitized.sources.transcript_text, body["sources"]["transcript_text"])
+        self.assertEqual(
+            "[transcript.turn_1] 내담자: SYNTH-TRANSCRIPT-ONCE\n[transcript.turn_2] 상담자: 어떤 마음인가요?",
+            body["sources"]["transcript_text"],
+        )
         self.assertEqual(self.sanitized.sources.counselor_memo, body["sources"]["counselor_memo"])
         serialized = "\n".join(message.content for message in request.messages)
         self.assertEqual(1, serialized.count("SYNTH-TRANSCRIPT-ONCE"))

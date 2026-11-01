@@ -3620,7 +3620,9 @@ function emptyRestoredSection(id: string): DraftSection {
 export function quickSummaryResultFromNote(note: NoteDraftResponse): QuickSummaryResult {
   const sections = buildDocumentSections(note, initialForm, '', defaultVisibleSectionIds)
     .filter((section) => section.visible && section.content.trim())
-    .map(({ id, title, content }) => ({ id, title, content }))
+    .map(({ id, title, content, evidence, sourceBadges }) => ({
+      id, title, content, evidence, requiresReview: sourceBadges.includes('needs_review'),
+    }))
   return { sections, deidentified: true, stub: Boolean(note.full_response?.stub) }
 }
 

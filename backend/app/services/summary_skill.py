@@ -23,7 +23,7 @@ from app.schemas.note import SanitizedInput, SessionInfo, SessionSummaryDraft, S
 from app.services.llm import get_llm
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues
-from app.services.summary_rules import SKILL_PATH
+from app.services.summary_rules import SKILL_PATH, labeled_summary_input
 
 
 SUMMARY_FIELDS = tuple(name for name in SessionSummaryDraft.model_fields if name != "session_info")
@@ -80,7 +80,7 @@ def build_summary_skill_request(sanitized: SanitizedInput) -> SummarySkillReques
         raise SummarySkillError()
     # Do not transmit session identifiers, personal metadata, or sensitive-info
     # candidate excerpts. Those are not necessary for summary generation.
-    sources = {key: value for key, value in sanitized.sources.model_dump().items() if value}
+    sources = {key: value for key, value in labeled_summary_input(sanitized)["sources"].items() if value}
     payload = {"sources": sources, "allowed_source_refs": list(_source_catalog(sanitized, []))}
     return SummarySkillRequest(
         messages=(

@@ -32,6 +32,20 @@ CASES = [
 
 
 class SessionSummaryMemoryTests(unittest.TestCase):
+    def test_source_line_labels_match_catalog_without_changing_saved_input(self):
+        state = _state()
+        source = state["sanitized_input"]
+        source.sources.transcript_text = "내담자: 목이 막혀요.\r\n\r\n상담자: 잠시 주의를 두어볼까요?"
+        before = source.model_dump()
+        payload = summary_rules.labeled_summary_input(source)
+        self.assertEqual("[transcript.turn_1] 내담자: 목이 막혀요.\n\n[transcript.turn_3] 상담자: 잠시 주의를 두어볼까요?", payload["sources"]["transcript_text"])
+        self.assertEqual(before, source.model_dump())
+        catalog = nodes._source_catalog(source, [])
+        self.assertIn("transcript.turn_3", catalog)
+        self.assertNotIn("transcript.turn_2", catalog)
+        verifier = nodes._build_verification_prompt(source, state["structured_case_data"], state["evidence_mapped_data"], _summary())
+        self.assertIn("[transcript.turn_3] 상담자:", verifier)
+
     def test_all_summary_serverless_entries_package_the_shared_skill(self):
         config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
         for route in ("api/notes/generate.py", "api/notes/recompose.py"):
