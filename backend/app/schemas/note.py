@@ -126,7 +126,7 @@ class SummarySection(BaseModel):
 
 class SessionSummaryDraft(BaseModel):
     session_info: SessionInfo
-    session_theme: SummarySection = Field(description="다음 회기 전에 기억할 구체적 사건·반응을 담은 주제 한 문장. 임상 범주만 남기지 않으며 짧은 핵심 원문 인용은 허용.")
+    session_theme: SummarySection = Field(description="다음 회기 전에 기억할 구체적 사건·반응을 담은 주제 한 문장. 임상 범주만 남기지 않으며 짧은 핵심 원문 인용은 허용. 발언·제안·의향을 실제 수행이나 동의로 단정하지 않음.")
     presenting_problem: SummarySection = Field(description="이번 회기에 가져온 최근 사건에서 누구와 무슨 일이 있었고 어떤 반응이 이어졌는지 핵심 1문장으로 요약. 원인·진단 추정 금지.")
     session_content: SummarySection = Field(description="사건·탐색·남은 어려움을 3문장, 목표 160~240자로 통합. 화자와 반응의 대상을 정확히 구분하고 다른 항목과 중복 최소화.")
     counselor_intervention: SummarySection = Field(description="상담자가 무엇에 대해 실제로 어떤 질문·반영·제안을 했는지 1~2문장, 목표 90~140자로 요약. 제안·거절·실제 수행을 구분하고 목적·기법·효과를 추정하지 않음.")
