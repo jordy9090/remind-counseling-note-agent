@@ -823,9 +823,8 @@ export default function SessionDraftPage({
     const nonverbalNotes = buildNonverbalNotes(material.segments || [], speakerRoleMap) || material.nonverbalNotes || ''
     if (!transcriptText.trim()) return
 
-    const isReapply =
-      Boolean(material.dirtySinceApply) &&
-      (material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined)
+    // Privacy-only edits leave ASR turns clean but must replace the prior applied block.
+    const isReapply = material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined
     const nextTranscriptText = isReapply
       ? replaceAppliedAudioBlock(form.transcript_text, material.lastAppliedTranscriptText || '', transcriptText)
       : mergeMaterialText(form.transcript_text, transcriptText, mode)

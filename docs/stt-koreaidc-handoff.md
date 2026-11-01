@@ -24,6 +24,50 @@ not include its changes, merge it, or replace main's summary implementation.
 Main's `handleSubmit`, `generateReviewed`, and person-review components are retained.
 The inspected 24-file PR list overlaps this candidate only at that session page.
 
+## November 2 publication and validation addendum
+
+The preparation context above is historical. The original candidate `5fce276`
+is published in [Draft PR #73](https://github.com/jordy9090/remind-counseling-note-agent/pull/73).
+PR #72 has independently merged into main at `f49a35e`; it was not merged or rebased
+into this STT branch. Read-only integration checks preserve its 23 other changed
+files byte-for-byte and retain its separate evidence/summary hunks in the shared
+session page. The STT candidate now contains 33 paths, as listed in
+[source separation](stt-source-separation.md).
+
+Dependency follow-up `2a7d3cc` regenerated `backend/uv.lock` for the declared audio
+extras and added NumPy/RapidFuzz to the default development group. Base runtime
+package versions were preserved. Optional dependency resolution, including
+OmegaConf, changed; the new lock is **not** the measured A100 environment or a
+qualified Blackwell installation. Fresh Python 3.11 locked installation and
+41 focused synthetic backend tests passed without installing Torch, faster-whisper,
+FunASR or WhisperX. On that exact head, backend-smoke, backend-pdf-export and
+frontend-build passed in [Product CI](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/41321558779);
+[security-regressions](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/41321558781)
+also passed. Those checks did not run GPU inference.
+
+The subsequent privacy-reapplication correction uses the stored previously applied
+block to identify repeat application, even when only the masking textarea changed
+and the ASR turns remain clean. It replaces that block without duplicating it or
+discarding unrelated memo text. A missing, ambiguous or independently edited prior
+block stops the entire update, including acoustic notes, with the existing review
+message. New synthetic regressions execute the actual page callback and helpers;
+they cover privacy-only correction, repeat application, both initial apply modes,
+unrelated text preservation and conflict rejection. See PR #73 for the exact
+follow-up commit and CI results; these checks are not a fresh browser/model E2E.
+
+The final review verified all 13 retained evidence-index hashes, the long fixture's
+speaker/text sequence and the STT source archive against the candidate. The ASR
+implementation and historical measurements below are unchanged. The source archives
+and earlier patch are frozen snapshots, not an alternative to checking out the
+reviewed PR head. Automatic GitHub-linked Previews do not qualify the self-hosted
+GPU service or authorize Production promotion.
+
+Before enabling real data, the downstream outbound privacy boundary, actual
+Blackwell kernels/concurrency, crash/deletion-failure recovery, current-main
+browser/auth/persistence integration, and dense long-input summary limits still
+require separate acceptance. This correction does not close those operational
+gates or change the experimental/disabled Blackwell profile.
+
 ## Reused evidence, not a new experiment
 
 The original experiment was based on `1879757694dced5530aca80db499323dc4300767`
@@ -215,13 +259,14 @@ of successful STT. Do not advertise a guaranteed 60-minute upload-to-summary SLA
 
 ## Review and application
 
-Review [source separation](stt-source-separation.md), the changed-path allowlist and
-the supplied local validation ledger. The local patch can be applied to the exact
-base with `git apply --check <patch>` followed by `git apply <patch>` in a clean
-checkout. It contains source, configuration templates, fictional scripts and docs,
-not credentials, model weights, generated audio or benchmark output.
+Review [source separation](stt-source-separation.md), the changed-path allowlist,
+the supplied validation ledger and the exact head/checks on Draft PR #73. Use that
+reviewed revision for current source. The original local patch remains applicable
+only to its recorded base and does not contain subsequent fixes. Published source
+contains configuration templates, fictional scripts and docs, not credentials,
+model weights, generated audio or benchmark output.
 
-No deployment, PR publication, main merge, server-package change, or real data
-processing is part of this handoff. Before a future PR or deployment, fetch main
-and inspect overlapping paths (especially the shared session page and PR #72),
-reuse unchanged checks, and run only checks invalidated by actual integration.
+No main merge, Production deployment, GPU/model rerun, server-package change or
+real-data processing is part of these follow-ups. Before any later authorized
+integration, fetch main and inspect overlapping paths, especially the shared
+session page; reuse unchanged checks and run only checks invalidated by the change.

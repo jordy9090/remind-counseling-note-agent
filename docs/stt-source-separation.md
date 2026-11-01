@@ -17,6 +17,14 @@ file/hunk allowlist, never by wholesale copying the dirty checkout. The candidat
 starts at GitHub main `c15249e780f7f07d8523f8fc88195c9b5d28fdf5` in a separate
 managed local worktree, branch `codex/stt-experimental-handoff`.
 
+The original candidate is `5fce276`. Dependency follow-up `2a7d3cc` adds the
+default NumPy/RapidFuzz development group and synchronizes `backend/uv.lock`.
+The November 2 privacy-reapplication follow-up changes only the audio apply
+callback, its regression script, and these handoff documents. It does not change
+ASR/diarization, dependencies, summary implementation, or person mapping.
+PR #73 remains Draft; PR #72 is now independently merged into main at `f49a35e`.
+The current candidate has 33 changed paths: the original 32 plus `backend/uv.lock`.
+
 ## Included files
 
 | Files | Selected behavior |
@@ -26,7 +34,8 @@ managed local worktree, branch `codex/stt-experimental-handoff`.
 | `backend/app/schemas/audio.py` | Stage artifacts, stable segment IDs, partial failures and review metadata |
 | `backend/app/services/audio_transcription.py` | Opt-in local engine selection/cache/capability integration; regression WhisperX remains explicit |
 | `backend/app/services/local_audio_pipeline.py` | Previously evaluated bounded ASR/VAD/diarization and timestamp merge; no algorithm changes in this handoff |
-| `backend/pyproject.toml` | Only `audio-local` / `audio-evaluation` extras; CTranslate2 pinned to the measured 4.8.4; no summary-evaluation extras |
+| `backend/pyproject.toml` | `audio-local` / `audio-evaluation` extras and default NumPy/RapidFuzz development dependencies for synthetic CI; CTranslate2 pinned to the measured 4.8.4; no summary-evaluation extras |
+| `backend/uv.lock` | Synchronized optional audio and development dependencies; base runtime versions preserved; not a qualified target-GPU environment |
 | `backend/audio-runtime.env.example`, `backend/audio-blackwell.env.example` | Non-secret operator templates; Blackwell profile is unqualified and disabled |
 | `backend/benchmarks/stt_{synthetic,benchmark,evaluate,rediarize,audit,gpu_probe}.py` | Fictional fixture generation, comparison/scoring and diagnostic tools |
 | `backend/benchmarks/counseling_long_synthetic.py`, `backend/tests/fixtures/{stt_roleplay,counseling_long_v3}.json` | Authored fictional scripts only, no generated audio or client data |
@@ -37,8 +46,8 @@ managed local worktree, branch `codex/stt-experimental-handoff`.
 | `frontend/src/lib/audioTranscriptWorkflow.ts` | Existing split/merge, timestamp provenance and anonymous-role formatting |
 | `frontend/src/components/audio/AudioTranscriptEditor.tsx` | Previously tested edits, roles, playback, omission candidates and audio masking confirmation |
 | `frontend/src/components/session-input/SessionInputPage.tsx` | Existing upload-consent dialog and audio lifecycle copy; unrelated summary-replacement dialog excluded |
-| `frontend/src/pages/SessionDraftPage.tsx` | Audio results held for review, edits and confirmed text applied explicitly; main summary submission/privacy flow retained |
-| `frontend/scripts/verify-audio-transcript-workflow.mjs` | Prior audio/editor/consent regressions; unrelated summary-replacement-dialog assertions excluded |
+| `frontend/src/pages/SessionDraftPage.tsx` | Audio results held for review; confirmed text applied explicitly; later privacy-only corrections replace the tracked prior block safely; main summary submission/privacy flow retained |
+| `frontend/scripts/verify-audio-transcript-workflow.mjs` | Audio/editor/consent and actual-callback reapplication regressions, including repeated apply and conflicting prior blocks; unrelated summary-replacement-dialog assertions excluded |
 | `docs/api_contract.md`, `docs/local-audio-runtime.md` | Audio contract and runtime explanation, corrected to disclose current-main downstream boundaries |
 | `docs/stt-koreaidc-handoff.md`, this file | Evidence, exclusions, target-host acceptance and review instructions |
 
@@ -77,3 +86,10 @@ TypeScript/Vite build, a network-free provider-boundary probe, final diff/source
 review, original-file preservation and patch applicability. No production smoke
 test is appropriate because nothing is deployed. Exact commands, timestamps,
 candidate SHA and cleanup status are in the supplied validation ledger.
+
+The November 2 follow-up adds synthetic callback regressions for privacy-only
+corrections, repeat application, append/replace modes, unrelated memo preservation,
+and atomic rejection of edited, missing, ambiguous or independently edited acoustic
+blocks. These checks do not make the old browser/model run a current-main E2E.
+Exact-head CI results and follow-up SHAs are linked from PR #73; the original
+source/evidence archives remain immutable historical artifacts.

@@ -237,7 +237,12 @@ assert(applyNode, 'reviewed apply callback must exist')
 const applyJs = ts.transpileModule(`const apply = ${applyNode.initializer.getText(pageAst)}`, {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText
-const mergeText = (before, after, mode) => mode === 'replace' ? after : [before, after].filter(Boolean).join('\n\n')
+const mergeTextNode = pageAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'mergeMaterialText')
+assert(mergeTextNode, 'actual material merge helper must exist')
+const mergeTextJs = ts.transpileModule(mergeTextNode.getText(pageAst), {
+  compilerOptions: { target: ts.ScriptTarget.ES2020 },
+}).outputText
+const mergeText = new Function(`${mergeTextJs}; return mergeMaterialText`)()
 let appliedMaterials = [{ id: 'reviewed', kind: 'audio', segments: editable, speakerRoleMap: { speaker_0: 'client' }, appliedTargets: [], dirtySinceApply: true }]
 let appliedForm = { transcript_text: '상담사 메모', nonverbal_notes: '' }
 const invokeApply = () => new Function('materials', 'form', 'buildTranscriptText', 'buildNonverbalNotes', 'replaceAppliedAudioBlock',
@@ -250,6 +255,46 @@ assert(appliedForm.transcript_text === '상담사 메모', 'stale review must be
 invokeApply()('reviewed', 'append', '내담자: [이름]에게 안 갔다. 12회입니다.', reviewedSource)
 assert(appliedForm.transcript_text === '상담사 메모\n\n내담자: [이름]에게 안 갔다. 12회입니다.', 'only the counselor-reviewed masked text is summary input')
 assert(appliedMaterials[0].dirtySinceApply === false, 'reviewed application clears the pending review marker')
+
+// A second privacy review changes no ASR turn or role, so the material stays clean.
+// It must still replace its prior block and preserve independently entered content.
+for (const initialMode of ['append', 'replace']) {
+  const reviewSegments = editable.map((segment, index) => index === 0 ? { ...segment, volume_level: 'low' } : segment)
+  appliedMaterials = [{ id: 'reviewed', kind: 'audio', segments: reviewSegments,
+    speakerRoleMap: { speaker_0: 'client' }, appliedTargets: [], dirtySinceApply: true }]
+  appliedForm = { transcript_text: 'Synthetic existing memo', nonverbal_notes: 'Synthetic existing observation' }
+  const sourceText = buildTranscriptText(reviewSegments, { speaker_0: 'client' })
+  invokeApply()('reviewed', initialMode, 'Synthetic unmasked name', sourceText)
+  assert(appliedMaterials[0].dirtySinceApply === false, 'initial review leaves no pending ASR edits')
+  assert(appliedForm.transcript_text.includes('Synthetic existing memo') === (initialMode === 'append'), 'initial apply must honor append/replace mode')
+  appliedForm = { ...appliedForm, transcript_text: `Synthetic prefix\n\n${appliedForm.transcript_text}\n\nSynthetic suffix` }
+  const observations = appliedForm.nonverbal_notes
+  const correctionMode = initialMode === 'append' ? 'replace' : 'append'
+  invokeApply()('reviewed', correctionMode, 'Synthetic [PERSON]', sourceText)
+  const expected = ['Synthetic prefix', ...(initialMode === 'append' ? ['Synthetic existing memo'] : []), 'Synthetic [PERSON]', 'Synthetic suffix'].join('\n\n')
+  assert(appliedForm.transcript_text === expected, 'privacy-only reapplication must remove the unmasked prior block and preserve unrelated text')
+  assert(appliedForm.nonverbal_notes === observations, 'privacy-only reapplication must not duplicate acoustic observations')
+  assert(appliedMaterials[0].lastAppliedTranscriptText === 'Synthetic [PERSON]', 'the revised masked block becomes the next replacement baseline')
+  assert(appliedMaterials[0].lastAppliedMode === initialMode, 'reapplication retains the original apply mode')
+  const stableForm = structuredClone(appliedForm)
+  invokeApply()('reviewed', correctionMode, 'Synthetic [PERSON]', sourceText)
+  assert(JSON.stringify(appliedForm) === JSON.stringify(stableForm), 'repeating the same reviewed application is idempotent')
+
+  const stableMaterials = structuredClone(appliedMaterials)
+  for (const conflict of ['edited', 'missing', 'ambiguous', 'observation-edited']) {
+    appliedForm = structuredClone(stableForm)
+    appliedMaterials = structuredClone(stableMaterials)
+    if (conflict === 'edited') appliedForm.transcript_text = appliedForm.transcript_text.replace('Synthetic [PERSON]', 'Synthetic independent correction')
+    if (conflict === 'missing') appliedForm.transcript_text = 'Synthetic unrelated replacement'
+    if (conflict === 'ambiguous') appliedForm.transcript_text += '\n\nSynthetic [PERSON]'
+    if (conflict === 'observation-edited') appliedForm.nonverbal_notes = 'Synthetic independent observation'
+    const beforeConflict = JSON.stringify(appliedForm)
+    invokeApply()('reviewed', correctionMode, 'Synthetic [PERSON-2]', sourceText)
+    assert(JSON.stringify(appliedForm) === beforeConflict, `${conflict}: rejection must preserve both form fields atomically`)
+    assert(Boolean(appliedMaterials[0].error), `${conflict}: rejection must explain the conflict`)
+    assert(appliedMaterials[0].lastAppliedTranscriptText === 'Synthetic [PERSON]', `${conflict}: rejection must preserve the prior replacement baseline`)
+  }
+}
 
 const editorAst = ts.createSourceFile('AudioTranscriptEditor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 const gateExpressions = {}
