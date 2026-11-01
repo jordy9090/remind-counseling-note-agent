@@ -20,13 +20,18 @@ class PlanAssessment(BaseModel):
     evidence: list[PlanEvidence] = Field(default_factory=list)
 
 
-class SummaryVerification(VerificationReport):
-    """Private verifier output; the existing verifier call also checks temporal scope."""
+class SummaryCorrectionValidation(VerificationReport):
+    """Approve or reject a fixed candidate; never propose another edit."""
 
     next_plan_assessment: PlanAssessment = Field(default_factory=PlanAssessment)
+    correction_validated: bool = False
+
+
+class SummaryVerification(SummaryCorrectionValidation):
+    """Private initial verifier output with bounded correction proposals."""
+
     text_corrections: list[TextCorrection] = Field(default_factory=list, max_length=14)
     source_ref_reviews: list[SourceRefReview] = Field(default_factory=list, max_length=7)
-    correction_validated: bool = False
 
 
 def _literal(value: str) -> str:

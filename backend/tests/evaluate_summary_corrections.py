@@ -62,18 +62,27 @@ def run() -> None:
                 result = nodes.verify_output(state)
             after = result["session_summary_draft"]
             catalog = nodes._source_catalog(state["sanitized_input"], [])
-            assert len(assessments) == 2 and assessments[-1]["correction_validated"]
+            assert 1 <= len(assessments) <= 2
+            if len(assessments) == 2:
+                assert assessments[-1]["correction_validated"]
             assert not introduced_script_fields(after, catalog)
             assert not summary_quote_issues(after, catalog)
             if example["case"] == "full_b_typo":
+                assert len(assessments) == 2
                 assert "अलग개로" in before["session_content"]["text"]
                 assert "अलग" not in after.session_content.text
                 assert after.session_content.text != before["session_content"]["text"]
                 assert after.next_plan.text == before["next_plan"]["text"]
+                assert any(set(section["source_refs"]) - set(getattr(after, field).source_refs)
+                           for field, section in before.items() if field != "session_info")
             else:
                 assert "transcript.turn_5" in before["session_theme"]["source_refs"]
-                assert after.session_theme.source_refs == ["transcript.turn_1", "transcript.turn_3"]
+                # Turn 5 supplies the next-meeting context in this historical wording;
+                # it was incorrectly called unnecessary in the earlier manual report.
+                # Preserve whole-section evidence, not just the quotation's turn.
+                assert after.session_theme.source_refs == ["transcript.turn_1", "transcript.turn_3", "transcript.turn_5"]
                 assert after.session_theme.text == before["session_theme"]["text"]
+                item["expectation"] = "Preserve literal quotation and required temporal-context reference."
             item.update(passed=True, after=after.model_dump(mode="json"),
                         verification=result["verification_report"].model_dump(mode="json"))
         except Exception as error:

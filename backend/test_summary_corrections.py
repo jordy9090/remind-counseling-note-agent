@@ -7,7 +7,7 @@ from app.graph.nodes import _source_catalog, verify_output
 from app.schemas.note import SessionSummaryDraft, VerificationReport
 from app.services.summary_corrections import SourceRefReview, TextCorrection, correct_summary, introduced_script_fields
 from app.services.summary_quality import SummaryQualityError
-from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryVerification
+from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification
 from test_summary_quality import _state, _summary
 
 
@@ -86,7 +86,7 @@ class SummaryCorrectionTests(unittest.TestCase):
         first = SummaryVerification(source_ref_reviews=reviews(self.summary), text_corrections=[
             TextCorrection(field="session_content", original="अलग개로", replacement="별개로"),
         ])
-        final = SummaryVerification(source_ref_reviews=reviews(self.summary), correction_validated=True)
+        final = SummaryCorrectionValidation(correction_validated=True)
         invoke = Mock(side_effect=[first, final])
         with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)):
             result = verify_output(self.state)
@@ -102,17 +102,14 @@ class SummaryCorrectionTests(unittest.TestCase):
         first = SummaryVerification(source_ref_reviews=reviews(self.summary), text_corrections=[
             TextCorrection(field="session_content", original="अलग개로", replacement="별개로"),
         ])
-        for final in (
-            SummaryVerification(source_ref_reviews=reviews(self.summary)),
-            SummaryVerification(source_ref_reviews=reviews(self.summary), correction_validated=True,
-                                text_corrections=[TextCorrection(field="session_content", original="별개로", replacement="따로")]),
-        ):
-            with self.subTest(validated=final.correction_validated):
-                invoke = Mock(side_effect=[first, final])
-                with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)):
-                    with self.assertRaises(SummaryQualityError): verify_output(self.state)
-                self.assertEqual(2, invoke.call_count)
-                self.assertIn("अलग개로", self.summary.session_content.text)
+        invoke = Mock(side_effect=[first, SummaryCorrectionValidation(correction_validated=False)])
+        with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)) as factory:
+            with self.assertRaises(SummaryQualityError): verify_output(self.state)
+        self.assertEqual(2, invoke.call_count)
+        self.assertIs(SummaryCorrectionValidation, factory.call_args.args[0])
+        self.assertNotIn("source_ref_reviews", SummaryCorrectionValidation.model_fields)
+        self.assertNotIn("text_corrections", SummaryCorrectionValidation.model_fields)
+        self.assertIn("अलग개로", self.summary.session_content.text)
 
     def test_supported_plan_anchor_cannot_restore_a_removed_reference(self):
         from app.services.summary_verification import apply_summary_verification
