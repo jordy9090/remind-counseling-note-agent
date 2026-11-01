@@ -39,7 +39,7 @@ from app.schemas.note import (
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
 from app.services.summary_rules import labeled_summary_input, session_summary_writing_rules
-from app.services.summary_verification import SummaryCorrectionValidation, SummaryVerification, apply_summary_verification
+from app.services.summary_verification import SummaryCorrectionValidation, SummaryVerification, apply_summary_verification, summary_verification_schema
 from app.services.summary_corrections import SourceRefReview, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
@@ -451,7 +451,7 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
         return {"verification_report": fallback}
 
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context)
-    assessment = get_structured_llm(SummaryVerification).invoke(prompt)
+    assessment = get_structured_llm(summary_verification_schema(summary)).invoke(prompt)
     catalog = _source_catalog(sanitized, state.get("retrieved_case_context") or [])
     candidate, changed_fields = correct_summary(summary, assessment.text_corrections, assessment.source_ref_reviews, catalog)
     if changed_fields:

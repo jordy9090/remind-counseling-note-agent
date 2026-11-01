@@ -29,7 +29,8 @@ class SummaryVerificationTests(unittest.TestCase):
         ])
         with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=Mock(return_value=assessment))) as llm:
             result = verify_output(self.state)
-        llm.assert_called_once_with(SummaryVerification)
+        llm.assert_called_once()
+        self.assertTrue(issubclass(llm.call_args.args[0], SummaryVerification))
         self.assertEqual("[자료에서 확인되지 않음]", self.summary.next_plan.text)
         self.assertEqual([], self.summary.next_plan.source_refs)
         self.assertTrue(self.summary.next_plan.requires_review)

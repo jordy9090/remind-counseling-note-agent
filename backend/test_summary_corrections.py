@@ -2,12 +2,14 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from pydantic import ValidationError
+
 from app.core.config import settings
 from app.graph.nodes import _source_catalog, verify_output
 from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_corrections import SourceRefRestoration, SourceRefReview, TextCorrection, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.summary_quality import SummaryQualityError
-from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification
+from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification, summary_verification_schema
 from test_summary_quality import _state, _summary
 
 
@@ -160,6 +162,24 @@ class SummaryCorrectionTests(unittest.TestCase):
         self.assertEqual("두 결정은 별개로 나눔.", result["session_summary_draft"].session_content.text)
         self.assertTrue(result["session_summary_draft"].session_theme.requires_review)
         self.assertEqual(1, len(result["verification_report"].unsupported_or_risky_claims))
+
+    def test_model_schema_restricts_references_to_their_original_field(self):
+        self.summary.session_theme.source_refs = ["transcript.turn_1"]
+        self.summary.session_content.source_refs = ["transcript.turn_4"]
+        schema = summary_verification_schema(self.summary)
+        valid = schema.model_validate({"source_ref_reviews": [
+            {"field": "session_theme", "keep_source_refs": ["transcript.turn_1"]}]})
+        self.assertIsInstance(valid, SummaryVerification)
+        for refs in (["transcript.turn_4"], ["unknown"]):
+            with self.subTest(refs=refs), self.assertRaises(ValidationError):
+                schema.model_validate({"source_ref_reviews": [
+                    {"field": "session_theme", "keep_source_refs": refs}]})
+        for field in SessionSummaryDraft.model_fields:
+            if field != "session_info": getattr(self.summary, field).source_refs = []
+        empty = summary_verification_schema(self.summary)
+        self.assertEqual([], empty().source_ref_reviews)
+        with self.assertRaises(ValidationError):
+            empty.model_validate({"source_ref_reviews": [{"field": "session_theme", "keep_source_refs": []}]})
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@ class SummarySkillPipelineTests(unittest.TestCase):
         self.addCleanup(quick_summary.rate_limiter.reset)
 
     def _fake_llm(self, schema, **kwargs):
-        self.schema_calls.append(schema)
+        self.schema_calls.append(SummaryVerification if issubclass(schema, SummaryVerification) else schema)
         if schema is StructuredCaseData:
             output = StructuredCaseData(session_content=[EvidenceItem(
                 content="내담자는 시험 준비를 반복 확인한다고 보고함.",
@@ -74,7 +74,7 @@ class SummarySkillPipelineTests(unittest.TestCase):
             )])
         elif schema is SessionSummaryDraft:
             output = _summary()
-        elif schema is SummaryVerification:
+        elif issubclass(schema, SummaryVerification):
             output = self.verification.model_copy(deep=True)
             output.source_ref_reviews = [SourceRefReview(field=field, keep_source_refs=section.source_refs)
                                          for field, section in _summary() if field != "session_info"]

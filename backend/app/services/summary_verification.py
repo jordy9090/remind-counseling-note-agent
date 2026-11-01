@@ -1,9 +1,9 @@
 """Apply independent summary checks without changing the public response schema."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_quality import QUOTED_TEXT, SECTION_LIMITS
@@ -42,6 +42,25 @@ class SummaryVerification(SummaryAssessment):
 
     text_corrections: list[TextCorrection] = Field(default_factory=list, max_length=14)
     source_ref_reviews: list[SourceRefReview] = Field(default_factory=list, max_length=7)
+
+
+def summary_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVerification]:
+    """Constrain model citation choices to existing IDs in the same draft field."""
+    reviews = []
+    for field in SECTION_LIMITS:
+        refs = list(dict.fromkeys(getattr(summary, field).source_refs))
+        if not refs:
+            continue
+        reviews.append(create_model(
+            f"{field.title().replace('_', '')}SourceReview", __base__=SourceRefReview,
+            field=(Literal[field], field),
+            keep_source_refs=(list[Literal[tuple(refs)]], Field(default_factory=list)),
+        ))
+    review_type = Union[tuple(reviews)] if reviews else SourceRefReview
+    return create_model(
+        "DraftBoundSummaryVerification", __base__=SummaryVerification,
+        source_ref_reviews=(list[review_type], Field(default_factory=list, max_length=len(reviews))),
+    )
 
 
 def _literal(value: str) -> str:
