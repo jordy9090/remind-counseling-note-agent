@@ -344,7 +344,7 @@ Scanned/image-only PDFs return 200 with `status: "warning"` and a warning that O
 GET /api/audio/capabilities
 ```
 
-Returns whether this runtime can accept audio uploads, whether automatic transcription is configured, and which runtime mode is active. Upload is available by default. `AUDIO_TRANSCRIPTION_STUB=1` enables a demo transcript that does not analyze uploaded audio. Real transcription requires `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, `AUDIO_TRANSCRIPTION_ENGINE=whisperx`, and the optional `audio-whisperx` dependency group. Speaker diarization is opt-in with `ENABLE_AUDIO_DIARIZATION=1` and `HF_TOKEN`.
+Returns whether this runtime can accept audio uploads, whether automatic transcription is configured, and which runtime mode is active. Upload is available by default. `AUDIO_TRANSCRIPTION_STUB=1` enables a demo transcript that does not analyze uploaded audio. Real transcription requires `AUDIO_TRANSCRIPTION_STUB=0`, `ENABLE_AUDIO_TRANSCRIPTION=1`, FFmpeg and the optional `audio-local` dependencies. The default engine is `faster-whisper`; `sensevoice` is an alternative. Independent CAM++ diarization defaults on and does not require a gated Hugging Face token. Capability checks do not load model weights or prove GPU readiness. See [local audio runtime](local-audio-runtime.md) for installation and operator configuration. WhisperX remains an explicit regression engine, whose legacy diarization still requires `ENABLE_AUDIO_DIARIZATION=1` and `HF_TOKEN`.
 
 ```json
 {
@@ -367,13 +367,13 @@ Returns whether this runtime can accept audio uploads, whether automatic transcr
 POST /api/audio/transcribe
 ```
 
-Accepts multipart `file`, optional `language`, optional `task`, and optional `expected_speakers`. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`. Runtime duration and process-level concurrency default to 7200 seconds and one job, controlled by `AUDIO_MAX_DURATION_SECONDS` and `AUDIO_MAX_CONCURRENT_JOBS`.
+Accepts multipart `file`, optional `language=ko`, `task=transcribe`, and optional `expected_speakers`. Other languages and translation are rejected. Supported uploads are WAV, MP3, and M4A. Default size limit is 500MB and can be changed with `AUDIO_UPLOAD_MAX_BYTES`. The local pipeline defaults to a 3600-second limit (`AUDIO_MAX_DURATION_SECONDS`) and one in-process job. Use one Uvicorn worker. The legacy WhisperX duration default remains 7200 seconds.
 
 `expected_speakers` defaults to 2 and must be between 1 and 4. When transcription is unavailable, the endpoint returns 503. In stub mode, the endpoint returns a clearly marked demo transcript with warning text: `시연용 예시 축어록이며 업로드 음성을 분석한 결과가 아닙니다.`
 
-Real mode uses WhisperX 3.8.6 for ASR, the explicit `kresnik/wav2vec2-large-xlsr-korean` forced-alignment model, Community-1 diarization, and WhisperX speaker assignment. Alignment failure retains ASR segment timestamps. Diarization failure retains transcription as one `SPEAKER_00` speaker.
+The local pipeline exposes independent ASR, VAD and diarization outputs. `raw_segments` remain separate from editable merged `segments`. `failed_ranges`, `error_codes` and `stage_metrics` make partial failures inspectable. ASR partial failure returns `status: partial`; total failure returns 500; no speech/duration excess returns 422; a busy worker returns 429. Diarization failure preserves ASR with unknown speakers and a review warning. Acoustic speaker IDs never imply counselor/client roles.
 
-`pause_before_seconds` is based on the previous chronological transcript turn end time. `speech_rate_wps` is turn words per second, and `speech_rate_level` is speaker-relative when enough samples exist. `volume_level` is computed from the already-decoded waveform and compared within the same speaker when enough turns exist. The API does not infer emotion, depression, anxiety, risk, diagnosis, tremor, or treatment effect from audio.
+Optional acoustic observations remain part of the legacy response contract; the new default does not fabricate them. The API does not infer emotion, depression, anxiety, risk, diagnosis, tremor, or treatment effect from audio. Below is a legacy WhisperX response example; local engines use `transcription_engine: faster-whisper` or `sensevoice`, `diarization_model: campplus`, anonymous `speaker_0`/`speaker_1`, stable `segment_id` and `review_flags`.
 
 ### Response
 
@@ -412,6 +412,12 @@ Real mode uses WhisperX 3.8.6 for ASR, the explicit `kresnik/wav2vec2-large-xlsr
   "warnings": []
 }
 ```
+
+### Corrected audio privacy review
+
+`POST /api/audio/deidentify` accepts `{ "text": "counselor-corrected transcript" }` (at most 300,000 characters), requires the same authentication, and returns deterministic local masking proposals as `text`, `candidates`, and `requires_confirmation: true`. It makes no LLM call and responds with `Cache-Control: no-store`. The editor requires explicit counselor confirmation, invalidated by text, speaker, role or timestamp edits. Only that confirmed text is explicitly applied to session-summary input; raw ASR is never automatically applied.
+
+The audio endpoints live in FastAPI. Configure `VITE_AUDIO_API_BASE_URL` for the self-hosted origin; Vercel has no audio-model runtime or long-request proxy. Uploaded/decoded temporary files are removed on ordinary success and failure; see the runtime document for crash/deletion-error limitations and browser retention.
 
 ## Local Run
 

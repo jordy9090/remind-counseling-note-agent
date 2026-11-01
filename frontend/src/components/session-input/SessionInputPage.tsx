@@ -12,7 +12,7 @@ export interface SessionTime {
 
 const ACCEPT = '.pdf,.docx,.txt,.mp3,.m4a,.wav,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,audio/mpeg,audio/mp4,audio/wav,audio/x-wav'
 const AUDIO_EXTENSION = /\.(mp3|m4a|wav)$/i
-const AUDIO_CONSENT_MESSAGE = '음성 파일은 자동 축어록 생성을 위해 임시 처리되며 원본은 저장하지 않습니다.\n상담 음성 업로드에 필요한 동의를 확인하셨나요?'
+const AUDIO_CONSENT_MESSAGE = '음성 파일은 자체 음성 서버에서 임시 처리하고 작업 종료 후 서버 임시 파일을 삭제합니다. 재생용 파일은 이 화면을 닫거나 자료를 제거할 때까지 브라우저 메모리에 남습니다.\n상담 음성 업로드에 필요한 동의를 확인하셨나요?'
 
 const fieldClass = 'h-11 w-full cursor-pointer rounded-[10px] border border-grey-200 bg-grey-100 px-3 text-sm text-grey-800 outline-none focus:border-primary-400 focus:bg-white'
 
@@ -39,7 +39,7 @@ function toFileList(files: File[]): FileList {
 /**
  * New-session input page (Figma "홍길동 · 8회기 입력"): 상담 일시, 직접 녹음, 자료 업로드, 메모 → AI 요약 생성.
  * Session time is display-only (no backend field). Uploaded files are extracted/transcribed and applied
- * to the transcript input automatically. In-browser recording is not implemented yet.
+ * to the review editor before explicit application. In-browser recording is not implemented yet.
  */
 export default function SessionInputPage({
   mode,
@@ -74,8 +74,16 @@ export default function SessionInputPage({
   onSubmit: () => void
 }) {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const [pendingAudioFiles, setPendingAudioFiles] = useState<File[] | null>(null)
+  const consentDialog = useRef<HTMLDialogElement | null>(null)
   // dragenter/dragleave fire for every child element, so count them instead of toggling.
   const dragDepth = useRef(0)
+
+  useEffect(() => {
+    const dialog = consentDialog.current
+    if (pendingAudioFiles && dialog && !dialog.open) dialog.showModal()
+    else if (!pendingAudioFiles && dialog?.open) dialog.close()
+  }, [pendingAudioFiles])
 
   useEffect(() => {
     // A file dropped outside the upload area would make the browser navigate to it and lose the form.
@@ -96,9 +104,15 @@ export default function SessionInputPage({
     const list = Array.from(files)
     const hasAudio = list.some((file) => AUDIO_EXTENSION.test(file.name))
     if (!hasAudio) return onUploadFiles(files, false)
-    if (window.confirm(AUDIO_CONSENT_MESSAGE)) return onUploadFiles(files, true)
-    const rest = list.filter((file) => !AUDIO_EXTENSION.test(file.name))
-    if (rest.length) onUploadFiles(toFileList(rest), false)
+    setPendingAudioFiles(list)
+  }
+
+  const resolveAudioConsent = (approved: boolean) => {
+    const files = pendingAudioFiles
+    setPendingAudioFiles(null)
+    if (!files) return
+    const selected = approved ? files : files.filter((file) => !AUDIO_EXTENSION.test(file.name))
+    if (selected.length) onUploadFiles(toFileList(selected), approved)
   }
 
   const hasDraggedFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
@@ -131,7 +145,7 @@ export default function SessionInputPage({
 
   const hasInput = Boolean(form.counselor_memo.trim() || form.transcript_text.trim() || form.previous_session_summary.trim() || form.psychological_test_summary?.trim())
   const processing = materials.some((material) => material.status === 'uploading' || material.status === 'transcribing')
-  const canSubmit = Boolean(form.session_date) && hasInput && !processing && !isLoading
+  const canSubmit = Boolean(form.session_date) && hasInput && !processing && !isLoading && !pendingAudioFiles
   const blockedReason = !form.session_date
     ? '상담 날짜를 입력해주세요.'
     : !hasInput
@@ -140,6 +154,17 @@ export default function SessionInputPage({
 
   return (
     <section aria-label="새 회기 입력" className="mx-auto w-full max-w-[658px] px-4 pb-10 pt-2">
+      <dialog ref={consentDialog} aria-labelledby="audio-consent-title" aria-describedby="audio-consent-description"
+        onCancel={(event) => { event.preventDefault(); resolveAudioConsent(false) }}
+        className="m-auto w-[min(92vw,480px)] rounded-xl border border-grey-200 bg-white p-6 shadow-xl backdrop:bg-black/40">
+        <h2 id="audio-consent-title" className="text-base font-bold text-grey-900">음성 업로드 동의 확인</h2>
+        <p id="audio-consent-description" className="mt-3 whitespace-pre-line text-sm leading-6 text-grey-700">{AUDIO_CONSENT_MESSAGE}</p>
+        <p className="mt-2 break-all text-xs text-grey-500">{pendingAudioFiles?.filter(file => AUDIO_EXTENSION.test(file.name)).map(file => file.name).join(', ')}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" autoFocus onClick={() => resolveAudioConsent(false)} className="rounded-lg border border-grey-300 px-4 py-2 text-sm">취소</button>
+          <button type="button" onClick={() => resolveAudioConsent(true)} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white">동의를 확인하고 업로드</button>
+        </div>
+      </dialog>
       <div className="rm-card p-5">
         <h1 className="text-base font-bold text-grey-900">{mode === 'existing' ? `${form.session_number}회기 다시 요약하기` : '새 회기 시작'}</h1>
         {mode === 'existing' && (
@@ -178,7 +203,7 @@ export default function SessionInputPage({
             <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed px-4 py-9 text-center ${isDraggingFiles ? 'border-primary-400 bg-primary-50' : 'border-grey-400/60 bg-white hover:bg-primary-50/40'}`}>
               <Upload className={`h-6 w-6 ${isDraggingFiles ? 'text-primary-400' : 'text-grey-800'}`} strokeWidth={1.5} />
               <span className="text-sm font-semibold text-grey-900">{isDraggingFiles ? '여기에 놓으면 업로드됩니다.' : '파일을 끌어다 놓거나 클릭하여 파일을 선택해주세요.'}</span>
-              <span className="text-xs text-grey-500">STT 자료, 검사 결과 PDF, 워드 파일 등 · 최대 {uploadLimitLabel}</span>
+              <span className="text-xs text-grey-500">문서 최대 {uploadLimitLabel} · 음성 기본 한도 500MB / 60분</span>
               <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
             </label>
           ) : (
@@ -192,7 +217,7 @@ export default function SessionInputPage({
               </label>
             </div>
           )}
-          <p className="mt-2 text-xs text-grey-500">음성 파일은 축어록을 만든 뒤 바로 삭제되고, 문서 파일은 글자만 추출한 뒤 저장하지 않아요.</p>
+          <p className="mt-2 text-xs text-grey-500">서버의 음성 임시 파일은 작업 종료 후 삭제합니다. 원음 재생을 위한 브라우저 파일은 자료를 제거하거나 이 화면을 닫을 때 해제됩니다. 검토해 반영한 텍스트만 회기 입력으로 사용합니다.</p>
           {form.transcript_text.trim() && (
             <p className="mt-2 text-xs text-grey-500">축어록 {form.transcript_text.replace(/\s/g, '').length.toLocaleString('ko-KR')}자가 회기 입력에 반영되어 있습니다.{materials.length > 0 ? ' 파일 항목을 눌러 내용을 확인하거나 수정할 수 있습니다.' : ''}</p>
           )}

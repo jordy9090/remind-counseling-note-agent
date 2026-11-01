@@ -681,8 +681,7 @@ export default function SessionDraftPage({
   }
 
   /**
-   * 음성 전사. fileOverride/expectedSpeakersOverride는 업로드 직후 자동 전사(상태가 아직 반영되기 전)용.
-   * 전사가 끝나면 축어록·비언어 메모를 회기 입력에 자동 반영한다 (검토는 파일 항목 클릭).
+   * Keep new ASR results in the review workspace until counselor/privacy confirmation.
    */
   const transcribeAudioMaterial = async (materialId: string, fileOverride?: File, expectedSpeakersOverride?: number, objectUrlOverride?: string) => {
     const target = materials.find((material) => material.id === materialId)
@@ -707,38 +706,12 @@ export default function SessionDraftPage({
       const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers)
       // Removed files and replaced workspaces revoke ownership of this URL.
       if (!objectUrlsRef.current.has(objectUrl)) return
-      const latestTarget = materialsRef.current.find((material) => material.id === materialId && material.objectUrl === objectUrl)
-      // React may defer or replay material updaters. Compute the applied text
-      // before scheduling either state update so both states use the same block.
-      const speakerRoleMap = buildInitialSpeakerRoleMap(transcription.segments, latestTarget?.speakerRoleMap || target?.speakerRoleMap)
-      const appliedTranscript = buildTranscriptText(transcription.segments, speakerRoleMap) || transcription.transcript_text || ''
-      const appliedNonverbal = buildNonverbalNotes(transcription.segments, speakerRoleMap) || transcription.nonverbal_notes || ''
       setMaterials((prev) =>
         prev.map((material) => {
           if (material.id !== materialId) return material
-          const transcribed = buildTranscribedAudioMaterial(material, transcription)
-          if (!appliedTranscript.trim()) return transcribed
-          return {
-            ...transcribed,
-            speakerRoleMap,
-            transcriptText: appliedTranscript,
-            nonverbalNotes: appliedNonverbal,
-            appliedTargets: Array.from(new Set([...transcribed.appliedTargets, ...AUDIO_APPLY_TARGETS])),
-            dirtySinceApply: false,
-            lastAppliedTranscriptText: appliedTranscript,
-            lastAppliedNonverbalNotes: appliedNonverbal,
-            lastAppliedMode: 'append',
-          }
+          return buildTranscribedAudioMaterial(material, transcription)
         }),
       )
-      if (appliedTranscript.trim()) {
-        setForm((prev) => ({
-          ...prev,
-          transcript_text: mergeMaterialText(prev.transcript_text, appliedTranscript, 'append'),
-          nonverbal_notes: mergeMaterialText(prev.nonverbal_notes || '', appliedNonverbal, 'append'),
-        }))
-        setDraftSaveMessage(null)
-      }
     } catch (err) {
       if (!objectUrlsRef.current.has(objectUrl)) return
       const message = err instanceof Error ? err.message : '음성 축어록을 생성하지 못했습니다.'
@@ -757,7 +730,7 @@ export default function SessionDraftPage({
           ? markAudioMaterialDirty({
               ...material,
               segments: (material.segments || []).map((segment) =>
-                segment.id === segmentId ? { ...segment, text } : segment,
+                segment.id === segmentId ? { ...segment, text, words: [], confidence: null } : segment,
               ),
             })
           : material,
@@ -779,6 +752,11 @@ export default function SessionDraftPage({
           : material,
       ),
     )
+  }
+
+  const updateAudioSegments = (materialId: string, segments: AudioSegment[]) => {
+    setMaterials(prev => prev.map(material => material.id === materialId
+      ? markAudioMaterialDirty({ ...material, segments }) : material))
   }
 
   const updateAudioExpectedSpeakers = (materialId: string, value: number) => {
@@ -835,17 +813,18 @@ export default function SessionDraftPage({
     setMaterialModal(null)
   }
 
-  const applyAudioTranscriptToForm = (materialId: string, mode: MaterialApplyMode) => {
+  const applyAudioTranscriptToForm = (materialId: string, mode: MaterialApplyMode, reviewedText: string, sourceText: string) => {
     const material = materials.find((item) => item.id === materialId)
     if (!material || material.kind !== 'audio') return
     const speakerRoleMap = material.speakerRoleMap || {}
-    const transcriptText = buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText || ''
+    const currentText = buildTranscriptText(material.segments || [], speakerRoleMap) || material.transcriptText || ''
+    if (sourceText !== currentText || !reviewedText.trim()) return
+    const transcriptText = reviewedText
     const nonverbalNotes = buildNonverbalNotes(material.segments || [], speakerRoleMap) || material.nonverbalNotes || ''
     if (!transcriptText.trim()) return
 
-    const isReapply =
-      Boolean(material.dirtySinceApply) &&
-      (material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined)
+    // Privacy-only edits leave ASR turns clean but must replace the prior applied block.
+    const isReapply = material.lastAppliedTranscriptText !== undefined || material.lastAppliedNonverbalNotes !== undefined
     const nextTranscriptText = isReapply
       ? replaceAppliedAudioBlock(form.transcript_text, material.lastAppliedTranscriptText || '', transcriptText)
       : mergeMaterialText(form.transcript_text, transcriptText, mode)
@@ -1996,6 +1975,7 @@ export default function SessionDraftPage({
           onTranscribeAudio={(materialId) => void transcribeAudioMaterial(materialId)}
           onUpdateAudioExpectedSpeakers={updateAudioExpectedSpeakers}
           onUpdateAudioSegmentText={updateAudioSegmentText}
+          onUpdateAudioSegments={updateAudioSegments}
           onUpdateAudioSpeakerRole={updateAudioSpeakerRole}
           onUploadDocumentFiles={uploadDocumentFiles}
         />
@@ -3198,6 +3178,7 @@ function MaterialModal({
   onTranscribeAudio,
   onUpdateAudioExpectedSpeakers,
   onUpdateAudioSegmentText,
+  onUpdateAudioSegments,
   onUpdateAudioSpeakerRole,
   onUpdateField,
   onUpdateSessionTopic,
@@ -3211,7 +3192,7 @@ function MaterialModal({
   materials: UploadedMaterial[]
   mode: MaterialModalMode
   onAddAudioFiles: (files: FileList | null) => void
-  onApplyAudioTranscript: (materialId: string, mode: MaterialApplyMode) => void
+  onApplyAudioTranscript: (materialId: string, mode: MaterialApplyMode, reviewedText: string, sourceText: string) => void
   onApplyMaterial: (materialId: string, target: MaterialApplyTarget, mode: MaterialApplyMode) => void
   onClose: () => void
   onModeChange: (mode: MaterialModalMode) => void
@@ -3219,6 +3200,7 @@ function MaterialModal({
   onTranscribeAudio: (materialId: string) => void
   onUpdateAudioExpectedSpeakers: (materialId: string, value: number) => void
   onUpdateAudioSegmentText: (materialId: string, segmentId: number, text: string) => void
+  onUpdateAudioSegments: (materialId: string, segments: AudioSegment[]) => void
   onUpdateAudioSpeakerRole: (materialId: string, speakerKey: string, role: SpeakerRole) => void
   onUpdateField: (field: keyof SessionInput, value: string | number) => void
   onUpdateSessionTopic: (value: string) => void
@@ -3499,11 +3481,12 @@ function MaterialModal({
                 applyMode={applyMode}
                 transcriptionAvailable={transcriptionAvailable}
                 transcriptionReason={audioCapabilities?.transcription.reason || null}
-                onApply={() => onApplyAudioTranscript(selectedMaterial.id, applyMode)}
+                onApply={(reviewedText, sourceText) => onApplyAudioTranscript(selectedMaterial.id, applyMode, reviewedText, sourceText)}
                 onApplyModeChange={setApplyMode}
                 onExpectedSpeakersChange={(value) => onUpdateAudioExpectedSpeakers(selectedMaterial.id, value)}
                 onTranscribe={() => onTranscribeAudio(selectedMaterial.id)}
                 onUpdateSegmentText={(segmentId, text) => onUpdateAudioSegmentText(selectedMaterial.id, segmentId, text)}
+                onUpdateSegments={(segments) => onUpdateAudioSegments(selectedMaterial.id, segments)}
                 onUpdateSpeakerRole={(speakerKey, role) => onUpdateAudioSpeakerRole(selectedMaterial.id, speakerKey, role)}
               />
             </div>
@@ -4220,6 +4203,9 @@ function buildTranscribedAudioMaterial(
     status: 'transcribed',
     transcriptText,
     segments: transcription.segments,
+    rawSegments: structuredClone(transcription.raw_segments?.length ? transcription.raw_segments : transcription.segments),
+    reviewRanges: transcription.review_ranges,
+    failedRanges: transcription.failed_ranges,
     durationSeconds: transcription.duration_seconds,
     language: transcription.language,
     runtimeMode: transcription.runtime_mode,
@@ -4244,7 +4230,12 @@ function buildInitialSpeakerRoleMap(segments: AudioSegment[], previous: SpeakerR
 
 function markAudioMaterialDirty(material: UploadedMaterial): UploadedMaterial {
   if (material.kind !== 'audio') return material
-  const speakerRoleMap = buildInitialSpeakerRoleMap(material.segments || [], material.speakerRoleMap)
+  // A manual correction can temporarily remove every turn for a speaker.
+  // Keep its assigned role so restoring that speaker does not erase counselor work.
+  const speakerRoleMap = {
+    ...material.speakerRoleMap,
+    ...buildInitialSpeakerRoleMap(material.segments || [], material.speakerRoleMap),
+  }
   return {
     ...material,
     speakerRoleMap,
