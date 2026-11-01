@@ -1006,7 +1006,7 @@ def _apply_verification_consistency(
                   "client_response", "reflection", "next_plan"):
         section = getattr(summary, field)
         if field in review_fields or section.evidence_type != "direct" or any(
-            re.search(rf"(?<!\w){re.escape(field)}(?!\w)", claim)
+            re.search(rf"(?<![A-Za-z0-9_]){re.escape(field)}(?![A-Za-z0-9_])", claim)
             or _text_similarity(section.text, claim) >= 0.35 for claim in review_claims
         ):
             section.requires_review = True
