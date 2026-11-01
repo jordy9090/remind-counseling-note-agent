@@ -1889,6 +1889,11 @@ export default function SessionDraftPage({
                 exportError={documentExportError || documentCapabilitiesError}
                 onDownload={(format) => void handleDownloadDocument(format)}
               >
+                {finalDocumentType === 'termination_report' && (
+                  <p className="border-b border-grey-200 px-5 py-3 text-sm text-grey-600">
+                    회기요약의 개인 상세 기록은 자동으로 옮기지 않습니다. 공유 목적에 필요한 내용만 직접 작성하고 종결 여부를 확인해주세요.
+                  </p>
+                )}
                 {finalDocumentType === 'supervision_report' ? (
                   <SupervisionReportWorkspace
                     editingBlockId={editingSupervisionBlockId}
@@ -3885,11 +3890,11 @@ function buildFinalDocumentSections(
 
   if (documentType === 'termination_report') {
     return [
-      makeSection('termination_goal_process', '상담 목표 및 진행 과정', getSection('session_content', '상담 진행 과정을 확인해야 합니다.')),
-      makeSection('termination_changes', '주요 변화', getSection('client_response', '내담자 변화 내용을 상담사가 확인해야 합니다.')),
-      makeSection('termination_reason', '종결 사유', '종결 사유는 상담사가 직접 입력해야 합니다.'),
-      makeSection('termination_recommendation', '향후 권고', getSection('next_plan', '향후 권고 사항을 확인해야 합니다.')),
-      makeSection('termination_counselor_opinion', '상담자 종합소견', '상담자 종합소견은 임상 판단 영역이므로 직접 작성이 필요합니다.'),
+      makeSection('termination_goal_process', '상담 목표 및 진행 과정', ''),
+      makeSection('termination_changes', '주요 변화', ''),
+      makeSection('termination_reason', '종결 사유', ''),
+      makeSection('termination_recommendation', '향후 권고', ''),
+      makeSection('termination_counselor_opinion', '상담자 종합소견', ''),
     ]
   }
 

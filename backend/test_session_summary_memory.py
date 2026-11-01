@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 from app.core.config import settings
 from app.graph import nodes
-from app.schemas.note import SessionSummaryDraft, VerificationReport
+from app.schemas.note import SessionSummaryDraft
+from app.services.summary_verification import SummaryVerification
 from app.services import summary_rules, summary_skill
 from app.services.summary_quality import summary_quality_issues, summary_quote_issues
 from test_summary_quality import _state, _summary
@@ -144,7 +145,7 @@ class SessionSummaryMemoryTests(unittest.TestCase):
         self.assertEqual("needs_review", summary.client_response.evidence_type)
         state["session_summary_draft"] = summary
         with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key"), patch.object(
-            nodes, "get_structured_llm", return_value=Mock(invoke=Mock(return_value=VerificationReport())),
+            nodes, "get_structured_llm", return_value=Mock(invoke=Mock(return_value=SummaryVerification())),
         ):
             report = nodes.verify_output(state)["verification_report"]
         self.assertTrue(any("직접 인용" in item.reason for item in report.unsupported_or_risky_claims))

@@ -12,8 +12,9 @@ from app.graph import graph, nodes
 from app.schemas.insight import RelationalInsights
 from app.schemas.note import (
     EvidenceItem, EvidenceMappedData, GenerateNoteResponse, ReviewableClaim,
-    SessionInfo, SessionInput, SessionSummaryDraft, StructuredCaseData, VerificationReport,
+    SessionInfo, SessionInput, SessionSummaryDraft, StructuredCaseData,
 )
+from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryVerification
 from app.services import quick_summary
 from app.services.summary_skill import SummarySkillResult
 from test_quick_summary import _load_vercel_generate
@@ -44,7 +45,7 @@ class SummarySkillPipelineTests(unittest.TestCase):
             persist=False, insight_lens="none",
         )
         self.schema_calls: list[type] = []
-        self.verification = VerificationReport()
+        self.verification = SummaryVerification()
         self.structured_llm = self.stack.enter_context(patch(
             "app.graph.nodes.get_structured_llm", side_effect=self._fake_llm,
         ))
@@ -72,8 +73,11 @@ class SummarySkillPipelineTests(unittest.TestCase):
             )])
         elif schema is SessionSummaryDraft:
             output = _summary()
-        elif schema is VerificationReport:
+        elif schema is SummaryVerification:
             output = self.verification.model_copy(deep=True)
+            output.next_plan_assessment = PlanAssessment(status="supported_future", evidence=[
+                PlanEvidence(source_ref="transcript.turn_4", quote="다음 회기에 시험 전날의 걱정을 다시 살펴볼까요?"),
+            ])
         else:
             raise AssertionError(f"Unexpected model schema: {schema.__name__}")
         return Mock(invoke=Mock(return_value=output))
@@ -93,12 +97,12 @@ class SummarySkillPipelineTests(unittest.TestCase):
 
     def test_quick_nonstub_uses_skill_once_and_preserves_independent_verification(self) -> None:
         claim = _summary().client_response.text
-        self.verification = VerificationReport(unsupported_or_risky_claims=[ReviewableClaim(
+        self.verification = SummaryVerification(unsupported_or_risky_claims=[ReviewableClaim(
             claim=claim, reason="합성 검증에서 표현의 근거를 재확인해야 함.", recommendation="상담사 검토 필요",
         )])
         response = quick_summary.generate_quick_summary(self.session_input.transcript_text)
         self.skill.assert_called_once()
-        self.assertEqual([VerificationReport], self.schema_calls)
+        self.assertEqual([SummaryVerification], self.schema_calls)
         self.verifier_prompt.assert_called_once()
         sanitized, extracted, mapped, summary, _privacy = self.verifier_prompt.call_args.args
         self.assertEqual(self.skill.call_args.args[0], sanitized)
@@ -122,7 +126,7 @@ class SummarySkillPipelineTests(unittest.TestCase):
     def test_standard_pipeline_still_extracts_summarizes_and_verifies(self) -> None:
         response = graph.run_note_pipeline(self.session_input, allow_retrieval=False)
         self.skill.assert_not_called()
-        self.assertEqual([StructuredCaseData, SessionSummaryDraft, VerificationReport], self.schema_calls)
+        self.assertEqual([StructuredCaseData, SessionSummaryDraft, SummaryVerification], self.schema_calls)
         self.assertEqual(1, len(response.structured_case_data.session_content))
         self.assertEqual(1, len(response.evidence_mapped_data.items))
         self.verifier_prompt.assert_called_once()
@@ -183,7 +187,7 @@ class SummarySkillPipelineTests(unittest.TestCase):
             denied = client.post("/api/notes/generate", json=self.session_input.model_dump(mode="json"))
             self.assertEqual(401, denied.status_code)
         self.skill.assert_called_once()
-        self.assertEqual([VerificationReport], self.schema_calls)
+        self.assertEqual([SummaryVerification], self.schema_calls)
         self.insights.assert_called_once()
 
     def test_vercel_skill_failure_is_safe_502_without_legacy_fallback(self) -> None:
