@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from app.core.config import settings
 from app.graph.nodes import _source_catalog, verify_output
-from app.schemas.note import SessionSummaryDraft, VerificationReport
+from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_corrections import SourceRefRestoration, SourceRefReview, TextCorrection, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.summary_quality import SummaryQualityError
 from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification
@@ -145,6 +145,21 @@ class SummaryCorrectionTests(unittest.TestCase):
         for refs in (["transcript.turn_2"], ["transcript.turn_1"], ["unknown"], ["transcript.turn_4", "transcript.turn_4"]):
             with self.subTest(refs=refs), self.assertRaises(SummaryQualityError):
                 retain_required_refs(self.summary, candidate, [SourceRefRestoration(field="session_theme", source_refs=refs)], self.catalog)
+
+    def test_safe_correction_preserves_unrelated_semantic_warnings(self):
+        self.summary.session_content.text = "두 결정은 अलग개로 나눔."
+        self.state["session_summary_draft"] = self.summary
+        first = SummaryVerification(source_ref_reviews=reviews(self.summary), text_corrections=[
+            TextCorrection(field="session_content", original="अलग개로", replacement="별개로")])
+        final = SummaryCorrectionValidation(correction_validated=True,
+            unsupported_or_risky_claims=[ReviewableClaim(claim="session_theme", reason="기존 해석 표현 확인 필요", recommendation="원문 확인")],
+            requires_counselor_review=[CounselorReviewField(field="session_theme", reason="기존 해석 표현 확인 필요")])
+        invoke = Mock(side_effect=[first, final])
+        with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)):
+            result = verify_output(self.state)
+        self.assertEqual("두 결정은 별개로 나눔.", result["session_summary_draft"].session_content.text)
+        self.assertTrue(result["session_summary_draft"].session_theme.requires_review)
+        self.assertEqual(1, len(result["verification_report"].unsupported_or_risky_claims))
 
 
 if __name__ == "__main__":

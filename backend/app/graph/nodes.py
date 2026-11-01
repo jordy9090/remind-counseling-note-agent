@@ -469,8 +469,14 @@ together preserve facts, speaker, negation, time, conditions and direct quotatio
 errors, and leave only unnecessary references removed. Assess the final report against that result.
 The previous draft below is change-audit data, NOT source evidence and NOT the current draft.
 Do not repeat warnings about errors already corrected. Retain unrelated semantic/safety warnings.
-If the result remains unsafe after the allowed restorations, set correction_validated=false and
-explain why in requires_counselor_review. There is no further model call or repair pass.
+correction_validated judges the CHANGE, not whether every unchanged original claim is fully grounded.
+An unchanged interpretation, overstatement or counselor-input placeholder can still require review
+while safe lexical edits and valid citation removals are approved. Do not reject safe corrections
+solely because of those pre-existing issues. A reference is not actual support for an unsupported
+claim merely because it shares a keyword or time phrase; removing such a ref does not create that issue.
+Reject when an edit changes meaning, a correctable typo is unresolved, or an actual supporting source
+is lost even after allowed restorations. Explain that edit-specific defect in requires_counselor_review.
+There is no further model call or repair pass.
 Correction audit:
 {_json(audit)}
 """

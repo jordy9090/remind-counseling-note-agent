@@ -30,6 +30,10 @@ class SummaryAssessment(VerificationReport):
 class SummaryCorrectionValidation(SummaryAssessment):
     """Validate corrections and cancel only removals that lose required evidence."""
 
+    correction_validated: bool = Field(default=False, description=(
+        "Whether the bounded edits are safe after the specified restorations. "
+        "This does not certify the unchanged original draft as free of all semantic warnings."
+    ))
     source_ref_restorations: list[SourceRefRestoration] = Field(default_factory=list, max_length=7)
 
 

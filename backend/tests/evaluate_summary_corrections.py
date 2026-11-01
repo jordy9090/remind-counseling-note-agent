@@ -78,12 +78,16 @@ def run() -> None:
                            for field, section in before.items() if field != "session_info")
             else:
                 assert "transcript.turn_5" in before["session_theme"]["source_refs"]
-                # Turn 5 supplies the next-meeting context in this historical wording;
-                # it was incorrectly called unnecessary in the earlier manual report.
-                # Preserve whole-section evidence, not just the quotation's turn.
-                assert after.session_theme.source_refs == ["transcript.turn_1", "transcript.turn_3", "transcript.turn_5"]
+                # Turn 5 supplies context, but does not directly establish the timing
+                # of fear. It may remain as context or be pruned while the unchanged
+                # overstatement stays reviewable. Neither forced pruning nor forced
+                # retention is a semantic correctness oracle.
+                assert {"transcript.turn_1", "transcript.turn_3"} <= set(after.session_theme.source_refs)
+                assert set(after.session_theme.source_refs) <= set(before["session_theme"]["source_refs"])
+                if "transcript.turn_5" not in after.session_theme.source_refs:
+                    assert after.session_theme.requires_review
                 assert after.session_theme.text == before["session_theme"]["text"]
-                item["expectation"] = "Preserve literal quotation and required temporal-context reference."
+                item["expectation"] = "Preserve quotation and fear evidence; distinguish context from support for unchanged overstatement."
             item.update(passed=True, after=after.model_dump(mode="json"),
                         verification=result["verification_report"].model_dump(mode="json"))
         except Exception as error:
@@ -92,9 +96,11 @@ def run() -> None:
         item["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         report["cases"].append(item)
     started = time.perf_counter()
+    assessments = []
     try:
         raw = (fixtures.parent / "interview_case_b.txt").read_text(encoding="utf-8").strip()
-        response = generate_quick_summary(raw)
+        with patch.object(nodes, "get_structured_llm", side_effect=observed_model):
+            response = generate_quick_summary(raw)
         assert not response.stub
         catalog = nodes._source_catalog(response.sanitized_input, [])
         assert not introduced_script_fields(response.session_summary_draft, catalog)
@@ -104,6 +110,7 @@ def run() -> None:
     except Exception as error:
         report["fresh_full_b"] = {"passed": False, "failure_type": type(error).__name__}
     report["fresh_full_b"]["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+    report["fresh_full_b"]["assessments"] = assessments
     report["passed"] = all(item["passed"] for item in report["cases"]) and report["fresh_full_b"]["passed"]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
