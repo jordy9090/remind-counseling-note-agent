@@ -126,13 +126,13 @@ class SummarySection(BaseModel):
 
 class SessionSummaryDraft(BaseModel):
     session_info: SessionInfo
-    session_theme: SummarySection = Field(description="회기에서 다룬 핵심 주제를 3인칭 기록체 한 문장으로 요약. 발췌 대사 금지.")
-    presenting_problem: SummarySection = Field(description="이번 회기에 가져온 사건과 어려움을 핵심 1문장으로 요약. 내담자 대사를 복사하지 않음.")
+    session_theme: SummarySection = Field(description="다음 회기 전에 기억할 구체적 사건·반응을 담은 주제 한 문장. 임상 범주만 남기지 않으며 짧은 핵심 원문 인용은 허용.")
+    presenting_problem: SummarySection = Field(description="이번 회기에 가져온 최근 사건에서 누구와 무슨 일이 있었고 어떤 반응이 이어졌는지 핵심 1문장으로 요약. 원인·진단 추정 금지.")
     session_content: SummarySection = Field(description="사건·탐색·남은 어려움을 3문장, 목표 160~240자로 통합. 화자와 반응의 대상을 정확히 구분하고 다른 항목과 중복 최소화.")
-    counselor_intervention: SummarySection = Field(description="상담자가 실제로 한 질문·반영·탐색의 목적과 대상을 1~2문장, 목표 90~140자로 요약. 질문이나 대사 목록 금지.")
+    counselor_intervention: SummarySection = Field(description="상담자가 무엇에 대해 실제로 어떤 질문·반영·제안을 했는지 1~2문장, 목표 90~140자로 요약. 제안·거절·실제 수행을 구분하고 목적·기법·효과를 추정하지 않음.")
     client_response: SummarySection = Field(description="개입에 대한 내담자의 반응과 남은 어려움을 1~2문장, 목표 90~140자로 통합. 발화를 이어 붙이지 않음.")
     reflection: SummarySection = Field(description="상담자가 직접 메모한 자신의 반응과 성찰만 1~2문장, 목표 90~150자로 요약. 내담자의 감정이나 추정을 상담자 감정으로 바꾸지 않음.")
-    next_plan: SummarySection = Field(description="실제로 제안하거나 합의한 다음 회기 계획만 1문장, 목표 60~90자로 요약. 과제나 계획을 새로 제안하지 않음.")
+    next_plan: SummarySection = Field(description="실제로 제안하거나 합의한 계획의 조건·시점·보류 가능성까지 1문장, 목표 60~90자로 요약. 나중에 결정할 행동을 확정하거나 새 과제를 만들지 않음.")
 
 
 class GroundedItem(BaseModel):

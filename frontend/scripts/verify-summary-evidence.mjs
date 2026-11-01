@@ -33,6 +33,13 @@ assert.deepEqual(content.evidence.map(item => item.source_type), ['transcript', 
 assert.equal(content.evidence[0].source_excerpt, 'Client: Synthetic response')
 assert.equal(content.requiresReview, true)
 assert.equal(content.inferred, false)
+const multiTurn = structuredClone(note)
+multiTurn.full_response.session_summary_draft.session_content.source_refs = ['transcript_text', 'transcript.turn_1', 'transcript.turn_2', 'transcript.turn_1']
+assert.deepEqual(summarySectionEvidence(multiTurn, 'session_content').evidence.map(item => item.source_excerpt),
+  ['Counselor: Synthetic question', 'Client: Synthetic response'], 'both the intervention and response must survive, without whole-source duplication')
+multiTurn.full_response.sanitized_input.sources.transcript_text = 'Counselor: ' + 'Long synthetic question '.repeat(15) + '\nClient: Synthetic response'
+assert(summarySectionEvidence(multiTurn, 'session_content').evidence[0].source_excerpt.length > 180,
+  'specific turns must remain readable in full')
 assert.deepEqual(summarySectionEvidence(note, 'main_issue').evidence.map(item => item.source_type), ['counselor_memo'])
 assert.deepEqual(summarySectionEvidence(note, 'counselor_intervention').evidence.map(item => item.source_type), ['transcript'])
 assert.equal(summarySectionEvidence(note, 'client_response').requiresReview, false)
@@ -89,10 +96,13 @@ const page = fs.readFileSync('src/pages/SessionDraftPage.tsx', 'utf8')
 assert(page.includes('summarySectionEvidence(result, id)'), 'rendered sections must consume final summary metadata')
 assert(page.includes('content: riskInformation(result).text'), 'rendered risk section must use the backend risk text')
 assert(!page.includes('입력 자료에서 직접 확인된 위험 신호는 없습니다.'), 'UI must not manufacture an absence-of-risk statement')
+assert(page.includes('...markDraftSectionEvidenceStale(section), content'), 'editing must also stale section evidence')
+assert(page.includes('...markDraftSectionEvidenceStale(baseSections.find'), 'restoring temporary edits must not revive old evidence')
+assert(page.includes('evidence.map((item, index)'), 'the evidence preview must render all linked excerpts')
 
 // Exercise the page's actual section assembly without booting a browser or creating records.
 const parsedPage = ts.createSourceFile('SessionDraftPage.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-const functionNames = new Set(['buildDocumentSections', 'findEvidenceForSection', 'buildSourceBadges', 'buildSectionConfidence', 'toCompactEvidence', 'normalizeText'])
+const functionNames = new Set(['buildDocumentSections', 'findEvidenceForSection', 'buildSourceBadges', 'buildSectionConfidence', 'toCompactEvidence', 'normalizeText', 'markDraftSectionEvidenceStale'])
 const constantNames = new Set(['sourceTypeToBadge', 'sourceTypeLabel'])
 const sectionSource = parsedPage.statements.filter(statement => (
   ts.isFunctionDeclaration(statement) && functionNames.has(statement.name?.text)
@@ -109,6 +119,11 @@ const renderedNote = { ...note, session_summary: note.full_response.session_summ
   evidence_check: [{ claim: 'Unrelated extraction', source_type: 'previous_summary', source_excerpt: 'Old context', confidence: 'high' }] }
 const sections = buildDocumentSections(renderedNote, { counselor_memo: 'Synthetic session memo' }, '', new Set())
 const getSection = id => sections.find(section => section.id === id)
+const staleEvidence = new Function('markGroundingItemsStale', `${sectionJs}\nreturn markDraftSectionEvidenceStale`)(items => items.map(item => ({ ...item, stale: true })))
+const staleSection = staleEvidence({ ...getSection('client_response'), groundingItems: [{ claimId: 'synthetic' }] })
+assert(staleSection.evidence.every(item => item.needsReview && item.confidence === 'low'))
+assert(staleSection.sourceBadges.includes('needs_review'))
+assert(staleSection.groundingItems.every(item => item.stale))
 assert.deepEqual(getSection('session_content').sourceBadges, ['needs_review', 'transcript', 'memo', 'editable'])
 assert.equal(getSection('session_content').evidence.length, 2, 'unrelated extraction evidence must not leak into the summary')
 assert(getSection('session_content').evidence.every(item => item.needsReview), 'final requires_review must survive the display transformation')

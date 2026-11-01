@@ -1,4 +1,4 @@
-import type { SessionSummaryDraft } from '../types/session'
+import type { SessionSummaryDraft, SummarySection } from '../types/session'
 
 export interface CounselorEditedSection {
   id: string
@@ -14,37 +14,20 @@ export function applyCounselorEditsToSummary(
   sections: CounselorEditedSection[],
 ): SessionSummaryDraft {
   const editedText = Object.fromEntries(sections.map((section) => [section.id, section.content]))
+  const edited = (section: SummarySection, text: string | undefined): SummarySection => (
+    text === undefined || text === section.text ? { ...section }
+      : { ...section, text, evidence_type: 'needs_review', requires_review: true }
+  )
 
   return {
     ...original,
-    session_theme: {
-      ...original.session_theme,
-      text: editedText.session_theme ?? original.session_theme.text,
-    },
-    presenting_problem: {
-      ...original.presenting_problem,
-      text: editedText.main_issue ?? original.presenting_problem.text,
-    },
-    session_content: {
-      ...original.session_content,
-      text: editedText.session_content ?? original.session_content.text,
-    },
-    counselor_intervention: {
-      ...original.counselor_intervention,
-      text: editedText.counselor_intervention ?? original.counselor_intervention.text,
-    },
-    client_response: {
-      ...original.client_response,
-      text: editedText.client_response ?? original.client_response.text,
-    },
-    reflection: {
-      ...original.reflection,
-      text: editedText.supervision_memo ?? original.reflection.text,
-    },
-    next_plan: {
-      ...original.next_plan,
-      text: editedText.next_plan ?? original.next_plan.text,
-    },
+    session_theme: edited(original.session_theme, editedText.session_theme),
+    presenting_problem: edited(original.presenting_problem, editedText.main_issue),
+    session_content: edited(original.session_content, editedText.session_content),
+    counselor_intervention: edited(original.counselor_intervention, editedText.counselor_intervention),
+    client_response: edited(original.client_response, editedText.client_response),
+    reflection: edited(original.reflection, editedText.supervision_memo),
+    next_plan: edited(original.next_plan, editedText.next_plan),
   }
 }
 

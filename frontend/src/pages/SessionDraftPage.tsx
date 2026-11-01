@@ -1016,7 +1016,7 @@ export default function SessionDraftPage({
     setDraftSections((prev) =>
       prev.map((section) => (
         section.id === sectionId
-          ? { ...section, content, groundingItems: markGroundingItemsStale(section.groundingItems) }
+          ? { ...markDraftSectionEvidenceStale(section), content }
           : section
       )),
     )
@@ -1505,7 +1505,7 @@ export default function SessionDraftPage({
       const restoredNote = restoredResult as unknown as NoteDraftResponse | null
       const baseSections = restoredNote ? buildDocumentSections(restoredNote, restoredForm, draft.session_topic, new Set(draft.visible_section_ids)) : []
       const nextSections = sections.map((section) => ({
-        ...(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)),
+        ...markDraftSectionEvidenceStale(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)),
         ...section,
         // Saved edited text is authoritative; stale source claims must not be revalidated by restore.
         groundingItems: markGroundingItemsStale(baseSections.find((base) => base.id === section.id)?.groundingItems || []),
@@ -2407,19 +2407,18 @@ function EvidencePreview({ evidence }: { evidence: CompactEvidence[] }) {
     )
   }
 
-  const firstEvidence = evidence[0]
-
   return (
-    <div className="text-[10px] leading-4">
-      <div className="flex items-center justify-between gap-2 text-slate-500">
-        <span className="font-extrabold text-slate-900">{firstEvidence.label} 원문</span>
-        <span>{confidenceLabel[firstEvidence.confidence]}</span>
-      </div>
-      <p className="mt-2 max-h-[74px] overflow-hidden text-slate-700">
-        {firstEvidence.excerpt || '표시할 원문 일부가 없습니다.'}
-      </p>
-      {firstEvidence.needsReview && <p className="mt-2 font-semibold text-amber-700">상담사 확인 필요</p>}
-      {evidence.length > 1 && <p className="mt-2 font-semibold text-blue-700">근거 {evidence.length}개 연결</p>}
+    <div className="max-h-64 space-y-3 overflow-y-auto text-[10px] leading-4">
+      {evidence.map((item, index) => (
+        <div key={index}>
+          <div className="flex items-center justify-between gap-2 text-slate-500">
+            <span className="font-extrabold text-slate-900">{item.label} 원문 {evidence.length > 1 ? index + 1 : ''}</span>
+            <span>{confidenceLabel[item.confidence]}</span>
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-slate-700">{item.excerpt || '표시할 원문 일부가 없습니다.'}</p>
+          {item.needsReview && <p className="mt-2 font-semibold text-amber-700">상담사 확인 필요 · 현재 문장과 원문을 대조해주세요.</p>}
+        </div>
+      ))}
     </div>
   )
 }
@@ -3600,6 +3599,16 @@ function SourceBadge({ interactive = false, type }: { interactive?: boolean; typ
       {badge.label}
     </span>
   )
+}
+
+function markDraftSectionEvidenceStale(section: DraftSection): DraftSection {
+  return {
+    ...section,
+    sourceBadges: [...section.sourceBadges.filter(badge => badge !== 'needs_review'), 'needs_review'],
+    confidence: 'low',
+    evidence: section.evidence.map(item => ({ ...item, confidence: 'low', needsReview: true })),
+    groundingItems: markGroundingItemsStale(section.groundingItems),
+  }
 }
 
 function emptyRestoredSection(id: string): DraftSection {

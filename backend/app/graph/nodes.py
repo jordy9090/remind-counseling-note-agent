@@ -37,7 +37,8 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
-from app.services.summary_quality import SummaryQualityError, summary_quality_issues
+from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
+from app.services.summary_rules import session_summary_writing_rules
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
 from app.services.session_materials import separate_session_materials
@@ -459,6 +460,12 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
         )
     _reconcile_verification_claims(verification, sanitized, state.get("retrieved_case_context") or [])
     _merge_grounding_verification(verification, state.get("grounding"))
+    for field, reasons in summary_quote_issues(summary, _source_catalog(sanitized, state.get("retrieved_case_context") or [])).items():
+        section = getattr(summary, field)
+        verification.unsupported_or_risky_claims = _unique_review_claims([
+            *verification.unsupported_or_risky_claims,
+            ReviewableClaim(claim=section.text, reason=reasons[0], recommendation="원문 확인 후 인용을 수정하거나 따옴표 없이 요약해주세요."),
+        ])
     _apply_verification_consistency(summary, verification)
     return {"verification_report": verification}
 
@@ -969,6 +976,10 @@ def _normalize_summary_refs(
         section.requires_review = section.requires_review or not section.source_refs or section.evidence_type in {
             "inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based",
         }
+    for field in summary_quote_issues(summary, catalog):
+        section = getattr(summary, field)
+        section.requires_review = True
+        section.evidence_type = "needs_review"
 
 
 def _unique_review_claims(items: list[ReviewableClaim]) -> list[ReviewableClaim]:
@@ -1064,7 +1075,7 @@ Required source_refs: every factual claim must cite current input source_refs or
 Allowed source_refs (canonical identifiers only):
 {_json(source_ref_keys)}
 Choose source_refs exactly from this list; never invent an identifier or leave a supported factual claim uncited.
-For material in sources.counselor_memo use "counselor_memo"; for sources.transcript_text use "transcript_text".
+For material in sources.counselor_memo use "counselor_memo"; for sources.transcript_text prefer the exact allowed transcript.turn_N references, with "transcript_text" as a fallback when uncertain.
 Use other input field names or retrieved source_refs only when they appear in the allowed list and support the claim.
 The labels A01, A02, or other speaker-turn labels inside the material are not source_refs.
 Do not translate those labels into transcript.turn_N. Prefer the whole-field reference if the precise turn identifier is uncertain.
@@ -1113,7 +1124,7 @@ Task: draft editable text, not final clinical judgment.
 작성 형식: 상담사가 읽는 회기 기록입니다. 대화 상대에게 말하듯 작성하지 말고
 "내담자는 …을 표현함", "상담자는 …을 탐색함"과 같은 간결한 3인칭 기록체로 작성하세요.
 축어록을 발췌·연결하거나 화자 표지를 붙인 대화문으로 출력하지 마세요.
-의미를 재서술하고 반복 발화는 압축하세요. 대사 인용, 이론 약어, 소제목, 출처·문헌 목록을 본문에 넣지 마세요.
+의미를 재서술하고 반복 발화는 압축하세요. 핵심 원문 표현만 짧게 선택적으로 인용하고, 이론 약어, 소제목, 출처·문헌 목록을 본문에 넣지 마세요.
 아래 문장 수와 글자 수는 충분한 근거가 있을 때의 목표입니다. 자료가 적으면 짧게 쓰고 분량을 채우기 위해 사실을 보충하지 마세요.
 전체 화면은 별도 슈퍼비전 메모를 포함해 약 900~1,200자를 목표로 합니다. 여기서 생성하는 7개 항목은 합계 약 650~850자로 정리하세요.
 한 사실을 여러 항목에서 반복 설명하지 마세요. 각 항목의 역할에 필요한 핵심만 남기되 중요한 불확실성과 반대 근거는 유지하세요.
@@ -1138,6 +1149,9 @@ Task: draft editable text, not final clinical judgment.
 내담자가 상대 반응에 부여한 의미도 원문 수준을 지키세요. 침묵이나 짧은 답장을 내담자가 거절·무시로 경험했다고 새로 해석하지 마세요.
 상대가 지겨워한다고 느꼈다는 표현은 그 지각으로 기록하고, 실제 상대의 의도나 거절 경험으로 강화하지 마세요.
 사건·상대방·그 장면에서 명시된 감정을 함께 확인하고, 다른 장면에서 표현한 감정을 현재 사건의 감정으로 옮기거나 합치지 마세요.
+공통 회기요약 작성 규칙 (빠른 요약과 동일한 Skill):
+{session_summary_writing_rules()}
+
 Each section must include evidence_type and source_refs.
 Allowed source_refs (canonical identifiers only):
 {_json(source_ref_keys)}

@@ -1,4 +1,4 @@
-"""Conservative checks for dialogue dumps in counselor-facing session summaries."""
+"""Bounded prose checks and literal quotation checks for session summaries."""
 from __future__ import annotations
 
 import re
@@ -61,6 +61,31 @@ def summary_quality_issues(summary: SessionSummaryDraft) -> dict[str, list[str]]
             field_issues.append("항목의 분량이 지나칩니다. 반복과 주변 발화를 줄이고 핵심만 요약하세요.")
         if field_issues:
             issues[field_name] = field_issues
+    return issues
+
+
+def summary_quote_issues(summary: SessionSummaryDraft, catalog: dict[str, str]) -> dict[str, list[str]]:
+    """Check quoted wording against cited sources, never semantic support.
+
+    Normalize whitespace only. Do not repair words, punctuation or speaker labels,
+    stitch different turns together, or let a whole-transcript ref hide a wrong
+    precise turn. The result contains field names and safe feedback, not source text.
+    """
+    issues: dict[str, list[str]] = {}
+    for field in SECTION_LIMITS:
+        section = getattr(summary, field)
+        quotes = [" ".join(match.group()[1:-1].split()) for match in QUOTED_TEXT.finditer(section.text)]
+        if not quotes:
+            continue
+        refs = section.source_refs
+        has_turns = any(ref.startswith("transcript.turn_") for ref in refs)
+        excerpts = [
+            " ".join(line.split())
+            for ref in refs if ref in catalog and not (has_turns and ref == "transcript_text")
+            for line in catalog[ref].splitlines() if line.strip()
+        ]
+        if any(not any(quote in excerpt for excerpt in excerpts) for quote in quotes):
+            issues[field] = ["직접 인용이 연결된 원문과 일치하지 않습니다. 원문 표현과 인용 범위를 확인해주세요."]
     return issues
 
 
