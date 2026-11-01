@@ -23,9 +23,11 @@ CASES = [
     ("B_self_criticism", "내담자: 친구에게 서운한데 제가 봐도 유치하죠.\n내담자: 저만 바보같이.\n내담자: 너는 왜 이렇게 목매냐.",
      "client_response", "내담자는 친구에게 서운한 자신을 유치하다고 평가하며 “너는 왜 이렇게 목매냐”라고 비난한다고 말함.", [1, 2, 3]),
     ("C_declined", "상담자: 잠깐 일어나서 해볼까요?\n내담자: 서서 하는 건 싫어요.\n상담자: 네. 앉아 있을게요.",
-     "counselor_intervention", "상담자가 일어나서 해보자고 제안했으나 내담자가 서서 하는 것을 거절해 앉아 있기로 함.", [1, 2, 3]),
+     "counselor_intervention", "상담자가 일어나서 해보자고 제안했으나 내담자가 서서 하는 것을 거절하자 상담자는 앉아 있겠다고 응답함.", [1, 2, 3]),
+    ("C_no_future_plan", "상담자: 잠깐 일어나서 해볼까요?\n내담자: 서서 하는 건 싫어요.\n상담자: 네. 앉아 있을게요.",
+     "next_plan", "[자료에서 확인되지 않음]", []),
     ("D_conditional_plan", "내담자: 내일 수영 끝나고 다시 읽어볼게요.\n그때도 못 보내겠으면 안 보낼 수도 있어요.",
-     "next_plan", "다음 날 수영 후 메시지 초안을 다시 읽고 보낼지 결정하되 보내지 않을 가능성도 남겨둠.", [1, 2]),
+     "next_plan", "다음 날 수영 후 다시 읽어보고 그때도 보내기 어려우면 안 보낼 수도 있다고 말함.", [1, 2]),
     ("E_scene", "내담자: 친구가 당일 약속을 취소하고 다음 약속을 먼저 잡지 않아 서운했어요.\n내담자: 연락을 피하면서도 친구가 먼저 찾아주길 기다렸어요.",
      "session_content", "친구가 당일 약속을 취소하고 다음 약속을 먼저 제안하지 않아 내담자가 서운함을 느꼈고, 연락을 피하면서도 친구가 먼저 연락하기를 기다렸다고 말함.", [1, 2]),
 ]
@@ -61,6 +63,9 @@ class SessionSummaryMemoryTests(unittest.TestCase):
                     section = getattr(summary, field)
                     section.text = text
                     section.source_refs = [f"transcript.turn_{n}" for n in lines]
+                    if not lines:
+                        section.evidence_type = "needs_review"
+                        section.requires_review = True
                     stack.enter_context(patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key"))
                     if route == "quick":
                         model = Mock()
@@ -78,7 +83,9 @@ class SessionSummaryMemoryTests(unittest.TestCase):
                         model.invoke.assert_called_once()
                     self.assertEqual(text, getattr(result, field).text)
                     self.assertEqual(section.source_refs, getattr(result, field).source_refs)
-                    self.assertFalse(getattr(result, field).requires_review)
+                    self.assertEqual(not bool(lines), getattr(result, field).requires_review)
+                    if not lines:
+                        self.assertEqual("needs_review", getattr(result, field).evidence_type)
                     self.assertEqual({}, summary_quality_issues(result))
 
     def test_shared_skill_edit_reaches_both_prompts_without_changing_route_scope(self):
