@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from app.core.config import settings
 from app.graph.nodes import _apply_verification_consistency, _source_catalog, transform_document_preview, verify_output
-from app.schemas.note import CounselorReviewField, GroundedItem, SessionInput, VerificationReport
+from app.schemas.note import CounselorReviewField, GroundedItem, ReviewableClaim, SessionInput, VerificationReport
 from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryVerification, apply_summary_verification
 from test_summary_quality import _state, _summary
 
@@ -90,6 +90,15 @@ class SummaryVerificationTests(unittest.TestCase):
         self.summary.next_plan.text = "[자료에서 확인되지 않음]"
         report = apply_summary_verification(self.summary, SummaryVerification(), self.catalog)
         self.assertEqual([], report.unsupported_or_risky_claims)
+
+    def test_risky_claim_naming_a_field_marks_it_without_fuzzy_text_overlap(self):
+        report = VerificationReport(unsupported_or_risky_claims=[ReviewableClaim(
+            claim="session_theme의 '중심이었다'", reason="The excerpt does not establish session-wide importance.",
+            recommendation="Counselor review required.",
+        )])
+        _apply_verification_consistency(self.summary, report)
+        self.assertTrue(self.summary.session_theme.requires_review)
+        self.assertFalse(self.summary.presenting_problem.requires_review)
 
     def test_termination_api_draft_and_selected_preview_never_copy_private_content(self):
         marker = "SYNTHETIC-PRIVATE-RECALL-DETAIL"
