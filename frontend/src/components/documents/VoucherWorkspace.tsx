@@ -72,7 +72,8 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
   const load = () => task(async () => {
     const sources = Object.entries(selections).map(([note_id, s]) => ({ note_id, voucher_session_no: Number(s.number), actual_service_date: s.date, delivered_attested: s.attested }))
     const mapped = await voucherApi<{ rows: VoucherRow[]; source_hashes: Record<string, string> }>('map', 'POST', { case_id: caseId, sources })
-    change({ ...form, rows: mapped.rows }); setHashes(mapped.source_hashes)
+    // Keep manual-entry behavior even while an older backend is being replaced.
+    change({ ...form, rows: mapped.rows.map(row => ({ ...row, content_left: '', content_right: '' })) }); setHashes(mapped.source_hashes)
   })
   const download = (format: 'pdf' | 'hwpx') => task(async () => {
     if (!candidate) return
@@ -95,7 +96,8 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
             <label>작성월<input className="rm-input mt-1" type="month" value={form.report_month} onChange={e => change({ ...form, report_month: e.target.value })} /></label>
           </div>
           {form.template === 'form10' && <section className="mt-5">
-            <h2 className="font-bold">검토 완료된 회기 가져오기</h2>
+            <h2 className="font-bold">기록할 회기 선택</h2>
+            <p className="my-2 text-sm text-slate-600">회기·제공일·바우처 회차만 연결하며 개인 회기요약은 복사하지 않습니다. 기관 제출에 필요한 서비스 내용과 추가 기록을 직접 작성해주세요.</p>
             <p className="my-2 text-sm text-slate-600">일반 상담 회차와 바우처 회차는 다를 수 있습니다. 실제 제공일과 해당 과정의 1~8회차를 직접 확인해주세요.</p>
             {!confirmed.length && <p>먼저 회기 요약을 저장하고 검토 완료해주세요.</p>}
             {confirmed.map(doc => {
@@ -106,7 +108,7 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
                 {selection && <><label>바우처 회차<input aria-label={`상담 ${doc.session_number}회기 바우처 회차`} className="rm-input w-20" type="number" min="1" max="8" value={selection.number} onChange={e => update({ number: e.target.value })} /></label><label>제공일<input className="rm-input" type="date" value={selection.date} onChange={e => update({ date: e.target.value })} /></label><label><input type="checkbox" checked={selection.attested} onChange={e => update({ attested: e.target.checked })} /> 실제 제공한 서비스입니다</label></>}
               </div>
             })}
-            <button type="button" disabled={!Object.keys(selections).length || Object.values(selections).some(s => !s.number || !s.date || !s.attested)} onClick={load} className="mt-2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40">확정 내용 가져오기</button>
+            <button type="button" disabled={!Object.keys(selections).length || Object.values(selections).some(s => !s.number || !s.date || !s.attested)} onClick={load} className="mt-2 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40">선택한 회기 입력란 만들기</button>
             <label className="mt-4 block">서비스 유형<select className="rm-input" value={form.service_tier} onChange={e => change({ ...form, service_tier: e.target.value as VoucherForm['service_tier'] })}><option value="">기관에서 확인</option><option value="type_1">1급 유형</option><option value="type_2">2급 유형</option></select></label>
             {form.rows.map((row, i) => <div key={row.note_id} className="mt-4"><h3 className="font-semibold">바우처 {row.voucher_session_no}회차 · {row.actual_service_date}</h3><div className="grid gap-3 sm:grid-cols-2">{(['content_left', 'content_right'] as const).map((key, j) => <label key={key}>{j === 0 ? '서비스 내용' : '개입·반응 / 검사결과 등 추가 기록'}<textarea aria-label={`바우처 ${row.voucher_session_no}회차 ${j === 0 ? '서비스 내용' : '추가 기록'}`} className="rm-textarea min-h-28" value={row[key]} onChange={e => change({ ...form, rows: form.rows.map((r, index) => index === i ? { ...r, [key]: e.target.value } : r) })} /></label>)}</div></div>)}
             <label className="mt-4 block">비고·종합의견 / 확인된 전후 검사결과<textarea aria-label="비고·종합의견" className="rm-textarea min-h-24" value={form.general_comment} onChange={e => change({ ...form, general_comment: e.target.value })} /></label>
@@ -119,12 +121,12 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
             <p className="text-sm text-slate-600 sm:col-span-2">원문 제1~9조가 함께 출력됩니다. 미리보기에서 계약조건과 모든 조항을 확인한 뒤 검토를 완료해 주세요. 전자서명이나 전자바우처시스템 계약 등록은 포함되지 않습니다.</p>
             <p className="text-xs text-slate-500 sm:col-span-2">출처: 보건복지부 2026년 정신건강 심리상담 바우처사업 안내 제25호 · <a className="underline" href="https://welfare.dobong.go.kr/dobongBokji/bbs/BMSR00004/view.do?boardId=1771&menuNo=200113" target="_blank" rel="noreferrer">도봉복지로 공개본</a> · 공공누리 제1유형(출처표시). 작성란·배치는 리마인드에서 재구성했습니다.</p>
           </div>}
-          <button type="button" className="mt-5 rounded bg-blue-600 px-5 py-3 font-bold text-white disabled:opacity-40" disabled={!caseId || (form.template === 'form10' && !form.rows.length)} onClick={() => task(async () => {
+          <button type="button" className="mt-5 rounded bg-blue-600 px-5 py-3 font-bold text-white disabled:opacity-40" disabled={!caseId || (form.template === 'form10' && (!form.rows.length || form.rows.some(row => !row.content_left.trim())))} onClick={() => task(async () => {
             const doc = candidate || await voucherApi<VoucherDocument>('prepare', 'POST', { case_id: caseId, operation_key: operationKey.current, form, source_hashes: hashes }); await openPreview(doc)
           })}>{busy ? '처리 중…' : '출력 내용 확인'}</button>
         </fieldset>
         {candidate && <section className="mt-5 rounded-xl border bg-white p-5"><h2 className="font-bold">출력 미리보기</h2><p className="my-2 text-sm">{candidate.privacy_status === 'degraded' ? '자동 식별정보 확인이 제한되었습니다. 남은 이름·기관·연락처를 확인해 주세요.' : '출력 내용을 확인해주세요. 자동 처리가 모든 식별정보를 제거한다고 보장하지 않습니다.'}</p>{preview && <VoucherPdfPreview blob={preview} onReady={setPreviewReady} />}
-          {candidate.reviewed_at ? <p className="my-3 font-bold text-green-700">검토 완료 · 기관 보완 필요</p> : <div className="my-4 space-y-3"><label className="block"><input type="checkbox" checked={privacy} onChange={e => setPrivacy(e.target.checked)} /> 미리보기의 내용과 남아 있는 식별정보를 확인했습니다.</label><label className="block"><input type="checkbox" checked={offline} onChange={e => setOffline(e.target.checked)} /> 기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.</label><button type="button" disabled={busy || !privacy || !offline || !previewReady} className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40" onClick={() => task(async () => setCandidate(await voucherApi<VoucherDocument>(`saved/${candidate.id}/review`, 'POST', { fingerprint: candidate.fingerprint, human_privacy_reviewed: true, acknowledged_offline_completion: true }))) }>내용 검토 완료</button></div>}
+          {candidate.reviewed_at ? <p className="my-3 font-bold text-green-700">검토 완료 · 기관 보완 필요</p> : <div className="my-4 space-y-3"><label className="block"><input type="checkbox" checked={privacy} onChange={e => setPrivacy(e.target.checked)} /> 미리보기의 식별정보를 확인하고 직접 인용·사생활 세부내용을 기관 제출에 필요한 수준으로 줄였습니다.</label><label className="block"><input type="checkbox" checked={offline} onChange={e => setOffline(e.target.checked)} /> 기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.</label><button type="button" disabled={busy || !privacy || !offline || !previewReady} className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40" onClick={() => task(async () => setCandidate(await voucherApi<VoucherDocument>(`saved/${candidate.id}/review`, 'POST', { fingerprint: candidate.fingerprint, human_privacy_reviewed: true, acknowledged_offline_completion: true }))) }>내용 검토 완료</button></div>}
           <div className="flex gap-3">{(['pdf', 'hwpx'] as const).map(format => <button type="button" key={format} className="rounded border px-4 py-2 disabled:opacity-40" disabled={busy || !candidate.reviewed_at || !caps.formats[format]} onClick={() => download(format)}>{format.toUpperCase()} 다운로드</button>)}</div>{!caps.formats.hwpx && <p className="mt-2 text-sm text-slate-500">HWPX는 문서 편집기 호환성 확인 후 제공됩니다.</p>}</section>}
         <section className="mt-5 rounded-xl border bg-white p-5"><h2 className="font-bold">저장한 전마투 문서</h2>{history.map(doc => <div key={doc.id} className="mt-2 flex justify-between border-b py-2"><button disabled={busy} type="button" onClick={() => task(async () => openPreview(await voucherApi<VoucherDocument>(`saved/${doc.id}`)))}>{label[doc.template]} · {doc.reviewed_at ? '검토 완료' : '검토 전'} · {new Date(doc.created_at).toLocaleDateString('ko-KR')}</button><button disabled={busy} type="button" onClick={() => { if (window.confirm('이 서식 문서를 삭제할까요? 원래 회기 기록은 유지됩니다.')) void task(async () => { await voucherApi(`saved/${doc.id}`, 'DELETE'); setHistory(history.filter(d => d.id !== doc.id)); if (candidate?.id === doc.id) clearReview() }) }}>삭제</button></div>)}</section>
       </>}

@@ -33,6 +33,8 @@ export function confirmedPayload(original: Record<string, unknown>, sections: St
     payload[field] = {
       ...(isObject(metadata) ? metadata : {}),
       text: section.content,
+      ...(isObject(metadata) && metadata.text !== section.content
+        ? { evidence_type: 'needs_review', requires_review: true } : {}),
     }
   }
   // Grounding belongs to the AI draft, not to newly edited assertions.

@@ -17,6 +17,9 @@ export interface QuickSummarySection {
   id: string
   title: string
   content: string
+  /** Ephemeral source excerpts; never included in saved summaries or login handoffs. */
+  evidence?: { label: string; excerpt: string; needsReview: boolean }[]
+  requiresReview?: boolean
 }
 
 export interface QuickSummaryResult {
@@ -58,7 +61,7 @@ export function quickSummaryDraftPayload(result: QuickSummaryResult): TemporaryD
     selected_previous_session_ids: [],
     attachments: [],
     visible_section_ids: [],
-    draft_sections: result.sections.map((section) => ({ ...section, visible: true })),
+    draft_sections: result.sections.map(({ id, title, content }) => ({ id, title, content, visible: true })),
     final_document_sections: [],
     final_document_type: 'session_note',
   }

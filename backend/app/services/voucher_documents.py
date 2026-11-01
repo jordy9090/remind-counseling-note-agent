@@ -1,7 +1,7 @@
 """Owned, immutable review snapshots for voucher exports.
 
 Edits create a new candidate rather than modifying a reviewed document. The server
-reads confirmed notes, sanitizes only narrative fields, and renders stored values.
+checks confirmed notes, sanitizes manually authored narrative, and renders stored values.
 """
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -37,7 +37,7 @@ def template_fingerprint(template=None):
 
 def confirmed_fields(note):
     if note.confirmation_status != 'confirmed' or note.note_type != 'session_note':
-        raise VoucherError('SOURCE_NOT_CONFIRMED', '검토 완료된 회기 요약만 가져올 수 있습니다.')
+        raise VoucherError('SOURCE_NOT_CONFIRMED', '검토 완료된 회기만 연결할 수 있습니다.')
     payload = note.confirmed_json
     allowed = ('session_content', 'counselor_intervention', 'client_response')
     if not isinstance(payload, dict):
@@ -87,12 +87,10 @@ class VoucherDocuments:
 
     def map_sources(self, actor, request):
         self.owned_case(actor, request.case_id)
-        fields, hashes = self.sources(actor, request.case_id, request.sources)
-        rows = []
-        for source in request.sources:
-            used = fields[str(source.note_id)]
-            rows.append({**source.model_dump(mode='json'), 'content_left': used['session_content'],
-                         'content_right': '\n'.join(value for key, value in used.items() if key != 'session_content' and value)})
+        _, hashes = self.sources(actor, request.case_id, request.sources)
+        # Link service metadata without copying private session-summary narrative.
+        rows = [{**source.model_dump(mode='json'), 'content_left': '', 'content_right': ''}
+                for source in request.sources]
         return {'rows': rows, 'source_hashes': hashes}
 
     def get(self, actor, document_id):

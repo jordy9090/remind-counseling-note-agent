@@ -50,6 +50,9 @@ assert(latest.session_content.text === '상담사가 수정한 최신 회기 요
 assert(latest.presenting_problem.text === '상담사가 수정한 주요 호소', 'edited presenting problem must be used')
 assert(latest.reflection.text === '상담사가 수정한 슈퍼비전 메모', 'edited supervision memo must be used')
 assert(latest.session_content.source_refs[0] === 'transcript:s1:1-3', 'grounding source metadata must survive edit')
+assert(latest.session_content.requires_review, 'old references cannot validate edited assertions')
+assert(latest.session_content.evidence_type === 'needs_review', 'edited assertions need source review')
+assert(latest.next_plan.requires_review === false, 'unchanged text keeps its original review state')
 assert(original.session_content.text === 'AI 회기 요약', 'original AI response must remain immutable')
 
 const pageSource = fs.readFileSync(path.resolve('src/pages/SessionDraftPage.tsx'), 'utf8')

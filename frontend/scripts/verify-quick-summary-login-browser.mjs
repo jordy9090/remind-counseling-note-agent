@@ -18,6 +18,8 @@ const section = text => ({ text, evidence_type: 'reported', source_refs: [], nee
 const draft = { session_info: { case_id: 'synthetic', session_number: 1, session_date: '2026-10-27', counselor_name: '' } }
 for (const name of ['presenting_problem', 'session_theme', 'session_content', 'counselor_intervention', 'client_response', 'next_plan', 'reflection']) draft[name] = section(marker)
 const response = { session_summary_draft: draft, verification_report: { requires_counselor_review: [], unsupported_or_risky_claims: [], sensitive_info_items: [] }, document_transform_preview: { missing_required_fields: [] }, evidence_mapped_data: { items: [] }, stub: true }
+draft.session_content = { text: marker, evidence_type: 'direct', source_refs: ['transcript.turn_1', 'transcript.turn_2'], requires_review: true }
+response.sanitized_input = { sources: { transcript_text: '상담자: SYNTHETIC-QUESTION-CUE\n내담자: SYNTHETIC-RESPONSE-CUE' } }
 const uid = '00000000-0000-4000-8000-000000000001'
 const user = { id: uid, aud: 'authenticated', role: 'authenticated', email: 'handoff@example.invalid', app_metadata: { provider: 'email' }, user_metadata: {}, created_at: '2026-10-27T00:00:00Z' }
 const jwt = [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'), Buffer.from(JSON.stringify({ sub: uid, exp: Math.floor(Date.now() / 1000) + 3600, role: 'authenticated', aud: 'authenticated' })).toString('base64url'), 'synthetic-signature'].join('.')
@@ -78,7 +80,11 @@ try {
       await page.getByRole('button', { name: '요약하기', exact: true }).click()
       await page.getByRole('checkbox').check()
       await page.getByRole('button', { name: 'AI 요약 생성하기', exact: true }).click()
+      await page.getByText('관련 원문 보기 (2)', { exact: true }).click()
+      assert.equal(await page.getByText('상담자: SYNTHETIC-QUESTION-CUE', { exact: true }).isVisible(), true)
+      assert.equal(await page.getByText('내담자: SYNTHETIC-RESPONSE-CUE', { exact: true }).isVisible(), true)
       await page.getByRole('button', { name: '로그인 후 저장하기', exact: true }).click()
+      assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending').includes('SYNTHETIC-QUESTION-CUE')), false)
       assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('remind.quickSummary.pending'))), true)
       const login = page.getByRole('dialog', { name: '로그인', exact: true })
       await login.getByRole('textbox', { name: '이메일' }).fill(user.email)
@@ -104,6 +110,7 @@ try {
       assert.ok((await result.innerText()).includes(marker))
       assert.equal(draftWrites.length, 1, 'Handoff saves the summary exactly once')
       assert.ok(draftWrites[0].draft_sections.some(item => item.content === marker))
+      assert(!JSON.stringify(draftWrites).includes('SYNTHETIC-QUESTION-CUE'))
       assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending')), null)
       await picker.getByRole('button', { name: '내담자 새로 등록하기', exact: true }).click()
       await page.getByRole('dialog', { name: '새 내담자 생성', exact: true }).waitFor()
