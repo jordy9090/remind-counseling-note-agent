@@ -25,6 +25,8 @@ const {
   getNotableAcousticObservations,
   getSegmentSpeakerKey,
   replaceAppliedAudioBlock,
+  mergeAudioSegments,
+  splitAudioSegment,
 } = await import(pathToFileURL(outputPath).href)
 
 function assert(condition, message) {
@@ -144,12 +146,11 @@ for (const deferred of [false, true]) {
     }
     assert(requestCount === 1, 'transcription must make one API call')
     assert(form.transcript_text.startsWith('Synthetic existing document'), 'transcription must preserve existing document input')
-    assert(form.transcript_text.includes('Synthetic audio sentence'), `audio must reach session input with deferred=${deferred}, initialUpload=${initialUpload}`)
-    assert(form.transcript_text.split('Synthetic audio sentence').length === 2, 'updater replay must not duplicate audio input')
-    assert(form.nonverbal_notes.includes('Synthetic existing observation') && form.nonverbal_notes.includes('Synthetic acoustic observation'), 'acoustic input must preserve existing observations and apply transcription')
-    assert(storedMaterials[0].appliedTargets.includes('transcript_text'), 'material must record successful application')
-    assert(form.transcript_text.includes(storedMaterials[0].lastAppliedTranscriptText), 'saved applied block must match actual session input')
-    assert(storedMaterials[0].dirtySinceApply === false, 'successfully applied audio must be clean')
+    assert(!form.transcript_text.includes('Synthetic audio sentence'), 'unreviewed ASR must never enter summary input')
+    assert(form.nonverbal_notes === 'Synthetic existing observation', 'unreviewed audio must not change observations')
+    assert(!storedMaterials[0].appliedTargets.includes('transcript_text'), 'new ASR must remain unapplied')
+    assert(storedMaterials[0].rawSegments[0].text === 'Synthetic audio sentence', 'raw ASR must be retained separately')
+    assert(storedMaterials[0].dirtySinceApply === true, 'new ASR requires counselor review')
   }
 }
 for (const transition of ['delete', 'new-workspace', 'restored-workspace', 'restored-error', 'speaker-edit']) {
@@ -177,7 +178,8 @@ for (const transition of ['delete', 'new-workspace', 'restored-workspace', 'rest
   else finish({ segments: [{ id: 1, start: 0, end: 2, speaker: 'SPEAKER_00', text: 'SYNTHETIC-PENDING-AUDIO' }], transcript_text: '', nonverbal_notes: '', warnings: [] })
   await pending
   if (transition === 'speaker-edit') {
-    assert(form.transcript_text.includes('상담자: SYNTHETIC-PENDING-AUDIO'), 'completion must use the latest speaker role')
+    assert(!form.transcript_text.includes('SYNTHETIC-PENDING-AUDIO'), 'completion must still wait for review')
+    assert(materialsRef.current[0].transcriptText.includes('상담자: SYNTHETIC-PENDING-AUDIO'), 'review projection uses latest role')
     assert(materialsRef.current[0].speakerRoleMap.SPEAKER_00 === 'counselor', 'completion must preserve updated speaker role')
   } else {
     assert(JSON.stringify(form) === before, `pending audio must not enter replacement input after ${transition}`)
@@ -203,6 +205,120 @@ assert(editorSource.includes('useRef<HTMLAudioElement | null>(null)'), 'audio ed
 assert(editorSource.includes('currentTime = seekTarget'), 'segment play must seek to the segment start')
 assert(editorSource.includes('readOnly'), 'full transcript preview must be read-only')
 assert(editorSource.includes('onUpdateSpeakerRole'), 'speaker role edits must be wired through the editor')
+
+const editable = [
+  { id: 1, segment_id: 'a', start: 1.2, end: 4.5, speaker: 'speaker_0', text: '안 갔다. 네.' },
+  { id: 2, segment_id: 'b', start: 5, end: 8, speaker: 'speaker_0', text: '12회입니다.' },
+]
+const beforeEdit = JSON.stringify(editable)
+const split = splitAudioSegment(editable, 1, 6, 3)
+assert(split.length === 3 && split[0].start === 1.2 && split[1].end === 4.5, 'split preserves outer timestamps')
+assert(split[0].end === 3 && split[1].start === 3, 'split uses explicit user time')
+assert(split[0].source_ranges[0].end === 4.5 && split[1].source_ranges[0].start === 1.2, 'original timestamps survive split')
+assert(splitAudioSegment(editable, 1, 6, 8) === editable, 'invalid split time cannot change transcript')
+const merged = mergeAudioSegments(editable, 1)
+assert(merged.length === 1 && merged[0].text === '안 갔다. 네. 12회입니다.', 'merge must preserve negation and numbers')
+assert(merged[0].start === 1.2 && merged[0].end === 8 && merged[0].source_ranges.length === 2, 'merge keeps source ranges')
+assert(JSON.stringify(editable) === beforeEdit, 'edits cannot mutate original ASR data')
+assert(mergeAudioSegments([editable[0], { ...editable[1], speaker: 'speaker_1' }], 1).length === 2, 'different speaker merge requires explicit reassignment')
+assert(pageSource.includes('sourceText !== currentText'), 'stale privacy review cannot be applied')
+assert(editorSource.includes('confirmedReviewKey === reviewKey'), 'privacy confirmation is bound to exact text, speakers and timestamps')
+assert(clientSource.includes('VITE_AUDIO_API_BASE_URL'), 'audio has a separate self-hosted origin')
+
+// Execute the actual page callback: only the reviewed masked text may reach the
+// summary form, and an obsolete review must not overwrite a later correction.
+let applyNode
+function findApply(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(pageAst) === 'applyAudioTranscriptToForm') applyNode = node
+  ts.forEachChild(node, findApply)
+}
+findApply(pageAst)
+assert(applyNode, 'reviewed apply callback must exist')
+const applyJs = ts.transpileModule(`const apply = ${applyNode.initializer.getText(pageAst)}`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2020 },
+}).outputText
+const mergeText = (before, after, mode) => mode === 'replace' ? after : [before, after].filter(Boolean).join('\n\n')
+let appliedMaterials = [{ id: 'reviewed', kind: 'audio', segments: editable, speakerRoleMap: { speaker_0: 'client' }, appliedTargets: [], dirtySinceApply: true }]
+let appliedForm = { transcript_text: '상담사 메모', nonverbal_notes: '' }
+const invokeApply = () => new Function('materials', 'form', 'buildTranscriptText', 'buildNonverbalNotes', 'replaceAppliedAudioBlock',
+  'mergeMaterialText', 'setForm', 'setMaterials', 'setMaterialModal', 'AUDIO_APPLY_TARGETS', `${applyJs}; return apply`)(
+  appliedMaterials, appliedForm, buildTranscriptText, buildNonverbalNotes, replaceAppliedAudioBlock, mergeText,
+  update => { appliedForm = update(appliedForm) }, update => { appliedMaterials = update(appliedMaterials) }, () => {}, ['transcript_text', 'nonverbal_notes'])
+const reviewedSource = buildTranscriptText(editable, { speaker_0: 'client' })
+invokeApply()('reviewed', 'append', '내담자: [이름]에게 안 갔다. 12회입니다.', 'obsolete source')
+assert(appliedForm.transcript_text === '상담사 메모', 'stale review must be rejected by the actual callback')
+invokeApply()('reviewed', 'append', '내담자: [이름]에게 안 갔다. 12회입니다.', reviewedSource)
+assert(appliedForm.transcript_text === '상담사 메모\n\n내담자: [이름]에게 안 갔다. 12회입니다.', 'only the counselor-reviewed masked text is summary input')
+assert(appliedMaterials[0].dirtySinceApply === false, 'reviewed application clears the pending review marker')
+
+const editorAst = ts.createSourceFile('AudioTranscriptEditor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const gateExpressions = {}
+function collectGates(node) {
+  if (ts.isVariableDeclaration(node) && ['reviewKey', 'canApply'].includes(node.name.getText(editorAst))) {
+    gateExpressions[node.name.getText(editorAst)] = node.initializer.getText(editorAst)
+  }
+  ts.forEachChild(node, collectGates)
+}
+collectGates(editorAst)
+const keyFor = new Function('material', 'segments', 'speakerRoleMap', `return ${gateExpressions.reviewKey}`)
+const gateFor = new Function('material', 'privacy', 'reviewKey', 'confirmedReviewKey', `return ${gateExpressions.canApply}`)
+const material = { id: 'gate', status: 'transcribed' }
+const key = keyFor(material, editable, {})
+const privacy = { key, text: '검토할 텍스트' }
+assert(!gateFor(material, privacy, key, null), 'a PII proposal alone does not permit application')
+assert(gateFor(material, privacy, key, key), 'explicit confirmation of current revision permits application')
+for (const changed of [{ ...editable[0], text: '갔다' }, { ...editable[0], speaker: 'speaker_1' }, { ...editable[0], end: 4.2 }]) {
+  assert(!gateFor(material, privacy, keyFor(material, [changed, editable[1]], {}), key), 'text, speaker, or time edits invalidate prior confirmation')
+}
+assert(!gateFor(material, privacy, keyFor(material, editable, { speaker_0: 'counselor' }), key), 'global role assignment invalidates confirmation')
+assert(!gateFor(material, privacy, keyFor({ ...material, reviewRanges: [{ start: 2, end: 3 }] }, editable, {}), key), 'new omission candidates invalidate confirmation')
+
+// Execute the actual upload consent callbacks; no file may be sent before approval.
+const inputSource = fs.readFileSync(path.resolve('src/components/session-input/SessionInputPage.tsx'), 'utf8')
+const inputAst = ts.createSourceFile('SessionInputPage.tsx', inputSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const consentCallbacks = {}
+function collectConsent(node) {
+  if (ts.isVariableDeclaration(node) && ['upload', 'resolveAudioConsent'].includes(node.name.getText(inputAst))) {
+    consentCallbacks[node.name.getText(inputAst)] = node.initializer.getText(inputAst)
+  }
+  ts.forEachChild(node, collectConsent)
+}
+collectConsent(inputAst)
+let pendingFiles = null
+let uploadCalls = []
+const consentJs = ts.transpileModule(Object.entries(consentCallbacks).map(([name, body]) => `const ${name} = ${body}`).join('\n'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2020 },
+}).outputText
+const consentActions = () => new Function('pendingAudioFiles', 'setPendingAudioFiles', 'onUploadFiles', 'AUDIO_EXTENSION', 'toFileList',
+  `${consentJs}; return {upload, resolveAudioConsent}`)(pendingFiles, value => { pendingFiles = value },
+  (files, approved) => uploadCalls.push({ files, approved }), /\.(mp3|m4a|wav)$/i, files => files)
+const syntheticAudio = { name: 'synthetic.wav' }
+const syntheticText = { name: 'synthetic.txt' }
+consentActions().upload([syntheticAudio])
+assert(uploadCalls.length === 0 && pendingFiles[0] === syntheticAudio, 'selection must wait for explicit consent')
+consentActions().resolveAudioConsent(false)
+assert(uploadCalls.length === 0 && pendingFiles === null, 'cancel must discard the pending audio without upload')
+consentActions().upload([syntheticAudio, syntheticText])
+consentActions().resolveAudioConsent(false)
+assert(uploadCalls.length === 1 && uploadCalls[0].files[0] === syntheticText && !uploadCalls[0].approved, 'declining audio must preserve non-audio uploads')
+uploadCalls = []
+consentActions().upload([syntheticAudio])
+consentActions().resolveAudioConsent(true)
+assert(uploadCalls.length === 1 && uploadCalls[0].approved && uploadCalls[0].files[0] === syntheticAudio, 'approval uploads only the selected files')
+consentActions().resolveAudioConsent(true)
+assert(uploadCalls.length === 1, 'a resolved consent cannot upload again')
+
+const dirtyHelperSource = pageAst.statements.filter(node => ts.isFunctionDeclaration(node)
+  && ['buildInitialSpeakerRoleMap', 'markAudioMaterialDirty'].includes(node.name?.text)).map(node => node.getText(pageAst)).join('\n')
+const dirtyHelperJs = ts.transpileModule(dirtyHelperSource, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
+const markDirty = new Function('getSegmentSpeakerKey', 'buildTranscriptText', 'buildNonverbalNotes', 'AUDIO_APPLY_TARGETS',
+  `${dirtyHelperJs}; return markAudioMaterialDirty`)(getSegmentSpeakerKey, buildTranscriptText, buildNonverbalNotes, ['transcript_text', 'nonverbal_notes'])
+const roleMaterial = { kind: 'audio', segments: [{ id: 1, start: 0, end: 3, text: '합성 발화', speaker: 'speaker_1' }],
+  speakerRoleMap: { speaker_0: 'counselor', speaker_1: 'client' }, appliedTargets: [] }
+const temporarilyAbsent = markDirty({ ...roleMaterial, segments: [{ ...roleMaterial.segments[0], speaker: 'speaker_0' }] })
+const restoredSpeaker = markDirty({ ...temporarilyAbsent, segments: roleMaterial.segments })
+assert(temporarilyAbsent.speakerRoleMap.speaker_1 === 'client', 'temporary absence must preserve the counselor-assigned speaker role')
+assert(restoredSpeaker.transcriptText.includes('내담자: 합성 발화'), 'restoring a speaker must restore its existing role automatically')
 
 fs.rmSync(outputDir, { recursive: true, force: true })
 console.log('audio transcript workflow verification passed')

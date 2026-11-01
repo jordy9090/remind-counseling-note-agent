@@ -34,6 +34,8 @@ import { getAccessToken } from '../lib/supabase'
 import type { QuickSummaryResult } from '../lib/quickSummary'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+// Audio goes directly to the configured self-hosted FastAPI origin.
+const AUDIO_API_BASE_URL = import.meta.env.VITE_AUDIO_API_BASE_URL || API_BASE_URL
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -236,7 +238,7 @@ export const requestDeidentificationPreview = async (payload: {
 }
 
 export const getAudioCapabilities = async (): Promise<AudioCapabilitiesResponse> => {
-  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities')
+  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities', { baseURL: AUDIO_API_BASE_URL })
   return response.data
 }
 
@@ -253,12 +255,18 @@ export const transcribeAudio = async (
   formData.append('expected_speakers', String(expectedSpeakers))
   try {
     const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
-      timeout: 900000,
+      baseURL: AUDIO_API_BASE_URL,
+      timeout: 7200000,
     })
     return response.data
   } catch (error) {
     throw normalizeApiError(error, '음성 축어록을 생성하지 못했습니다.')
   }
+}
+
+export const reviewAudioPrivacy = async (text: string): Promise<{ text: string; candidates: { category: string }[] }> => {
+  const response = await client.post('/api/audio/deidentify', { text }, { baseURL: AUDIO_API_BASE_URL })
+  return response.data
 }
 
 export { API_BASE_URL }

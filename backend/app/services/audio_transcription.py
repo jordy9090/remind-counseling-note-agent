@@ -63,6 +63,7 @@ class TranscriptionServiceCacheKey:
     runtime_mode: AudioRuntimeMode
     engine: str
     whisperx: WhisperXRuntimeConfig | None = None
+    local: Any = None
 
 
 @dataclass(frozen=True)
@@ -397,6 +398,11 @@ class WhisperXTranscriptionService(AudioTranscriptionService):
 def get_audio_capabilities() -> AudioCapabilitiesResponse:
     runtime_mode = get_audio_runtime_mode()
     transcription = get_transcription_capability()
+    if runtime_mode == "real" and current_audio_engine() in {"faster-whisper", "sensevoice"}:
+        enabled = os.getenv("AUDIO_DIARIZATION_ENGINE", "campplus") == "campplus" and importlib.util.find_spec("funasr") is not None
+        return AudioCapabilitiesResponse(upload=AudioCapability(available=True), transcription=transcription,
+            speaker_diarization=AudioCapability(available=enabled and transcription.available,
+                reason=None if enabled else "화자 구분 확인 필요: CAM++ 런타임 설정을 확인해주세요."), runtime_mode=runtime_mode)
     config = current_whisperx_config()
     token_configured = bool(os.getenv("HF_TOKEN", "").strip())
     diarization_available = runtime_mode == "stub" or (
@@ -434,7 +440,8 @@ def get_transcription_service() -> AudioTranscriptionService:
     cache_key = TranscriptionServiceCacheKey(
         runtime_mode=runtime_mode,
         engine="stub" if runtime_mode == "stub" else engine,
-        whisperx=current_whisperx_config() if runtime_mode == "real" else None,
+        whisperx=current_whisperx_config() if runtime_mode == "real" and engine == "whisperx" else None,
+        local=_local_config() if runtime_mode == "real" and engine in {"faster-whisper", "sensevoice"} else None,
     )
     with _transcription_service_lock:
         if _transcription_service_cache and _transcription_service_cache[0] == cache_key:
@@ -445,10 +452,11 @@ def get_transcription_service() -> AudioTranscriptionService:
             capability = get_transcription_capability()
             if not capability.available:
                 return UnavailableAudioTranscriptionService(capability.reason or UNAVAILABLE_REASON)
-            service = WhisperXTranscriptionService(
-                config=cache_key.whisperx,
-                runtime=_whisperx_runtime_override,
-            )
+            if cache_key.local is not None:
+                from app.services.local_audio_pipeline import LocalAudioPipeline
+                service = LocalAudioPipeline(cache_key.local)
+            else:
+                service = WhisperXTranscriptionService(config=cache_key.whisperx, runtime=_whisperx_runtime_override)
         _transcription_service_cache = (cache_key, service)
         return service
 
@@ -462,7 +470,15 @@ def get_audio_runtime_mode() -> AudioRuntimeMode:
 
 
 def current_audio_engine() -> str:
-    return (os.getenv("AUDIO_TRANSCRIPTION_ENGINE", "whisperx").strip() or "whisperx").lower()
+    return (os.getenv("AUDIO_TRANSCRIPTION_ENGINE", "faster-whisper").strip() or "faster-whisper").lower()
+
+
+def _local_config():
+    from app.services.local_audio_pipeline import LocalAudioConfig
+    try:
+        return LocalAudioConfig.from_env()
+    except ValueError as error:
+        raise AudioTranscriptionUnavailable("로컬 음성 처리 설정을 확인해주세요.") from error
 
 
 def get_transcription_capability() -> AudioCapability:
@@ -471,6 +487,16 @@ def get_transcription_capability() -> AudioCapability:
         return AudioCapability(available=True)
     if runtime_mode == "disabled":
         return AudioCapability(available=False, reason=UNAVAILABLE_REASON)
+    if current_audio_engine() in {"faster-whisper", "sensevoice"}:
+        import shutil
+        packages = ["soundfile", "faster_whisper" if current_audio_engine() == "faster-whisper" else "funasr"]
+        if shutil.which("ffmpeg") is None or any(importlib.util.find_spec(p) is None for p in packages):
+            return AudioCapability(available=False, reason="로컬 ASR 패키지 또는 FFmpeg가 설치되어 있지 않습니다.")
+        try:
+            _local_config()
+        except AudioTranscriptionUnavailable as error:
+            return AudioCapability(available=False, reason=error.reason)
+        return AudioCapability(available=True)
     if current_audio_engine() != "whisperx":
         return AudioCapability(available=False, reason="지원하지 않는 음성 축어록 엔진 설정입니다.")
     if _whisperx_runtime_override is not None:

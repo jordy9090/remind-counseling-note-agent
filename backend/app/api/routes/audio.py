@@ -1,12 +1,12 @@
 """Routes for audio upload capabilities and optional transcription."""
 from __future__ import annotations
 
-import re
 from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 
 from app.api.security import require_preview_access
 from app.schemas.audio import AudioCapabilitiesResponse, AudioTranscriptionResponse
@@ -73,9 +73,23 @@ async def transcribe_audio(
 
 
 def validate_audio_request(language: str | None, task: str, expected_speakers: int) -> None:
-    if task not in {"transcribe", "translate"}:
-        raise HTTPException(status_code=422, detail="task는 transcribe 또는 translate만 사용할 수 있습니다.")
-    if language and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{1,9}", language):
-        raise HTTPException(status_code=422, detail="language는 2~10자의 안전한 언어 코드여야 합니다.")
+    if task != "transcribe":
+        raise HTTPException(status_code=422, detail="상담 축어록은 번역 없이 transcribe만 사용할 수 있습니다.")
+    if language not in {None, "ko"}:
+        raise HTTPException(status_code=422, detail="상담 축어록 언어는 한국어(ko)로 설정해주세요.")
     if not 1 <= expected_speakers <= 4:
         raise HTTPException(status_code=422, detail="expected_speakers는 1~4 사이여야 합니다.")
+
+
+class AudioPrivacyReviewRequest(BaseModel):
+    text: str = Field(max_length=300000)
+
+
+@router.post("/deidentify")
+async def review_audio_privacy(payload: AudioPrivacyReviewRequest, response: Response, actor: AuthenticatedUser):
+    """Return deterministic local masking proposals before any downstream AI call."""
+    from app.services.deidentification import deidentify_text
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    masked, candidates = deidentify_text(payload.text, source="corrected_audio_transcript")
+    return {"text": masked, "candidates": [c.model_dump() for c in candidates], "requires_confirmation": True}

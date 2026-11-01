@@ -42,6 +42,9 @@ export interface UploadedMaterial {
   objectUrl?: string
   transcriptText?: string
   segments?: AudioSegment[]
+  rawSegments?: AudioSegment[]
+  reviewRanges?: { start: number; end: number; code?: string }[]
+  failedRanges?: { start: number; end: number; code?: string }[]
   durationSeconds?: number | null
   language?: string | null
   speakerRoleMap?: SpeakerRoleMap
