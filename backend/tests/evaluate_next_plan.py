@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import settings
 from app.graph import nodes
+from app.services import summary_skill
 from app.services.quick_summary import generate_quick_summary
 from app.services.summary_corrections import introduced_script_fields
 from app.services.summary_quality import summary_quality_issues, summary_quote_issues
@@ -28,6 +29,7 @@ from app.services.summary_verification import cited_lines
 def run() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cases", nargs="+", choices=["B_full", "C_in_session", "D_conditional"])
     args = parser.parse_args()
     if settings.stub_mode or not settings.openai_api_key:
         raise SystemExit("Live provider configuration is required; no stub substitution.")
@@ -41,8 +43,17 @@ def run() -> None:
               "mode": "Actual production quick-summary pipeline in Preview build; no HTTP wrapper or storage.",
               "cases": [], "cleanup": "Synthetic fixtures only; no accounts or stored rows."}
     factory = nodes.get_structured_llm
+    quality_check = summary_skill.summary_quality_issues
     for name, raw in cases.items():
+        if args.cases and name not in args.cases:
+            continue
         assessments = []
+        generation_checks = []
+
+        def observe_quality(summary):
+            issues = quality_check(summary)
+            generation_checks.append({"draft": summary.model_dump(mode="json"), "issues": issues})
+            return issues
 
         def observe(schema, **kwargs):
             actual = factory(schema, **kwargs)
@@ -57,9 +68,12 @@ def run() -> None:
 
         started = time.perf_counter()
         item = {"case": name, "input_characters": len(raw),
-                "input_sha256": hashlib.sha256(raw.encode()).hexdigest(), "assessments": assessments}
+                "input_sha256": hashlib.sha256(raw.encode()).hexdigest(), "assessments": assessments,
+                "generation_checks": generation_checks}
         try:
-            with patch.object(nodes, "get_structured_llm", side_effect=observe):
+            with patch.object(nodes, "get_structured_llm", side_effect=observe), patch.object(
+                summary_skill, "summary_quality_issues", side_effect=observe_quality,
+            ):
                 response = generate_quick_summary(raw)
             item["response"] = response.model_dump(mode="json")
             assert not response.stub
