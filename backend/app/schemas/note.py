@@ -132,7 +132,7 @@ class SessionSummaryDraft(BaseModel):
     counselor_intervention: SummarySection = Field(description="상담자가 무엇에 대해 실제로 어떤 질문·반영·제안을 했는지 1~2문장, 목표 90~140자로 요약. 제안·거절·실제 수행을 구분하고 목적·기법·효과를 추정하지 않음.")
     client_response: SummarySection = Field(description="개입에 대한 내담자의 반응과 남은 어려움을 1~2문장, 목표 90~140자로 통합. 발화를 이어 붙이지 않음.")
     reflection: SummarySection = Field(description="상담자가 직접 메모한 자신의 반응과 성찰만 1~2문장, 목표 90~150자로 요약. 내담자의 감정이나 추정을 상담자 감정으로 바꾸지 않음.")
-    next_plan: SummarySection = Field(description="회기 이후 또는 다음 회기의 계획만 조건·시점·보류 가능성까지 1문장, 목표 60~90자로 요약. 현재 회기의 자세 유지·잠시 기다리기·개입 거절을 다음 계획으로 옮기지 않음. 별도 향후 계획이 없으면 미확인 및 검토 필요로 표시. 나중에 결정할 행동을 확정하거나 입력에 없는 대상·과제를 만들지 않음.")
+    next_plan: SummarySection = Field(description="회기 이후 또는 다음 회기의 계획을 최대 350자로 요약. 서로 다른 계획이 여러 개면 1~4문장으로 구분. 별도 합의 행동과 다음 회기 일정·확인할 내용을 구분하며 시점·조건·횟수·선택 사항·보류 가능성을 빠뜨리지 않음. 적은 자료는 짧게 쓰되 여러 계획을 60~90자에 억지로 압축하지 않음. 현재 회기의 자세 유지·잠시 기다리기·개입 거절을 다음 계획으로 옮기지 않음. 별도 향후 계획이 없으면 미확인 및 검토 필요로 표시. 나중에 결정할 행동을 확정하거나 입력에 없는 대상·과제를 만들지 않음.")
 
 
 class GroundedItem(BaseModel):
