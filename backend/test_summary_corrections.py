@@ -113,7 +113,7 @@ class SummaryCorrectionTests(unittest.TestCase):
         self.assertNotIn("text_corrections", SummaryCorrectionValidation.model_fields)
         self.assertIn("अलग개로", self.summary.session_content.text)
 
-    def test_supported_plan_anchor_cannot_restore_a_removed_reference(self):
+    def test_supported_plan_uses_its_validated_current_anchors(self):
         from app.services.summary_verification import apply_summary_verification
         self.summary.next_plan = _summary().next_plan
         self.summary.next_plan.source_refs = ["transcript.turn_4"]

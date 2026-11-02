@@ -62,6 +62,41 @@ class SummaryVerificationTests(unittest.TestCase):
                 self.assertEqual([], summary.next_plan.source_refs)
                 self.assertTrue(report.requires_counselor_review)
 
+    def test_plan_retains_conditions_when_generic_refs_omit_acceptance(self):
+        self.catalog = {
+            "transcript.turn_1": "상담자: 내일 초안을 읽고 보내기, 수정하기, 기다리기 중 골라 이유 한 줄을 남겨볼까요?",
+            "transcript.turn_2": "내담자: 네. 보내기로 정한 건 아니고 수영과 저녁 식사 뒤 아홉 시쯤 다시 읽고 정할게요.",
+            "transcript.turn_3": "내담자: 비슷한 일이 자연히 생기면 사실과 해석을 두 줄로 한 번만 적을게요. 매일 하지는 않고요.",
+        }
+        plan = self.summary.next_plan
+        plan.text = "내일 수영·저녁 식사 후 9시쯤 초안을 읽고 발송·수정·대기 중 선택과 이유 한 줄을 남기되 발송은 미확정임. 비슷한 일이 자연히 생기면 사실·해석 두 줄을 한 번 기록하며 매일 하지는 않기로 함."
+        plan.source_refs = ["transcript.turn_1", "transcript.turn_3"]
+        before = plan.text
+        assessment = SummaryVerification(
+            source_ref_reviews=[SourceRefReview(field="next_plan", keep_source_refs=plan.source_refs)],
+            next_plan_assessment=PlanAssessment(status="supported_future", evidence=[
+                PlanEvidence(source_ref=ref, quote=text.split(": ", 1)[1]) for ref, text in self.catalog.items()
+            ]),
+        )
+        report = apply_summary_verification(self.summary, assessment, self.catalog)
+        self.assertEqual(before, plan.text)
+        self.assertEqual(list(self.catalog), plan.source_refs)
+        self.assertFalse(any(item.field == "next_plan" for item in report.requires_counselor_review))
+
+    def test_added_plan_anchor_still_requires_literal_current_source_support(self):
+        for source_ref, quote in (("transcript.turn_1", "보내기로 확정했어요."),
+                                  ("previous_session_summary", "다음 회기에"),
+                                  ("transcript.turn_999", "내일 읽을게요.")):
+            with self.subTest(source_ref=source_ref):
+                summary = _summary()
+                result = SummaryVerification(
+                    source_ref_reviews=[SourceRefReview(field="next_plan", keep_source_refs=summary.next_plan.source_refs)],
+                    next_plan_assessment=PlanAssessment(status="supported_future", evidence=[
+                        PlanEvidence(source_ref=source_ref, quote=quote)]))
+                apply_summary_verification(summary, result, self.catalog)
+                self.assertEqual("[다음 계획은 원문 확인 필요]", summary.next_plan.text)
+                self.assertEqual([], summary.next_plan.source_refs)
+
     def test_bad_quote_is_removed_but_valid_quote_and_original_finding_survive(self):
         text = '내담자는 “잠이 안 와요.”라고 했고 “치료로 좋아졌어요.”라고 표현함.'
         self.summary.client_response.text = text

@@ -1266,6 +1266,11 @@ Complete next_plan_assessment for the draft's next_plan. supported_future requir
 draft plan, including actor, action, timing, conditions, deferral and agreement level, is supported by
 current-session input. Return exact contiguous quotes with canonical transcript.turn_N or counselor_memo
 IDs covering that support. Never use a prior summary or counseling_goal as proof of a new plan.
+Use a minimal sufficient set of exact current-source anchors covering the plan's actions, timing,
+agreement, conditions and deferral. Anchors may include a necessary current-source turn omitted by
+the draft's generic source_refs. These validated anchors determine next_plan's final citations;
+generic source_ref_reviews must not remove evidence required for the plan. A counselor suggestion
+alone is insufficient to prove client agreement; retain the client's acceptance and qualifications.
 in_session_only means the alleged plan describes the present session: '앉아 있을게요', '잠깐 기다릴게요',
 a declined in-session exercise or a response about current posture is not a future plan, even with future tense.
 Use not_documented when no post-session plan is recorded; uncertain for missing conditions, overstated

@@ -113,13 +113,10 @@ def apply_summary_verification(
             and any(_literal(item.quote) in line for line in cited_lines([item.source_ref], catalog))
             for item in assessment.evidence
         )
-        if supported and result.source_ref_reviews:
-            # Keep the reviewed citation subset; plan anchors cannot restore a
-            # reference that the complete per-section review removed.
-            retained_lines = cited_lines(plan.source_refs, catalog)
-            supported = all(any(_literal(item.quote) in line for line in retained_lines)
-                            for item in assessment.evidence)
-        if supported and not result.source_ref_reviews:
+        if supported:
+            # The dedicated assessment validates the entire plan against current
+            # sources, including consent and conditions. Generic citation pruning
+            # cannot veto its exact anchors or turn a supported plan into a blank.
             plan.source_refs = list(dict.fromkeys(item.source_ref for item in assessment.evidence))
         if not supported:
             flag("next_plan", "회기 이후 계획의 시점·조건·합의와 원문 근거를 확인할 수 없습니다.")
