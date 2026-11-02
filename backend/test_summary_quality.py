@@ -122,7 +122,9 @@ class SummaryQualityTests(unittest.TestCase):
         self.assertGreater(len(original), 250)
         self.assertEqual({}, summary_quality_issues(summary))
         self.assertEqual(original, summary.next_plan.text)
-        for extra in (" 추가 계획을 제안함.", " 추가 내용" * 20):
+        summary.next_plan.text = original + " 다음 회기에 별도 계획을 확인함." * 2
+        self.assertEqual({}, summary_quality_issues(summary))
+        for extra in (" 추가 계획을 제안함." * 3, " 추가 내용" * 20):
             summary.next_plan.text = original + extra
             self.assertIn("next_plan", summary_quality_issues(summary))
 

@@ -21,7 +21,7 @@ SECTION_LIMITS = {
     "counselor_intervention": (350, 3),
     "client_response": (350, 3),
     "reflection": (350, 3),
-    "next_plan": (350, 2),
+    "next_plan": (350, 4),
 }
 SPEAKER_LABEL = re.compile(
     r"(?:^|\n|(?<=[.!?])\s+)(?:[-*]\s*)?"
