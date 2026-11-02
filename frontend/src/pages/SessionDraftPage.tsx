@@ -1565,7 +1565,9 @@ export default function SessionDraftPage({
   }
 
   const restoreNote = (noteId: string) => {
-    if (!allowRestore()) return
+    const reopeningSavedNote = noteId === storedNoteId
+      && confirmedFingerprint === sectionFingerprint(draftSections)
+    if (!reopeningSavedNote && !allowRestore()) return
     void runPersistence(async () => {
       const record = await loadGeneratedNote(noteId)
       const data = noteFromRecord(record)
@@ -1612,6 +1614,7 @@ export default function SessionDraftPage({
       setDraftSaveMessage(confirmed
         ? `서버에서 상담사 확정본 전체를 불러왔습니다.${inputNote}`
         : `서버에서 AI 초안을 불러왔습니다. 상담사 검토와 확정이 필요합니다.${inputNote}`)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     })
   }
 
@@ -1841,6 +1844,7 @@ export default function SessionDraftPage({
                 documents={sessionDocuments}
                 fullResponse={result.full_response}
                 confirmDisabled={isPersistenceBusy || !storedNoteId || confirmedFingerprint === sectionFingerprint(draftSections)}
+                isSaving={isPersistenceBusy}
                 confirmationState={confirmedFingerprint ? confirmedFingerprint === sectionFingerprint(draftSections) ? 'confirmed' : 'edited' : 'draft'}
                 editingSectionId={editingSectionId}
                 expandedEvidenceId={expandedEvidenceId}
@@ -1856,18 +1860,13 @@ export default function SessionDraftPage({
                 onCloseGrounding={() => setSelectedGroundingClaimId(null)}
                 onToggleSection={toggleSectionVisibility}
                 onAddCustomSection={addCustomSection}
-                onOpenDocument={(document) => document.document_type === 'session_note' && document.document_id !== storedNoteId && restoreNote(document.document_id)}
+                onOpenDocument={(document) => openDocument({ ...document, case_id: form.case_id, case_alias: form.client_alias || null, updated_at: document.created_at || '' })}
                 onAddMaterial={goBackToInput}
                 onDeleteStoredInput={storedNoteId ? deleteStoredInput : undefined}
               />
             )}
 
             {currentScreen === 'document_transform' && result && (
-              <>
-              <div className="mx-auto max-w-[1240px] px-6 pt-5">
-                <button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700 disabled:opacity-40" disabled={!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)} onClick={() => setVoucherContext({ caseId: form.case_id, noteId: storedNoteId })}>전마투 기록지·계약서·계획서 작성</button>
-                {(!storedNoteId || confirmedFingerprint !== sectionFingerprint(draftSections)) && <p className="mt-2 text-sm text-slate-500">현재 회기 요약을 저장하고 검토 완료한 뒤 가져올 수 있습니다.</p>}
-              </div>
               <DocumentTransformWorkspace
                 preview={result.full_response?.document_transform_preview}
                 selectedType={finalDocumentType}
@@ -1875,8 +1874,9 @@ export default function SessionDraftPage({
                 onBackToDraft={() => setCurrentScreen('summary_draft')}
                 onSelectType={setFinalDocumentType}
                 onCreateFinal={openFinalDocument}
+                onOpenVoucher={() => setVoucherContext({ caseId: form.case_id, noteId: confirmedFingerprint === sectionFingerprint(draftSections) ? storedNoteId : null })}
+                voucherNoteReady={Boolean(storedNoteId && confirmedFingerprint === sectionFingerprint(draftSections))}
               />
-              </>
             )}
 
             {currentScreen === 'final_document' && result && (
@@ -2116,6 +2116,7 @@ function SessionDetailWorkspace({
   documents,
   fullResponse,
   confirmDisabled,
+  isSaving,
   confirmationState,
   editingSectionId,
   expandedEvidenceId,
@@ -2145,6 +2146,7 @@ function SessionDetailWorkspace({
   documents: CaseDashboardDocument[]
   fullResponse?: GenerateNoteResponse
   confirmDisabled: boolean
+  isSaving: boolean
   confirmationState: 'draft' | 'confirmed' | 'edited'
   editingSectionId: DraftSectionId | null
   expandedEvidenceId: DraftSectionId | null
@@ -2220,8 +2222,12 @@ function SessionDetailWorkspace({
               )}
             </div>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-grey-200 pt-4">
-              <p className="text-xs text-grey-500">임시저장은 작업 중 상태를, 검토 완료는 현재 요약을 저장합니다.</p>
-              <PrimaryButton className="h-10" onClick={onConfirm} disabled={confirmDisabled}>검토 완료하고 저장</PrimaryButton>
+              <p role="status" className={`text-xs ${confirmationState === 'confirmed' ? 'font-semibold text-green-700' : 'text-grey-500'}`}>
+                {confirmationState === 'confirmed' ? '현재 요약이 저장되었습니다. 문서 변환하기로 서류를 준비할 수 있습니다.' : '임시저장은 작업 중 상태를, 검토 완료는 현재 요약을 저장합니다.'}
+              </p>
+              <PrimaryButton className="h-10" onClick={onConfirm} disabled={confirmDisabled}>
+                {isSaving ? '저장 중…' : confirmationState === 'confirmed' ? '검토 완료 · 저장됨' : confirmationState === 'edited' ? '수정사항 검토하고 저장' : '검토 완료하고 저장'}
+              </PrimaryButton>
             </div>
           </article>
 
@@ -2430,6 +2436,8 @@ function DocumentTransformWorkspace({
   preview,
   sections,
   selectedType,
+  onOpenVoucher,
+  voucherNoteReady,
 }: {
   onBackToDraft: () => void
   onCreateFinal: (documentType: FinalDocumentType) => void
@@ -2437,7 +2445,10 @@ function DocumentTransformWorkspace({
   preview?: GenerateNoteResponse['document_transform_preview']
   sections: DraftSection[]
   selectedType: FinalDocumentType
+  onOpenVoucher: () => void
+  voucherNoteReady: boolean
 }) {
+  const [voucherSelected, setVoucherSelected] = useState(false)
   return (
     <section className="min-h-[calc(100vh-var(--workspace-header-height))] px-4 py-10 sm:px-10 sm:py-20">
       <div className="mx-auto max-w-[760px] text-center">
@@ -2450,9 +2461,10 @@ function DocumentTransformWorkspace({
           <button
             key={option.id}
             type="button"
-            onClick={() => onSelectType(option.id)}
+            onClick={() => { setVoucherSelected(false); onSelectType(option.id) }}
+            aria-pressed={!voucherSelected && selectedType === option.id}
             className={`min-h-[226px] whitespace-normal rounded-[8px] border bg-white p-6 text-center transition hover:-translate-y-0.5 hover:shadow-md ${
-              selectedType === option.id ? 'border-blue-600 bg-blue-50' : 'border-slate-300'
+              !voucherSelected && selectedType === option.id ? 'border-blue-600 bg-blue-50' : 'border-slate-300'
             }`}
           >
             <div className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[12px] bg-blue-50 text-blue-700">
@@ -2467,9 +2479,23 @@ function DocumentTransformWorkspace({
             </span>
           </button>
         ))}
+        <button
+          type="button"
+          aria-pressed={voucherSelected}
+          onClick={() => setVoucherSelected(true)}
+          className={`min-h-[226px] whitespace-normal rounded-[8px] border bg-white p-6 text-center transition hover:-translate-y-0.5 hover:shadow-md ${voucherSelected ? 'border-blue-600 bg-blue-50' : 'border-slate-300'}`}
+        >
+          <div className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[12px] bg-blue-50 text-blue-700"><ClipboardCheck className="h-7 w-7" /></div>
+          <h2 className="mt-5 text-base font-extrabold text-black">전마투 서식</h2>
+          <p className="mt-3 text-xs font-semibold leading-4 text-slate-500">제10호 기록지 · 제25호 이용계약서 · 제26호 계획서를 작성합니다.</p>
+          <span className="mt-4 inline-flex rounded-full bg-blue-50 px-3 py-1 text-[10px] font-bold text-blue-600">PDF · HWPX 다운로드</span>
+        </button>
       </div>
 
       <section className="mx-auto mt-10 max-w-[730px]">
+        {voucherSelected && <p className="mb-5 text-center text-sm text-slate-600">{voucherNoteReady
+          ? '현재 검토 완료한 회기를 연결합니다. 기관 제출용 서비스 내용은 직접 작성해주세요.'
+          : '제10호 기록지는 회기 요약을 검토 완료한 뒤 연결할 수 있습니다. 이용계약서와 계획서는 바로 작성할 수 있습니다.'}</p>}
         <div className="flex flex-wrap justify-center gap-4">
           <button
             type="button"
@@ -2480,10 +2506,10 @@ function DocumentTransformWorkspace({
           </button>
           <button
             type="button"
-            onClick={() => onCreateFinal(selectedType)}
+            onClick={() => voucherSelected ? onOpenVoucher() : onCreateFinal(selectedType)}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-7 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
           >
-            변환하기
+            {voucherSelected ? '전마투 서식 작성하기' : '변환하기'}
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
