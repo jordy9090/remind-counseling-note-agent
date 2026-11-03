@@ -70,6 +70,26 @@ gates or change the experimental/disabled Blackwell profile.
 
 ## Reused evidence, not a new experiment
 
+### November 4 release preparation
+
+Main `487317a` was integrated without conflicts as `cf9a1b2`; #72's summary changes
+and subsequent voucher UI remain intact. The new privacy boundary is described
+below. The A100 became reachable after VPN restoration, but has only a private
+address and no configured fixed HTTPS origin or named tunnel. Successful VPN SSH
+does not establish public browser connectivity. This attempt has only inspected the
+host; no new service, tunnel, model installation or Production deployment was made.
+
+GPU/process activity is observable; people sharing the same OS login are not isolated by file
+mode `0700`. Resolve the service identity, shared-host authorization and stable
+public ingress before processing client data or claiming operational readiness.
+No real counseling material has been used. Prior GPU measurements remain historical.
+
+The new focused privacy regression reproduced two provider calls before the fix.
+Afterward, 26 backend privacy/audio-boundary checks passed, as did transcript
+workflow checks and the frontend build. Browser-only discovery and confirmation
+invalidation execute the actual component callbacks in the frontend regression.
+These checks do not constitute a new authenticated browser/ASR/model E2E.
+
 The original experiment was based on `1879757694dced5530aca80db499323dc4300767`
 plus explicitly archived working changes. The primary source is the retained
 `outputs/` artifact directory from the STT task, not this branch's commit history.
@@ -126,7 +146,7 @@ Browser File -> configured self-hosted /api/audio/transcribe
   -> temporary upload -> FFmpeg PCM -> bounded ASR -> CAM++ -> raw/editable turns
   -> counselor edits -> self-hosted /api/audio/deidentify (deterministic only)
   -> counselor checks and explicitly applies the masked text to the session form
-  -> MAIN privacy-preview request -> MAIN server-side re-masking -> summary
+  -> browser-only privacy review -> local server-side re-masking -> summary
 ```
 
 The following distinction is essential. A local audio endpoint does not make the
@@ -137,24 +157,22 @@ remaining application a local-only privacy system.
 | `frontend/src/api/client.ts`: audio methods | File and corrected text go to `VITE_AUDIO_API_BASE_URL`, with the existing bearer token. If omitted, it falls back to the general API origin. Only operator-controlled HTTPS origins may be configured. Vercel has no audio model/proxy route. |
 | `backend/app/audio_main.py`, `api/routes/audio.py` | Dedicated app has audio routes, verified-user auth and local masking only. It exposes no summary route. Supabase Auth can receive the token; it does not receive audio through this authentication call. |
 | `services/deidentification.py:deidentify_text` | Deterministic rules only; proposals are incomplete and confirmation is a UI workflow, not proof every identifier is gone. Main's detector is retained unchanged, including missed unlabeled names and the known ordinary-word overmasking issue. |
-| `DeidentificationReviewModal.tsx` -> `detectDeidentificationItems` -> `/api/notes/deidentification-preview` | On modal opening, the frontend passes original source strings to remote detection. Local candidates are collected but are not substituted before that request. Client/counselor names are also sent as context. This happens before final counselor confirmation; the modal also has a skip path. |
-| `services/deidentification_preview.py:preview_items` | Joins submitted strings and calls `_extract_entities(joined)`. No preliminary local masking is applied to that model input. |
+| `DeidentificationReviewModal.tsx` -> `detectDeidentificationItems` | Candidate discovery stays in the browser. There is no preview API request on opening. Applied audio requires confirmation and hides skip; replacement edits invalidate confirmation. Other input flows retain their existing skip option. |
+| `services/deidentification_preview.py:preview_items` | The API remains compatible but calls the local rule-based `_extract_entities`; `model_used` is false. |
 | `api/routes/notes.py:_run_pipeline_with_stub_fallback` -> `deidentify_session_input` | Regular summary always re-runs storage de-identification on submitted fields before the graph; `quick_summary.py` does likewise. This can alter already-reviewed names/aliases. |
-| `services/storage_deidentification.py:deidentify_texts` | Calls `_extract_entities(joined)` **before** contact and other replacement rules. `_extract_entities` uses `get_structured_llm` unless in stub mode; catching provider failure afterwards does not undo transmission. |
-| `services/llm.py:get_llm` | Main uses `ChatOpenAI` with the configured key/model (default model `gpt-5.4`), with no application-level local endpoint routing implemented by this candidate. Runtime environment overrides were not inspected or changed. In ordinary configured operation, detection itself can send raw text to the external provider. |
-| `graph/nodes.py:sanitize_input`, `services/summary_skill.py` | Deterministic graph masking and the summary's sanitized input occur after the earlier model detection boundary. Their existence does not prove prior inputs stayed local. |
+| `services/storage_deidentification.py:deidentify_texts` | Discovery and replacement are local even under live-model settings. There is no LLM factory/invocation in entity discovery; `llm_used` is false. Unknown names/occupations/indirect identifiers still require manual review. |
+| `services/llm.py:get_llm` | Summary generation still uses `ChatOpenAI` with the configured key/model (default `gpt-5.4`). Only discovery was changed; the downstream summary is not self-hosted by this candidate. Production configuration has not been changed. |
+| `graph/nodes.py:sanitize_input`, `services/summary_skill.py` | The summary receives the submitted reviewed fields after local re-masking. Direct API callers can still submit unreviewed text; this is not proof of human review. |
 
 Audio review reduces risk for text applied through its editor, but misses can
 survive; other memo/document fields and registered names can still be raw.
 Neither the API nor general main flow verifies an unforgeable reviewed-input
-version. The browser gate is not a backend security guarantee. A separate future
-privacy task must select/qualify a local detector, preserve counselor-reviewed
-aliases across downstream calls, define skip/manual-field behavior and enforce
-an outbound boundary. This handoff intentionally does not implement the assigned
-person-mapping work or modify production summary/privacy code.
+version. The browser gate is not a backend security guarantee. The local detector
+is conservative and incomplete; person mapping and richer local NER remain separate
+work. The follow-up changes privacy discovery, not the summary model or prompts.
 
 Do not say "all counseling data stays in KoreaIDC" or "only counselor-confirmed
-text reaches any AI" for the current main. The accurate claim is that this
+text reaches any AI" for the application as a whole. The accurate claim is that this
 candidate's ASR and audio-review proposals are self-hosted/local; the subsequent
 main flow has the provider boundaries above.
 
@@ -167,7 +185,7 @@ main flow has the provider boundaries above.
 | Decoded PCM | `TemporaryDirectory(remind_pcm_*)`; normal success/error cleanup | SIGKILL, power loss, filesystem locks and filled volumes can leave data. A process restart does not itself clear a persistent temp directory. |
 | Raw ASR/merged turns | Request memory then browser material state; no transcript file in production service | Disable request/response body logging, core dumps and raw swap/backup capture; decide crash diagnostics policy. Benchmark tools intentionally write outputs and must never be pointed at client data. |
 | Browser audio/transcript | Object URLs released on material removal/unmount; editing needs the File and raw turns in memory | Revocation is not secure erasure and cannot remove the user's original file, browser/OS swap or external recordings. |
-| Reviewed session text | General form may be stored by current main's drafts/session routes | `draft_store` and confirmation re-run model-backed de-identification. `save_original_input` defaults true, subject to counselor opt-out. `sessions.raw_input_text` can retain what reaches persistence; regular generation currently passes already re-masked input there. Do not equate the column name or audio cleanup with no retained counseling text. |
+| Reviewed session text | General form may be stored by drafts/session routes | `draft_store` and confirmation re-run local de-identification. `save_original_input` defaults true, subject to counselor opt-out. `sessions.raw_input_text` can retain what reaches persistence; regular generation currently passes already re-masked input there. Do not equate the column name or audio cleanup with no retained counseling text. |
 
 Ordinary success/failure cleanup was tested and the previous GPU/local services,
 private environment/cache, uploads and job directories were removed. No hosted

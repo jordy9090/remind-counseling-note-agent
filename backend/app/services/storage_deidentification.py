@@ -19,15 +19,11 @@ higher concept (p.94); 한국상담심리학회 상담심리사 윤리규정 5-�
 identifiable client information in reports, lectures or consultations; change or delete personal
 details for education, research and publication).
 
-Mentions in free text are found with the OpenAI model (structured output). The model only returns the
-mentions; replacement is deterministic and applies only to text that occurs in the input. Contact
-details, explicit ages ("(28세)", "나이: 28") and school grades are also handled by regular expressions.
-When the model is unavailable (stub mode, missing key, timeout, or error), the deterministic rules still
-apply and the client alias and its given name are masked; other free-text mentions then stay unchanged
-and the report says so. Saving never fails because of this step.
-
-The extraction request sends the text as entered to the model provider; the generation pipeline
-afterwards receives the de-identified text. Sensitive content that is the subject of counseling
+Discovery and replacement run locally, including in live-model configurations. Explicit name labels,
+known aliases, recognizable institution names, contacts, labeled ages and grades have deterministic
+rules. Unlabeled people, occupations and indirect identifiers need counselor review; this is not a
+complete named-entity recognizer. No raw input is sent to a model for privacy discovery.
+Sensitive content that is the subject of counseling
 (health, sexual life, beliefs; 개인정보 보호법 제23조) is not removed, because it is the record itself.
 """
 from __future__ import annotations
@@ -38,8 +34,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
-from app.core.config import settings
 
 NAME_MASK_CHAR = "O"
 FALLBACK_OCCUPATION = "기타 직업군"
@@ -168,37 +162,6 @@ class _StorageEntities(BaseModel):
     birth_dates: list[str] = Field(default_factory=list)
 
 
-_EXTRACTION_PROMPT = """You prepare Korean counseling records for storage. Find identifying mentions in the text below.
-Copy every mention verbatim, without particles. Return empty lists when there is nothing to report.
-
-person_names: every name of a real person (client, family members, friends, counselor, any third party).
-Include full names, given names and nicknames as separate entries (for example "김민지" and "민지").
-Remove trailing particles (민지가 → 민지). Do not include role words (엄마, 선생님, 내담자, 상담사),
-placeholders such as [PERSON], or names already masked with "O" (홍O동).
-
-occupations: every job or occupation of a person (for example "초등학교 교사", "싱어송라이터", "간호사"),
-each with the broadest fitting category from the allowed list. Use "기타 직업군" only when no other
-category fits. Do not include workplaces, school names or hobbies.
-
-organizations: proper names of schools, academies, companies, hospitals, counseling centers, public
-offices, churches/temples, military units or other organizations a person belongs to (for example
-"가상고등학교", "한빛전자", "서울OO병원"), each with its kind. Do not include generic words such as
-"학교" or "회사" without a proper name.
-
-ages: expressions of a person's current age (for example "28세", "만 28세", "스물여덟 살"), each with its
-10-year band. Do not include ages that describe when a past event happened ("7살 때").
-
-locations: specific places that point to where a person lives, works or studies: street addresses,
-neighborhoods (동, 읍, 면), apartment or building names, nearby stations or landmarks. Do not include
-countries, provinces or large cities (서울, 부산, 경기도).
-
-birth_dates: birth dates or birthdays of a person.
-
-Text:
-{text}
-"""
-
-
 @dataclass(frozen=True)
 class StorageDeidentificationReport:
     llm_used: bool
@@ -236,18 +199,16 @@ def age_band(age: int) -> str:
 
 
 def _extract_entities(text: str) -> _StorageEntities | None:
-    """Ask the model for identifying mentions; None when the model is unavailable."""
-    if settings.stub_mode or not text.strip():
-        return None
-    try:
-        from app.services.llm import get_structured_llm
+    """Find conservative local candidates without importing or calling an LLM provider."""
+    from app.services.deidentification import MASK_RULES
 
-        llm = get_structured_llm(_StorageEntities, timeout=min(settings.openai_timeout_seconds, 30))
-        result = llm.invoke(_EXTRACTION_PROMPT.format(text=text))
-        return result if isinstance(result, _StorageEntities) else _StorageEntities.model_validate(result)
-    except Exception:
-        # Never surface provider errors or input text; the deterministic rules still apply.
-        return None
+    names = list(dict.fromkeys(re.findall(r"(?:이름|성명)\s*[:：]\s*([가-힣]{2,4})(?![가-힣])", text)))
+    organizations: list[_OrganizationMention] = []
+    institution_rule = next(rule for rule in MASK_RULES if rule.category == "institution")
+    for value in dict.fromkeys(institution_rule.pattern.findall(text)):
+        kind = next((suffix for suffix in ("초등학교", "중학교", "고등학교", "대학교", "대학원", "병원", "회사") if value.endswith(suffix)), "기관")
+        organizations.append(_OrganizationMention(text=value, kind=kind))
+    return _StorageEntities(person_names=names, organizations=organizations) if names or organizations else None
 
 
 def _name_pattern(name: str) -> re.Pattern[str]:
@@ -374,7 +335,7 @@ def deidentify_texts(
             totals["names"] += count
         result[key] = text
     return result, StorageDeidentificationReport(
-        llm_used=entities is not None,
+        llm_used=False,
         names_masked=totals["names"],
         occupations_generalized=totals["occupations"],
         organizations_generalized=totals["organizations"],

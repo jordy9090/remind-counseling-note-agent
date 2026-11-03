@@ -159,6 +159,8 @@ export function detectLocalDeidItems(texts: string[], context: DeidDetectionCont
   for (const form of personNameForms(context.counselorName ?? '', joined)) {
     if (joined.includes(form)) add(form, '상담자', 'auto')
   }
+  for (const match of joined.matchAll(/(?:이름|성명)\s*[:：]\s*([가-힣]{2,4})(?![가-힣])/g)) add(match[1], '인물 정보 비공개', 'review')
+  for (const match of joined.matchAll(/[가-힣A-Za-z0-9]{2,30}(?:초등학교|중학교|고등학교|대학교|대학원|병원|센터|상담소|회사|기관)/g)) add(match[0], '기관 정보 비공개', 'review')
   for (const match of joined.matchAll(RESIDENT_NUMBER)) add(match[0], '******-*******', 'auto')
   for (const match of joined.matchAll(PHONE)) add(match[0], maskPhone(match[0]), 'auto')
   for (const match of joined.matchAll(EMAIL)) add(match[0], maskEmail(match[0]), 'auto')

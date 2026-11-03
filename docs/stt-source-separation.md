@@ -23,7 +23,15 @@ The November 2 privacy-reapplication follow-up changes only the audio apply
 callback, its regression script, and these handoff documents. It does not change
 ASR/diarization, dependencies, summary implementation, or person mapping.
 PR #73 remains Draft; PR #72 is now independently merged into main at `f49a35e`.
-The current candidate has 33 changed paths: the original 32 plus `backend/uv.lock`.
+That November 2 candidate had 33 changed paths: the original 32 plus `backend/uv.lock`.
+
+On November 4, main `487317a` was merged into this branch (`cf9a1b2`), preserving
+the already-merged #72 summary and newer voucher navigation changes. The release
+follow-up additionally removes external-model PII discovery from preview/storage,
+keeps review discovery in the browser, and requires confirmation for applied audio.
+Its privacy tests and documentation are intentional additions to the original STT
+scope, required by the user's later Production-release request. Summary generation
+and #72's evidence behavior are not replaced. This integration is not deployment.
 
 ## Included files
 

@@ -394,7 +394,9 @@ class PersistenceWorkflowTests(unittest.TestCase):
         record = self.client.get(url, headers=self.headers).json()
         self.assertTrue(record["session_input_is_original"])
         self.assertEqual(record["session_input"]["counselor_memo"], "보호자 연락처 연락처 정보 비공개 로 안내함.")
-        self.assertEqual(record["session_input"]["transcript_text"], sensitive["transcript_text"])
+        # Local institution discovery now runs even without an extraction model.
+        self.assertEqual(record["session_input"]["transcript_text"], "내담자: 고등학교에 다녀요.")
+        self.assertNotIn("한빛고등학교", row["raw_input_text"])
         other = {"Authorization": f"Bearer {OTHER_TOKEN}"}
         self.assertEqual(self.client.get(url, headers=other).status_code, 404)
         # A malformed original falls back to the sanitized copy.

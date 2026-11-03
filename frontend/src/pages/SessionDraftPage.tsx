@@ -1985,6 +1985,7 @@ export default function SessionDraftPage({
       {reviewSources && (
         <DeidentificationReviewModal
           sources={reviewSources}
+          requireConfirmation={materials.some((material) => material.kind === 'audio' && material.appliedTargets.length > 0)}
           context={{ clientName: registeredClientName(form.case_id) || getClientAlias(form), counselorName: form.counselor_name }}
           onBack={() => setReviewSources(null)}
           onAddMaterial={() => setReviewSources(null)}

@@ -12,6 +12,51 @@ async function loadModule(name) {
 }
 const lib = await loadModule('deidentificationReview')
 
+{
+  // Execute the component's real discovery effect: opening review must not send raw text.
+  const source = fs.readFileSync('src/components/deidentification/DeidentificationReviewModal.tsx', 'utf8')
+  const tree = ts.createSourceFile('modal.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const effects = []
+  let submitNode
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(tree) === 'useEffect') effects.push(node.arguments[0])
+    if (ts.isVariableDeclaration(node) && node.name.getText(tree) === 'submit') submitNode = node.initializer
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  const execute = (node, scope) => new Function(...Object.keys(scope), `${ts.transpile(`const callback = ${node.getText(tree)}`, { target: ts.ScriptTarget.ES2020 })}; return callback()`)(...Object.values(scope))
+  let detected
+  let detecting = true
+  let calls = 0
+  const sources = [{ key: 'transcript_text', label: '합성', text: '이름: 윤다온, 가상누리병원에 안 갔다. 2회기다.' }]
+  execute(effects[0], {
+    sources, context: { clientName: '윤다온' }, detectDeidentificationItems: lib.detectDeidentificationItems,
+    requestDeidentificationPreview: () => { calls++; throw new Error('raw text left browser') },
+    setItems: value => { detected = value }, setDetecting: value => { detecting = value },
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls, 0)
+  assert.equal(detecting, false)
+  assert.ok(detected.some(item => item.original === '가상누리병원'))
+  assert.ok(detected.some(item => item.original === '윤다온'))
+  for (const confirmed of [false, true]) {
+    let result
+    execute(submitNode, { detecting: false, requireConfirmation: true, confirmed, skip: true,
+      sources, items: detected, applyDeidItems: lib.applyDeidItems, onConfirm: value => { result = value } })
+    assert.equal(Boolean(result), confirmed)
+    if (result) {
+      assert.equal(result.skipped, false, 'mandatory review ignores a stale skip toggle')
+      assert.ok(!result.texts.transcript_text.includes('윤다온'))
+      assert.ok(!result.texts.transcript_text.includes('가상누리병원'))
+      assert.ok(result.texts.transcript_text.includes('안 갔다. 2회기'))
+    }
+  }
+  let confirmed = true
+  execute(effects[1], { setConfirmed: value => { confirmed = value } })
+  assert.equal(confirmed, false, 'editing the replacement items invalidates confirmation')
+  console.log('browser-only review and mandatory confirmation: passed')
+}
+
 const transcript = [
   '상담자: 지난주는 어떻게 지내셨어요?',
   '내담자: 제가 가나다이고, 32세 팀장이에요. 나다 씨라고 불러요.',

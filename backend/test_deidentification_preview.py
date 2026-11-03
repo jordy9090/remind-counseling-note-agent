@@ -75,7 +75,7 @@ class PreviewRouteTests(unittest.TestCase):
             rewritten = TestClient(_load_vercel_generate().app).post("/api/notes/generate?scope=deid-preview", json=body)
         for response in (direct, rewritten):
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertTrue(response.json()["model_used"])
+            self.assertFalse(response.json()["model_used"])
             items = {item["original"]: item for item in response.json()["items"]}
             self.assertEqual(items["윤다온"]["replacement"], "내담자 A")
             self.assertEqual(items["박서준"]["category"], "name")

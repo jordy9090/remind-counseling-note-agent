@@ -1,10 +1,10 @@
 # Experimental self-hosted Korean counseling transcription
 
-This source-only candidate is based on main `c15249e`. It is not deployed and is
+This source-only candidate now integrates main `487317a`. It is not deployed and is
 not a blocker for the voucher PoC. The existing transcript editor is retained;
 the previous extractive-summary experiments and new person-dictionary UI/backend/DB
-are excluded. See [KoreaIDC handoff](stt-koreaidc-handoff.md) for the current-main
-privacy gap, evidence boundaries, and operational acceptance criteria.
+are excluded. See [KoreaIDC handoff](stt-koreaidc-handoff.md) for the November 4
+local privacy-discovery changes, evidence boundaries, and operational acceptance criteria.
 
 
 The default real engine is now `faster-whisper` large-v3 with Korean fixed,
@@ -27,7 +27,8 @@ Browser upload -> self-hosted FastAPI /api/audio/transcribe
   -> independent CAM++ diarization -> timestamp-based assignment
   -> anonymous editable turns -> counselor correction
   -> self-hosted /api/audio/deidentify -> counselor confirms masking
-  -> explicit apply to session input -> CURRENT MAIN model-backed preview/re-masking
+  -> explicit apply to session input -> browser-only PII discovery and confirmation
+  -> local deterministic server re-masking
   -> Re summary (provider boundary; see the handoff before enabling real data)
 ```
 
@@ -136,6 +137,21 @@ that shutdown/backup/logging policies do not retain raw data. Audio and raw ASR
 are not included in the temporary-draft attachment whitelist. PII detection is
 heuristic; the counselor must correct missed names/institutions before confirmation.
 Manually typed/document inputs retain their pre-existing workflow.
+
+The general privacy review now detects candidates in the browser, without an API
+request on opening. Applied audio requires final confirmation; changing replacement
+items invalidates that confirmation. Server preview/storage discovery also uses
+local rules, even with a configured summary-model key. This closes the former raw
+text-to-model discovery path. Detection remains incomplete: counselors must add
+unlabeled names, occupations and indirect identifiers manually. Existing non-audio
+skip behavior remains, and the API does not attest that a person reviewed text.
+
+A shared operating-system login is not a confidentiality boundary: mode `0700`
+does not isolate people using the same UID, and administrators can inspect the host.
+Use a dedicated service identity/host for client data. A private VPN address alone
+cannot serve public browser uploads. A stable authenticated HTTPS origin, suitable
+upload/read timeouts and operational approval are required before release; a quick
+tunnel is only suitable for explicitly synthetic temporary validation.
 
 ## Reproduce the evaluation
 
