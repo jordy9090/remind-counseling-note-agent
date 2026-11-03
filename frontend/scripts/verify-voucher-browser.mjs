@@ -37,7 +37,7 @@ const open = async () => {
   await page.goto(origin)
   await page.getByRole('button', { name: '문서 보관함', exact: true }).click()
   await page.getByRole('button', { name: '전마투 기록지·계약서·계획서 작성', exact: true }).click()
-  await page.getByRole('heading', { name: '검토 완료된 회기 가져오기' }).waitFor()
+  await page.getByRole('heading', { name: '기록할 회기 선택' }).waitFor()
 }
 const approve = async () => {
   const canvas = page.getByRole('img', { name: '전마투 PDF 1 / 1페이지', exact: true })
@@ -49,7 +49,7 @@ const approve = async () => {
     for (let i = 0; i < pixels.length; i += 4) if (pixels[i+3] && pixels[i] < 200 && pixels[i+1] < 200 && pixels[i+2] < 200) ink++
     return ink > 1000
   }), 'the PDF canvas must contain actual rendered text/grid pixels')
-  await page.getByRole('checkbox', { name: '미리보기의 내용과 남아 있는 식별정보를 확인했습니다.' }).check()
+  await page.getByRole('checkbox', { name: '미리보기의 식별정보를 확인하고 직접 인용·사생활 세부내용을 기관 제출에 필요한 수준으로 줄였습니다.' }).check()
   await page.getByRole('checkbox', { name: '기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.' }).check()
   await page.getByRole('button', { name: '내용 검토 완료', exact: true }).click()
   await page.getByText('검토 완료 · 기관 보완 필요', { exact: true }).waitFor()
@@ -82,7 +82,7 @@ try {
     await page.route('**/vouchers/saved/*/preview', route => route.fulfill({ status: 200, contentType: 'application/pdf', body: 'invalid synthetic PDF' }), { times: 1 })
     await page.getByRole('button', { name: '출력 내용 확인', exact: true }).click()
     await page.getByText(/PDF를 표시하지 못했습니다/).waitFor()
-    await page.getByRole('checkbox', { name: '미리보기의 내용과 남아 있는 식별정보를 확인했습니다.' }).check()
+    await page.getByRole('checkbox', { name: '미리보기의 식별정보를 확인하고 직접 인용·사생활 세부내용을 기관 제출에 필요한 수준으로 줄였습니다.' }).check()
     await page.getByRole('checkbox', { name: '기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.' }).check()
     assert.equal(await page.getByRole('button', { name: '내용 검토 완료', exact: true }).isDisabled(), true)
     assert.equal(await page.locator('canvas').count(), 0, 'a render failure must clear old content')
@@ -92,13 +92,31 @@ try {
     console.log('PASS: sanitized preview retry reuses snapshot; failed preview clears stale PDF and blocks approval')
   } else {
   await open()
+  await page.getByLabel('작성월', { exact: true }).fill('2026-10')
   await page.getByRole('checkbox', { name: '상담 12회기', exact: true }).check()
   await page.getByRole('spinbutton', { name: '상담 12회기 바우처 회차' }).fill('3')
   await page.getByRole('checkbox', { name: '실제 제공한 서비스입니다', exact: true }).check()
-  await page.getByRole('button', { name: '확정 내용 가져오기', exact: true }).click()
+  let metadataOnly = false
+  await page.route('**/api/documents/vouchers/map', async route => {
+    const response = await route.fetch()
+    assert.equal(response.status(), 200)
+    const mapped = await response.json()
+    assert.equal(mapped.rows[0].content_left, '')
+    assert.equal(mapped.rows[0].content_right, '')
+    metadataOnly = true
+    // An older backend must not reintroduce copied private narrative in the UI.
+    await route.fulfill({ response, json: { ...mapped, rows: mapped.rows.map(row => ({ ...row,
+      content_left: '합성 개인 기록: 비밀 약속', content_right: '합성 개인 발화: 상세 사생활' })) } })
+  }, { times: 1 })
+  await page.getByRole('button', { name: '선택한 회기 입력란 만들기', exact: true }).click()
   const text = page.getByLabel('바우처 3회차 서비스 내용', { exact: true })
   await text.waitFor()
-  assert.ok((await text.inputValue()).includes('합성사례'))
+  assert.equal(metadataOnly, true)
+  assert.equal(await text.inputValue(), '')
+  assert.equal(await page.getByLabel('바우처 3회차 추가 기록', { exact: true }).inputValue(), '')
+  assert.equal(await page.getByRole('button', { name: '출력 내용 확인', exact: true }).isDisabled(), true)
+  await text.fill('  ')
+  assert.equal(await page.getByRole('button', { name: '출력 내용 확인', exact: true }).isDisabled(), true)
   await text.fill('합성사례: 긴장과 대처를 탐색함.')
   await page.getByRole('button', { name: '출력 내용 확인', exact: true }).click()
   await page.getByTitle('실제 출력될 전마투 PDF').waitFor()
@@ -111,6 +129,8 @@ try {
   await open()
   await page.getByRole('button', { name: /서비스 제공기록지 · 제10호 · 검토 완료/ }).click()
   await page.getByTitle('실제 출력될 전마투 PDF').waitFor()
+  assert.equal(await page.getByLabel('바우처 3회차 서비스 내용', { exact: true }).inputValue(), '합성사례: 긴장과 대처를 탐색함.')
+  assert.equal(await page.getByLabel('바우처 3회차 추가 기록', { exact: true }).inputValue(), '')
   assert.deepEqual(await download(), first, 'reopened reviewed PDF is byte-identical')
   // Editing an approved document creates a new candidate with no inherited approval.
   await page.getByLabel('바우처 3회차 서비스 내용', { exact: true }).fill('합성사례: 수정한 기록.')
@@ -128,7 +148,7 @@ try {
   await approve(); await download()
   await page.screenshot({ path: path.resolve('../tmp_ab/voucher-browser-plan.png'), fullPage: true })
   await download('hwpx')
-  console.log('PASS: real React UI -> API -> in-memory snapshot -> PDF review -> PDF/HWPX download -> reopen -> edit/review; manual plan without source notes')
+  console.log('PASS: metadata-only mapping, legacy-response narrative discarded, manual entry required -> API -> PDF review -> PDF/HWPX download -> reopen -> edit/review; manual plan without source notes')
   }
   assert.deepEqual(errors, [])
 } catch (error) {

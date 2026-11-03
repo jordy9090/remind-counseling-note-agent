@@ -36,16 +36,22 @@ export function summarySectionEvidence(result: NoteDraftResponse, sectionId: str
   const inferred = ['inferred', 'model_inference'].includes(section.evidence_type)
   const confidence: EvidenceConfidence = section.evidence_type === 'direct' ? 'high'
     : inferred || section.evidence_type === 'needs_review' ? 'low' : 'medium'
-  const evidence = new Map<EvidenceSourceType, EvidenceCheckItem>()
-  for (const ref of section.source_refs || []) {
+  const evidence = new Map<string, EvidenceCheckItem>()
+  const refs = section.source_refs || []
+  const preciseTypes = new Set(refs.filter(ref => ref.startsWith('transcript.turn_') || /^previous_session\.\d+$/.test(ref))
+    .filter(ref => resolveSource(response, ref)?.text.trim())
+    .map(ref => resolveSource(response, ref)!.type))
+  for (const ref of refs) {
     const source = resolveSource(response, ref)
     if (!source) continue
     const excerpt = source.text.replace(/\s+/g, ' ').trim()
     if (!excerpt) continue
+    if ((ref === 'transcript_text' || ref === 'previous_session_summary') && preciseTypes.has(source.type)) continue
+    const precise = ref.startsWith('transcript.turn_') || /^previous_session\.\d+$/.test(ref)
     const item = { claim: section.text, source_type: source.type,
-      source_excerpt: excerpt.length > 180 ? `${excerpt.slice(0, 180)}...` : excerpt, confidence }
-    // Prefer specific source references when both a whole source and a turn are cited.
-    if (!evidence.has(source.type) || ref.startsWith('transcript.turn_') || ref.startsWith('previous_session.')) evidence.set(source.type, item)
+      source_excerpt: !precise && excerpt.length > 180 ? `${excerpt.slice(0, 180)}...` : excerpt, confidence }
+    // Keep every cited turn so an intervention and its response remain readable together.
+    evidence.set(ref, item)
   }
   return {
     evidence: [...evidence.values()],

@@ -320,6 +320,48 @@ class ServiceTests(TestCase):
         self.source.case_id = 'other'
         with self.assertRaises(VoucherError): service.map_sources(OWNER, req)
 
+    def test_mapping_returns_metadata_only_for_legacy_and_workspace_summaries(self):
+        private = '합성 개인 기록: "비밀 약속"에 관한 상세 대화'
+        fields = ('session_content', 'counselor_intervention', 'client_response')
+        for payload in [dict.fromkeys(fields, private), {'workspace_sections': [
+            {'id': field, 'content': private, 'visible': True} for field in fields
+        ]}]:
+            with self.subTest(payload_type='workspace' if 'workspace_sections' in payload else 'legacy'):
+                self.source.confirmed_json = payload
+                mapped = service.map_sources(OWNER, MapRequest(case_id=CASE, sources=[selection()]))
+                self.assertEqual(mapped['rows'], [{**selection(), 'content_left': '', 'content_right': ''}])
+                self.assertEqual(set(mapped['source_hashes']), {NOTE})
+                self.assertNotIn(private, str(mapped))
+
+    def test_map_routes_require_manual_content_and_never_restore_summary(self):
+        from app.main import app as local_app
+        from api.documents.export import app as vercel_app
+        private = '합성 개인 상세 기록: 비밀 약속'
+        self.source.confirmed_json = dict.fromkeys(('session_content', 'counselor_intervention', 'client_response'), private)
+        for app, prefix in [(local_app, '/api/documents/vouchers/'), (vercel_app, '/api/documents/export?voucher_path=')]:
+            with self.subTest(prefix=prefix), patch.dict('os.environ', {'ENABLE_VOUCHER_DOCUMENTS': '1'}):
+                app.dependency_overrides[require_preview_access] = lambda: OWNER
+                self.addCleanup(app.dependency_overrides.clear)
+                client = TestClient(app)
+                response = client.post(prefix+'map', json={'case_id': CASE, 'sources': [selection()]})
+                self.assertEqual(response.status_code, 200, response.text)
+                mapped = response.json()
+                self.assertNotIn(private, response.text)
+                self.assertEqual(mapped['rows'][0]['content_left'], '')
+                self.assertEqual(mapped['rows'][0]['content_right'], '')
+                request = {'case_id': CASE, 'operation_key': str(uuid4()), 'source_hashes': mapped['source_hashes'],
+                           'form': {**record().model_dump(mode='json'), 'rows': mapped['rows']}}
+                self.assertEqual(client.post(prefix+'prepare', json=request).status_code, 422)
+                request['form']['rows'][0]['content_left'] = '기관 제출용 직접 작성: 대처 방식을 점검함.'
+                prepared = client.post(prefix+'prepare', json=request)
+                self.assertEqual(prepared.status_code, 200, prepared.text)
+                row = prepared.json()
+                self.assertEqual(row['snapshot']['form']['rows'], request['form']['rows'])
+                self.assertNotIn(private, prepared.text)
+                self.assertEqual(client.get(prefix+'saved/'+row['id']).json()['snapshot'], row['snapshot'])
+                self.assertEqual(client.delete(prefix+'saved/'+row['id']).status_code, 204)
+        self.assertEqual(self.memory.rows, [])
+
     def test_all_snapshot_operations_forward_user_token_without_admin_key(self):
         from app.services import supabase_storage as db
         self.patches[0].stop()

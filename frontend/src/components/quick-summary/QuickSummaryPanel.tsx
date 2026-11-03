@@ -144,6 +144,22 @@ export default function QuickSummaryPanel({
                 {/* Same title box as the regular summary screen (주요 호소, 회기 주제, ...). */}
                 <h2 className="inline-flex h-7 items-center rounded-[6px] bg-primary-50 px-2.5 text-sm font-bold text-primary-400">{section.title}</h2>
                 <p className="mt-3 whitespace-pre-line px-2 text-sm leading-7 text-grey-800">{section.content}</p>
+                {section.requiresReview && <p className="mt-2 px-2 text-xs text-amber-800">상담사 확인 필요 · 원문과 대조해주세요.</p>}
+                {!!section.evidence?.length && (
+                  <details className="mt-2 px-2 text-xs text-grey-600">
+                    <summary className="cursor-pointer">관련 원문 보기 ({section.evidence.length})</summary>
+                    <div className="mt-2 max-h-64 space-y-3 overflow-y-auto">
+                      {section.evidence.map((item, index) => (
+                        <div key={index}>
+                          <p className="font-semibold">{item.label} 원문 {index + 1}</p>
+                          <p className="mt-1 whitespace-pre-wrap leading-5">{item.excerpt}</p>
+                          {item.needsReview && <p className="text-amber-800">상담사 확인 필요</p>}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2">원문 근거는 현재 화면에서만 볼 수 있으며 요약 저장·다시 열기에는 포함되지 않습니다.</p>
+                  </details>
+                )}
               </section>
             ))}
           </div>

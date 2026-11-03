@@ -16,6 +16,17 @@ async function loadModule(name) {
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 }
 const workflow = await loadModule('persistenceWorkflow')
+const quickEvidence = await loadModule('quickSummary')
+const transient = { sections: [{ id: 'session_content', title: 'Content', content: 'Summary',
+  evidence: [{ label: 'Transcript', excerpt: 'SYNTHETIC-PRIVATE-EXCERPT', needsReview: true }], requiresReview: true }] }
+assert(!JSON.stringify(quickEvidence.quickSummaryDraftPayload(transient)).includes('SYNTHETIC-PRIVATE-EXCERPT'),
+  'showing quick-summary evidence must not change the summary-only persistence contract')
+const staleSummary = workflow.confirmedPayload({ session_content: {
+  text: 'Original AI wording', evidence_type: 'direct', requires_review: false, source_refs: ['transcript.turn_1'],
+} }, [{ id: 'session_content', title: 'Content', content: 'Edited assertion', visible: true }])
+assert.equal(staleSummary.session_content.requires_review, true)
+assert.equal(staleSummary.session_content.evidence_type, 'needs_review')
+assert.deepEqual(staleSummary.session_content.source_refs, ['transcript.turn_1'], 'historical references remain available for review')
 const record = (confirmed_json, confirmation_status = 'confirmed') => ({
   note_id: 'synthetic-note', case_id: 'SYNTHETIC', session_number: 1,
   session_date: '2026-09-11', confirmation_status,
