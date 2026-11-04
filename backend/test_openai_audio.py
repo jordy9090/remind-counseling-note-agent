@@ -46,6 +46,7 @@ class HostedAudioTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def post(self, **data):
+        data.setdefault('cloud_audio_provider', 'openai')
         return self.client.post('/api/materials/documents/extract?audio_path=transcribe',
             files={'file': ('synthetic.wav', wav(), 'audio/wav')}, data=data)
 

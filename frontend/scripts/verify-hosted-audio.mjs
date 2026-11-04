@@ -49,4 +49,20 @@ assert.equal(withSilence.status, 'completed')
 assert.equal(withSilence.failed_ranges.length, 0)
 assert.equal(withSilence.review_ranges.filter(r => r.code === 'no_speech').length, 2)
 assert.ok(withSilence.segments.at(-1).start > 170)
+let clovaCalls = 0
+const clova = await transcribePcmChunks(pcm.subarray(0, 120 * 16000), 'clova.wav', 2, async () => {
+  const index = clovaCalls++
+  return { ...result(index ? 'unmatched_1' : 'clova_1'), transcription_engine: 'clova',
+    status: index ? 'partial' : 'completed',
+    failed_ranges: index ? [{ start: 0, end: 0.5, code: 'timestamp_unavailable' }] : [],
+    segments: [{ ...result('unused').segments[0], speaker: index ? 'unmatched_1' : 'clova_1',
+      review_flags: index ? ['speaker_reference_unmatched'] : [],
+      words: [{start: 1, end: 2, text: '안 갔다.'}] }] }
+})
+assert.equal(clova.status, 'partial')
+assert.equal(clova.segments[0].speaker, 'speaker_0')
+assert.ok(clova.segments[1].speaker.startsWith('chunk_'))
+assert.ok(clova.segments[1].words[0].start > 59)
+assert.ok(clova.failed_ranges[0].start > 58)
+assert.equal(clova.raw_segments[1].words[0].start, clova.segments[1].words[0].start)
 console.log('Hosted audio: 60-minute coverage, payload limits, speaker references, raw preservation and partial failure PASS')

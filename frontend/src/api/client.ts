@@ -253,7 +253,11 @@ export const transcribeAudio = async (
   stillActive?: () => boolean,
 ): Promise<AudioTranscriptionResponse> => {
   const capabilities = await getAudioCapabilities()
-  if (capabilities.provider === 'openai') {
+  if (!capabilities.transcription.available) throw new Error(capabilities.transcription.reason || '음성 인식 연결 설정이 필요합니다.')
+  // The current UI consent names CLOVA. A stale provider configuration must never
+  // silently send the recording to a different company.
+  if (capabilities.provider === 'openai') throw new Error('CLOVA Speech로 전환 중입니다. 잠시 후 다시 시도해주세요.')
+  if (capabilities.provider === 'clova') {
     return transcribeHostedAudio(file, expectedSpeakers, (chunk, references) =>
       sendAudioChunk(chunk, language, task, expectedSpeakers, references), onProgress, stillActive)
   }
@@ -269,6 +273,7 @@ const sendAudioChunk = async (file: File, language: string, task: string, expect
   formData.append('expected_speakers', String(expectedSpeakers))
   if (references) {
     formData.append('cloud_audio_consent', 'true')
+    formData.append('cloud_audio_provider', 'clova')
     formData.append('speaker_references', JSON.stringify(references))
   }
   try {

@@ -398,10 +398,10 @@ class WhisperXTranscriptionService(AudioTranscriptionService):
 def get_audio_capabilities() -> AudioCapabilitiesResponse:
     runtime_mode = get_audio_runtime_mode()
     transcription = get_transcription_capability()
-    if current_audio_engine() == "openai":
+    if current_audio_engine() in {"openai", "clova"}:
         return AudioCapabilitiesResponse(upload=AudioCapability(available=True),
             transcription=transcription, speaker_diarization=transcription,
-            runtime_mode=runtime_mode, provider="openai", chunk_seconds=60)
+            runtime_mode=runtime_mode, provider=current_audio_engine(), chunk_seconds=60)
     if runtime_mode == "real" and current_audio_engine() in {"faster-whisper", "sensevoice"}:
         enabled = os.getenv("AUDIO_DIARIZATION_ENGINE", "campplus") == "campplus" and importlib.util.find_spec("funasr") is not None
         return AudioCapabilitiesResponse(upload=AudioCapability(available=True), transcription=transcription,
@@ -443,6 +443,9 @@ def get_transcription_service() -> AudioTranscriptionService:
     if runtime_mode == "real" and engine == "openai":
         from app.services.openai_audio import OpenAIAudioTranscriptionService
         return OpenAIAudioTranscriptionService()
+    if runtime_mode == "real" and engine == "clova":
+        from app.services.clova_audio import ClovaAudioTranscriptionService
+        return ClovaAudioTranscriptionService()
 
     cache_key = TranscriptionServiceCacheKey(
         runtime_mode=runtime_mode,
@@ -494,6 +497,13 @@ def get_transcription_capability() -> AudioCapability:
         return AudioCapability(available=True)
     if runtime_mode == "disabled":
         return AudioCapability(available=False, reason=UNAVAILABLE_REASON)
+    if current_audio_engine() == "clova":
+        from app.services.clova_audio import clova_config
+        try:
+            clova_config()
+        except AudioTranscriptionUnavailable as error:
+            return AudioCapability(available=False, reason=error.reason)
+        return AudioCapability(available=True)
     if current_audio_engine() == "openai":
         configured = bool(os.getenv("OPENAI_API_KEY", "").strip())
         return AudioCapability(available=configured,
