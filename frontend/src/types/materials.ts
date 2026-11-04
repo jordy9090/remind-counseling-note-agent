@@ -28,6 +28,7 @@ export const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
 }
 
 export interface UploadedMaterial {
+  transcriptionProgress?: string
   id: string
   kind: UploadedMaterialKind
   filename: string

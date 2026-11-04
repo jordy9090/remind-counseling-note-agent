@@ -1,3 +1,7 @@
+# Production path update — 2026-11-04
+
+The owner subsequently selected the [OpenAI hosted audio runtime](openai-audio-runtime.md). The KoreaIDC/local instructions and measured results below remain an optional self-hosted handoff; they are not the active hosted deployment configuration or evidence for OpenAI quality. Do not run GPU qualification as part of the hosted release.
+
 # Experimental STT handoff for KoreaIDC
 
 ## Decision and scope

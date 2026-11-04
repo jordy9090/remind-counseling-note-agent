@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { transcribeHostedAudio, type SpeakerReference } from '../lib/hostedAudio'
 import type {
   AudioCapabilitiesResponse,
   AudioTranscriptionResponse,
@@ -247,12 +248,28 @@ export const transcribeAudio = async (
   language = 'ko',
   task = 'transcribe',
   expectedSpeakers = 2,
+  onProgress?: (message: string) => void,
+  stillActive?: () => boolean,
 ): Promise<AudioTranscriptionResponse> => {
+  const capabilities = await getAudioCapabilities()
+  if (capabilities.provider === 'openai') {
+    return transcribeHostedAudio(file, expectedSpeakers, (chunk, references) =>
+      sendAudioChunk(chunk, language, task, expectedSpeakers, references), onProgress, stillActive)
+  }
+  return sendAudioChunk(file, language, task, expectedSpeakers)
+}
+
+const sendAudioChunk = async (file: File, language: string, task: string, expectedSpeakers: number,
+  references?: SpeakerReference[]): Promise<AudioTranscriptionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('language', language)
   formData.append('task', task)
   formData.append('expected_speakers', String(expectedSpeakers))
+  if (references) {
+    formData.append('cloud_audio_consent', 'true')
+    formData.append('speaker_references', JSON.stringify(references))
+  }
   try {
     const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
       baseURL: AUDIO_API_BASE_URL,

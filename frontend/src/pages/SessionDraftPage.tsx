@@ -703,7 +703,10 @@ export default function SessionDraftPage({
       ),
     )
     try {
-      const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers)
+      const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers,
+        (message) => setMaterials(prev => prev.map(material => material.id === materialId
+          ? { ...material, transcriptionProgress: message } : material)),
+        () => objectUrlsRef.current.has(objectUrl))
       // Removed files and replaced workspaces revoke ownership of this URL.
       if (!objectUrlsRef.current.has(objectUrl)) return
       setMaterials((prev) =>
@@ -3398,7 +3401,7 @@ function MaterialModal({
           {mode === 'audio_upload' && (
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                원본 음성은 저장하지 않으며, 자동 축어록은 서버 런타임이 활성화된 경우에만 실행됩니다.
+                원본 음성이 OpenAI 음성 API로 전송됩니다. Re:mind의 서버 임시 파일은 처리 후 삭제하며, OpenAI 보관 정책은 별도로 적용됩니다.
               </div>
               <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm text-slate-700">
                 <input
@@ -3407,7 +3410,7 @@ function MaterialModal({
                   onChange={(event) => setAudioConsent(event.target.checked)}
                   className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
                 />
-                상담 음성 업로드 및 임시 처리에 필요한 동의를 확인했습니다.
+                원본 음성의 OpenAI 전송과 처리에 필요한 동의를 확인했습니다.
               </label>
               <label
                 className={`block rounded-lg border border-dashed px-4 py-8 text-center ${

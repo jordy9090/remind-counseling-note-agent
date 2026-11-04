@@ -1,3 +1,7 @@
+# Hosted production scope update — 2026-11-04
+
+The owner authorized OpenAI audio processing and production deployment after the local-only candidate review. See [hosted runtime](openai-audio-runtime.md) for the changed privacy boundary, Vercel routing, limits and model lifecycle. The source separation and historical local benchmark below remain evidence for that earlier candidate. Summary implementation from PR #72 is preserved.
+
 # STT candidate source separation
 
 ## Provenance

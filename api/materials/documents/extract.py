@@ -14,6 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.api.security import require_preview_access  # noqa: E402
+from app.api.routes.audio import router as audio_router  # noqa: E402
 from app.schemas.material import DocumentExtractionResponse  # noqa: E402
 from app.services.document_extraction import DocumentExtractionError, DocumentExtractionService  # noqa: E402
 from app.services.upload_validation import (  # noqa: E402
@@ -23,6 +24,17 @@ from app.services.upload_validation import (  # noqa: E402
 )
 
 app = FastAPI(title="Re:mind Material Extraction API")
+app.include_router(audio_router)
+
+
+@app.middleware("http")
+async def route_audio(request, call_next):
+    # Share one function to stay within the project's serverless function limit.
+    audio_path = request.query_params.get("audio_path")
+    if audio_path in {"capabilities", "transcribe", "deidentify"}:
+        request.scope["path"] = f"/api/audio/{audio_path}"
+    return await call_next(request)
+
 AuthenticatedUser = Annotated[str, Depends(require_preview_access)]
 service = DocumentExtractionService()
 

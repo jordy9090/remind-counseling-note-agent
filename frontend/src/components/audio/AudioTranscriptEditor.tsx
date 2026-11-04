@@ -20,6 +20,7 @@ type AudioMaterialStatus = 'uploading' | 'completed' | 'warning' | 'selected' | 
 type AudioApplyMode = 'append' | 'replace'
 
 export interface AudioTranscriptEditorMaterial {
+  transcriptionProgress?: string
   id: string
   filename: string
   status: AudioMaterialStatus
@@ -99,7 +100,7 @@ export function AudioTranscriptEditor({
       const result = await reviewAudioPrivacy(transcriptPreview)
       setPrivacy({ key: reviewKey, source: transcriptPreview, text: result.text, categories: result.candidates.map(c => c.category) })
     } catch {
-      setPrivacyError('개인정보 후보를 확인하지 못했습니다. 로컬 음성 서버 연결을 확인해주세요.')
+      setPrivacyError('개인정보 후보를 확인하지 못했습니다. 서버 연결을 확인해주세요.')
     } finally {
       setPrivacyBusy(false)
     }
@@ -161,7 +162,7 @@ export function AudioTranscriptEditor({
           className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RefreshCcw className="h-4 w-4" />
-          {material.status === 'transcribing' ? '축어록 생성 중' : '축어록 생성'}
+          {material.status === 'transcribing' ? material.transcriptionProgress || '축어록 생성 중' : '축어록 생성'}
         </button>
       )}
       {!transcriptionAvailable && material.status !== 'transcribed' && (

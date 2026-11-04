@@ -16,6 +16,9 @@ class AudioCapabilitiesResponse(BaseModel):
     transcription: AudioCapability
     speaker_diarization: AudioCapability
     runtime_mode: Literal["disabled", "stub", "real"]
+    provider: Literal["local", "openai"] = "local"
+    chunk_seconds: int | None = None
+    max_duration_seconds: int = 3600
 
 
 class AudioWord(BaseModel):
@@ -59,7 +62,7 @@ class AudioTranscriptionResponse(BaseModel):
     filename: str
     status: AudioTranscriptionStatus = "completed"
     runtime_mode: Literal["stub", "real"]
-    transcription_engine: Literal["whisperx", "stub", "faster-whisper", "sensevoice"] | None = None
+    transcription_engine: Literal["whisperx", "stub", "faster-whisper", "sensevoice", "openai"] | None = None
     alignment_model: str | None = None
     diarization_model: str | None = None
     alignment_status: Literal["completed", "fallback", "disabled"] = "disabled"

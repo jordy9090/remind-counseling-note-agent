@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import partial
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
@@ -18,6 +19,7 @@ from app.services.audio_transcription import (
     AudioTranscriptionUnavailable,
     get_audio_capabilities,
     get_transcription_service,
+    current_audio_engine,
 )
 from app.services.upload_validation import UploadValidationError, cleanup_temp_file, persist_upload_to_temp
 
@@ -40,6 +42,8 @@ async def transcribe_audio(
     language: str | None = Form(default=None),
     task: str = Form(default="transcribe"),
     expected_speakers: int = Form(default=2),
+    cloud_audio_consent: bool = Form(default=False),
+    speaker_references: str = Form(default="[]", max_length=700000),
 ) -> AudioTranscriptionResponse:
     """Transcribe a temporary audio upload when the opt-in runtime is available."""
     validated = None
@@ -47,6 +51,18 @@ async def transcribe_audio(
     response.headers["Pragma"] = "no-cache"
     try:
         validate_audio_request(language, task, expected_speakers)
+        hosted = current_audio_engine() == "openai"
+        if hosted and not cloud_audio_consent:
+            raise HTTPException(status_code=422, detail="원본 음성을 OpenAI에 전송하는 데 동의가 필요합니다.")
+        kwargs = {}
+        if hosted:
+            from app.services.openai_audio import validate_references
+            try:
+                references = json.loads(speaker_references)
+            except (ValueError, TypeError) as error:
+                raise HTTPException(status_code=422, detail="화자 참조 형식이 올바르지 않습니다.") from error
+            validate_references(references)
+            kwargs["speaker_references"] = references
         validated = await persist_upload_to_temp(file, "audio")
         service = get_transcription_service()
         transcribe = partial(
@@ -55,6 +71,7 @@ async def transcribe_audio(
             language=language,
             task=task,
             expected_speakers=expected_speakers,
+            **kwargs,
         )
         return await run_in_threadpool(transcribe)
     except UploadValidationError as error:

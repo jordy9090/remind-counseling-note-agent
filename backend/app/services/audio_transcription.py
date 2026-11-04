@@ -398,6 +398,10 @@ class WhisperXTranscriptionService(AudioTranscriptionService):
 def get_audio_capabilities() -> AudioCapabilitiesResponse:
     runtime_mode = get_audio_runtime_mode()
     transcription = get_transcription_capability()
+    if current_audio_engine() == "openai":
+        return AudioCapabilitiesResponse(upload=AudioCapability(available=True),
+            transcription=transcription, speaker_diarization=transcription,
+            runtime_mode=runtime_mode, provider="openai", chunk_seconds=60)
     if runtime_mode == "real" and current_audio_engine() in {"faster-whisper", "sensevoice"}:
         enabled = os.getenv("AUDIO_DIARIZATION_ENGINE", "campplus") == "campplus" and importlib.util.find_spec("funasr") is not None
         return AudioCapabilitiesResponse(upload=AudioCapability(available=True), transcription=transcription,
@@ -436,6 +440,9 @@ def get_transcription_service() -> AudioTranscriptionService:
     if runtime_mode == "disabled":
         capability = get_transcription_capability()
         return UnavailableAudioTranscriptionService(capability.reason or UNAVAILABLE_REASON)
+    if runtime_mode == "real" and engine == "openai":
+        from app.services.openai_audio import OpenAIAudioTranscriptionService
+        return OpenAIAudioTranscriptionService()
 
     cache_key = TranscriptionServiceCacheKey(
         runtime_mode=runtime_mode,
@@ -487,6 +494,10 @@ def get_transcription_capability() -> AudioCapability:
         return AudioCapability(available=True)
     if runtime_mode == "disabled":
         return AudioCapability(available=False, reason=UNAVAILABLE_REASON)
+    if current_audio_engine() == "openai":
+        configured = bool(os.getenv("OPENAI_API_KEY", "").strip())
+        return AudioCapability(available=configured,
+            reason=None if configured else "음성 API 연결 설정이 필요합니다.")
     if current_audio_engine() in {"faster-whisper", "sensevoice"}:
         import shutil
         packages = ["soundfile", "faster_whisper" if current_audio_engine() == "faster-whisper" else "funasr"]
