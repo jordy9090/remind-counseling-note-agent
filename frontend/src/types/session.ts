@@ -599,6 +599,9 @@ export interface AudioCapability {
 }
 
 export interface AudioCapabilitiesResponse {
+  provider?: 'local' | 'openai'
+  chunk_seconds?: number | null
+  max_duration_seconds?: number
   upload: AudioCapability
   transcription: AudioCapability
   speaker_diarization: AudioCapability
@@ -615,6 +618,7 @@ export interface AudioWord {
 
 export interface AudioSegment {
   id: number
+  segment_id?: string | null
   start: number
   end: number
   text: string
@@ -626,14 +630,17 @@ export interface AudioSegment {
   volume_level?: 'low' | 'typical' | 'high' | null
   confidence?: number | null
   words?: AudioWord[]
+  review_flags?: string[]
+  source_segment_ids?: string[]
+  source_ranges?: { start: number; end: number }[]
 }
 
 export interface AudioTranscriptionResponse {
   transcription_id: string
   filename: string
-  status: 'completed'
+  status: 'completed' | 'partial'
   runtime_mode: 'stub' | 'real'
-  transcription_engine?: 'whisperx' | 'stub' | null
+  transcription_engine?: 'whisperx' | 'stub' | 'faster-whisper' | 'sensevoice' | 'openai' | null
   alignment_model?: string | null
   diarization_model?: string | null
   alignment_status?: 'completed' | 'fallback' | 'disabled' | null
@@ -645,6 +652,11 @@ export interface AudioTranscriptionResponse {
   transcript_text: string
   nonverbal_notes: string
   warnings: string[]
+  raw_segments?: AudioSegment[]
+  review_ranges?: { start: number; end: number; code?: string }[]
+  failed_ranges?: { start: number; end: number; code?: string }[]
+  error_codes?: string[]
+  stage_metrics?: Record<string, number>
 }
 
 export interface CaseDashboardSession {

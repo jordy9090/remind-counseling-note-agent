@@ -28,6 +28,7 @@ export const materialApplyTargetLabel: Record<MaterialApplyTarget, string> = {
 }
 
 export interface UploadedMaterial {
+  transcriptionProgress?: string
   id: string
   kind: UploadedMaterialKind
   filename: string
@@ -42,6 +43,9 @@ export interface UploadedMaterial {
   objectUrl?: string
   transcriptText?: string
   segments?: AudioSegment[]
+  rawSegments?: AudioSegment[]
+  reviewRanges?: { start: number; end: number; code?: string }[]
+  failedRanges?: { start: number; end: number; code?: string }[]
   durationSeconds?: number | null
   language?: string | null
   speakerRoleMap?: SpeakerRoleMap

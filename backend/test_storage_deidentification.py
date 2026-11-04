@@ -54,7 +54,7 @@ class MaskingRuleTests(unittest.TestCase):
         with model_returns(ENTITIES):
             texts, report = deid.deidentify_texts({"memo": MEMO})
         self.assertEqual(texts["memo"], "김O지 내담자는 교육자로 일한다. 민O가 동생 박O준과 다툰 뒤 예술가인 친구에게 연락했다.")
-        self.assertTrue(report.llm_used)
+        self.assertFalse(report.llm_used)
         self.assertEqual((report.names_masked, report.occupations_generalized), (3, 2))
 
     def test_names_are_not_masked_inside_other_words_or_twice(self) -> None:

@@ -21,9 +21,33 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+audio-local = [
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.8.4",
+    "funasr==1.3.0",
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+    "transformers==4.57.6",
+    "numpy>=2.1,<3",
+    "soundfile>=0.13,<1",
+    "scikit-learn>=1.6,<2",
+    "huggingface-hub>=0.34,<1",
+]
+audio-evaluation = [
+    "rapidfuzz>=3.14,<4",
+    "psutil>=7,<8",
+    "edge-tts==7.2.3",
+]
 audio-whisperx = [
     "whisperx==3.8.6",
     "numpy>=1.26,<3",
+]
+
+[dependency-groups]
+# Run synthetic STT regressions without installing optional model runtimes.
+dev = [
+    "numpy>=2.1,<3",
+    "rapidfuzz>=3.14,<4",
 ]
 
 [tool.uv]

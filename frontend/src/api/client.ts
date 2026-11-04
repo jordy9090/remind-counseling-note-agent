@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { transcribeHostedAudio, type SpeakerReference } from '../lib/hostedAudio'
 import type {
   AudioCapabilitiesResponse,
   AudioTranscriptionResponse,
@@ -34,6 +35,8 @@ import { getAccessToken } from '../lib/supabase'
 import type { QuickSummaryResult } from '../lib/quickSummary'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+// Audio goes directly to the configured self-hosted FastAPI origin.
+const AUDIO_API_BASE_URL = import.meta.env.VITE_AUDIO_API_BASE_URL || API_BASE_URL
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -236,7 +239,7 @@ export const requestDeidentificationPreview = async (payload: {
 }
 
 export const getAudioCapabilities = async (): Promise<AudioCapabilitiesResponse> => {
-  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities')
+  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities', { baseURL: AUDIO_API_BASE_URL })
   return response.data
 }
 
@@ -245,20 +248,42 @@ export const transcribeAudio = async (
   language = 'ko',
   task = 'transcribe',
   expectedSpeakers = 2,
+  onProgress?: (message: string) => void,
+  stillActive?: () => boolean,
 ): Promise<AudioTranscriptionResponse> => {
+  const capabilities = await getAudioCapabilities()
+  if (capabilities.provider === 'openai') {
+    return transcribeHostedAudio(file, expectedSpeakers, (chunk, references) =>
+      sendAudioChunk(chunk, language, task, expectedSpeakers, references), onProgress, stillActive)
+  }
+  return sendAudioChunk(file, language, task, expectedSpeakers)
+}
+
+const sendAudioChunk = async (file: File, language: string, task: string, expectedSpeakers: number,
+  references?: SpeakerReference[]): Promise<AudioTranscriptionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('language', language)
   formData.append('task', task)
   formData.append('expected_speakers', String(expectedSpeakers))
+  if (references) {
+    formData.append('cloud_audio_consent', 'true')
+    formData.append('speaker_references', JSON.stringify(references))
+  }
   try {
     const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
-      timeout: 900000,
+      baseURL: AUDIO_API_BASE_URL,
+      timeout: 7200000,
     })
     return response.data
   } catch (error) {
     throw normalizeApiError(error, '음성 축어록을 생성하지 못했습니다.')
   }
+}
+
+export const reviewAudioPrivacy = async (text: string): Promise<{ text: string; candidates: { category: string }[] }> => {
+  const response = await client.post('/api/audio/deidentify', { text }, { baseURL: AUDIO_API_BASE_URL })
+  return response.data
 }
 
 export { API_BASE_URL }
