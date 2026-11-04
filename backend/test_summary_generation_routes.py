@@ -69,6 +69,22 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                 generate.assert_called_once()
                 self.assertFalse(settings.use_stub)
 
+    def test_generation_logs_error_type_without_sensitive_provider_message(self):
+        for app in (generate_app, main_app):
+            with self.subTest(app=app.title), patch(
+                "app.api.routes.notes.run_note_pipeline",
+                side_effect=TimeoutError("PRIVATE_PROVIDER_DETAIL " + INPUT["transcript_text"]),
+            ), patch("app.api.routes.notes.persist_generated_note") as persist, self.assertLogs(
+                "app.api.routes.notes", level="WARNING",
+            ) as logs:
+                response = TestClient(app).post("/api/notes/generate", json=INPUT)
+            self.assertEqual(502, response.status_code)
+            self.assertEqual(
+                ["WARNING:app.api.routes.notes:session_summary_failed exception_type=TimeoutError"],
+                logs.output,
+            )
+            persist.assert_not_called()
+
     def test_missing_model_key_cannot_silently_generate_a_sample(self):
         with patch.object(settings, "openai_api_key", None), patch("app.graph.graph.note_graph.invoke") as graph:
             with self.assertRaises(RuntimeError):

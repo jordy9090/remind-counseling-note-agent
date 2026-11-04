@@ -1,6 +1,7 @@
 """Routes for note generation."""
 from __future__ import annotations
 
+import logging
 import traceback
 from typing import Annotated
 
@@ -57,6 +58,7 @@ from app.services.supabase_storage import (
 )
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
+logger = logging.getLogger(__name__)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 
@@ -202,6 +204,8 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str)
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception as error:
+        # Exception messages and tracebacks may contain model input or credentials.
+        logger.warning("session_summary_failed exception_type=%s", type(error).__name__)
         raise HTTPException(
             status_code=502,
             detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
