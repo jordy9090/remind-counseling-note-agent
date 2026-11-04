@@ -37,6 +37,7 @@ const open = async () => {
   await page.goto(origin)
   await page.getByRole('button', { name: '문서 보관함', exact: true }).click()
   await page.getByRole('button', { name: '전마투 기록지·계약서·계획서 작성', exact: true }).click()
+  await page.getByRole('button', { name: '내용 입력 · 저장한 문서', exact: true }).click()
   await page.getByRole('heading', { name: '기록할 회기 선택' }).waitFor()
 }
 const approve = async () => {

@@ -1,6 +1,6 @@
 """Shared FastAPI/Vercel voucher routes; fail closed until qualification and migration."""
 import os
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -11,6 +11,7 @@ from app.api.security import require_preview_access, AuthenticatedActor
 from app.schemas.voucher import MapRequest, PrepareRequest, ReviewRequest, ExportRequest
 from app.services.voucher_documents import service
 from app.services.voucher_renderer import VoucherError, manifest
+from app.services.voucher_original import original_file
 from app.services.supabase_storage import SupabaseStorageError, NoteConfirmationError
 
 def private_response(response: Response):
@@ -47,6 +48,12 @@ async def call(fn, *args, **kwargs):
 async def capabilities(actor: Actor):
     enabled = os.getenv('ENABLE_VOUCHER_DOCUMENTS', '0') == '1'
     return {'enabled': enabled, 'formats': manifest()['qualification']}
+
+
+@router.get('/original/{format}')
+async def original(format: Literal['pdf', 'hwpx'], actor: Actor):
+    data = await call(original_file, format)
+    return binary(data, 'original', format, inline=format == 'pdf')
 
 
 @router.post('/map')
