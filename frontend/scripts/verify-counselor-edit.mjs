@@ -60,6 +60,22 @@ assert(pageSource.includes('applyCounselorEditsToSummary(originalSummary, draftS
 assert(pageSource.includes('markGroundingItemsStale(section.groundingItems)'), 'counselor edits must still mark grounding stale')
 assert(pageSource.includes('rows: block.rows || []'), 'supervision export must normalize nullable rows')
 
+// Exercise the real builder with private recall text; new institutional drafts
+// must contain neither narrative nor the source excerpts attached to it.
+const pageAst = ts.createSourceFile('SessionDraftPage.tsx', pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const builder = pageAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'buildFinalDocumentSections')
+assert(builder, 'final document builder must exist')
+const builderJs = ts.transpileModule(builder.getText(pageAst), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
+const buildFinal = new Function(`${builderJs}; return buildFinalDocumentSections`)()
+const privateSections = ['session_content', 'client_response', 'next_plan', 'reflection'].map(id => ({
+  id, content: 'SYNTHETIC-PRIVATE-RECALL', groundingItems: [{ excerpt: 'SYNTHETIC-PRIVATE-SOURCE' }],
+}))
+const termination = buildFinal('termination_report', privateSections, [])
+assert(termination.length === 5, 'termination must retain its five editable sections')
+assert(termination.every(item => item.content === '' && item.groundingItems.length === 0), 'termination must require independent writing')
+assert(!JSON.stringify(termination).includes('SYNTHETIC-PRIVATE'), 'private details must not propagate')
+assert(buildFinal('session_note', privateSections, []).some(item => item.content === 'SYNTHETIC-PRIVATE-RECALL'), 'personal note must retain recall detail')
+
 // Supervision form C-2: transcript turns are numbered per speaker (내1, 상1, 내2).
 const turnLabels = transcriptTurnLabels([{ speaker: 'counselor' }, { speaker: 'client' }, { speaker: 'counselor' }, { speaker: 'client' }, { speaker: 'other' }])
 assert(turnLabels.join(',') === '상1,내1,상2,내2,기타', `per-speaker transcript labels: ${turnLabels.join(',')}`)

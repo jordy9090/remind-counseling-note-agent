@@ -4,6 +4,12 @@ import ts from 'typescript'
 
 async function loadModule(name) {
   let source = fs.readFileSync(`src/lib/${name}.ts`, 'utf8')
+  if (source.includes("'./summaryEvidence'")) {
+    const dependency = ts.transpileModule(fs.readFileSync('src/lib/summaryEvidence.ts', 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+    }).outputText
+    source = source.replace("'./summaryEvidence'", `'data:text/javascript;base64,${Buffer.from(dependency).toString('base64')}'`)
+  }
   if (name === 'persistenceWorkflow') {
     const dependency = ts.transpileModule(fs.readFileSync('src/lib/relationalInsights.ts', 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
@@ -20,7 +26,14 @@ const quickEvidence = await loadModule('quickSummary')
 const transient = { sections: [{ id: 'session_content', title: 'Content', content: 'Summary',
   evidence: [{ label: 'Transcript', excerpt: 'SYNTHETIC-PRIVATE-EXCERPT', needsReview: true }], requiresReview: true }] }
 assert(!JSON.stringify(quickEvidence.quickSummaryDraftPayload(transient)).includes('SYNTHETIC-PRIVATE-EXCERPT'),
-  'showing quick-summary evidence must not change the summary-only persistence contract')
+  'unattributed evidence caches must not become saved sources')
+const cited = { sections: [{ id: 'client_response', title: '반응', content: '목 답답함이 남음.', requiresReview: false,
+  evidence: [{ label: '축어록', excerpt: '내담자: 목이 아직 답답하고 말이 잘 안 나와요.', sourceRef: 'transcript.turn_3',
+    sourceType: 'transcript', confidence: 'high', needsReview: false, raw_input: 'SYNTHETIC-RAW-INPUT' }] }] }
+const citedPayload = quickEvidence.quickSummaryDraftPayload(cited)
+assert(citedPayload.draft_sections[0].evidence.length === 1)
+assert(!JSON.stringify(citedPayload).includes('SYNTHETIC-RAW-INPUT'))
+assert.deepEqual(quickEvidence.quickSummaryFromDraft(citedPayload).sections, citedPayload.draft_sections.map(({ visible, ...item }) => item))
 const staleSummary = workflow.confirmedPayload({ session_content: {
   text: 'Original AI wording', evidence_type: 'direct', requires_review: false, source_refs: ['transcript.turn_1'],
 } }, [{ id: 'session_content', title: 'Content', content: 'Edited assertion', visible: true }])
@@ -106,6 +119,17 @@ console.log('Confirmed string/object/sections values and intentional empty strin
 }
 
 const { temporaryDraftPayload } = await loadModule('temporaryDraft')
+const savedEvidence = temporaryDraftPayload(citedPayload)
+assert.equal(savedEvidence.draft_sections[0].evidence[0].sourceRef, 'transcript.turn_3')
+assert.equal(savedEvidence.draft_sections[0].requiresReview, false)
+const clientSaved = { ...record({}), confirmation_status: 'draft', draft_json: {
+  client_response: { text: '목 답답함이 남음.' }, workspace_sections: savedEvidence.draft_sections,
+} }
+const reopenedEvidence = workflow.restoreStoredSections(workflow.recordPayload(clientSaved), [], false)
+assert.deepEqual(reopenedEvidence[0].evidence, savedEvidence.draft_sections[0].evidence)
+const editedEvidence = workflow.confirmedPayload(clientSaved.draft_json, [{ ...reopenedEvidence[0], content: '수정한 반응.' }])
+assert.equal(editedEvidence.workspace_sections[0].evidence[0].needsReview, true)
+assert.equal(editedEvidence.workspace_sections[0].requiresReview, true)
 {
   // Signed-in quick summaries are temporary drafts under a reserved case ID; only the AI output survives the allowlist.
   const quick = await loadModule('quickSummary')

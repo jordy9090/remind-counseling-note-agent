@@ -32,6 +32,7 @@ import type {
   SessionInputDeletionResponse,
 } from '../types/session'
 import { getAccessToken } from '../lib/supabase'
+import { cleanQuickSummarySections } from '../lib/quickSummary'
 import type { QuickSummaryResult } from '../lib/quickSummary'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
@@ -481,12 +482,12 @@ export const createCase = async (payload: CaseCreateRequest): Promise<CaseDashbo
   return response.data
 }
 
-/** 간편 요약을 그 내담자의 다음 회기(AI 초안)로 저장한다. Only the four summary items are sent. */
+/** Save the summary and de-identified supporting excerpts as the client's next AI draft. */
 export const saveQuickSummaryToClient = async (
   caseId: string,
   summary: Pick<QuickSummaryResult, 'sections'>,
 ): Promise<QuickSummarySessionResponse> => {
-  const sections = summary.sections.map(({ id, title, content }) => ({ id, title, content }))
+  const sections = cleanQuickSummarySections(summary.sections)
   const response = await client.post<QuickSummarySessionResponse>(`/api/cases/${encodeURIComponent(caseId)}/quick-summary`, { sections })
   return response.data
 }

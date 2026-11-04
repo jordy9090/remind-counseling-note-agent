@@ -359,7 +359,7 @@ _STRUCTURAL_KEYS = frozenset({
     "session_date", "screen", "type", "status", "reviewStatus", "evidenceStatus", "evidence_type",
     "final_document_type", "speaker", "turnId", "reportId", "caseId", "reportType", "mediaType", "kind",
     "language", "runtimeMode", "diarizationStatus", "lastAppliedMode", "contentKind", "source_type",
-    "source_ref", "source_refs", "evidenceIds", "visible_section_ids", "selected_previous_session_ids",
+    "source_ref", "source_refs", "sourceRef", "sourceType", "evidenceIds", "visible_section_ids", "selected_previous_session_ids",
     "appliedTargets", "confidence", "severity", "sectionId", "blockId", "reportDate", "sessionNumber",
     "workspace_note_id", "confirmation_status", "note_type", "field", "category",
     # Source references (e.g. literature links in relational insights), not counseling text.

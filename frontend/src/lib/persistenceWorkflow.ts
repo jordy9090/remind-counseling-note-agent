@@ -1,12 +1,16 @@
-import type { GeneratedNoteRecord, NoteDraftResponse } from '../types/session'
+import type { EvidenceConfidence, EvidenceSourceType, GeneratedNoteRecord, NoteDraftResponse } from '../types/session'
 import type { RelationalInsights } from '../types/insight'
 import { formatRelationalSupervisionMemo } from './relationalInsights'
+import { savedSummaryEvidence } from './summaryEvidence'
 
 export interface StoredSection {
   id: string
   title: string
   content: string
   visible: boolean
+  evidence?: { label: string; excerpt: string; confidence: EvidenceConfidence; needsReview: boolean;
+    sourceRef?: string; sourceType?: EvidenceSourceType; truncated?: boolean }[]
+  requiresReview?: boolean
 }
 
 const fieldMap: Record<string, string> = {
@@ -44,7 +48,14 @@ export function confirmedPayload(original: Record<string, unknown>, sections: St
   return {
     ...payload,
     sections: textSections,
-    workspace_sections: sections.map(({ id, title, content, visible }) => ({ id, title, content, visible })),
+    workspace_sections: sections.map(({ id, title, content, visible, evidence, requiresReview }) => {
+      const previous = original[fieldMap[id] || id]
+      const edited = isObject(previous) && previous.text !== content
+      const excerpts = savedSummaryEvidence(evidence).map(item => ({ ...item, needsReview: item.needsReview || edited }))
+      return { id, title, content, visible,
+        ...(excerpts.length ? { evidence: excerpts, requiresReview: requiresReview || edited || excerpts.some(item => item.needsReview) } : {}),
+      }
+    }),
   }
 }
 
@@ -57,7 +68,13 @@ export function readStoredSections(value: unknown): StoredSection[] | null {
   if (!value.every((section) => isObject(section) && typeof section.id === 'string'
     && typeof section.title === 'string' && typeof section.content === 'string'
     && typeof section.visible === 'boolean')) return null
-  return value as StoredSection[]
+  return value.map(item => {
+    const section = item as StoredSection
+    const evidence = savedSummaryEvidence(section.evidence)
+    return { id: section.id, title: section.title, content: section.content, visible: section.visible,
+      ...(evidence.length ? { evidence, requiresReview: section.requiresReview !== false } : {}),
+    }
+  })
 }
 
 export function isConfirmedRecord(record: GeneratedNoteRecord): boolean {

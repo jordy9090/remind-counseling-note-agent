@@ -6,7 +6,18 @@ const source = fs.readFileSync('src/lib/summaryEvidence.ts', 'utf8')
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 })
-const { summarySectionEvidence, riskInformation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const { summarySectionEvidence, riskInformation, savedSummaryEvidence, clientMemoryQuotes } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const exactWords = '목이 아직 답답하고 말이 잘 안 나와요.'
+const literalEvidence = { label: '축어록', excerpt: '내담자: ' + exactWords, sourceRef: 'transcript.turn_2',
+  sourceType: 'transcript', confidence: 'high', needsReview: false }
+assert.deepEqual(clientMemoryQuotes([literalEvidence, literalEvidence]), [exactWords])
+assert.deepEqual(clientMemoryQuotes([{ ...literalEvidence, excerpt: '상담자: ' + exactWords }]), [])
+assert.deepEqual(clientMemoryQuotes([{ ...literalEvidence, truncated: true }]), [])
+assert.deepEqual(savedSummaryEvidence([{ ...literalEvidence, sourceRef: 'transcript_text' }]), [])
+assert.equal(savedSummaryEvidence([{ ...literalEvidence, excerpt: '가'.repeat(2100) }])[0].truncated, true)
+assert.deepEqual(summarySectionEvidence({ full_response: { session_summary_draft: {
+  next_plan: { text: '[자료에서 확인되지 않음]', source_refs: [], evidence_type: 'needs_review', requires_review: true },
+} } }, 'next_plan'), { evidence: [], requiresReview: false, inferred: false })
 const relationalSource = ts.transpileModule(fs.readFileSync('src/lib/relationalInsights.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText

@@ -95,7 +95,8 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } from '../lib/supervisionDraft'
-import { riskInformation, summarySectionEvidence } from '../lib/summaryEvidence'
+import { riskInformation, savedSummaryEvidence, summarySectionEvidence } from '../lib/summaryEvidence'
+import SourceMemoryCues from '../components/quick-summary/SourceMemoryCues'
 import { formatRelationalSupervisionMemo } from '../lib/relationalInsights'
 import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord, sessionThemeText } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
@@ -216,6 +217,9 @@ interface CompactEvidence {
   excerpt: string
   confidence: EvidenceConfidence
   needsReview: boolean
+  sourceRef?: string
+  sourceType?: EvidenceSourceType
+  truncated?: boolean
 }
 
 interface DraftSection {
@@ -1575,6 +1579,12 @@ export default function SessionDraftPage({
       const baseSections = buildDocumentSections(data, nextForm, theme, defaultVisibleSectionIds)
       const sections = restoreStoredSections(payload, baseSections, confirmed).map((section) => ({
         ...(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)), ...section,
+        ...(section.evidence?.length ? {
+          sourceBadges: buildSourceBadges(section.evidence.map(item => ({
+            claim: section.content, source_type: item.sourceType || 'transcript', source_excerpt: item.excerpt,
+            confidence: item.confidence,
+          })), section.requiresReview ? ['needs_review'] : []),
+        } : {}),
       }))
       setForm(nextForm)
       setSessionTopic(theme)
@@ -1871,6 +1881,11 @@ export default function SessionDraftPage({
                 exportError={documentExportError || documentCapabilitiesError}
                 onDownload={(format) => void handleDownloadDocument(format)}
               >
+                {finalDocumentType === 'termination_report' && (
+                  <p className="border-b border-grey-200 px-5 py-3 text-sm text-grey-600">
+                    회기요약의 개인 상세 기록은 자동으로 옮기지 않습니다. 공유 목적에 필요한 내용만 직접 작성하고 종결 여부를 확인해주세요.
+                  </p>
+                )}
                 {finalDocumentType === 'supervision_report' ? (
                   <SupervisionReportWorkspace
                     editingBlockId={editingSupervisionBlockId}
@@ -2185,6 +2200,7 @@ function SessionDetailWorkspace({
                 <PenLine className="h-4 w-4" />{editMode ? '수정 완료' : '수정하기'}
               </button>
             </div>
+            <SourceMemoryCues evidence={sections.flatMap(section => section.evidence)} />
             <div className="mt-2">
               {sections.length ? (
                 sections.map((section) => (
@@ -2406,6 +2422,7 @@ function EvidencePreview({ evidence }: { evidence: CompactEvidence[] }) {
             <span>{confidenceLabel[item.confidence]}</span>
           </div>
           <p className="mt-2 whitespace-pre-wrap text-slate-700">{item.excerpt || '표시할 원문 일부가 없습니다.'}</p>
+          {item.truncated && <p>긴 원문의 앞부분만 표시합니다.</p>}
           {item.needsReview && <p className="mt-2 font-semibold text-amber-700">상담사 확인 필요 · 현재 문장과 원문을 대조해주세요.</p>}
         </div>
       ))}
@@ -3634,7 +3651,7 @@ export function quickSummaryResultFromNote(note: NoteDraftResponse): QuickSummar
   const sections = buildDocumentSections(note, initialForm, '', defaultVisibleSectionIds)
     .filter((section) => section.visible && section.content.trim())
     .map(({ id, title, content, evidence, sourceBadges }) => ({
-      id, title, content, evidence, requiresReview: sourceBadges.includes('needs_review'),
+      id, title, content, evidence: savedSummaryEvidence(evidence), requiresReview: sourceBadges.includes('needs_review'),
     }))
   return { sections, deidentified: true, stub: Boolean(note.full_response?.stub) }
 }
@@ -3811,6 +3828,8 @@ function toCompactEvidence(item: EvidenceCheckItem): CompactEvidence {
   return {
     label: sourceTypeLabel[item.source_type],
     excerpt: item.source_excerpt,
+    sourceRef: item.source_ref,
+    sourceType: item.source_type,
     confidence: item.confidence,
     needsReview: item.source_type === 'ai_inference' || item.confidence !== 'high',
   }
@@ -3898,11 +3917,11 @@ function buildFinalDocumentSections(
 
   if (documentType === 'termination_report') {
     return [
-      makeSection('termination_goal_process', '상담 목표 및 진행 과정', getSection('session_content', '상담 진행 과정을 확인해야 합니다.')),
-      makeSection('termination_changes', '주요 변화', getSection('client_response', '내담자 변화 내용을 상담사가 확인해야 합니다.')),
-      makeSection('termination_reason', '종결 사유', '종결 사유는 상담사가 직접 입력해야 합니다.'),
-      makeSection('termination_recommendation', '향후 권고', getSection('next_plan', '향후 권고 사항을 확인해야 합니다.')),
-      makeSection('termination_counselor_opinion', '상담자 종합소견', '상담자 종합소견은 임상 판단 영역이므로 직접 작성이 필요합니다.'),
+      makeSection('termination_goal_process', '상담 목표 및 진행 과정', ''),
+      makeSection('termination_changes', '주요 변화', ''),
+      makeSection('termination_reason', '종결 사유', ''),
+      makeSection('termination_recommendation', '향후 권고', ''),
+      makeSection('termination_counselor_opinion', '상담자 종합소견', ''),
     ]
   }
 
