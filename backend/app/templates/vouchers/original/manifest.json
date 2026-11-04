@@ -1,0 +1,17 @@
+{
+  "version": "ari-20261104",
+  "page_count": 12,
+  "source_filename": "정신건강바우처 서류 양식.hwpx",
+  "pdf_renderer": "rhwp 0.8.7, print profile, Hancom 2024 compatibility, local Windows fonts",
+  "assets": {
+    "pdf": {
+      "file": "ari-voucher-original.pdf",
+      "sha256": "2b591560a17938ac80a6de1127b74c96194110ee7d9165d6529005ea126ab4e1"
+    },
+    "hwpx": {
+      "file": "ari-voucher-original.hwpx",
+      "sha256": "2d9281955b9af4dd7583a052f1821bea8e545a0b75d0b3d5feae959c9081f6af"
+    }
+  },
+  "source": "User-supplied blank voucher packet from Ari Counseling Center"
+}
