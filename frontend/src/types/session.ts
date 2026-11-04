@@ -328,6 +328,7 @@ export type EvidenceConfidence = 'high' | 'medium' | 'low'
 
 export interface EvidenceCheckItem {
   claim: string
+  source_ref?: string
   source_type: EvidenceSourceType
   source_excerpt: string
   confidence: EvidenceConfidence

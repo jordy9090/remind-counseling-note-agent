@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import VoucherPdfPreview from './VoucherPdfPreview'
+import VoucherOriginalForms from './VoucherOriginalForms'
 import { fetchCaseDashboard } from '../../api/client'
 import type { CaseDashboardResponse, CaseListItem } from '../../types/session'
 import { voucherApi, type VoucherDocument, type VoucherForm, type VoucherRow, type VoucherTemplate } from '../../lib/voucherApi'
@@ -13,6 +14,7 @@ const contractLabels = { contract_period: '계약기간', content: '서비스 �
 export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, onClose }: {
   cases: CaseListItem[]; initialCaseId?: string; initialNoteId?: string | null; onClose: () => void
 }) {
+  const [mode, setMode] = useState<'original' | 'write'>('original')
   const [caseId, setCaseId] = useState(initialCaseId || cases[0]?.case_id || '')
   const [form, setForm] = useState(blank('form10'))
   const [dashboard, setDashboard] = useState<CaseDashboardResponse | null>(null)
@@ -86,6 +88,12 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
   return <div role="dialog" aria-modal="true" aria-label="전마투 서식 작성" className="fixed inset-0 z-[80] overflow-y-auto bg-slate-50 p-4 sm:p-8">
     <div className="mx-auto max-w-6xl">
       <div className="flex items-center justify-between"><h1 className="text-xl font-bold">전마투 서식 작성</h1><button type="button" disabled={busy} onClick={onClose} className="rm-input w-auto">닫기</button></div>
+      <div className="my-4 flex flex-wrap gap-2" aria-label="전마투 이용 방식">
+        <button type="button" aria-pressed={mode === 'original'} className={`rounded-lg px-4 py-2 font-semibold ${mode === 'original' ? 'bg-blue-600 text-white' : 'border bg-white'}`} disabled={busy} onClick={() => setMode('original')}>원본 양식 · 인쇄/저장</button>
+        <button type="button" aria-pressed={mode === 'write'} className={`rounded-lg px-4 py-2 font-semibold ${mode === 'write' ? 'bg-blue-600 text-white' : 'border bg-white'}`} disabled={busy} onClick={() => setMode('write')}>내용 입력 · 저장한 문서</button>
+      </div>
+      <div hidden={mode !== 'original'}>{mode === 'original' && <VoucherOriginalForms />}</div>
+      <div hidden={mode !== 'write'}>
       <p className="my-3 text-sm text-slate-600">정신건강 심리상담 바우처사업 작성용 문서입니다. 기관에서 기본정보와 서명을 보완해 주세요.</p>
       {error && <p role="alert" className="my-3 rounded bg-red-50 p-3 text-red-700">{error}</p>}
       {!caps?.enabled ? <p role="status" className="rounded bg-white p-6">전마투 서식 출력을 준비하고 있습니다. 서식·저장소 확인 후 제공됩니다.</p> : <>
@@ -130,6 +138,7 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
           <div className="flex gap-3">{(['pdf', 'hwpx'] as const).map(format => <button type="button" key={format} className="rounded border px-4 py-2 disabled:opacity-40" disabled={busy || !candidate.reviewed_at || !caps.formats[format]} onClick={() => download(format)}>{format.toUpperCase()} 다운로드</button>)}</div>{!caps.formats.hwpx && <p className="mt-2 text-sm text-slate-500">HWPX는 문서 편집기 호환성 확인 후 제공됩니다.</p>}</section>}
         <section className="mt-5 rounded-xl border bg-white p-5"><h2 className="font-bold">저장한 전마투 문서</h2>{history.map(doc => <div key={doc.id} className="mt-2 flex justify-between border-b py-2"><button disabled={busy} type="button" onClick={() => task(async () => openPreview(await voucherApi<VoucherDocument>(`saved/${doc.id}`)))}>{label[doc.template]} · {doc.reviewed_at ? '검토 완료' : '검토 전'} · {new Date(doc.created_at).toLocaleDateString('ko-KR')}</button><button disabled={busy} type="button" onClick={() => { if (window.confirm('이 서식 문서를 삭제할까요? 원래 회기 기록은 유지됩니다.')) void task(async () => { await voucherApi(`saved/${doc.id}`, 'DELETE'); setHistory(history.filter(d => d.id !== doc.id)); if (candidate?.id === doc.id) clearReview() }) }}>삭제</button></div>)}</section>
       </>}
+      </div>
     </div>
   </div>
 }

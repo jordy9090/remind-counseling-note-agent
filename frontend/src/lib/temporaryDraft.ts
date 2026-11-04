@@ -1,4 +1,5 @@
 import type { TemporaryDraftSaveRequest } from '../types/session'
+import { savedSummaryEvidence } from './summaryEvidence'
 
 // Keep this projection in sync with backend/app/services/temporary_draft_payload.py.
 // Only workspace content is persisted; extraction and evidence caches are not workspace content.
@@ -15,7 +16,8 @@ const insights: Shape = {
     ...fields('id title organization url locator principle limitations'), concepts: strings,
   }],
 }
-const section = fields('id title content visible')
+const section: Shape = { ...fields('id title content visible requiresReview'),
+  evidence: [fields('label excerpt sourceRef sourceType confidence needsReview truncated')] }
 const block: Shape = {
   ...fields('id type text textHtml aiGenerated demoValue reviewStatus label evidenceStatus'),
   rows: [{ '*': 'scalar' }], speakerTurns: [fields('turnId speaker text silenceSeconds')],
@@ -66,6 +68,12 @@ function project(value: unknown, allowed: Shape): unknown {
 
 export function temporaryDraftPayload<T extends TemporaryDraftSaveRequest>(draft: T): T {
   const data = project(draft, shape) as T
+  data.draft_sections = (data.draft_sections || []).map(section => {
+    const item = section as Record<string, unknown>
+    const evidence = savedSummaryEvidence(item.evidence)
+    const { evidence: _, ...fields } = item
+    return { ...fields, ...(evidence.length ? { evidence } : {}) }
+  })
   data.attachments = (data.attachments || []).map(material => ({
     ...(material as object), requiresReattachment: true, warnings: [],
   }))

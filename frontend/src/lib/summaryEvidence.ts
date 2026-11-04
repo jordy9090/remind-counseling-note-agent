@@ -1,5 +1,44 @@
 import type { EvidenceCheckItem, EvidenceConfidence, EvidenceSourceType, GenerateNoteResponse, NoteDraftResponse, SummarySection } from '../types/session'
 
+export interface SavedSummaryEvidence {
+  label: string
+  excerpt: string
+  sourceRef: string
+  sourceType: 'transcript' | 'counselor_memo'
+  confidence: EvidenceConfidence
+  needsReview: boolean
+  truncated?: boolean
+}
+
+/** Persist only bounded, attributed excerpts, never source containers or extraction caches. */
+export function savedSummaryEvidence(value: unknown): SavedSummaryEvidence[] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 40).flatMap(item => {
+    if (!item || typeof item !== 'object' || typeof item.label !== 'string' || !item.label.trim()
+      || typeof item.excerpt !== 'string' || !item.excerpt.trim()
+      || typeof item.sourceRef !== 'string'
+      || !/^(transcript\.turn_[1-9]\d*|counselor_memo)$/.test(item.sourceRef)
+      || item.sourceType !== (item.sourceRef === 'counselor_memo' ? 'counselor_memo' : 'transcript')) return []
+    return [{ label: item.label.slice(0, 60), excerpt: item.excerpt.slice(0, 2000),
+      sourceRef: item.sourceRef, sourceType: item.sourceType,
+      confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'low',
+      needsReview: item.needsReview !== false,
+      ...(item.truncated || item.excerpt.length > 2000 ? { truncated: true } : {}),
+    }]
+  })
+}
+
+/** Quotes come from attributed source text even when generated prose chooses no quotation marks. */
+export function clientMemoryQuotes(evidence: unknown): string[] {
+  const quotes = savedSummaryEvidence(evidence).flatMap(item => {
+    if (item.sourceType !== 'transcript' || item.truncated) return []
+    return item.excerpt.split(/\r?\n/).filter(line => /^\s*내담자\s*[:：]/.test(line))
+      .map(line => line.replace(/^\s*내담자\s*[:：]\s*/, '').trim())
+      .filter(line => line.length >= 12)
+  })
+  return [...new Set(quotes)].slice(0, 2)
+}
+
 const summaryFields = {
   main_issue: 'presenting_problem',
   session_theme: 'session_theme',
@@ -33,6 +72,10 @@ export function summarySectionEvidence(result: NoteDraftResponse, sectionId: str
   if (!field && sectionId !== 'risk_signal') return undefined
   const section = sectionId === 'risk_signal' ? riskInformation(result) : response.session_summary_draft?.[field]
   if (!section) return { evidence: [], requiresReview: true, inferred: false }
+  // An explicitly absent plan is not a fabricated claim that the counselor must repair.
+  if (field === 'next_plan' && section.text.trim() === '[자료에서 확인되지 않음]' && !section.source_refs?.length) {
+    return { evidence: [], requiresReview: false, inferred: false }
+  }
   const inferred = ['inferred', 'model_inference'].includes(section.evidence_type)
   const confidence: EvidenceConfidence = section.evidence_type === 'direct' ? 'high'
     : inferred || section.evidence_type === 'needs_review' ? 'low' : 'medium'
@@ -48,7 +91,7 @@ export function summarySectionEvidence(result: NoteDraftResponse, sectionId: str
     if (!excerpt) continue
     if ((ref === 'transcript_text' || ref === 'previous_session_summary') && preciseTypes.has(source.type)) continue
     const precise = ref.startsWith('transcript.turn_') || /^previous_session\.\d+$/.test(ref)
-    const item = { claim: section.text, source_type: source.type,
+    const item = { claim: section.text, source_type: source.type, source_ref: ref,
       source_excerpt: !precise && excerpt.length > 180 ? `${excerpt.slice(0, 180)}...` : excerpt, confidence }
     // Keep every cited turn so an intervention and its response remain readable together.
     evidence.set(ref, item)

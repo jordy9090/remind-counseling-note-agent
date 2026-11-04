@@ -108,6 +108,26 @@ class SummaryQualityTests(unittest.TestCase):
         self.assertEqual({}, summary_quality_issues(summary))
         self.assertEqual(original, summary.session_content.text)
 
+    def test_multiple_agreed_plans_keep_conditions_without_truncation(self) -> None:
+        # Actual synthetic B generation: previously rejected solely at 278 chars.
+        summary = _summary()
+        summary.next_plan.text = (
+            "오늘 집에 가서 단체방에는 책 수령과 관련해 자신의 가능한 시간만 답하고, 개인 메시지 초안은 내일 수영 후 "
+            "저녁을 먹은 뒤 아홉 시쯤 다시 읽어 보내기·수정하기·더 기다리기 중 하나를 정한 뒤 이유를 한 줄 남기기로 했다. "
+            "이번 주에 비슷한 일이 자연스럽게 생기면 한 번만 사실과 자신의 해석을 두 줄로 적고, 몸 느낌은 떠오르면 "
+            "덧붙일 수 있으나 필수는 아니며, 다음 주 수요일 7시에 만나 초안 발송 여부와 답이 왔을 경우 그 내용을 "
+            "어떻게 받아들였는지, 답이 없으면 없는 대로 보기로 했다."
+        )
+        original = summary.next_plan.text
+        self.assertGreater(len(original), 250)
+        self.assertEqual({}, summary_quality_issues(summary))
+        self.assertEqual(original, summary.next_plan.text)
+        summary.next_plan.text = original + " 다음 회기에 별도 계획을 확인함." * 2
+        self.assertEqual({}, summary_quality_issues(summary))
+        for extra in (" 추가 계획을 제안함." * 3, " 추가 내용" * 20):
+            summary.next_plan.text = original + extra
+            self.assertIn("next_plan", summary_quality_issues(summary))
+
     def test_valid_summary_uses_one_call_and_preserves_source_reference(self) -> None:
         llm = Mock()
         llm.invoke.return_value = _summary()
