@@ -1,6 +1,6 @@
 """Items for the pre-generation review step ("AI로 보내기 전 내용을 확인해주세요").
 
-Uses the same model extraction as storage de-identification, but returns
+Uses the same local discovery as storage de-identification, but returns
 (original → replacement) items for the counselor to review instead of
 rewriting the text. Replacement wording follows the review screen design:
 the client is "내담자 A", other people "인물 B", "인물 C", ...
@@ -116,4 +116,4 @@ def preview_items(texts: list[str], *, client_name: str = "", counselor_name: st
             if len(birth_date.strip()) >= 4:
                 add(birth_date, BIRTH_DATE_LABEL, "birth_date")
 
-    return DeidentificationPreviewResponse(items=list(items.values()), model_used=entities is not None)
+    return DeidentificationPreviewResponse(items=list(items.values()), model_used=False)

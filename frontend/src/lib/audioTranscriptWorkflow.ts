@@ -15,7 +15,7 @@ export function buildTranscriptText(segments: AudioSegment[], speakerRoleMap: Sp
     .map((segment) => {
       const speakerKey = getSegmentSpeakerKey(segment)
       const role = speakerRoleMap[speakerKey] || 'unassigned'
-      return `[${formatTimestamp(segment.start)}] ${roleLabels[role]}: ${segment.text.trim()}`
+      return `[${formatTimestamp(segment.start)}] ${role === 'unassigned' ? `화자 ${speakerKey}` : roleLabels[role]}: ${segment.text.trim()}`
     })
     .join('\n')
 }
@@ -69,7 +69,7 @@ export function getNotableAcousticObservations(segment: AudioSegment): string[] 
 }
 
 export function getSegmentSpeakerKey(segment: AudioSegment): string {
-  return segment.speaker || `segment_${segment.id}`
+  return segment.speaker || 'unknown'
 }
 
 export function getSpeakerRoleLabel(role: SpeakerRole): string {
@@ -106,4 +106,39 @@ export function replaceAppliedAudioBlock(current: string, previous: string, next
 
 function roundOneDecimal(value: number): string {
   return (Math.round(value * 10) / 10).toFixed(1)
+}
+
+function sourceRanges(segment: AudioSegment) {
+  return segment.source_ranges || [{ start: segment.start, end: segment.end }]
+}
+
+export function mergeAudioSegments(segments: AudioSegment[], id: number): AudioSegment[] {
+  const index = segments.findIndex(segment => segment.id === id)
+  const first = segments[index]
+  const second = segments[index + 1]
+  if (!first || !second || first.speaker !== second.speaker) return segments
+  const merged: AudioSegment = {
+    ...first, start: Math.min(first.start, second.start), end: Math.max(first.end, second.end),
+    text: `${first.text.trim()} ${second.text.trim()}`.trim(), words: [], confidence: null,
+    source_ranges: [...sourceRanges(first), ...sourceRanges(second)],
+    source_segment_ids: [...new Set([...(first.source_segment_ids || [first.segment_id || String(first.id)]),
+      ...(second.source_segment_ids || [second.segment_id || String(second.id)])])],
+    review_flags: [...new Set([...(first.review_flags || []), ...(second.review_flags || [])])],
+  }
+  return [...segments.slice(0, index), merged, ...segments.slice(index + 2)]
+}
+
+export function splitAudioSegment(segments: AudioSegment[], id: number, position: number, time: number): AudioSegment[] {
+  const index = segments.findIndex(segment => segment.id === id)
+  const segment = segments[index]
+  if (!segment || !Number.isFinite(time) || time <= segment.start || time >= segment.end
+    || position <= 0 || position >= segment.text.length) return segments
+  const left = segment.text.slice(0, position).trim()
+  const right = segment.text.slice(position).trim()
+  if (!left || !right) return segments
+  const nextId = Math.max(...segments.map(s => s.id)) + 1
+  const common = { ...segment, words: [], confidence: null, source_ranges: sourceRanges(segment),
+    source_segment_ids: segment.source_segment_ids || [segment.segment_id || String(segment.id)] }
+  return [...segments.slice(0, index), { ...common, end: time, text: left },
+    { ...common, id: nextId, segment_id: `edit-${nextId}`, start: time, text: right }, ...segments.slice(index + 1)]
 }

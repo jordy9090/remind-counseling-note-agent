@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Loader2, PenLine, Plus, Sparkles, X } from 'lucide-react'
 
-import { requestDeidentificationPreview } from '../../api/client'
 import ModalShell from '../app-shell/ModalShell'
 import { OutlineButton, PrimaryButton } from '../app-shell/ui'
 import {
@@ -44,6 +43,7 @@ export default function DeidentificationReviewModal({
   onBack,
   onConfirm,
   onAddMaterial,
+  requireConfirmation = false,
 }: {
   sources: DeidSource[]
   context: DeidDetectionContext
@@ -51,10 +51,10 @@ export default function DeidentificationReviewModal({
   onConfirm: (result: DeidReviewResult) => void
   /** "+ 자료 추가": returns to the input screen. Hidden when absent. */
   onAddMaterial?: () => void
+  requireConfirmation?: boolean
 }) {
   const [items, setItems] = useState<DeidItem[]>([])
   const [detecting, setDetecting] = useState(true)
-  const [remoteFailed, setRemoteFailed] = useState(false)
   const [tab, setTab] = useState<'original' | 'ai'>('original')
   const [activeKey, setActiveKey] = useState(sources[0]?.key ?? '')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -69,15 +69,11 @@ export default function DeidentificationReviewModal({
 
   useEffect(() => {
     let cancelled = false
-    detectDeidentificationItems(sources.map((source) => source.text), context, (texts, known) => requestDeidentificationPreview({
-      texts,
-      client_name: known.clientName ?? '',
-      counselor_name: known.counselorName ?? '',
-    }))
+    // Unreviewed counseling text stays in the browser during candidate discovery.
+    detectDeidentificationItems(sources.map((source) => source.text), context)
       .then((detected) => {
         if (cancelled) return
         setItems(detected.items)
-        setRemoteFailed(detected.remoteFailed)
       })
       .catch(() => { if (!cancelled) setItems([]) })
       .finally(() => { if (!cancelled) setDetecting(false) })
@@ -85,6 +81,8 @@ export default function DeidentificationReviewModal({
     // Detect once per opening; later edits are the counselor's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => { setConfirmed(false) }, [items])
 
   const activeSource = sources.find((source) => source.key === activeKey) ?? sources[0]
   const segments = useMemo(
@@ -171,11 +169,13 @@ export default function DeidentificationReviewModal({
   }
 
   const submit = () => {
-    const texts = Object.fromEntries(sources.map((source) => [source.key, skip ? source.text : applyDeidItems(source.text, items)]))
-    onConfirm({ texts, skipped: skip })
+    if (detecting || (requireConfirmation ? !confirmed : !(skip || confirmed))) return
+    const skipped = skip && !requireConfirmation
+    const texts = Object.fromEntries(sources.map((source) => [source.key, skipped ? source.text : applyDeidItems(source.text, items)]))
+    onConfirm({ texts, skipped })
   }
 
-  const canSubmit = !detecting && (skip || confirmed)
+  const canSubmit = !detecting && (requireConfirmation ? confirmed : (skip || confirmed))
 
   return (
     <ModalShell
@@ -197,7 +197,7 @@ export default function DeidentificationReviewModal({
               />
               표시된 항목과 AI에 전달할 내용을 모두 확인했어요.
             </label>
-            <label className="flex cursor-pointer items-center gap-2.5 text-sm text-grey-500">
+            {!requireConfirmation && <label className="flex cursor-pointer items-center gap-2.5 text-sm text-grey-500">
               건너뛰기
               <button
                 type="button"
@@ -210,7 +210,7 @@ export default function DeidentificationReviewModal({
               >
                 <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${skip ? 'left-[26px]' : 'left-1'}`} />
               </button>
-            </label>
+            </label>}
           </div>
           <div className="flex gap-3">
             <OutlineButton className="h-[52px] w-[120px] rounded-[12px] text-[15px] sm:w-[182px]" onClick={onBack}>
@@ -231,9 +231,9 @@ export default function DeidentificationReviewModal({
           {!detecting && reviewCount > 0 && (
             <span className="inline-flex h-9 items-center rounded-[10px] bg-danger-50 px-3 text-sm font-bold text-danger-500">확인 필요 {reviewCount}건</span>
           )}
-          {!detecting && remoteFailed && (
+          {!detecting && (
             <p role="status" className="flex items-center text-xs text-grey-500">
-              이름·기관·지역 등 일부 항목을 자동으로 찾지 못했어요. 원문을 보고 직접 추가해주세요.
+              자동 탐지는 이 브라우저에서만 실행됩니다. 놓친 이름·기관·지역·직업은 원문을 보고 직접 추가해주세요.
             </p>
           )}
         </div>

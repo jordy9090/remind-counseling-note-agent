@@ -111,6 +111,7 @@ jobs:
         run: |
           pnpm verify:material-workflow
           pnpm verify:audio-transcript-workflow
+          pnpm verify:hosted-audio
           pnpm verify:grounding-review
           pnpm verify:counselor-edit
           pnpm verify:summary-evidence

@@ -1,12 +1,13 @@
 """Routes for audio upload capabilities and optional transcription."""
 from __future__ import annotations
 
-import re
 from functools import partial
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 
 from app.api.security import require_preview_access
 from app.schemas.audio import AudioCapabilitiesResponse, AudioTranscriptionResponse
@@ -18,6 +19,7 @@ from app.services.audio_transcription import (
     AudioTranscriptionUnavailable,
     get_audio_capabilities,
     get_transcription_service,
+    current_audio_engine,
 )
 from app.services.upload_validation import UploadValidationError, cleanup_temp_file, persist_upload_to_temp
 
@@ -40,6 +42,8 @@ async def transcribe_audio(
     language: str | None = Form(default=None),
     task: str = Form(default="transcribe"),
     expected_speakers: int = Form(default=2),
+    cloud_audio_consent: bool = Form(default=False),
+    speaker_references: str = Form(default="[]", max_length=700000),
 ) -> AudioTranscriptionResponse:
     """Transcribe a temporary audio upload when the opt-in runtime is available."""
     validated = None
@@ -47,6 +51,18 @@ async def transcribe_audio(
     response.headers["Pragma"] = "no-cache"
     try:
         validate_audio_request(language, task, expected_speakers)
+        hosted = current_audio_engine() == "openai"
+        if hosted and not cloud_audio_consent:
+            raise HTTPException(status_code=422, detail="원본 음성을 OpenAI에 전송하는 데 동의가 필요합니다.")
+        kwargs = {}
+        if hosted:
+            from app.services.openai_audio import validate_references
+            try:
+                references = json.loads(speaker_references)
+            except (ValueError, TypeError) as error:
+                raise HTTPException(status_code=422, detail="화자 참조 형식이 올바르지 않습니다.") from error
+            validate_references(references)
+            kwargs["speaker_references"] = references
         validated = await persist_upload_to_temp(file, "audio")
         service = get_transcription_service()
         transcribe = partial(
@@ -55,6 +71,7 @@ async def transcribe_audio(
             language=language,
             task=task,
             expected_speakers=expected_speakers,
+            **kwargs,
         )
         return await run_in_threadpool(transcribe)
     except UploadValidationError as error:
@@ -73,9 +90,23 @@ async def transcribe_audio(
 
 
 def validate_audio_request(language: str | None, task: str, expected_speakers: int) -> None:
-    if task not in {"transcribe", "translate"}:
-        raise HTTPException(status_code=422, detail="task는 transcribe 또는 translate만 사용할 수 있습니다.")
-    if language and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{1,9}", language):
-        raise HTTPException(status_code=422, detail="language는 2~10자의 안전한 언어 코드여야 합니다.")
+    if task != "transcribe":
+        raise HTTPException(status_code=422, detail="상담 축어록은 번역 없이 transcribe만 사용할 수 있습니다.")
+    if language not in {None, "ko"}:
+        raise HTTPException(status_code=422, detail="상담 축어록 언어는 한국어(ko)로 설정해주세요.")
     if not 1 <= expected_speakers <= 4:
         raise HTTPException(status_code=422, detail="expected_speakers는 1~4 사이여야 합니다.")
+
+
+class AudioPrivacyReviewRequest(BaseModel):
+    text: str = Field(max_length=300000)
+
+
+@router.post("/deidentify")
+async def review_audio_privacy(payload: AudioPrivacyReviewRequest, response: Response, actor: AuthenticatedUser):
+    """Return deterministic local masking proposals before any downstream AI call."""
+    from app.services.deidentification import deidentify_text
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    masked, candidates = deidentify_text(payload.text, source="corrected_audio_transcript")
+    return {"text": masked, "candidates": [c.model_dump() for c in candidates], "requires_confirmation": True}
