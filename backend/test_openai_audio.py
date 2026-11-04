@@ -90,6 +90,16 @@ class HostedAudioTests(unittest.TestCase):
         self.assertEqual('fallback', response.json()['diarization_status'])
         self.assertIsNone(response.json()['segments'][0]['speaker'])
 
+    def test_silent_chunk_is_reviewable_without_asr_failure(self):
+        provider = MagicMock()
+        provider.return_value.__enter__.return_value.audio.transcriptions.create.return_value.model_dump.return_value = {'text': '', 'segments': []}
+        with patch('openai.OpenAI', provider):
+            response = self.post(cloud_audio_consent='true')
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(['no_speech'], response.json()['error_codes'])
+        self.assertEqual([], response.json()['segments'])
+        self.assertEqual([], list(Path(self.tmp.name).iterdir()))
+
     def test_reference_rejects_remote_url_and_oversized_duration(self):
         for refs in [[{'name': 'speaker_0', 'audio': 'https://example.com/secret.wav'}],
                      [{'name': 'speaker_0', 'audio': 'data:audio/wav;base64,' + base64.b64encode(wav(5)).decode()}], {}]:
@@ -97,6 +107,16 @@ class HostedAudioTests(unittest.TestCase):
                 validate_references(refs)
         valid = [{'name': 'speaker_0', 'audio': 'data:audio/wav;base64,' + base64.b64encode(wav()).decode()}]
         self.assertEqual(['speaker_0'], validate_references(valid)[0])
+
+    def test_privacy_preserves_medication_names_and_masks_identity_label(self):
+        text = '약 이름은 에스시탈로프람이라고 들었어요. 약 이름: 리튬. 이름: 윤다온, 안 갔다.'
+        response = self.client.post('/api/audio/deidentify', json={'text': text})
+        self.assertEqual(200, response.status_code)
+        masked = response.json()['text']
+        self.assertIn('에스시탈로프람', masked)
+        self.assertIn('약 이름: 리튬', masked)
+        self.assertNotIn('윤다온', masked)
+        self.assertIn('안 갔다', masked)
 
     def test_unauthenticated_upload_never_calls_provider(self):
         from app.core.config import settings

@@ -79,6 +79,7 @@ export async function transcribePcmChunks(
   const started = performance.now(), chunks = planAudioChunks(samples)
   const references: SpeakerReference[] = [], segments: AudioSegment[] = [], raw: AudioSegment[] = []
   const failed: { start: number; end: number; code: string }[] = []
+  const noSpeech: { start: number; end: number; code: string }[] = []
   let last: AudioTranscriptionResponse | undefined, consecutiveFailures = 0, lastError: unknown
   let fallback = false
   for (let index = 0; index < chunks.length; index++) {
@@ -88,6 +89,11 @@ export async function transcribePcmChunks(
     try {
       const audio = new File([encodeWav(samples, chunk.start, chunk.end) as BlobPart], 'chunk.wav', { type: 'audio/wav' })
       const result = await send(audio, references)
+      if (result.error_codes?.includes('no_speech')) {
+        noSpeech.push({ ...chunk, code: 'no_speech' })
+        consecutiveFailures = 0
+        continue
+      }
       last = result
       fallback ||= result.diarization_status !== 'completed'
       consecutiveFailures = 0
@@ -130,8 +136,9 @@ export async function transcribePcmChunks(
     status: failed.length ? 'partial' : 'completed', failed_ranges: failed,
     diarization_status: fallback ? 'fallback' : 'completed',
     transcript_text: segments.map(s => s.text).join('\n'),
-    review_ranges: segments.filter(s => s.review_flags?.length).map(s => ({ start: s.start, end: s.end, code: s.review_flags!.join(',') })),
+    review_ranges: [...noSpeech, ...segments.filter(s => s.review_flags?.length).map(s => ({ start: s.start, end: s.end, code: s.review_flags!.join(',') }))],
     warnings: [...last.warnings, '구간 경계와 화자 참조가 일치하지 않는 발화를 원음으로 확인해주세요.',
+      ...(noSpeech.length ? ['발화가 감지되지 않은 구간은 원음으로 확인해주세요.'] : []),
       ...(failed.length ? ['일부 구간을 처리하지 못했습니다. 누락 구간을 확인해주세요.'] : [])],
     stage_metrics: { total_seconds: (performance.now() - started) / 1000, chunks: chunks.length },
     error_codes: [...(last.error_codes || []), ...(failed.length ? ['partial_transcription'] : [])] }

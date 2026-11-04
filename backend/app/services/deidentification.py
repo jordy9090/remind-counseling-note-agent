@@ -69,7 +69,7 @@ MASK_RULES = [
         # counseling prose, not name labels.  Only explicit identity labels or
         # role + name constructions are masked here.
         re.compile(
-            r"(?:(?:이름|성명)\s*[:은는이가]?\s*[가-힣]{2,4}|"
+            r"(?:(?:이름|성명)\s*[:：]\s*[가-힣]{2,4}(?![가-힣])|"
             r"(?:학생|담임|보호자|어머니|아버지)\s*[:은는이가]\s*[가-힣]{2,4}(?=\s*(?:님|씨|$|[,.;])))"
         ),
         "Explicit names should be replaced with aliases.",
@@ -156,6 +156,10 @@ def deidentify_text(text: str, source: str = "") -> tuple[str, list[SensitiveInf
 
         def replace(match: re.Match[str]) -> str:
             nonlocal seen_in_rule
+            if rule.category == "person_name" and re.search(
+                r"(?:약|약물|제품|기관|진단)\s*$", masked[max(0, match.start() - 12):match.start()]
+            ):
+                return match.group(0)
             seen_in_rule = True
             return rule.placeholder
 

@@ -112,7 +112,12 @@ class OpenAIAudioTranscriptionService:
         if not segments:
             text = str(payload.get("text") or "").strip()
             if not text:
-                raise AudioNoSpeechDetectedError("음성에서 발화를 찾지 못했습니다.")
+                return AudioTranscriptionResponse(transcription_id=f"transcription_{uuid4().hex}",
+                    filename=upload.filename, runtime_mode="real", transcription_engine="openai",
+                    diarization_model=model, duration_seconds=duration, language="ko",
+                    transcript_text="", error_codes=["no_speech"],
+                    warnings=["발화가 감지되지 않은 구간은 원음으로 확인해주세요."],
+                    stage_metrics={"total_seconds": time.perf_counter() - started})
             fallback = True
             segments = [AudioSegment(id=0, segment_id="seg_0", start=0, end=duration,
                 text=text, review_flags=["speaker_unassigned", "timestamp_unavailable"])]

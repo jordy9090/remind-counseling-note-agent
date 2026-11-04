@@ -40,4 +40,13 @@ assert.equal(partial.status, 'partial')
 assert.equal(partial.segments.length, 1)
 assert.equal(partial.failed_ranges.at(-1).end, 240)
 assert.equal(calls, 3)
+let silenceCalls = 0
+const withSilence = await transcribePcmChunks(pcm.subarray(0, 240 * 16000), 'silence.wav', 2, async () => {
+  const index = silenceCalls++
+  return index === 1 || index === 2 ? { ...result('A'), segments: [], error_codes: ['no_speech'] } : result('speaker_0')
+})
+assert.equal(withSilence.status, 'completed')
+assert.equal(withSilence.failed_ranges.length, 0)
+assert.equal(withSilence.review_ranges.filter(r => r.code === 'no_speech').length, 2)
+assert.ok(withSilence.segments.at(-1).start > 170)
 console.log('Hosted audio: 60-minute coverage, payload limits, speaker references, raw preservation and partial failure PASS')
