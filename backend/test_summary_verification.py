@@ -131,6 +131,18 @@ class SummaryVerificationTests(unittest.TestCase):
         report = apply_summary_verification(self.summary, SummaryVerification(), self.catalog)
         self.assertEqual([], report.unsupported_or_risky_claims)
 
+    def test_named_warning_does_not_spread_to_similarly_worded_sections(self):
+        text = "내담자는 친구의 연락을 기다리며 답답함을 느꼈다고 말함."
+        self.summary.session_content.text = text
+        self.summary.client_response.text = text
+        report = VerificationReport(unsupported_or_risky_claims=[ReviewableClaim(
+            claim="client_response: " + text, reason="The response timing is uncertain.",
+            recommendation="Review the response field.",
+        )])
+        _apply_verification_consistency(self.summary, report)
+        self.assertTrue(self.summary.client_response.requires_review)
+        self.assertFalse(self.summary.session_content.requires_review)
+
     def test_risky_claim_naming_a_field_marks_it_without_fuzzy_text_overlap(self):
         report = VerificationReport(unsupported_or_risky_claims=[ReviewableClaim(
             claim="session_theme의 '중심이었다'", reason="The excerpt does not establish session-wide importance.",

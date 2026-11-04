@@ -10,6 +10,7 @@ import {
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse } from '../../types/session'
 import DeidentificationReviewModal, { type DeidReviewResult } from '../deidentification/DeidentificationReviewModal'
+import SourceMemoryCues from './SourceMemoryCues'
 
 const ACCEPTED_FILES = '.txt,.pdf,.docx'
 const QUICK_SOURCE_KEY = 'quick_summary_text'
@@ -138,6 +139,7 @@ export default function QuickSummaryPanel({
 
       {result ? (
         <article aria-label="AI 요약 결과" className="mt-10 w-full rounded-2xl border border-primary-100 bg-white p-5 shadow-card sm:p-6">
+          <SourceMemoryCues evidence={result.sections.flatMap(section => section.evidence || [])} />
           <div className="divide-y divide-grey-100">
             {result.sections.map((section) => (
               <section key={section.id} className="py-4 first:pt-0 last:pb-0">
@@ -153,11 +155,12 @@ export default function QuickSummaryPanel({
                         <div key={index}>
                           <p className="font-semibold">{item.label} 원문 {index + 1}</p>
                           <p className="mt-1 whitespace-pre-wrap leading-5">{item.excerpt}</p>
+                          {item.truncated && <p>긴 원문의 앞부분만 표시합니다.</p>}
                           {item.needsReview && <p className="text-amber-800">상담사 확인 필요</p>}
                         </div>
                       ))}
                     </div>
-                    <p className="mt-2">원문 근거는 현재 화면에서만 볼 수 있으며 요약 저장·다시 열기에는 포함되지 않습니다.</p>
+                    <p className="mt-2">요약을 저장하면 개인정보를 가린 연결 원문 일부도 함께 보관되어 다시 볼 수 있습니다.</p>
                   </details>
                 )}
               </section>

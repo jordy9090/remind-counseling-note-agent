@@ -2,6 +2,7 @@
 // The summary itself comes from the regular pipeline; a result is the list of summary items exactly
 // as the regular summary screen builds them (주요 호소, 회기 주제, 상담 내용, ...).
 import type { SessionInput, TemporaryDraftRecord, TemporaryDraftSaveRequest } from '../types/session'
+import { savedSummaryEvidence, type SavedSummaryEvidence } from './summaryEvidence'
 
 export const QUICK_SUMMARY_MAX_CHARS = 20000
 export const QUICK_SUMMARY_MIN_CHARS = 20
@@ -17,8 +18,8 @@ export interface QuickSummarySection {
   id: string
   title: string
   content: string
-  /** Ephemeral source excerpts; never included in saved summaries or login handoffs. */
-  evidence?: { label: string; excerpt: string; needsReview: boolean }[]
+  /** De-identified, attributed excerpts retained with the summary. */
+  evidence?: SavedSummaryEvidence[]
   requiresReview?: boolean
 }
 
@@ -40,13 +41,17 @@ function isSection(value: unknown): value is QuickSummarySection {
   return typeof item.id === 'string' && typeof item.title === 'string' && typeof item.content === 'string'
 }
 
-function cleanSections(value: unknown): QuickSummarySection[] {
+export function cleanQuickSummarySections(value: unknown): QuickSummarySection[] {
   return Array.isArray(value)
-    ? value.filter(isSection).map(({ id, title, content }) => ({ id, title, content }))
+    ? value.filter(isSection).map(({ id, title, content, evidence, requiresReview }) => ({
+      id, title, content,
+      ...(savedSummaryEvidence(evidence).length ? { evidence: savedSummaryEvidence(evidence) } : {}),
+      ...(typeof requiresReview === 'boolean' ? { requiresReview } : {}),
+    }))
     : []
 }
 
-/** Temporary-draft payload for a signed-in quick summary. Only the AI output is stored, never the input. */
+/** Save the AI output and bounded de-identified supporting excerpts, without the input document. */
 export function quickSummaryDraftPayload(result: QuickSummaryResult): TemporaryDraftSaveRequest {
   return {
     case_id: QUICK_SUMMARY_CASE_ID,
@@ -61,7 +66,7 @@ export function quickSummaryDraftPayload(result: QuickSummaryResult): TemporaryD
     selected_previous_session_ids: [],
     attachments: [],
     visible_section_ids: [],
-    draft_sections: result.sections.map(({ id, title, content }) => ({ id, title, content, visible: true })),
+    draft_sections: cleanQuickSummarySections(result.sections).map(section => ({ ...section, visible: true })),
     final_document_sections: [],
     final_document_type: 'session_note',
   }
@@ -81,7 +86,7 @@ const LEGACY_FIELDS: { key: string; id: string; title: string }[] = [
 
 /** Summary stored in a quick-summary draft, or null when the draft does not hold one. */
 export function quickSummaryFromDraft(draft: TemporaryDraftRecord): QuickSummaryResult | null {
-  let sections = cleanSections(draft.draft_sections)
+  let sections = cleanQuickSummarySections(draft.draft_sections)
   if (!sections.length && draft.result && typeof draft.result === 'object') {
     const value = draft.result as Record<string, unknown>
     sections = LEGACY_FIELDS
@@ -115,14 +120,14 @@ export function quickSummaryRecordTitle(savedAt: string, result: QuickSummaryRes
 }
 
 // "로그인 후 저장하기": a guest's summary waits in this browser until the login (or the email
-// confirmation link, which can open in a new tab) completes, then the workspace saves it like any
-// signed-in summary. Only the summary items are kept, never the input, and they expire after 30 minutes.
+// confirmation link, which can open in a new tab) completes. The summary and its de-identified
+// supporting excerpts expire after 30 minutes; the full input is never retained here.
 const PENDING_KEY = 'remind.quickSummary.pending'
 export const PENDING_TTL_MS = 30 * 60 * 1000
 
 export function storePendingQuickSummary(result: QuickSummaryResult, now = Date.now()): void {
   try {
-    window.localStorage.setItem(PENDING_KEY, JSON.stringify({ sections: cleanSections(result.sections), savedAt: now }))
+    window.localStorage.setItem(PENDING_KEY, JSON.stringify({ sections: cleanQuickSummarySections(result.sections), savedAt: now }))
   } catch {
     // Storage can be unavailable (private mode); the summary then cannot carry over the login.
   }
@@ -149,7 +154,7 @@ export function takePendingQuickSummary(now = Date.now()): QuickSummaryResult | 
   try {
     const parsed = JSON.parse(raw) as { sections?: unknown; savedAt?: unknown }
     if (typeof parsed.savedAt !== 'number' || now - parsed.savedAt > PENDING_TTL_MS || now < parsed.savedAt) return null
-    const sections = cleanSections(parsed.sections)
+    const sections = cleanQuickSummarySections(parsed.sections)
     return sections.length ? { sections, deidentified: true } : null
   } catch {
     return null

@@ -272,7 +272,9 @@ class CaseListRouteTests(unittest.TestCase):
             {"id": "session_theme", "title": "회기 주제", "content": "발표 불안 탐색"},
             {"id": "session_content", "title": "상담 내용", "content": "합성 내담자는 발표 불안을 이야기했다."},
             {"id": "counselor_intervention", "title": "상담자 개입", "content": "불안할 때 떠오르는 생각을 함께 정리했다."},
-            {"id": "client_response", "title": "내담자 반응", "content": "긴장했지만 계속 이야기했다."},
+            {"id": "client_response", "title": "내담자 반응", "content": "긴장했지만 계속 이야기했다.", "requiresReview": False,
+             "evidence": [{"label": "축어록", "sourceRef": "transcript.turn_2", "sourceType": "transcript", "confidence": "high",
+                           "needsReview": False, "excerpt": "내담자: 긴장되지만 여기서 계속 이야기해볼게요."}]},
             {"id": "next_plan", "title": "다음 계획", "content": "짧은 발표 연습을 해보기로 했다."},
             {"id": "risk_signal", "title": "위험 신호", "content": "확인된 위험 신호 없음."},
         ]}
@@ -296,6 +298,10 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual([section["id"] for section in record["draft_json"]["workspace_sections"]],
                          [section["id"] for section in summary["sections"]])
         self.assertEqual(record["draft_json"]["source"], "quick_summary")
+        response_section = next(item for item in record["draft_json"]["workspace_sections"] if item["id"] == "client_response")
+        self.assertEqual("transcript.turn_2", response_section["evidence"][0]["sourceRef"])
+        self.assertEqual("내담자: 긴장되지만 여기서 계속 이야기해볼게요.", response_section["evidence"][0]["excerpt"])
+        self.assertFalse(response_section["requiresReview"])
         self.assertIsNone(record["session_input"], "a quick summary stores no session input")
 
         # The next save takes the next number; the client list sees both sessions.

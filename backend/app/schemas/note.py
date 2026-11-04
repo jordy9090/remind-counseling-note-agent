@@ -426,12 +426,34 @@ class CaseDashboardExport(BaseModel):
     created_at: str | None = None
 
 
+class SavedSummaryEvidence(BaseModel):
+    """Bounded de-identified source excerpts; full source containers are excluded."""
+
+    label: str = Field(min_length=1, max_length=60)
+    excerpt: str = Field(min_length=1, max_length=2000)
+    sourceRef: str = Field(pattern=r"^(transcript\.turn_[1-9]\d*|counselor_memo)$")
+    sourceType: Literal["transcript", "counselor_memo"]
+    confidence: Literal["high", "medium", "low"] = "low"
+    needsReview: bool = True
+    truncated: bool = False
+
+    @field_validator("sourceType")
+    @classmethod
+    def match_source_type(cls, value: str, info) -> str:
+        expected = "counselor_memo" if info.data.get("sourceRef") == "counselor_memo" else "transcript"
+        if value != expected:
+            raise ValueError("Source type must match its reference.")
+        return value
+
+
 class QuickSummarySection(BaseModel):
     """One summary item as shown in the summary screen (주요 호소, 회기 주제, ...)."""
 
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     title: str = Field(min_length=1, max_length=60)
     content: str = Field(default="", max_length=8000)
+    evidence: list[SavedSummaryEvidence] = Field(default_factory=list, max_length=40)
+    requiresReview: bool = True
 
 
 class QuickSummarySessionRequest(BaseModel):

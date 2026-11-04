@@ -1176,7 +1176,7 @@ def save_quick_summary_session(
     # Korea has no daylight saving time, so a fixed offset avoids depending on installed tz data.
     session_date = request.session_date or datetime.now(timezone(timedelta(hours=9))).date().isoformat()
     alias = str(case_row.get("case_alias") or "")
-    # The summary items are documents: names and other identifying details are replaced.
+    # Reapply storage masking to both summary prose and its supporting excerpts.
     sections, _ = deidentify_json([section.model_dump() for section in request.sections], known_names=[alias])
     if not any(str(section.get("content") or "").strip() for section in sections):
         raise SupabaseStorageError("저장할 요약 내용이 비어 있습니다.")
@@ -1215,7 +1215,8 @@ def save_quick_summary_session(
     draft_json["source"] = "quick_summary"
     # Reopening the session shows exactly the items of the quick summary, in the same order.
     draft_json["workspace_sections"] = [
-        {"id": section["id"], "title": section["title"], "content": str(section.get("content") or ""), "visible": True}
+        {"id": section["id"], "title": section["title"], "content": str(section.get("content") or ""), "visible": True,
+         "evidence": section.get("evidence", []), "requiresReview": section.get("requiresReview", True)}
         for section in sections
     ]
     note_rows = actor_storage.insert("generated_notes", [{

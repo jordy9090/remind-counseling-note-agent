@@ -38,7 +38,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             if (!next) clearPendingQuickSummary()
           }}
           canExtractDocuments={false}
-          privacyNote="입력한 내용과 요약 결과는 저장되지 않아요. '로그인 후 저장하기'를 누르면 로그인한 뒤 고른 내담자의 회기로 요약 결과만 저장돼요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요."
+          privacyNote="로그인 전에는 서버에 저장하지 않아요. '로그인 후 저장하기'를 누르면 요약과 개인정보를 가린 연결 원문 일부를 이 브라우저에 최대 30분 보관하고, 로그인 후 저장해요. 입력 전문은 저장하지 않아요."
           saveAction={{
             label: '로그인 후 저장하기',
             onSave: (summary) => {

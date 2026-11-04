@@ -1040,12 +1040,16 @@ def _apply_verification_consistency(
         item.field.removeprefix("session_summary_draft.").removesuffix(".text")
         for item in verification.requires_counselor_review
     }
-    for field in ("session_theme", "presenting_problem", "session_content", "counselor_intervention",
-                  "client_response", "reflection", "next_plan"):
+    fields = ("session_theme", "presenting_problem", "session_content", "counselor_intervention",
+              "client_response", "reflection", "next_plan")
+    named_claims = [(claim, {field for field in fields
+                            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(field)}(?![A-Za-z0-9_])", claim)})
+                    for claim in review_claims]
+    for field in fields:
         section = getattr(summary, field)
         if field in review_fields or section.evidence_type != "direct" or any(
-            re.search(rf"(?<![A-Za-z0-9_]){re.escape(field)}(?![A-Za-z0-9_])", claim)
-            or _text_similarity(section.text, claim) >= 0.35 for claim in review_claims
+            field in named or (not named and _text_similarity(section.text, claim) >= 0.35)
+            for claim, named in named_claims
         ):
             section.requires_review = True
 

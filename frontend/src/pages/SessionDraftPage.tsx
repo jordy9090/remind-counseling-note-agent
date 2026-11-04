@@ -95,7 +95,8 @@ import {
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
 import { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } from '../lib/supervisionDraft'
-import { riskInformation, summarySectionEvidence } from '../lib/summaryEvidence'
+import { riskInformation, savedSummaryEvidence, summarySectionEvidence } from '../lib/summaryEvidence'
+import SourceMemoryCues from '../components/quick-summary/SourceMemoryCues'
 import { formatRelationalSupervisionMemo } from '../lib/relationalInsights'
 import { confirmedPayload, hasRestoredInput, isConfirmedRecord, isObject, noteFromRecord, readStoredSections, readStoredText, recordPayload, restoreStoredSections, sectionFingerprint, sessionInputFromRecord, sessionThemeText } from '../lib/persistenceWorkflow'
 import { REATTACHMENT_NOTICE, temporaryDraftPayload } from '../lib/temporaryDraft'
@@ -216,6 +217,9 @@ interface CompactEvidence {
   excerpt: string
   confidence: EvidenceConfidence
   needsReview: boolean
+  sourceRef?: string
+  sourceType?: EvidenceSourceType
+  truncated?: boolean
 }
 
 interface DraftSection {
@@ -1575,6 +1579,12 @@ export default function SessionDraftPage({
       const baseSections = buildDocumentSections(data, nextForm, theme, defaultVisibleSectionIds)
       const sections = restoreStoredSections(payload, baseSections, confirmed).map((section) => ({
         ...(baseSections.find((base) => base.id === section.id) || emptyRestoredSection(section.id)), ...section,
+        ...(section.evidence?.length ? {
+          sourceBadges: buildSourceBadges(section.evidence.map(item => ({
+            claim: section.content, source_type: item.sourceType || 'transcript', source_excerpt: item.excerpt,
+            confidence: item.confidence,
+          })), section.requiresReview ? ['needs_review'] : []),
+        } : {}),
       }))
       setForm(nextForm)
       setSessionTopic(theme)
@@ -2190,6 +2200,7 @@ function SessionDetailWorkspace({
                 <PenLine className="h-4 w-4" />{editMode ? '수정 완료' : '수정하기'}
               </button>
             </div>
+            <SourceMemoryCues evidence={sections.flatMap(section => section.evidence)} />
             <div className="mt-2">
               {sections.length ? (
                 sections.map((section) => (
@@ -2411,6 +2422,7 @@ function EvidencePreview({ evidence }: { evidence: CompactEvidence[] }) {
             <span>{confidenceLabel[item.confidence]}</span>
           </div>
           <p className="mt-2 whitespace-pre-wrap text-slate-700">{item.excerpt || '표시할 원문 일부가 없습니다.'}</p>
+          {item.truncated && <p>긴 원문의 앞부분만 표시합니다.</p>}
           {item.needsReview && <p className="mt-2 font-semibold text-amber-700">상담사 확인 필요 · 현재 문장과 원문을 대조해주세요.</p>}
         </div>
       ))}
@@ -3639,7 +3651,7 @@ export function quickSummaryResultFromNote(note: NoteDraftResponse): QuickSummar
   const sections = buildDocumentSections(note, initialForm, '', defaultVisibleSectionIds)
     .filter((section) => section.visible && section.content.trim())
     .map(({ id, title, content, evidence, sourceBadges }) => ({
-      id, title, content, evidence, requiresReview: sourceBadges.includes('needs_review'),
+      id, title, content, evidence: savedSummaryEvidence(evidence), requiresReview: sourceBadges.includes('needs_review'),
     }))
   return { sections, deidentified: true, stub: Boolean(note.full_response?.stub) }
 }
@@ -3816,6 +3828,8 @@ function toCompactEvidence(item: EvidenceCheckItem): CompactEvidence {
   return {
     label: sourceTypeLabel[item.source_type],
     excerpt: item.source_excerpt,
+    sourceRef: item.source_ref,
+    sourceType: item.source_type,
     confidence: item.confidence,
     needsReview: item.source_type === 'ai_inference' || item.confidence !== 'high',
   }

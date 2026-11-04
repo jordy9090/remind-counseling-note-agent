@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Any
+from pydantic import ValidationError
+from app.schemas.note import SavedSummaryEvidence
 
 
 def _fields(names: str) -> dict[str, Any]:
@@ -37,7 +39,8 @@ _SHAPE = {
         **_fields("id kind filename mediaType status characterCount pageCount durationSeconds language runtimeMode diarizationStatus languageProbability dirtySinceApply expectedSpeakers lastAppliedMode requiresReattachment"),
         "appliedTargets": _STRINGS,
     }],
-    "draft_sections": [_fields("id title content visible")],
+    "draft_sections": [{**_fields("id title content visible requiresReview"),
+                        "evidence": [_fields("label excerpt sourceRef sourceType confidence needsReview truncated")]}],
     "final_document_sections": [_fields("id title content contentHtml contentKind")],
     "result": {
         "relational_insights": _INSIGHTS,
@@ -77,6 +80,21 @@ def _project(value: Any, allowed: Any) -> Any:
 def temporary_draft_payload(value: dict[str, Any]) -> dict[str, Any]:
     """Project saves and legacy reads without modifying existing stored rows."""
     data = _project(value, _SHAPE)
+    for section in data.get("draft_sections", []):
+        excerpts = []
+        items = section.get("evidence")
+        for item in (items[:40] if isinstance(items, list) else []):
+            try:
+                evidence = SavedSummaryEvidence.model_validate(item)
+            except ValidationError:
+                continue
+            expected_type = "counselor_memo" if evidence.sourceRef == "counselor_memo" else "transcript"
+            if evidence.sourceType == expected_type:
+                excerpts.append(evidence.model_dump(exclude_defaults=True))
+        if excerpts:
+            section["evidence"] = excerpts
+        else:
+            section.pop("evidence", None)
     data["attachments"] = [
         {**material, "requiresReattachment": True, "warnings": []}
         for material in data.get("attachments", []) if isinstance(material, dict)
