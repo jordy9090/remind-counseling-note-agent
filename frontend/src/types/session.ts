@@ -599,7 +599,7 @@ export interface AudioCapability {
 }
 
 export interface AudioCapabilitiesResponse {
-  provider?: 'local' | 'openai'
+  provider?: 'local' | 'openai' | 'clova'
   chunk_seconds?: number | null
   max_duration_seconds?: number
   upload: AudioCapability
@@ -640,7 +640,7 @@ export interface AudioTranscriptionResponse {
   filename: string
   status: 'completed' | 'partial'
   runtime_mode: 'stub' | 'real'
-  transcription_engine?: 'whisperx' | 'stub' | 'faster-whisper' | 'sensevoice' | 'openai' | null
+  transcription_engine?: 'whisperx' | 'stub' | 'faster-whisper' | 'sensevoice' | 'openai' | 'clova' | null
   alignment_model?: string | null
   diarization_model?: string | null
   alignment_status?: 'completed' | 'fallback' | 'disabled' | null

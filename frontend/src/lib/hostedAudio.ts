@@ -95,12 +95,16 @@ export async function transcribePcmChunks(
         continue
       }
       last = result
+      for (const range of result.failed_ranges || []) {
+        failed.push({ start: range.start + chunk.start, end: range.end + chunk.start, code: range.code || 'asr_failed' })
+      }
       fallback ||= result.diarization_status !== 'completed'
       consecutiveFailures = 0
       const names = new Map<string, string>(references.map(ref => [ref.name, ref.name]))
       for (const speaker of new Set(result.segments.map(s => s.speaker).filter(Boolean) as string[])) {
         if (names.has(speaker)) continue
         const clean = result.segments.find(s => s.speaker === speaker && s.end - s.start >= 2.4 &&
+          !s.review_flags?.some(flag => ['speaker_reference_unmatched', 'speaker_unassigned', 'low_confidence'].includes(flag)) &&
           !result.segments.some(other => other !== s && other.speaker !== speaker && other.start < s.end && other.end > s.start))
         if (clean && references.length < expectedSpeakers) {
           const name = `speaker_${references.length}`
@@ -111,7 +115,9 @@ export async function transcribePcmChunks(
       }
       for (const segment of result.raw_segments || result.segments) {
         raw.push({ ...segment, id: raw.length, segment_id: `chunk_${index}_${segment.segment_id || segment.id}`,
-          start: segment.start + chunk.start, end: segment.end + chunk.start })
+          start: segment.start + chunk.start, end: segment.end + chunk.start,
+          words: segment.words?.map(word => ({ ...word, start: word.start == null ? word.start : word.start + chunk.start,
+            end: word.end == null ? word.end : word.end + chunk.start })) })
       }
       for (const segment of result.segments) {
         const speaker = segment.speaker ? names.get(segment.speaker) : undefined
@@ -120,6 +126,8 @@ export async function transcribePcmChunks(
         if ((index > 0 && segment.start < 1) || (index < chunks.length - 1 && segment.end > chunk.end - chunk.start - 1)) flags.push('chunk_boundary')
         segments.push({ ...segment, id: segments.length, segment_id: `chunk_${index}_${segment.segment_id || segment.id}`,
           start: segment.start + chunk.start, end: segment.end + chunk.start, speaker,
+          words: segment.words?.map(word => ({ ...word, start: word.start == null ? word.start : word.start + chunk.start,
+            end: word.end == null ? word.end : word.end + chunk.start })),
           review_flags: flags, source_segment_ids: [`chunk_${index}_${segment.segment_id || segment.id}`] })
       }
     } catch (error) {

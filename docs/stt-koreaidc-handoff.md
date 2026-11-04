@@ -1,6 +1,6 @@
 # Production path update — 2026-11-04
 
-The owner subsequently selected the [OpenAI hosted audio runtime](openai-audio-runtime.md). The KoreaIDC/local instructions and measured results below remain an optional self-hosted handoff; they are not the active hosted deployment configuration or evidence for OpenAI quality. Do not run GPU qualification as part of the hosted release.
+The owner selected the [CLOVA Speech runtime](clova-audio-runtime.md), superseding the brief [OpenAI beta](openai-audio-runtime.md). The KoreaIDC/local instructions and measured results below remain an optional self-hosted handoff; they are not the hosted deployment configuration or evidence for either API provider's quality. CLOVA live qualification must be recorded separately. Do not run GPU qualification as part of the hosted release.
 
 # Experimental STT handoff for KoreaIDC
 

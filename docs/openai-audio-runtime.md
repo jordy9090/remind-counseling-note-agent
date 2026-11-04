@@ -1,5 +1,7 @@
 # Hosted audio runtime
 
+Historical OpenAI beta record: the owner subsequently selected [CLOVA Speech](clova-audio-runtime.md). The current product consent/client accepts CLOVA only. Do not use this document to configure the current production provider or infer CLOVA quality from OpenAI evidence.
+
 The owner authorized switching the production audio path to OpenAI on 2026-11-04. The local/KoreaIDC benchmark remains historical evidence; it does not qualify this hosted provider.
 
 ## Configuration

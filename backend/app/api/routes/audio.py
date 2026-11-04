@@ -43,6 +43,7 @@ async def transcribe_audio(
     task: str = Form(default="transcribe"),
     expected_speakers: int = Form(default=2),
     cloud_audio_consent: bool = Form(default=False),
+    cloud_audio_provider: str = Form(default="", max_length=20),
     speaker_references: str = Form(default="[]", max_length=700000),
 ) -> AudioTranscriptionResponse:
     """Transcribe a temporary audio upload when the opt-in runtime is available."""
@@ -51,12 +52,14 @@ async def transcribe_audio(
     response.headers["Pragma"] = "no-cache"
     try:
         validate_audio_request(language, task, expected_speakers)
-        hosted = current_audio_engine() == "openai"
-        if hosted and not cloud_audio_consent:
-            raise HTTPException(status_code=422, detail="원본 음성을 OpenAI에 전송하는 데 동의가 필요합니다.")
+        engine = current_audio_engine()
+        hosted = engine in {"openai", "clova"}
+        if hosted and (not cloud_audio_consent or cloud_audio_provider != engine):
+            provider_name = "CLOVA Speech" if engine == "clova" else "OpenAI"
+            raise HTTPException(status_code=422, detail=f"원본 음성의 {provider_name} 전송 동의를 다시 확인해주세요.")
         kwargs = {}
         if hosted:
-            from app.services.openai_audio import validate_references
+            from app.services.hosted_audio import validate_references
             try:
                 references = json.loads(speaker_references)
             except (ValueError, TypeError) as error:

@@ -1,6 +1,6 @@
 # Hosted production scope update — 2026-11-04
 
-The owner authorized OpenAI audio processing and production deployment after the local-only candidate review. See [hosted runtime](openai-audio-runtime.md) for the changed privacy boundary, Vercel routing, limits and model lifecycle. The source separation and historical local benchmark below remain evidence for that earlier candidate. Summary implementation from PR #72 is preserved.
+The owner selected [CLOVA Speech](clova-audio-runtime.md) after a brief [OpenAI beta](openai-audio-runtime.md). The provider adapter and consent changed; the source separation and historical local benchmark below remain evidence for the earlier candidate, not CLOVA quality. Summary implementation from PR #72 is preserved.
 
 # STT candidate source separation
 
