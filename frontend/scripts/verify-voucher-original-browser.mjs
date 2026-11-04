@@ -44,7 +44,7 @@ try {
   }
   await page.goto(origin)
   if (deployed) {
-    await page.getByRole('button', { name: '로그인', exact: true }).first().click()
+    await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).click()
     await page.getByLabel('이메일', { exact: true }).fill(credentials.email)
     await page.getByLabel('비밀번호', { exact: true }).fill(credentials.password)
     await page.getByRole('button', { name: '로그인', exact: true }).last().click()
