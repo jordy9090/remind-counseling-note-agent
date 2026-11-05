@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
+import { AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../lib/audioConsent'
 import GroundingEvidenceReview, {
   EvidenceDrawer,
   EvidenceSourcePanel,
@@ -208,7 +209,6 @@ type SourceBadgeKind =
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(import.meta.env.VITE_DOCUMENT_UPLOAD_MAX_BYTES)
   || (import.meta.env.PROD ? 4 * 1024 * 1024 : 20 * 1024 * 1024)
 const DOCUMENT_UPLOAD_LIMIT_LABEL = `${Math.floor(DOCUMENT_UPLOAD_MAX_BYTES / 1024 / 1024)}MB`
-const AUDIO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
 const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['.pdf', '.docx', '.txt'])
 const AUDIO_UPLOAD_EXTENSIONS = new Set(['.mp3', '.m4a', '.wav'])
 
@@ -4201,7 +4201,7 @@ function validateSelectedFile(file: File, kind: UploadedMaterialKind): UploadedM
   const extension = getFileExtension(file.name)
   const allowed = kind === 'document' ? DOCUMENT_UPLOAD_EXTENSIONS : AUDIO_UPLOAD_EXTENSIONS
   const maxBytes = kind === 'document' ? DOCUMENT_UPLOAD_MAX_BYTES : AUDIO_UPLOAD_MAX_BYTES
-  const defaultLimitLabel = kind === 'document' ? DOCUMENT_UPLOAD_LIMIT_LABEL : '500MB'
+  const defaultLimitLabel = kind === 'document' ? DOCUMENT_UPLOAD_LIMIT_LABEL : AUDIO_UPLOAD_LIMIT_LABEL
 
   if (!allowed.has(extension)) {
     return buildFailedMaterial(file, kind, `지원하지 않는 파일 형식입니다. ${Array.from(allowed).join(', ')} 파일을 선택해주세요.`)

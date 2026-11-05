@@ -4,6 +4,7 @@ import { Check, Copy, Loader2, Mic, Plus, RotateCcw } from 'lucide-react'
 import { extractDocumentMaterial, requestQuickSummary } from '../../api/client'
 import {
   QUICK_SUMMARY_MAX_CHARS,
+  AUTHENTICATED_QUICK_SUMMARY_MAX_CHARS,
   QUICK_SUMMARY_MIN_CHARS,
   quickSummaryText,
   type QuickSummaryResult,
@@ -63,13 +64,14 @@ export default function QuickSummaryPanel({
   // A reviewed audio contribution is replaced on reapplication, never appended twice.
   const inputText = [text.trim(), audioText.trim()].filter(Boolean).join('\n\n')
   const length = inputText.length
-  const overLimit = length > QUICK_SUMMARY_MAX_CHARS
+  const maxChars = canExtractDocuments ? AUTHENTICATED_QUICK_SUMMARY_MAX_CHARS : QUICK_SUMMARY_MAX_CHARS
+  const overLimit = length > maxChars
 
   /** Validates, then opens the review step; generation starts from the modal. */
   const summarize = () => {
     if (loading || audioPending) return
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
-    if (overLimit) return setError(`간편 요약은 ${QUICK_SUMMARY_MAX_CHARS.toLocaleString()}자까지 입력할 수 있어요.`)
+    if (overLimit) return setError(`간편 요약은 ${maxChars.toLocaleString()}자까지 입력할 수 있어요.${canExtractDocuments ? '' : ' 로그인하면 2시간 상담 분량까지 이용할 수 있어요.'}`)
     setError(null)
     setReviewing(true)
   }
@@ -228,7 +230,7 @@ export default function QuickSummaryPanel({
               <input ref={fileInputRef} type="file" accept={ACCEPTED_FILES} disabled={loading || reviewing} className="hidden" aria-label="상담 내용 파일 선택" onChange={(event) => void addFile(event.target.files?.[0])} />
               {length > 0 && (
                 <span className={`text-xs ${overLimit ? 'font-bold text-danger-500' : 'text-grey-400'}`}>
-                  {length.toLocaleString()} / {QUICK_SUMMARY_MAX_CHARS.toLocaleString()}자
+                  {length.toLocaleString()} / {maxChars.toLocaleString()}자
                 </span>
               )}
             </div>

@@ -28,6 +28,7 @@ from app.schemas.note import GenerateNoteResponse, SessionInput
 from app.services.storage_deidentification import deidentify_session_input
 
 QUICK_SUMMARY_MAX_CHARS = 20_000
+AUTHENTICATED_MAX_CHARS = 120_000
 QUICK_SUMMARY_MIN_CHARS = 20
 ANONYMOUS_LIMIT = (5, 60 * 60)  # 5 requests per hour per IP
 AUTHENTICATED_LIMIT = (60, 60 * 60)  # 60 requests per hour per user
@@ -41,7 +42,7 @@ _SPEAKER_LINE = re.compile(
 
 
 class QuickSummaryRequest(BaseModel):
-    text: str = Field(default="", max_length=QUICK_SUMMARY_MAX_CHARS + 1000)
+    text: str = Field(default="", max_length=AUTHENTICATED_MAX_CHARS + 1000)
 
 
 class QuickSummaryInputError(ValueError):
@@ -92,20 +93,20 @@ def rate_limit_key(*, client_ip: str, actor: str | None) -> tuple[str, int, int]
     return hashlib.sha256(raw.encode("utf-8")).hexdigest(), limit, window
 
 
-def validate_quick_summary_text(text: str) -> str:
+def validate_quick_summary_text(text: str, *, max_chars: int = QUICK_SUMMARY_MAX_CHARS) -> str:
     cleaned = re.sub(r"[ \t]+\n", "\n", (text or "").strip())
     if len(cleaned) < QUICK_SUMMARY_MIN_CHARS:
         raise QuickSummaryInputError(f"요약할 상담 내용을 {QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.")
-    if len(cleaned) > QUICK_SUMMARY_MAX_CHARS:
+    if len(cleaned) > max_chars:
         raise QuickSummaryInputError(
-            f"간편 요약은 {QUICK_SUMMARY_MAX_CHARS:,}자까지 입력할 수 있어요. 현재 {len(cleaned):,}자입니다."
+            f"간편 요약은 {max_chars:,}자까지 입력할 수 있어요. 현재 {len(cleaned):,}자입니다."
         )
     return cleaned
 
 
-def quick_summary_session_input(text: str) -> SessionInput:
+def quick_summary_session_input(text: str, *, max_chars: int = QUICK_SUMMARY_MAX_CHARS) -> SessionInput:
     """The pasted text as a one-off session: a transcript when it has speaker lines, otherwise a memo."""
-    cleaned = validate_quick_summary_text(text)
+    cleaned = validate_quick_summary_text(text, max_chars=max_chars)
     is_transcript = len(_SPEAKER_LINE.findall(cleaned)) >= 2
     return SessionInput(
         case_id=QUICK_SUMMARY_CASE_ID,
@@ -116,9 +117,9 @@ def quick_summary_session_input(text: str) -> SessionInput:
     )
 
 
-def generate_quick_summary(text: str) -> GenerateNoteResponse:
+def generate_quick_summary(text: str, *, max_chars: int = QUICK_SUMMARY_MAX_CHARS) -> GenerateNoteResponse:
     """Run the Skill core and existing checks without retrieval or storage."""
     from app.graph.graph import run_note_pipeline
 
-    session_input, _ = deidentify_session_input(quick_summary_session_input(text))
+    session_input, _ = deidentify_session_input(quick_summary_session_input(text, max_chars=max_chars))
     return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True)

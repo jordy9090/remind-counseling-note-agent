@@ -3,6 +3,7 @@ rate limit, Vercel routing. Synthetic text only."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import unittest
@@ -82,6 +83,47 @@ class QuickSummaryTest(unittest.TestCase):
                 self.assertEqual(parsed.transcript_text, text)
                 self.assertEqual(parsed.counselor_memo, "")
                 self.assertFalse(parsed.persist)
+
+    def test_authenticated_two_hour_transcript_reaches_model_without_truncation(self) -> None:
+        from app.schemas.note import InputSources, SanitizedInput
+        from app.services.summary_skill import build_summary_skill_request
+        text = "\n".join(
+            f"[{minute // 60}:{minute % 60:02}:00] 내담자: 오늘 느낀 불안과 일상생활의 변화를 함께 점검했습니다. " * 8
+            + f"\n상담자: {minute}번째 구간에서 다룬 생각을 다시 확인하겠습니다."
+            for minute in range(120)
+        ) + "\n[1:59:59] 내담자: 마지막으로 수면 일지는 쓰지 않기로 했고 다음 회기에 다시 상의하기로 했어요."
+        self.assertGreater(len(text), qs.QUICK_SUMMARY_MAX_CHARS)
+        self.assertLess(len(text), qs.AUTHENTICATED_MAX_CHARS)
+        captured = {}
+
+        def pipeline(session_input, **kwargs):
+            sanitized = SanitizedInput(
+                case_id=session_input.case_id, session_number=1, session_date="", counselor_name="",
+                sources=InputSources(counselor_memo=session_input.counselor_memo, transcript_text=session_input.transcript_text),
+            )
+            captured["body"] = json.loads(build_summary_skill_request(sanitized).messages[1].content)
+            raise RuntimeError("Synthetic stop before model call")
+
+        with patch("app.api.routes.notes._optional_actor", return_value="synthetic-user"), patch(
+            "app.graph.graph.run_note_pipeline", side_effect=pipeline
+        ):
+            response = self.client.post("/api/notes/quick-summary", json={"text": text})
+        self.assertEqual(response.status_code, 502)
+        submitted = captured["body"]["sources"]["transcript_text"]
+        for line in text.splitlines():
+            self.assertTrue(line.rstrip() in submitted, "Every source line, including the tail, must reach generation")
+        self.assertIn(f"transcript.turn_{len(text.splitlines())}", captured["body"]["allowed_source_refs"])
+        # The larger budget requires a verified actor, not a user-supplied flag.
+        self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": text}).status_code, 422)
+
+    def test_authenticated_limit_and_privacy_preview_cover_same_input(self) -> None:
+        from app.services.deidentification_preview import preview_items
+        text = "내담자: " + "상담 내용 확인. " * 11990
+        text = text[:qs.AUTHENTICATED_MAX_CHARS]
+        self.assertEqual(qs.validate_quick_summary_text(text, max_chars=qs.AUTHENTICATED_MAX_CHARS), text.strip())
+        self.assertIsNotNone(preview_items([text]))
+        with self.assertRaises(qs.QuickSummaryInputError):
+            qs.validate_quick_summary_text("가" * (qs.AUTHENTICATED_MAX_CHARS + 1), max_chars=qs.AUTHENTICATED_MAX_CHARS)
 
     def test_anonymous_requests_are_rate_limited_per_ip(self) -> None:
         limit = qs.ANONYMOUS_LIMIT[0]
