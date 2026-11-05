@@ -602,7 +602,7 @@ export interface AudioCapability {
 export interface AudioCapabilitiesResponse {
   provider?: 'local' | 'openai' | 'clova'
   chunk_seconds?: number | null
-  max_duration_seconds?: number
+  max_duration_seconds?: number | null
   upload: AudioCapability
   transcription: AudioCapability
   speaker_diarization: AudioCapability

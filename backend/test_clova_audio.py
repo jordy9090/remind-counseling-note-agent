@@ -71,7 +71,10 @@ class ClovaAudioTests(unittest.TestCase):
         return provider
 
     def test_capabilities_and_missing_config_never_fall_back_to_openai(self):
-        self.assertEqual('clova', self.client.get('/api/audio/capabilities').json()['provider'])
+        capabilities = self.client.get('/api/audio/capabilities').json()
+        self.assertEqual('clova', capabilities['provider'])
+        self.assertIsNone(capabilities['max_duration_seconds'])
+        self.assertEqual(60, capabilities['chunk_seconds'])
         with patch.dict(os.environ, {'CLOVA_SPEECH_SECRET_KEY': ''}), patch('openai.OpenAI') as other:
             self.assertFalse(self.client.get('/api/audio/capabilities').json()['transcription']['available'])
             self.assertEqual(503, self.post().status_code)

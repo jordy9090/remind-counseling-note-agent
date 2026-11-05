@@ -32,8 +32,12 @@ QUICK_SUMMARY_MIN_CHARS = 20
 ANONYMOUS_LIMIT = (5, 60 * 60)  # 5 requests per hour per IP
 AUTHENTICATED_LIMIT = (60, 60 * 60)  # 60 requests per hour per user
 QUICK_SUMMARY_CASE_ID = "quick-summary"
-# Two or more speaker-labelled lines ("내담자: ...", "상담자: ...") mean the text is a transcript.
-_SPEAKER_LINE = re.compile(r"^\s*(?:내담자|상담자|상담사|Cl|Co|CL|CO)\s*\d*\s*[:：]", re.MULTILINE)
+# Include the timestamped lines emitted by the audio editor, preserving unknown roles.
+_SPEAKER_LINE = re.compile(
+    r"^\s*(?:\[\d+:\d{2}(?::\d{2})?\]\s*)?"
+    r"(?:내담자|상담자|상담사|Cl|Co|CL|CO|화자\s+[A-Za-z0-9_]+)\s*\d*\s*[:：]",
+    re.MULTILINE,
+)
 
 
 class QuickSummaryRequest(BaseModel):

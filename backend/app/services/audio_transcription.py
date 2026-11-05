@@ -401,7 +401,8 @@ def get_audio_capabilities() -> AudioCapabilitiesResponse:
     if current_audio_engine() in {"openai", "clova"}:
         return AudioCapabilitiesResponse(upload=AudioCapability(available=True),
             transcription=transcription, speaker_diarization=transcription,
-            runtime_mode=runtime_mode, provider=current_audio_engine(), chunk_seconds=60)
+            runtime_mode=runtime_mode, provider=current_audio_engine(), chunk_seconds=60,
+            max_duration_seconds=None)
     if runtime_mode == "real" and current_audio_engine() in {"faster-whisper", "sensevoice"}:
         enabled = os.getenv("AUDIO_DIARIZATION_ENGINE", "campplus") == "campplus" and importlib.util.find_spec("funasr") is not None
         return AudioCapabilitiesResponse(upload=AudioCapability(available=True), transcription=transcription,

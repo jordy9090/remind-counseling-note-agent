@@ -72,6 +72,17 @@ class QuickSummaryTest(unittest.TestCase):
         too_long = "가" * (qs.QUICK_SUMMARY_MAX_CHARS + 1)
         self.assertEqual(self.client.post("/api/notes/quick-summary", json={"text": too_long}).status_code, 422)
 
+    def test_audio_editor_timestamps_preserve_transcript_source(self) -> None:
+        for text in (
+            "[0:00] 상담자: 오늘은 어떤 일이 있었나요?\n[1:02:03] 내담자: 학교에 안 갔어요.",
+            "[0:00] 화자 speaker_0: 오늘은 어떤 일이 있었나요?\n[0:10] 화자 chunk_1_unmatched_2: 학교에 안 갔어요.",
+        ):
+            with self.subTest(text=text):
+                parsed = qs.quick_summary_session_input(text)
+                self.assertEqual(parsed.transcript_text, text)
+                self.assertEqual(parsed.counselor_memo, "")
+                self.assertFalse(parsed.persist)
+
     def test_anonymous_requests_are_rate_limited_per_ip(self) -> None:
         limit = qs.ANONYMOUS_LIMIT[0]
         headers = {"x-real-ip": "203.0.113.7"}

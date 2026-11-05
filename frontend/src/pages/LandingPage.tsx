@@ -38,6 +38,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             if (!next) clearPendingQuickSummary()
           }}
           canExtractDocuments={false}
+          onAudioLogin={onLogin}
           privacyNote="로그인 전에는 서버에 저장하지 않아요. '로그인 후 저장하기'를 누르면 요약과 개인정보를 가린 연결 원문 일부를 이 브라우저에 임시 보관하고, 로그인 후 저장해요. 30분이 지나면 이어서 저장할 수 없어요. 입력 전문은 저장하지 않아요."
           saveAction={{
             label: '로그인 후 저장하기',

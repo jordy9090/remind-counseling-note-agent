@@ -18,7 +18,7 @@ class AudioCapabilitiesResponse(BaseModel):
     runtime_mode: Literal["disabled", "stub", "real"]
     provider: Literal["local", "openai", "clova"] = "local"
     chunk_seconds: int | None = None
-    max_duration_seconds: int = 3600
+    max_duration_seconds: int | None = 3600
 
 
 class AudioWord(BaseModel):

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react'
-import { AlertTriangle, CheckCircle2, FileText, Loader2, Mic, PenLine, Plus, Upload, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileText, Loader2, PenLine, Plus, Upload, X } from 'lucide-react'
 
 import { PrimaryButton } from '../app-shell/ui'
 import type { AudioCapabilitiesResponse, SessionInput } from '../../types/session'
 import type { UploadedMaterial } from '../../types/materials'
+import { AUDIO_CONSENT_MESSAGE } from '../../lib/audioConsent'
 
 export interface SessionTime {
   start: string
@@ -12,7 +13,6 @@ export interface SessionTime {
 
 const ACCEPT = '.pdf,.docx,.txt,.mp3,.m4a,.wav,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,audio/mpeg,audio/mp4,audio/wav,audio/x-wav'
 const AUDIO_EXTENSION = /\.(mp3|m4a|wav)$/i
-const AUDIO_CONSENT_MESSAGE = '자동 축어록 생성을 위해 원본 음성과 화자 목소리 참조를 네이버클라우드 CLOVA Speech로 전송합니다. Re:mind 서버의 임시 파일은 처리 성공·실패 후 삭제하며, 네이버클라우드의 데이터 보관 정책은 별도로 적용됩니다. 재생용 음성은 화면을 닫거나 자료를 제거할 때까지 브라우저 메모리에 남습니다.\n원본 음성의 외부 전송과 처리에 필요한 동의를 확인하셨나요?'
 
 const fieldClass = 'h-11 w-full cursor-pointer rounded-[10px] border border-grey-200 bg-grey-100 px-3 text-sm text-grey-800 outline-none focus:border-primary-400 focus:bg-white'
 
@@ -37,7 +37,7 @@ function toFileList(files: File[]): FileList {
 }
 
 /**
- * New-session input page (Figma "홍길동 · 8회기 입력"): 상담 일시, 직접 녹음, 자료 업로드, 메모 → AI 요약 생성.
+ * Upload and review materials first, then optionally add session metadata before summarizing.
  * Session time is display-only (no backend field). Uploaded files are extracted/transcribed and applied
  * to the review editor before explicit application. In-browser recording is not implemented yet.
  */
@@ -145,10 +145,8 @@ export default function SessionInputPage({
 
   const hasInput = Boolean(form.counselor_memo.trim() || form.transcript_text.trim() || form.previous_session_summary.trim() || form.psychological_test_summary?.trim())
   const processing = materials.some((material) => material.status === 'uploading' || material.status === 'transcribing')
-  const canSubmit = Boolean(form.session_date) && hasInput && !processing && !isLoading && !pendingAudioFiles
-  const blockedReason = !form.session_date
-    ? '상담 날짜를 입력해주세요.'
-    : !hasInput
+  const canSubmit = hasInput && !processing && !isLoading && !pendingAudioFiles
+  const blockedReason = !hasInput
       ? '자료를 업로드하거나 메모를 입력하면 AI 요약을 생성할 수 있습니다.'
       : processing ? '자료 처리가 끝나면 AI 요약을 생성할 수 있습니다.' : null
 
@@ -166,36 +164,13 @@ export default function SessionInputPage({
         </div>
       </dialog>
       <div className="rm-card p-5">
-        <h1 className="text-base font-bold text-grey-900">{mode === 'existing' ? `${form.session_number}회기 다시 요약하기` : '새 회기 시작'}</h1>
+        <h1 className="text-base font-bold text-grey-900">{mode === 'existing' ? `${form.session_number}회기 다시 요약하기` : '상담 자료를 먼저 올려주세요'}</h1>
+        <p className="mt-2 text-sm text-grey-500">자료를 올리고 내용을 확인한 뒤 요약하세요. 상담일시는 필요할 때 입력하면 됩니다.</p>
         {mode === 'existing' && (
           <p role="note" className="mt-2 rounded-[10px] bg-primary-50 px-3 py-2 text-xs leading-5 text-grey-700">
             저장된 {form.session_number}회기 기록을 새 요약으로 바꿉니다. 다음 회기를 새로 만들려면 내담자 화면의 "새 회기 기록"을 눌러주세요.
           </p>
         )}
-
-        <div className="mt-5">
-          <p className="rm-label">상담 일시</p>
-          <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_130px_12px_130px]">
-            <input type="date" aria-label="상담 날짜" className={fieldClass} onClick={openNativePicker} value={form.session_date} onChange={(event) => onUpdateField('session_date', event.target.value)} />
-            <input type="time" aria-label="상담 시작 시간" className={`${fieldClass} text-center`} onClick={openNativePicker} value={sessionTime.start} onChange={(event) => onChangeSessionTime({ ...sessionTime, start: event.target.value })} />
-            <span className="hidden text-center text-sm text-grey-400 sm:block">~</span>
-            <input type="time" aria-label="상담 종료 시간" className={`${fieldClass} text-center`} onClick={openNativePicker} value={sessionTime.end} onChange={(event) => onChangeSessionTime({ ...sessionTime, end: event.target.value })} />
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <p className="rm-label">직접 녹음</p>
-          <button
-            type="button"
-            disabled
-            title="직접 녹음은 준비 중입니다. 녹음 파일은 자료 업로드로 올려주세요."
-            className="inline-flex h-[52px] w-full items-center justify-center gap-2 rounded-[10px] border border-grey-200 bg-white text-[15px] font-bold text-grey-900 disabled:cursor-not-allowed disabled:text-grey-400"
-          >
-            <Mic className="h-5 w-5" />
-            녹음 시작
-          </button>
-          <p className="mt-1.5 text-xs text-grey-500">직접 녹음은 준비 중입니다. 녹음 파일(mp3·m4a·wav)은 아래 자료 업로드로 올려주세요.</p>
-        </div>
 
         <div className="mt-6" {...dropZoneHandlers} data-dragging={isDraggingFiles || undefined}>
           <p className="rm-label">자료 업로드</p>
@@ -203,7 +178,8 @@ export default function SessionInputPage({
             <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[12px] border border-dashed px-4 py-9 text-center ${isDraggingFiles ? 'border-primary-400 bg-primary-50' : 'border-grey-400/60 bg-white hover:bg-primary-50/40'}`}>
               <Upload className={`h-6 w-6 ${isDraggingFiles ? 'text-primary-400' : 'text-grey-800'}`} strokeWidth={1.5} />
               <span className="text-sm font-semibold text-grey-900">{isDraggingFiles ? '여기에 놓으면 업로드됩니다.' : '파일을 끌어다 놓거나 클릭하여 파일을 선택해주세요.'}</span>
-              <span className="text-xs text-grey-500">문서 최대 {uploadLimitLabel} · 음성 기본 한도 500MB / 60분</span>
+              <span className="text-xs text-grey-500">MP3 · M4A · WAV · PDF · DOCX · TXT</span>
+              <span className="text-xs text-grey-500">음성 길이 제한 없음 · 파일 최대 500MB · 문서 최대 {uploadLimitLabel}</span>
               <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
             </label>
           ) : (
@@ -232,6 +208,19 @@ export default function SessionInputPage({
             placeholder="회기 중 특이사항, 상담사 소견 등을 입력하세요"
           />
         </label>
+
+        {(hasInput || materials.some(material => ['completed', 'warning', 'transcribed'].includes(material.status))) && (
+          <details className="mt-5 rounded-[10px] border border-grey-200 p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-grey-700">상담일시 추가 · 선택사항{form.session_date ? ` (${form.session_date})` : ''}</summary>
+            <p className="mt-2 text-xs text-grey-500">날짜를 입력하지 않아도 요약할 수 있습니다.</p>
+            <div className="mt-3 grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_130px_12px_130px]">
+              <input type="date" aria-label="상담 날짜" className={fieldClass} onClick={openNativePicker} value={form.session_date} onChange={event => onUpdateField('session_date', event.target.value)} />
+              <input type="time" aria-label="상담 시작 시간" className={`${fieldClass} text-center`} onClick={openNativePicker} value={sessionTime.start} onChange={event => onChangeSessionTime({ ...sessionTime, start: event.target.value })} />
+              <span className="hidden text-center text-sm text-grey-400 sm:block">~</span>
+              <input type="time" aria-label="상담 종료 시간" className={`${fieldClass} text-center`} onClick={openNativePicker} value={sessionTime.end} onChange={event => onChangeSessionTime({ ...sessionTime, end: event.target.value })} />
+            </div>
+          </details>
+        )}
       </div>
 
       {error && (

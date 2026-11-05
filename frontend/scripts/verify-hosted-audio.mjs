@@ -4,11 +4,12 @@ import ts from 'typescript'
 const { outputText } = ts.transpileModule(fs.readFileSync('src/lib/hostedAudio.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 })
-const { planAudioChunks, encodeWav, transcribePcmChunks } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
-const pcm = new Float32Array(3600 * 16000)
+const { planAudioChunks, encodeWav, transcribePcmChunks, transcribeHostedAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const duration = 3661
+const pcm = new Float32Array(duration * 16000)
 const chunks = planAudioChunks(pcm)
 assert.equal(chunks[0].start, 0)
-assert.equal(chunks.at(-1).end, 3600)
+assert.equal(chunks.at(-1).end, duration)
 chunks.forEach((c, i) => {
   assert.ok(c.end > c.start && c.end - c.start <= 60)
   if (i) assert.equal(c.start, chunks[i - 1].end)
@@ -17,6 +18,22 @@ chunks.forEach((c, i) => {
 const result = (speaker) => ({ transcription_id: 'synthetic', filename: 'chunk.wav', runtime_mode: 'real',
   status: 'completed', diarization_status: 'completed', warnings: [], transcript_text: '안 갔다. 3회기.',
   segments: [{ id: 0, start: 1, end: 5, speaker, text: '안 갔다. 3회기.' }] })
+let decoderClosed = false, longRequests = 0
+globalThis.AudioContext = class {
+  async decodeAudioData() { return { duration, length: pcm.length, sampleRate: 16000, numberOfChannels: 1, getChannelData: () => pcm } }
+  async close() { decoderClosed = true }
+}
+const long = await transcribeHostedAudio(new File(['synthetic decoder input'], 'long.wav'), 2, async file => {
+  longRequests++
+  assert.ok(file.size < 2000000)
+  return result('speaker_0')
+})
+assert.equal(long.duration_seconds, duration)
+assert.equal(long.status, 'completed')
+assert.equal(longRequests, chunks.length)
+assert.ok(long.segments.at(-1).start > 3600)
+assert.equal(decoderClosed, true)
+delete globalThis.AudioContext
 let requests = 0
 const joined = await transcribePcmChunks(pcm.subarray(0, 120 * 16000), 'synthetic.wav', 2, async (file, refs) => {
   assert.ok(file.size < 2000000)
@@ -65,4 +82,4 @@ assert.ok(clova.segments[1].speaker.startsWith('chunk_'))
 assert.ok(clova.segments[1].words[0].start > 59)
 assert.ok(clova.failed_ranges[0].start > 58)
 assert.equal(clova.raw_segments[1].words[0].start, clova.segments[1].words[0].start)
-console.log('Hosted audio: 60-minute coverage, payload limits, speaker references, raw preservation and partial failure PASS')
+console.log('Hosted audio: >60-minute decode/chunk coverage, payload limits, speaker references, raw preservation and partial failure PASS')
