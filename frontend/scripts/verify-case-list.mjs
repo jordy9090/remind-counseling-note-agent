@@ -12,6 +12,68 @@ async function loadModule(name) {
 }
 const lib = await loadModule('caseList')
 
+// Run the real save handler with a deferred API and a stalled list refresh.
+// Navigation must follow the successful write, not a separate list request.
+{
+  const source = fs.readFileSync('src/pages/SessionDraftPage.tsx', 'utf8')
+  const ast = ts.createSourceFile('SessionDraftPage.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let initializer
+  const visit = node => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'saveQuickSummaryToCase') initializer = node.initializer
+    ts.forEachChild(node, visit)
+  }
+  visit(ast)
+  assert.ok(initializer, 'the shared quick-summary save handler must exist')
+  const { outputText } = ts.transpileModule(`const handler = ${initializer.getText(ast)}`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  })
+  const deferred = () => {
+    let resolve, reject
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+    return { promise, resolve, reject }
+  }
+  for (const failSave of [false, true]) {
+    const save = deferred(), list = deferred()
+    const summary = { sections: [{ id: 'supervision_memo', title: '슈퍼비전 메모', content: '합성 인사이트 보존 확인' }] }
+    const state = { screen: 'quick_summary', caseId: null, result: summary, error: null, saving: false, writes: 0 }
+    const dependencies = {
+      saveQuickSummaryToClient: (caseId, value) => {
+        state.writes += 1
+        assert.equal(caseId, 'SYNTHETIC-NAVIGATION')
+        assert.equal(value, summary)
+        return save.promise
+      },
+      loadCaseList: () => list.promise,
+      setQuickSaving: value => { state.saving = value },
+      setQuickSaveError: value => { state.error = value },
+      setQuickPickerOpen: () => {}, setQuickClientSave: () => {},
+      setQuickResult: value => { state.result = value }, setDetailRefreshKey: () => {},
+      openClientDetail: caseId => { state.caseId = caseId; state.screen = 'client_detail' },
+      cancelQuickClientSave: () => {},
+      caseRequestErrorMessage: () => 'synthetic save failed',
+    }
+    const handler = new Function(...Object.keys(dependencies), `${outputText}; return handler`)(...Object.values(dependencies))
+    const pending = handler('SYNTHETIC-NAVIGATION', summary)
+    assert.equal(state.screen, 'quick_summary', 'do not navigate before the write succeeds')
+    assert.equal(state.result, summary, 'keep the summary while saving')
+    if (failSave) save.reject(new Error('synthetic save failed'))
+    else save.resolve({ session_number: 1 })
+    await new Promise(resolve => setImmediate(resolve))
+    try {
+      assert.equal(state.screen, failSave ? 'quick_summary' : 'client_detail', 'a stalled list must not block successful navigation')
+      assert.equal(state.caseId, failSave ? null : 'SYNTHETIC-NAVIGATION')
+      assert.equal(state.result, failSave ? summary : null)
+      assert.equal(state.error, failSave ? 'synthetic save failed' : null)
+      assert.equal(state.saving, false)
+      assert.equal(state.writes, 1, 'navigation must not repeat the save')
+    } finally {
+      list.resolve()
+      await pending
+    }
+  }
+  console.log('quick-summary save navigation and failure retention: passed')
+}
+
 const item = (overrides) => ({
   case_id: 'SYNTHETIC-1', case_alias: null, status: 'active', created_at: null, updated_at: null,
   total_session_count: 0, latest_session_number: null, first_consultation_date: null, latest_consultation_date: null,

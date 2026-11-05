@@ -1080,8 +1080,8 @@ export default function SessionDraftPage({
       setQuickPickerOpen(false)
       setQuickClientSave(null)
       setQuickResult(null)
-      await loadCaseList()
       setDetailRefreshKey((value) => value + 1)
+      // Enter the saved client immediately; the screen effect refreshes the list.
       openClientDetail(caseId)
     } catch (requestError) {
       cancelQuickClientSave()
