@@ -5,6 +5,7 @@ import type { SessionInput, TemporaryDraftRecord, TemporaryDraftSaveRequest } fr
 import { savedSummaryEvidence, type SavedSummaryEvidence } from './summaryEvidence'
 
 export const QUICK_SUMMARY_MAX_CHARS = 20000
+export const AUTHENTICATED_QUICK_SUMMARY_MAX_CHARS = 120000
 export const QUICK_SUMMARY_MIN_CHARS = 20
 /** Saved quick summaries are temporary drafts tagged with this session topic. */
 export const QUICK_SUMMARY_TOPIC = '간편 요약'

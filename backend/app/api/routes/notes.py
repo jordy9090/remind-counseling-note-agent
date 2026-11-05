@@ -27,6 +27,8 @@ from app.schemas.note import (
 )
 from app.core.config import settings
 from app.services.quick_summary import (
+    AUTHENTICATED_MAX_CHARS,
+    QUICK_SUMMARY_MAX_CHARS,
     QuickSummaryInputError,
     QuickSummaryRateLimited,
     QuickSummaryRequest,
@@ -281,7 +283,7 @@ def run_quick_summary(
             headers={"Retry-After": str(error.retry_after)},
         ) from error
     try:
-        return generate_quick_summary(payload.text)
+        return generate_quick_summary(payload.text, max_chars=AUTHENTICATED_MAX_CHARS if actor else QUICK_SUMMARY_MAX_CHARS)
     except QuickSummaryInputError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception:

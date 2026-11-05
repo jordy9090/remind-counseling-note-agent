@@ -22,7 +22,7 @@ from app.services.storage_deidentification import (
     is_masked_name,
 )
 
-PREVIEW_MAX_CHARS = 100_000
+PREVIEW_MAX_CHARS = 200_000
 CLIENT_LABEL = "내담자 A"
 COUNSELOR_LABEL = "상담자"
 LOCATION_LABEL = "지역"

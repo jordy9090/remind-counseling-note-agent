@@ -1,8 +1,24 @@
 import type { AudioSegment, AudioTranscriptionResponse } from '../types/session'
+import { openWavSource } from './wavSource'
 
 export interface SpeakerReference { name: string; audio: string }
 export interface AudioChunk { start: number; end: number }
 const RATE = 16000
+interface PcmChunk extends AudioChunk { samples: Float32Array }
+
+function mono(decoded: AudioBuffer): Float32Array {
+  if (decoded.sampleRate !== RATE) throw new Error('이 브라우저에서는 음성 변환을 지원하지 않습니다.')
+  // Reuse the decoder's first channel rather than allocating a full-length copy.
+  const samples = decoded.getChannelData(0)
+  if (decoded.numberOfChannels > 1) {
+    for (let i = 0; i < samples.length; i++) samples[i] /= decoded.numberOfChannels
+    for (let channel = 1; channel < decoded.numberOfChannels; channel++) {
+      const data = decoded.getChannelData(channel)
+      for (let i = 0; i < data.length; i++) samples[i] += data[i] / decoded.numberOfChannels
+    }
+  }
+  return samples
+}
 
 /** Contiguous chunks end at the quietest 100 ms window near the limit. */
 export function planAudioChunks(samples: Float32Array, maxSeconds = 60): AudioChunk[] {
@@ -56,18 +72,30 @@ export async function transcribeHostedAudio(
   stillActive: () => boolean = () => true,
 ): Promise<AudioTranscriptionResponse> {
   onProgress?.('음성을 준비하는 중…')
+  const wav = await openWavSource(file)
   const context = new AudioContext({ sampleRate: RATE })
-  let samples: Float32Array
   try {
-    const decoded = await context.decodeAudioData(await file.arrayBuffer())
-    if (decoded.sampleRate !== RATE) throw new Error('이 브라우저에서는 음성 변환을 지원하지 않습니다.')
-    samples = new Float32Array(decoded.length)
-    for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
-      const data = decoded.getChannelData(channel)
-      for (let i = 0; i < data.length; i++) samples[i] += data[i] / decoded.numberOfChannels
+    if (wav) {
+      async function* windows(): AsyncGenerator<PcmChunk> {
+        let frame = 0
+        while (frame < wav!.frameCount) {
+          if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
+          const frames = Math.min(61 * wav!.sampleRate, wav!.frameCount - frame)
+          const samples = mono(await context.decodeAudioData(await wav!.read(frame, frames)))
+          const boundary = planAudioChunks(samples)[0]
+          if (!boundary) throw new Error('음성 구간을 읽지 못했습니다.')
+          const usedFrames = Math.min(frames, Math.round(boundary.end * wav!.sampleRate))
+          if (usedFrames < 1) throw new Error('음성 구간을 읽지 못했습니다.')
+          yield { start: frame / wav!.sampleRate, end: (frame + usedFrames) / wav!.sampleRate,
+            samples: samples.subarray(0, Math.round(boundary.end * RATE)) }
+          frame += usedFrames
+        }
+      }
+      return await transcribeChunks(windows(), wav.duration, file.name, expectedSpeakers, send, onProgress, stillActive)
     }
+    const samples = mono(await context.decodeAudioData(await file.arrayBuffer()))
+    return await transcribePcmChunks(samples, file.name, expectedSpeakers, send, onProgress, stillActive)
   } finally { await context.close() }
-  return transcribePcmChunks(samples, file.name, expectedSpeakers, send, onProgress, stillActive)
 }
 
 export async function transcribePcmChunks(
@@ -75,71 +103,91 @@ export async function transcribePcmChunks(
   send: (file: File, references: SpeakerReference[]) => Promise<AudioTranscriptionResponse>,
   onProgress?: (message: string) => void, stillActive: () => boolean = () => true,
 ): Promise<AudioTranscriptionResponse> {
-  const started = performance.now(), chunks = planAudioChunks(samples)
+  const chunks = planAudioChunks(samples)
+  async function* windows(): AsyncGenerator<PcmChunk> {
+    for (const chunk of chunks) yield { ...chunk, samples: samples.subarray(Math.round(chunk.start * RATE), Math.round(chunk.end * RATE)) }
+  }
+  return transcribeChunks(windows(), samples.length / RATE, filename, expectedSpeakers, send, onProgress, stillActive)
+}
+
+async function transcribeChunks(
+  chunks: AsyncIterable<PcmChunk>, duration: number, filename: string, expectedSpeakers: number,
+  send: (file: File, references: SpeakerReference[]) => Promise<AudioTranscriptionResponse>,
+  onProgress?: (message: string) => void, stillActive: () => boolean = () => true,
+): Promise<AudioTranscriptionResponse> {
+  const started = performance.now()
   const references: SpeakerReference[] = [], segments: AudioSegment[] = [], raw: AudioSegment[] = []
   const failed: { start: number; end: number; code: string }[] = []
   const noSpeech: { start: number; end: number; code: string }[] = []
   let last: AudioTranscriptionResponse | undefined, consecutiveFailures = 0, lastError: unknown
-  let fallback = false
-  for (let index = 0; index < chunks.length; index++) {
-    if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
-    const chunk = chunks[index]
-    onProgress?.(`축어록 생성 중 ${index + 1}/${chunks.length} 구간`)
-    try {
-      const audio = new File([encodeWav(samples, chunk.start, chunk.end) as BlobPart], 'chunk.wav', { type: 'audio/wav' })
-      const result = await send(audio, references)
-      if (result.error_codes?.includes('no_speech')) {
-        noSpeech.push({ ...chunk, code: 'no_speech' })
+  let fallback = false, index = -1, processedEnd = 0
+  try {
+    for await (const { samples, ...chunk } of chunks) {
+      index++
+      if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
+      onProgress?.(`축어록 생성 중 ${Math.floor(chunk.start / 60)}/${Math.ceil(duration / 60)}분 · ${index + 1}번째 구간`)
+      processedEnd = chunk.end
+      try {
+        const audio = new File([encodeWav(samples) as BlobPart], 'chunk.wav', { type: 'audio/wav' })
+        const result = await send(audio, references)
+        if (result.error_codes?.includes('no_speech')) {
+          noSpeech.push({ ...chunk, code: 'no_speech' })
+          consecutiveFailures = 0
+          continue
+        }
+        last = result
+        for (const range of result.failed_ranges || []) {
+          failed.push({ start: range.start + chunk.start, end: range.end + chunk.start, code: range.code || 'asr_failed' })
+        }
+        fallback ||= result.diarization_status !== 'completed'
         consecutiveFailures = 0
-        continue
-      }
-      last = result
-      for (const range of result.failed_ranges || []) {
-        failed.push({ start: range.start + chunk.start, end: range.end + chunk.start, code: range.code || 'asr_failed' })
-      }
-      fallback ||= result.diarization_status !== 'completed'
-      consecutiveFailures = 0
-      const names = new Map<string, string>(references.map(ref => [ref.name, ref.name]))
-      for (const speaker of new Set(result.segments.map(s => s.speaker).filter(Boolean) as string[])) {
-        if (names.has(speaker)) continue
-        const clean = result.segments.find(s => s.speaker === speaker && s.end - s.start >= 2.4 &&
-          !s.review_flags?.some(flag => ['speaker_reference_unmatched', 'speaker_unassigned', 'low_confidence'].includes(flag)) &&
-          !result.segments.some(other => other !== s && other.speaker !== speaker && other.start < s.end && other.end > s.start))
-        if (clean && references.length < expectedSpeakers) {
-          const name = `speaker_${references.length}`
-          references.push({ name, audio: referenceAudio(samples, chunk.start + clean.start + 0.2,
-            chunk.start + Math.min(clean.end - 0.2, clean.start + 4.2)) })
-          names.set(speaker, name)
-        } else names.set(speaker, `chunk_${index}_${speaker}`)
-      }
-      for (const segment of result.raw_segments || result.segments) {
-        raw.push({ ...segment, id: raw.length, segment_id: `chunk_${index}_${segment.segment_id || segment.id}`,
-          start: segment.start + chunk.start, end: segment.end + chunk.start,
-          words: segment.words?.map(word => ({ ...word, start: word.start == null ? word.start : word.start + chunk.start,
-            end: word.end == null ? word.end : word.end + chunk.start })) })
-      }
-      for (const segment of result.segments) {
-        const speaker = segment.speaker ? names.get(segment.speaker) : undefined
-        const flags = [...(segment.review_flags || [])]
-        if (!speaker || speaker.startsWith('chunk_')) flags.push('speaker_reference_unmatched')
-        if ((index > 0 && segment.start < 1) || (index < chunks.length - 1 && segment.end > chunk.end - chunk.start - 1)) flags.push('chunk_boundary')
-        segments.push({ ...segment, id: segments.length, segment_id: `chunk_${index}_${segment.segment_id || segment.id}`,
-          start: segment.start + chunk.start, end: segment.end + chunk.start, speaker,
-          words: segment.words?.map(word => ({ ...word, start: word.start == null ? word.start : word.start + chunk.start,
-            end: word.end == null ? word.end : word.end + chunk.start })),
-          review_flags: flags, source_segment_ids: [`chunk_${index}_${segment.segment_id || segment.id}`] })
-      }
-    } catch (error) {
+        const names = new Map<string, string>(references.map(ref => [ref.name, ref.name]))
+        for (const speaker of new Set(result.segments.map(s => s.speaker).filter(Boolean) as string[])) {
+          if (names.has(speaker)) continue
+          const clean = result.segments.find(s => s.speaker === speaker && s.end - s.start >= 2.4 &&
+            !s.review_flags?.some(flag => ['speaker_reference_unmatched', 'speaker_unassigned', 'low_confidence'].includes(flag)) &&
+            !result.segments.some(other => other !== s && other.speaker !== speaker && other.start < s.end && other.end > s.start))
+          if (clean && references.length < expectedSpeakers) {
+            const name = `speaker_${references.length}`
+            references.push({ name, audio: referenceAudio(samples, clean.start + 0.2,
+              Math.min(clean.end - 0.2, clean.start + 4.2)) })
+            names.set(speaker, name)
+          } else names.set(speaker, `chunk_${index}_${speaker}`)
+        }
+        for (const segment of result.raw_segments || result.segments) {
+          raw.push({ ...segment, id: raw.length, segment_id: `chunk_${index}_${segment.segment_id || segment.id}`,
+            start: segment.start + chunk.start, end: segment.end + chunk.start,
+            words: segment.words?.map(word => ({ ...word, start: word.start == null ? word.start : word.start + chunk.start,
+              end: word.end == null ? word.end : word.end + chunk.start })) })
+        }
+        for (const segment of result.segments) {
+          const speaker = segment.speaker ? names.get(segment.speaker) : undefined
+          const flags = [...(segment.review_flags || [])]
+          if (!speaker || speaker.startsWith('chunk_')) flags.push('speaker_reference_unmatched')
+          if ((index > 0 && segment.start < 1) || (chunk.end < duration && segment.end > chunk.end - chunk.start - 1)) flags.push('chunk_boundary')
+          segments.push({ ...segment, id: segments.length, segment_id: `chunk_${index}_${segment.segment_id || segment.id}`,
+            start: segment.start + chunk.start, end: segment.end + chunk.start, speaker,
+            words: segment.words?.map(word => ({ ...word, start: word.start == null ? word.start : word.start + chunk.start,
+              end: word.end == null ? word.end : word.end + chunk.start })),
+            review_flags: flags, source_segment_ids: [`chunk_${index}_${segment.segment_id || segment.id}`] })
+        }
+      } catch (error) {
       lastError = error
       failed.push({ ...chunk, code: 'asr_failed' })
       if (++consecutiveFailures >= 2) {
-        if (index + 1 < chunks.length) failed.push({ start: chunks[index + 1].start, end: samples.length / RATE, code: 'not_processed' })
+        if (chunk.end < duration) failed.push({ start: chunk.end, end: duration, code: 'not_processed' })
         break
       }
     }
   }
+  } catch (error) {
+    if (!stillActive() || !segments.length) throw error
+    lastError = error
+    failed.push({ start: processedEnd, end: duration, code: 'decode_failed' })
+  }
+  if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
   if (!last || !segments.length) throw lastError || new Error('음성에서 발화를 찾지 못했습니다.')
-  return { ...last, filename, segments, raw_segments: raw, duration_seconds: samples.length / RATE,
+  return { ...last, filename, segments, raw_segments: raw, duration_seconds: duration,
     status: failed.length ? 'partial' : 'completed', failed_ranges: failed,
     diarization_status: fallback ? 'fallback' : 'completed',
     transcript_text: segments.map(s => s.text).join('\n'),
@@ -147,6 +195,6 @@ export async function transcribePcmChunks(
     warnings: [...last.warnings, '구간 경계와 화자 참조가 일치하지 않는 발화를 원음으로 확인해주세요.',
       ...(noSpeech.length ? ['발화가 감지되지 않은 구간은 원음으로 확인해주세요.'] : []),
       ...(failed.length ? ['일부 구간을 처리하지 못했습니다. 누락 구간을 확인해주세요.'] : [])],
-    stage_metrics: { total_seconds: (performance.now() - started) / 1000, chunks: chunks.length },
+    stage_metrics: { total_seconds: (performance.now() - started) / 1000, chunks: index + 1 },
     error_codes: [...(last.error_codes || []), ...(failed.length ? ['partial_transcription'] : [])] }
 }

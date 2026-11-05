@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, Loader2, X } from 'lucide-react'
 import { transcribeAudio } from '../../api/client'
-import { AUDIO_CONSENT_MESSAGE, AUDIO_FILE_ACCEPT } from '../../lib/audioConsent'
+import { AUDIO_CONSENT_MESSAGE, AUDIO_FILE_ACCEPT, AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
 import { buildTranscriptText } from '../../lib/audioTranscriptWorkflow'
 import { AudioTranscriptEditor, type AudioTranscriptEditorMaterial } from '../audio/AudioTranscriptEditor'
 
@@ -88,7 +88,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
     if (!file) return
     setError('')
     if (!/\.(mp3|m4a|wav)$/i.test(file.name)) return setError('MP3, M4A, WAV 음성을 선택해주세요.')
-    if (file.size > 500 * 1024 * 1024) return setError('음성 파일은 500MB까지 올릴 수 있어요.')
+    if (file.size > AUDIO_UPLOAD_MAX_BYTES) return setError(`음성 파일은 ${AUDIO_UPLOAD_LIMIT_LABEL}까지 올릴 수 있어요.`)
     if (!file.size) return setError('빈 음성 파일은 올릴 수 없어요.')
     setPendingFile(file)
   }
@@ -100,7 +100,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
           className="inline-flex h-10 items-center gap-2 rounded-full border border-primary-400 px-4 text-sm font-bold text-primary-400 disabled:opacity-50">
           <Mic className="h-4 w-4" />{material ? '음성 바꾸기' : '음성 추가'}
         </button>
-        <span className="text-xs text-grey-500">MP3 · M4A · WAV · 녹음 길이 제한 없음</span>
+        <span className="text-xs text-grey-500">MP3 · M4A · WAV · 2시간 상담 지원 · 최대 {AUDIO_UPLOAD_LIMIT_LABEL}</span>
       </div>
       <input ref={fileInput} type="file" accept={AUDIO_FILE_ACCEPT} disabled={disabled || material?.status === 'transcribing'} aria-label="간편요약 음성 파일 선택" className="sr-only"
         onChange={event => { selectFile(event.target.files?.[0]); event.target.value = '' }} />

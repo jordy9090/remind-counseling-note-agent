@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import ts from 'typescript'
-const { outputText } = ts.transpileModule(fs.readFileSync('src/lib/hostedAudio.ts', 'utf8'), {
+const wavModule = ts.transpileModule(fs.readFileSync('src/lib/wavSource.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+}).outputText
+const wavUrl = `data:text/javascript;base64,${Buffer.from(wavModule).toString('base64')}`
+const { openWavSource } = await import(wavUrl)
+const { outputText } = ts.transpileModule(fs.readFileSync('src/lib/hostedAudio.ts', 'utf8').replace("'./wavSource'", JSON.stringify(wavUrl)), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 })
 const { planAudioChunks, encodeWav, transcribePcmChunks, transcribeHostedAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
-const duration = 3661
+const duration = 7200
 const pcm = new Float32Array(duration * 16000)
 const chunks = planAudioChunks(pcm)
 assert.equal(chunks[0].start, 0)
@@ -83,3 +88,75 @@ assert.ok(clova.segments[1].words[0].start > 59)
 assert.ok(clova.failed_ranges[0].start > 58)
 assert.equal(clova.raw_segments[1].words[0].start, clova.segments[1].words[0].start)
 console.log('Hosted audio: >60-minute decode/chunk coverage, payload limits, speaker references, raw preservation and partial failure PASS')
+
+// A virtual 2-hour 48 kHz, stereo, 24-bit WAV is >500 MB. No full-file allocation/read is allowed.
+const frames = 7200 * 48000, sourceBytes = frames * 6
+const header = Buffer.alloc(44)
+header.write('RIFF'); header.writeUInt32LE(36 + sourceBytes, 4); header.write('WAVEfmt ', 8)
+header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(2, 22)
+header.writeUInt32LE(48000, 24); header.writeUInt32LE(48000 * 6, 28)
+header.writeUInt16LE(6, 32); header.writeUInt16LE(24, 34); header.write('data', 36); header.writeUInt32LE(sourceBytes, 40)
+let maxRead = 0, readBytes = 0, decodeCalls = 0, streamedCalls = 0, streamClosed = false
+const virtual = {
+  name: 'two-hour-stereo.wav', size: 44 + sourceBytes,
+  async arrayBuffer() { throw new Error('Must never read a complete long WAV') },
+  slice(start, end) {
+    const size = end - start
+    assert.ok(size <= 61 * 48000 * 6)
+    maxRead = Math.max(maxRead, size); readBytes += size
+    return { async arrayBuffer() {
+      const bytes = new Uint8Array(size)
+      if (start < 44) bytes.set(header.subarray(start, Math.min(end, 44)))
+      return bytes.buffer
+    } }
+  },
+}
+const wav = await openWavSource(virtual)
+assert.equal(wav.duration, 7200)
+assert.ok(virtual.size > 500 * 1024 * 1024)
+await assert.rejects(wav.read(0, 62 * 48000))
+globalThis.AudioContext = class {
+  async decodeAudioData(buffer) {
+    decodeCalls++
+    const count = new DataView(buffer).getUint32(40, true) / 6 / 3
+    assert.ok(count <= 61 * 16000)
+    const channel = new Float32Array(count)
+    return { length: count, sampleRate: 16000, numberOfChannels: 1, getChannelData: () => channel }
+  }
+  async close() { streamClosed = true }
+}
+const streamed = await transcribeHostedAudio(virtual, 2, async file => {
+  streamedCalls++
+  assert.ok(file.size < 2000000)
+  return result(streamedCalls === 1 ? 'A' : 'speaker_0')
+})
+assert.equal(streamed.duration_seconds, 7200)
+assert.equal(streamed.status, 'completed')
+assert.equal(streamedCalls, decodeCalls)
+assert.ok(streamed.segments.at(-1).start > 7140)
+assert.equal(streamClosed, true)
+assert.ok(maxRead <= 61 * 48000 * 6)
+// Only the one-second lookahead is reread; the whole source was visited.
+assert.ok(readBytes >= sourceBytes && readBytes < sourceBytes * 1.04)
+assert.ok(streamed.segments.every((s, i, all) => !i || s.start > all[i - 1].end))
+
+decodeCalls = 0; streamedCalls = 0; streamClosed = false
+globalThis.AudioContext = class {
+  async decodeAudioData() {
+    if (decodeCalls++) throw new Error('Synthetic decoder failure')
+    const channel = new Float32Array(61 * 16000)
+    return { sampleRate: 16000, numberOfChannels: 1, getChannelData: () => channel }
+  }
+  async close() { streamClosed = true }
+}
+const decodePartial = await transcribeHostedAudio(virtual, 2, async () => { streamedCalls++; return result('A') })
+assert.equal(decodePartial.status, 'partial')
+assert.equal(decodePartial.failed_ranges.at(-1).code, 'decode_failed')
+assert.equal(decodePartial.failed_ranges.at(-1).end, 7200)
+assert.equal(streamedCalls, 1)
+assert.equal(streamClosed, true)
+delete globalThis.AudioContext
+
+const malformed = new File([header], 'truncated.wav')
+await assert.rejects(openWavSource(malformed))
+console.log('Two-hour WAV: bounded 61-second reads, 2 GB stereo source, tail coverage, decoder failure retention and cleanup PASS')

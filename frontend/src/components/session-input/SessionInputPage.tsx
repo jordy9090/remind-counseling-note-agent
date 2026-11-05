@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, FileText, Loader2, PenLine, Plus, Upload, 
 import { PrimaryButton } from '../app-shell/ui'
 import type { AudioCapabilitiesResponse, SessionInput } from '../../types/session'
 import type { UploadedMaterial } from '../../types/materials'
-import { AUDIO_CONSENT_MESSAGE } from '../../lib/audioConsent'
+import { AUDIO_CONSENT_MESSAGE, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
 
 export interface SessionTime {
   start: string
@@ -179,7 +179,7 @@ export default function SessionInputPage({
               <Upload className={`h-6 w-6 ${isDraggingFiles ? 'text-primary-400' : 'text-grey-800'}`} strokeWidth={1.5} />
               <span className="text-sm font-semibold text-grey-900">{isDraggingFiles ? '여기에 놓으면 업로드됩니다.' : '파일을 끌어다 놓거나 클릭하여 파일을 선택해주세요.'}</span>
               <span className="text-xs text-grey-500">MP3 · M4A · WAV · PDF · DOCX · TXT</span>
-              <span className="text-xs text-grey-500">음성 길이 제한 없음 · 파일 최대 500MB · 문서 최대 {uploadLimitLabel}</span>
+              <span className="text-xs text-grey-500">2시간 상담 지원 · 음성 최대 {AUDIO_UPLOAD_LIMIT_LABEL} · 문서 최대 {uploadLimitLabel}</span>
               <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
             </label>
           ) : (
