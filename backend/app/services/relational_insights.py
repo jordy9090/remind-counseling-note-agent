@@ -14,7 +14,8 @@ from app.services.llm import get_structured_llm
 
 CORPUS_PATH = Path(__file__).resolve().parents[1] / "data" / "relational_theory.json"
 MAX_THEORY_SOURCES = 5
-MAX_SOURCE_CHARACTERS = 36000
+# Match the privacy-review budget, including a two-hour transcript and its memos.
+MAX_SOURCE_CHARACTERS = 200_000
 _TENTATIVE = re.compile(r"가능|가설|일\s*수|인지|잠정|탐색|추정|모른|수\s*있|시사")
 _REFLECTION_ATTRIBUTION = re.compile(r"상담자\s*성찰|상담자(?:의|는|가|로서)|(?:^|[\s:])(?:나는|내가|저는|제가)|역전이")
 _REFLECTION_ABSENT = re.compile(
@@ -299,7 +300,9 @@ def generate_relational_insights(sanitized: SanitizedInput, summary: SessionSumm
     if len("".join(sources.values())) < 60:
         return RelationalInsights(status="insufficient_evidence", notices=["관계 가설을 만들기에는 이번 회기의 구체적인 표현과 상호작용 자료가 부족합니다."])
     if sum(map(len, sources.values())) > MAX_SOURCE_CHARACTERS:
-        return RelationalInsights(status="unavailable", notices=["회기 인사이트 분석 범위를 초과했습니다. 검토할 장면을 좁힌 입력으로 다시 시도해주세요."])
+        return RelationalInsights(status="unavailable", notices=[
+            f"회기 인사이트는 축어록과 메모를 합해 {MAX_SOURCE_CHARACTERS:,}자까지 분석할 수 있어요. 회기요약은 유지됩니다."
+        ])
     try:
         theories = retrieve_theory_sources(sanitized, summary)
         if not theories:
