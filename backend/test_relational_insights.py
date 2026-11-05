@@ -1,13 +1,14 @@
 """Synthetic evidence, citation, retrieval, and failure boundaries for relational insights."""
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import Mock, patch
 
 from app.core.config import settings
 from app.schemas.insight import InsightCard, InsightEvidence, RelationalInsightDraft
 from app.schemas.note import InputSources, SanitizedInput, SessionInfo, SessionSummaryDraft, SummarySection
-from app.services.relational_insights import build_relational_insight_prompt, generate_relational_insights, retrieve_theory_sources
+from app.services.relational_insights import MAX_SOURCE_CHARACTERS, build_relational_insight_prompt, generate_relational_insights, retrieve_theory_sources
 
 
 def _input() -> SanitizedInput:
@@ -364,12 +365,50 @@ class RelationalInsightsTests(unittest.TestCase):
         sources = retrieve_theory_sources(sanitized, summary, corpus=_corpus())
         self.assertEqual(["theory-supervision"], [source.id for source in sources])
 
-    def test_long_input_is_not_silently_truncated(self) -> None:
+    def test_two_hour_transcript_and_memos_reach_model_without_truncation(self) -> None:
+        from app.services.deidentification_preview import PREVIEW_MAX_CHARS
+        from app.services.quick_summary import AUTHENTICATED_MAX_CHARS
+
+        self.assertEqual(PREVIEW_MAX_CHARS, MAX_SOURCE_CHARACTERS)
+        first = "[0:00:00] 내담자: 친구에게 연락하지 않았어요.\n"
+        last = "\n[1:59:59] 내담자: 선생님이 기다려 주셔서 말할 수 있었지만 친구와의 긴장은 아직 남아 있어요."
+        quote = "선생님이 기다려 주셔서 말할 수 있었지만 친구와의 긴장은 아직 남아 있어요."
+        middle = "[1:00:00] 상담자: 실제 반응과 예상한 반응을 구분해서 살펴볼까요?\n"
+        filler = "[0:30:00] 내담자: 질문을 듣고 잠시 생각하고 있어요.\n"
+        available = AUTHENTICATED_MAX_CHARS - len(first + middle + last)
+        transcript = first + (filler * (available // len(filler) + 1))[:available] + middle + last
+        for total in (AUTHENTICATED_MAX_CHARS, MAX_SOURCE_CHARACTERS):
+            with self.subTest(total=total):
+                sanitized = _input()
+                sanitized.sources.transcript_text = transcript
+                memo_size = total - len(transcript)
+                sanitized.sources.counselor_memo = "메" * max(0, memo_size - 20)
+                sanitized.sources.nonverbal_notes = "관" * min(20, memo_size)
+                card = _card(evidence=[InsightEvidence(source_ref="transcript_text", quote=quote)])
+                result, llm = self._generate([card], sanitized)
+                self.assertEqual("generated", result.status)
+                self.assertEqual(quote, result.cards[0].evidence[0].quote)
+                prompt = llm.invoke.call_args.args[0]
+                source_json = prompt.split("현재 회기 근거 자료:\n", 1)[1]
+                received, _ = json.JSONDecoder().raw_decode(source_json)
+                self.assertEqual(transcript, received["transcript_text"])
+                self.assertEqual(total, sum(map(len, received.values())))
+                if memo_size:
+                    self.assertEqual(sanitized.sources.counselor_memo, received["counselor_memo"])
+                    self.assertEqual(sanitized.sources.nonverbal_notes, received["nonverbal_notes"])
+                self.assertEqual(1, llm.invoke.call_count)
+
+    def test_aggregate_over_budget_is_rejected_without_truncation_or_model_call(self) -> None:
         sanitized = _input()
-        sanitized.sources.transcript_text = "가" * 36001
+        sanitized.sources.transcript_text = "가" * (MAX_SOURCE_CHARACTERS - 2)
+        sanitized.sources.counselor_memo = "메모"
+        sanitized.sources.nonverbal_notes = "관"
+        before = sanitized.model_dump()
         with patch("app.services.relational_insights.get_structured_llm") as llm:
             result = generate_relational_insights(sanitized, _summary())
         self.assertEqual("unavailable", result.status)
+        self.assertIn("200,000", result.notices[0])
+        self.assertEqual(before, sanitized.model_dump())
         llm.assert_not_called()
 
 
