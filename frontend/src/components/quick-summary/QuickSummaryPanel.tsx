@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, Loader2, Plus, RotateCcw } from 'lucide-react'
+import { Check, Copy, Loader2, Mic, Plus, RotateCcw } from 'lucide-react'
 
 import { extractDocumentMaterial, requestQuickSummary } from '../../api/client'
 import {
@@ -11,6 +11,7 @@ import {
 import type { NoteDraftResponse } from '../../types/session'
 import DeidentificationReviewModal, { type DeidReviewResult } from '../deidentification/DeidentificationReviewModal'
 import SourceMemoryCues from './SourceMemoryCues'
+import QuickAudioInput from './QuickAudioInput'
 
 const ACCEPTED_FILES = '.txt,.pdf,.docx'
 const QUICK_SOURCE_KEY = 'quick_summary_text'
@@ -31,6 +32,7 @@ export default function QuickSummaryPanel({
   saveAction,
   notice,
   below,
+  onAudioLogin,
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
@@ -46,8 +48,11 @@ export default function QuickSummaryPanel({
   saveAction?: { label: string; onSave: (result: QuickSummaryResult) => void }
   notice?: ReactNode
   below?: ReactNode
+  onAudioLogin?: () => void
 }) {
   const [text, setText] = useState('')
+  const [audioText, setAudioText] = useState('')
+  const [audioPending, setAudioPending] = useState(false)
   const [loading, setLoading] = useState(false)
   const [reviewing, setReviewing] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -55,12 +60,14 @@ export default function QuickSummaryPanel({
   const [copied, setCopied] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const length = text.trim().length
+  // A reviewed audio contribution is replaced on reapplication, never appended twice.
+  const inputText = [text.trim(), audioText.trim()].filter(Boolean).join('\n\n')
+  const length = inputText.length
   const overLimit = length > QUICK_SUMMARY_MAX_CHARS
 
   /** Validates, then opens the review step; generation starts from the modal. */
   const summarize = () => {
-    if (loading) return
+    if (loading || audioPending) return
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
     if (overLimit) return setError(`간편 요약은 ${QUICK_SUMMARY_MAX_CHARS.toLocaleString()}자까지 입력할 수 있어요.`)
     setError(null)
@@ -71,7 +78,7 @@ export default function QuickSummaryPanel({
     setReviewing(false)
     setLoading(true)
     try {
-      onResult(toResult(await requestQuickSummary(review.texts[QUICK_SOURCE_KEY] ?? text)))
+      onResult(toResult(await requestQuickSummary(review.texts[QUICK_SOURCE_KEY] ?? inputText)))
       setCopied(false)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
@@ -122,6 +129,9 @@ export default function QuickSummaryPanel({
 
   const startOver = () => {
     onResult(null)
+    setText('')
+    setAudioText('')
+    setAudioPending(false)
     setError(null)
     setCopied(false)
   }
@@ -198,6 +208,7 @@ export default function QuickSummaryPanel({
           <label htmlFor="quick-summary-input" className="sr-only">요약할 상담 내용</label>
           <textarea
             id="quick-summary-input"
+            disabled={loading || reviewing}
             value={text}
             onChange={(event) => { setText(event.target.value); setError(null) }}
             placeholder="요약할 내용을 입력해주세요"
@@ -209,12 +220,12 @@ export default function QuickSummaryPanel({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={extracting}
+                disabled={extracting || loading || reviewing}
                 className="inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm text-grey-600 hover:bg-grey-100 disabled:opacity-60"
               >
                 {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}파일 올리기
               </button>
-              <input ref={fileInputRef} type="file" accept={ACCEPTED_FILES} className="hidden" aria-label="상담 내용 파일 선택" onChange={(event) => void addFile(event.target.files?.[0])} />
+              <input ref={fileInputRef} type="file" accept={ACCEPTED_FILES} disabled={loading || reviewing} className="hidden" aria-label="상담 내용 파일 선택" onChange={(event) => void addFile(event.target.files?.[0])} />
               {length > 0 && (
                 <span className={`text-xs ${overLimit ? 'font-bold text-danger-500' : 'text-grey-400'}`}>
                   {length.toLocaleString()} / {QUICK_SUMMARY_MAX_CHARS.toLocaleString()}자
@@ -224,7 +235,7 @@ export default function QuickSummaryPanel({
             <button
               type="button"
               onClick={summarize}
-              disabled={loading || extracting}
+              disabled={loading || extracting || audioPending}
               className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-6 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-60"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}{loading ? '요약하는 중' : '요약하기'}
@@ -233,6 +244,15 @@ export default function QuickSummaryPanel({
         </div>
       )}
 
+      {!result && (canExtractDocuments ? (
+        <QuickAudioInput onApply={setAudioText} onPendingChange={setAudioPending} disabled={loading || reviewing} />
+      ) : (
+        <button type="button" onClick={onAudioLogin} className="mt-4 inline-flex items-center gap-2 rounded-full border border-primary-400 bg-white px-5 py-3 text-sm font-bold text-primary-400">
+          <Mic className="h-4 w-4" />로그인하고 음성 추가
+        </button>
+      ))}
+      {!result && audioPending && <p role="status" className="mt-2 text-xs text-grey-500">축어록의 화자와 개인정보를 확인한 뒤 요약 입력에 반영해주세요.</p>}
+
       {error && <p role="alert" className="mt-4 w-full rounded-lg bg-danger-50 px-4 py-3 text-sm text-danger-500">{error}</p>}
       {!result && <p className="mt-4 w-full text-center text-xs leading-5 text-grey-500">{privacyNote}</p>}
 
@@ -240,7 +260,7 @@ export default function QuickSummaryPanel({
 
       {reviewing && (
         <DeidentificationReviewModal
-          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text }]}
+          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: inputText }]}
           context={{}}
           onBack={() => setReviewing(false)}
           onConfirm={(review) => void summarizeReviewed(review)}

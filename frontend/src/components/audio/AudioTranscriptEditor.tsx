@@ -53,6 +53,8 @@ export function AudioTranscriptEditor({
   onUpdateSpeakerRole,
   transcriptionAvailable,
   transcriptionReason,
+  showApplyMode = true,
+  applyLabel = '검토한 수정본을 회기요약 입력에 반영',
 }: {
   applyMode: AudioApplyMode
   material: AudioTranscriptEditorMaterial
@@ -65,6 +67,8 @@ export function AudioTranscriptEditor({
   onUpdateSpeakerRole: (speakerKey: string, role: SpeakerRole) => void
   transcriptionAvailable: boolean
   transcriptionReason: string | null
+  showApplyMode?: boolean
+  applyLabel?: string
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [splitPositions, setSplitPositions] = useState<Record<number, number>>({})
@@ -328,7 +332,7 @@ export function AudioTranscriptEditor({
               원음과 화자, 누락 구간 및 개인정보 치환 결과를 확인했습니다.
             </label>
           </div>}
-          <div className="grid gap-2 sm:grid-cols-2">
+          {showApplyMode && <div className="grid gap-2 sm:grid-cols-2">
             <button
               type="button"
               onClick={() => onApplyModeChange('append')}
@@ -347,14 +351,14 @@ export function AudioTranscriptEditor({
             >
               기존 회기 입력 교체
             </button>
-          </div>
+          </div>}
           <button
             type="button"
             disabled={!canApply}
             onClick={() => { if (canApply && privacy) onApply(privacy.text, privacy.source) }}
             className="inline-flex w-full items-center justify-center rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            검토한 수정본을 회기요약 입력에 반영
+            {applyLabel}
           </button>
         </div>
       )}

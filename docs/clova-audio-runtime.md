@@ -12,7 +12,7 @@ The browser consent explicitly names CLOVA. Every hosted request includes that p
 
 ## Bounded audio and speaker continuity
 
-- The browser decodes at most 60 minutes to 16 kHz mono PCM and sends contiguous chunks of at most 60 seconds and under 2 MB. Source samples are neither skipped nor duplicated. Boundary turns remain review candidates.
+- The browser decodes to 16 kHz mono PCM without a total-duration cutoff and sends contiguous chunks of at most 60 seconds and under 2 MB. Hosted capabilities report `max_duration_seconds=null`; the per-request bound is unchanged. Source samples are neither skipped nor duplicated. Boundary turns remain review candidates. The 500 MB source-file safeguard and browser memory/codec constraints still apply.
 - CLOVA requests use Korean `ko-KR`, `completion=sync`, word alignment, diarization with minimum 1 and maximum `expected_speakers` (default 2), and `resultToObs=false`. A maximum allows one-speaker chunks; it does not force counselor/client roles.
 - CLOVA does not document known-speaker reference parameters. Instead, the adapter prepends up to four previously recognized 2–4 second isolated voice clips with 0.5-second separators. These clips remain in memory and are part of billable audio. This is application-level matching, not a CLOVA speaker-enrollment feature.
 - A reference establishes identity only if one provider label dominates at least 85% of its covered duration, covers at least 40% of the reference (and 0.5 seconds), and maps uniquely across references. Provider label order never establishes identity. Unmatched voices retain separate chunk IDs and review flags; reference clips are not collected from uncertain/low-confidence turns.
@@ -29,7 +29,9 @@ Browser decoding still needs RAM proportional to the source recording; use a des
 
 ## Verification and release
 
-`python -m unittest test_clova_audio test_openai_audio` covers provider binding, authentication, WAV and reference validation, error redaction, reference label swaps/collisions, boundary clipping, no-speech, raw text and temporary-file cleanup. `pnpm verify:hosted-audio` covers 60-minute PCM coverage, reference matching behavior, word offsets and partial ranges. These offline checks do not demonstrate actual Korean recognition quality.
+`python -m unittest test_clova_audio test_openai_audio` covers provider binding, authentication, WAV and reference validation, error redaction, reference label swaps/collisions, boundary clipping, no-speech, raw text and temporary-file cleanup. `pnpm verify:hosted-audio` covers decoding and contiguous PCM coverage beyond 60 minutes, reference matching behavior, word offsets and partial ranges. These offline checks do not demonstrate actual Korean recognition quality.
+
+Signed-in quick summary accepts audio directly using the same transcript editor and mandatory privacy review. Audio edits invalidate its applied text; reapplication replaces the audio contribution. Guests are directed to login for the protected audio API. New client sessions start with uploads and show optional date/time fields after material results or a memo exist; an omitted date stays unset. Quick summary retains its existing 20,000-character input budget; longer transcripts can be used in the regular client-session workflow.
 
 Use the same synthetic recording/reference as the OpenAI benchmark for the live gate. Record CER, speaker attribution, names/domain words, negation/numbers, omissions/repetitions, wall time, billed duration including reference overhead, and counselor correction effort separately. Exercise upload, role assignment, text/speaker edit, merge/split, local PII review and actual-model summary. Log commit, deployment, results and synthetic cleanup in the release ledger; deploy only after these gates pass.
 

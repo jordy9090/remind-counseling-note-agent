@@ -60,7 +60,6 @@ export async function transcribeHostedAudio(
   let samples: Float32Array
   try {
     const decoded = await context.decodeAudioData(await file.arrayBuffer())
-    if (decoded.duration > 3600) throw new Error('음성은 최대 60분까지 처리할 수 있습니다.')
     if (decoded.sampleRate !== RATE) throw new Error('이 브라우저에서는 음성 변환을 지원하지 않습니다.')
     samples = new Float32Array(decoded.length)
     for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
