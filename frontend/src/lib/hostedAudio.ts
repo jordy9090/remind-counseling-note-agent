@@ -172,14 +172,14 @@ async function transcribeChunks(
             review_flags: flags, source_segment_ids: [`chunk_${index}_${segment.segment_id || segment.id}`] })
         }
       } catch (error) {
-      lastError = error
-      failed.push({ ...chunk, code: 'asr_failed' })
-      if (++consecutiveFailures >= 2) {
-        if (chunk.end < duration) failed.push({ start: chunk.end, end: duration, code: 'not_processed' })
-        break
+        lastError = error
+        failed.push({ ...chunk, code: 'asr_failed' })
+        if (++consecutiveFailures >= 2) {
+          if (chunk.end < duration) failed.push({ start: chunk.end, end: duration, code: 'not_processed' })
+          break
+        }
       }
     }
-  }
   } catch (error) {
     if (!stillActive() || !segments.length) throw error
     lastError = error
