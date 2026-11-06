@@ -29,9 +29,9 @@ def given_name(name: str) -> str:
     return name[surname_length:] if len(name) - surname_length >= 2 else ""
 
 
-def name_pattern(name: str) -> re.Pattern[str]:
+def name_pattern(name: str, *, exact_identity: bool = False) -> re.Pattern[str]:
     ending = ENDING
-    if name in AMBIGUOUS_GIVEN_NAMES:
+    if name in AMBIGUOUS_GIVEN_NAMES and not exact_identity:
         # "지원이가/지원 씨/지원에게" identify a person; "지원을 받았다" does not.
         ending = rf"(?=\s*(?:이(?:는|가|랑|와|도|를|야|요)|에게(?:서)?|한테(?:서)?|씨|님)(?:는|도|만)?{BOUNDARY})"
     return re.compile(rf"(?<![가-힣A-Za-z0-9_]){re.escape(name)}{ending}")
@@ -41,15 +41,15 @@ def discover_person_names(text: str, known_names=()) -> dict[str, str]:
     """Map each observed form to its full name; an empty owner means ambiguous identity."""
     full_names = list(dict.fromkeys(name.strip() for name in known_names
                                    if re.fullmatch(r"[가-힣]{2,5}", name.strip())))
-    for pattern in PATTERNS:
+    for index, pattern in enumerate(PATTERNS):
         for match in re.finditer(pattern, text):
             if re.search(r"(?:약|약물|제품|기관|진단)\s*$", text[max(0, match.start() - 12):match.start()]):
                 continue
             name = match.group(1)
             ordinary_inflection = name[-1:] in "이은는을를도와과" and name[:-1] in STOP_WORDS
-            if name not in STOP_WORDS and not ordinary_inflection and name not in full_names:
+            if (index == 0 or (name not in STOP_WORDS and not ordinary_inflection)) and name not in full_names:
                 full_names.append(name)
-    result = {name: name for name in full_names if name_pattern(name).search(text)}
+    result = {name: name for name in full_names if name_pattern(name, exact_identity=True).search(text)}
     for full in full_names:
         given = given_name(full)
         if given and given not in full_names and name_pattern(given).search(text):
@@ -65,7 +65,8 @@ def person_replacements(text: str) -> dict[str, str]:
 
 
 def mask_person_names(text: str) -> tuple[str, bool]:
+    names = discover_person_names(text)
     replacements = person_replacements(text)
     for name in sorted(replacements, key=len, reverse=True):
-        text = name_pattern(name).sub(replacements[name], text)
+        text = name_pattern(name, exact_identity=names[name] == name).sub(replacements[name], text)
     return text, bool(replacements)

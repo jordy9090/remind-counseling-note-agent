@@ -212,10 +212,10 @@ def _extract_entities(text: str) -> _StorageEntities | None:
     return _StorageEntities(person_names=names, organizations=organizations) if names or organizations else None
 
 
-def _name_pattern(name: str) -> re.Pattern[str]:
+def _name_pattern(name: str, *, exact_identity: bool = False) -> re.Pattern[str]:
     # A Korean name starts a word: the preceding character must not be Hangul. Particles may follow.
     if _HANGUL.match(name):
-        return name_pattern(name)
+        return name_pattern(name, exact_identity=exact_identity)
     return re.compile(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])")
 
 
@@ -284,7 +284,10 @@ def deidentify_texts(
     """Return the texts with identifying details replaced, plus a value-free report."""
     joined = "\n\n".join(f"[{key}]\n{value}" for key, value in texts.items() if value and value.strip())
     entities = _extract_entities(joined)
+    known_names = tuple(known_names)
     names = _alias_names(known_names)
+    explicit_names = {name.strip() for name in known_names}
+    explicit_names.update(name for name, owner in discover_person_names(joined).items() if name == owner)
     occupations: dict[str, str] = {}
     organizations: dict[str, str] = {}
     ages: dict[str, str] = {}
@@ -332,7 +335,7 @@ def deidentify_texts(
         text, totals["ages"] = _accumulate(totals["ages"], _generalize_explicit_ages(text))
         text, totals["ages"] = _accumulate(totals["ages"], _generalize_grades(text))
         for name in sorted(names, key=len, reverse=True):
-            text, count = _name_pattern(name).subn(mask_name(name), text)
+            text, count = _name_pattern(name, exact_identity=name in explicit_names).subn(mask_name(name), text)
             totals["names"] += count
         result[key] = text
     return result, StorageDeidentificationReport(

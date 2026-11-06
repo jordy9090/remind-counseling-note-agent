@@ -18,7 +18,7 @@ class KoreanPersonNameTests(unittest.TestCase):
                 self.assertEqual(discover_person_names(case['text'], case.get('known_names', [])), case['names'])
                 masked = case['text']
                 for name in sorted(case['names'], key=len, reverse=True):
-                    masked = name_pattern(name).sub('[인물]', masked)
+                    masked = name_pattern(name, exact_identity=case['names'][name] == name).sub('[인물]', masked)
                 for phrase in case.get('preserve', []):
                     self.assertIn(phrase, masked)
 
@@ -58,6 +58,12 @@ class KoreanPersonNameTests(unittest.TestCase):
         self.assertTrue(masked.startswith('내담자: 지원을 받지 않았다. 2회기다.'))
         for name in ['김하린', '하린', '김소윤']:
             self.assertNotIn(name, masked)
+
+    def test_explicit_short_names_are_not_treated_as_inferred_aliases(self):
+        text = '이름: 지원. 지원은 안 갔다. 이름: 사랑. 사랑도 말했다.'
+        self.assertEqual(mask_person_names(text)[0], '이름: [인물 B]. [인물 B]은 안 갔다. 이름: [인물 C]. [인물 C]도 말했다.')
+        masked, _ = deidentify_json({'client_alias': '지혜', 'memo': '지혜는 안 갔다.'}, known_names=['지혜'])
+        self.assertEqual(masked, {'client_alias': '지O', 'memo': '지O는 안 갔다.'})
 
 
 if __name__ == '__main__':

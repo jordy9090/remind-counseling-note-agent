@@ -19,6 +19,7 @@ export interface DeidItem {
   origin: DeidItemOrigin
   /** Detected names use word/particle boundaries; manual phrases keep literal matching. */
   matchMode?: 'name'
+  nameIsIdentity?: boolean
 }
 
 export interface DeidSource {
@@ -114,8 +115,8 @@ function givenName(name: string): string {
   return name.length - length >= 2 ? name.slice(length) : ''
 }
 
-function namePattern(name: string): RegExp {
-  const ending = AMBIGUOUS_GIVEN_NAMES.has(name)
+function namePattern(name: string, exactIdentity = false): RegExp {
+  const ending = AMBIGUOUS_GIVEN_NAMES.has(name) && !exactIdentity
     ? `(?=\\s*(?:이(?:는|가|랑|와|도|를|야|요)|에게(?:서)?|한테(?:서)?|씨|님)(?:는|도|만)?${NAME_BOUNDARY})`
     : NAME_ENDING
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -125,14 +126,14 @@ function namePattern(name: string): RegExp {
 /** Full names established by context, then observed given names; '' means ambiguous identity. */
 export function discoverPersonNames(text: string, knownNames: string[] = []): Map<string, string> {
   const fullNames = [...new Set(knownNames.map(n => n.trim()).filter(n => /^[가-힣]{2,5}$/.test(n)))]
-  for (const pattern of NAME_PATTERNS) {
+  for (const [index, pattern] of NAME_PATTERNS.entries()) {
     for (const match of text.matchAll(new RegExp(pattern, 'g'))) {
       if (/(?:약|약물|제품|기관|진단)\s*$/.test(text.slice(Math.max(0, (match.index ?? 0) - 12), match.index))) continue
       const ordinaryInflection = '이은는을를도와과'.includes(match[1].slice(-1)) && NAME_STOP_WORDS.has(match[1].slice(0, -1))
-      if (!NAME_STOP_WORDS.has(match[1]) && !ordinaryInflection && !fullNames.includes(match[1])) fullNames.push(match[1])
+      if ((index === 0 || (!NAME_STOP_WORDS.has(match[1]) && !ordinaryInflection)) && !fullNames.includes(match[1])) fullNames.push(match[1])
     }
   }
-  const result = new Map(fullNames.filter(n => namePattern(n).test(text)).map(n => [n, n]))
+  const result = new Map(fullNames.filter(n => namePattern(n, true).test(text)).map(n => [n, n]))
   for (const full of fullNames) {
     const given = givenName(full)
     if (given && !fullNames.includes(given) && namePattern(given).test(text)) {
@@ -195,10 +196,10 @@ export async function detectDeidentificationItems(
 /** Deterministic rules only (registered names, contacts, exact dates, current ages). */
 export function detectLocalDeidItems(texts: string[], context: DeidDetectionContext = {}): DeidItem[] {
   const found = new Map<string, DeidItem>()
-  const add = (original: string, replacement: string, kind: DeidItemKind, matchMode?: 'name') => {
+  const add = (original: string, replacement: string, kind: DeidItemKind, matchMode?: 'name', nameIsIdentity = false) => {
     const key = original.trim()
     if (!key || found.has(key)) return
-    found.set(key, { id: newDeidItemId(), original: key, replacement, kind, origin: 'detected', matchMode })
+    found.set(key, { id: newDeidItemId(), original: key, replacement, kind, origin: 'detected', matchMode, nameIsIdentity })
   }
   const joined = texts.join('\n')
   const names = discoverPersonNames(joined, [context.clientName ?? '', context.counselorName ?? ''])
@@ -207,16 +208,16 @@ export function detectLocalDeidItems(texts: string[], context: DeidDetectionCont
   }
 
   for (const form of personNameForms(context.clientName ?? '', joined)) {
-    if (joined.includes(form)) add(form, '내담자 A', 'auto', 'name')
+    if (joined.includes(form)) add(form, '내담자 A', 'auto', 'name', form === context.clientName?.trim())
   }
   for (const form of personNameForms(context.counselorName ?? '', joined)) {
-    if (joined.includes(form)) add(form, '상담자', 'auto', 'name')
+    if (joined.includes(form)) add(form, '상담자', 'auto', 'name', form === context.counselorName?.trim())
   }
   const labels = new Map<string, string>()
   for (const [name, owner] of names) {
     if (found.has(name)) continue
     if (owner && !labels.has(owner)) labels.set(owner, `인물 ${labels.size < 25 ? String.fromCharCode(66 + labels.size) : labels.size + 2}`)
-    add(name, owner ? (found.get(owner)?.replacement ?? labels.get(owner)!) : '인물 확인 필요', 'review', 'name')
+    add(name, owner ? (found.get(owner)?.replacement ?? labels.get(owner)!) : '인물 확인 필요', 'review', 'name', name === owner)
   }
   for (const match of joined.matchAll(/[가-힣A-Za-z0-9]{2,30}(?:초등학교|중학교|고등학교|대학교|대학원|병원|센터|상담소|회사|기관)/g)) add(match[0], '기관 정보 비공개', 'review')
   for (const match of joined.matchAll(RESIDENT_NUMBER)) add(match[0], '******-*******', 'auto')
@@ -237,7 +238,7 @@ export function findDeidMatches(text: string, items: DeidItem[]): DeidMatch[] {
   const taken: DeidMatch[] = []
   const ordered = [...items].filter((item) => item.original).sort((a, b) => b.original.length - a.original.length)
   for (const item of ordered) {
-    const allowed = item.matchMode === 'name' ? new Set(Array.from(text.matchAll(namePattern(item.original)), m => m.index)) : null
+    const allowed = item.matchMode === 'name' ? new Set(Array.from(text.matchAll(namePattern(item.original, item.nameIsIdentity)), m => m.index)) : null
     let from = 0
     while (from <= text.length) {
       const start = text.indexOf(item.original, from)

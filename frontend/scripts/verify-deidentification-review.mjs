@@ -26,6 +26,10 @@ for (const fixture of JSON.parse(fs.readFileSync('../backend/fixtures/korean_per
   }
 }
 {
+  const registered = '지혜. 지혜는 안 갔다.'
+  assert.equal(lib.applyDeidItems(registered, lib.detectLocalDeidItems([registered], { clientName: '지혜' })), '[내담자 A]. [내담자 A]는 안 갔다.')
+  const explicit = '이름: 지원. 지원은 안 갔다. 이름: 사랑. 사랑도 말했다.'
+  assert.equal(lib.applyDeidItems(explicit, lib.detectLocalDeidItems([explicit])), '이름: [인물 B]. [인물 B]은 안 갔다. 이름: [인물 C]. [인물 C]도 말했다.')
   const text = '친구 김하린에게 전화했어요. 하린이는 안 갔어요. 누나 김소윤이요. 소윤에게 2번 말했어요.'
   const first = lib.applyDeidItems(text, lib.detectLocalDeidItems([text]))
   assert.equal(first, '친구 [인물 B]에게 전화했어요. [인물 B]이는 안 갔어요. 누나 [인물 C]이요. [인물 C]에게 2번 말했어요.')
