@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from app.services.korean_person_names import discover_person_names, given_name, name_pattern
 
 NAME_MASK_CHAR = "O"
 FALLBACK_OCCUPATION = "기타 직업군"
@@ -202,7 +203,7 @@ def _extract_entities(text: str) -> _StorageEntities | None:
     """Find conservative local candidates without importing or calling an LLM provider."""
     from app.services.deidentification import MASK_RULES
 
-    names = list(dict.fromkeys(re.findall(r"(?:이름|성명)\s*[:：]\s*([가-힣]{2,4})(?![가-힣])", text)))
+    names = list(discover_person_names(text))
     organizations: list[_OrganizationMention] = []
     institution_rule = next(rule for rule in MASK_RULES if rule.category == "institution")
     for value in dict.fromkeys(institution_rule.pattern.findall(text)):
@@ -214,7 +215,7 @@ def _extract_entities(text: str) -> _StorageEntities | None:
 def _name_pattern(name: str) -> re.Pattern[str]:
     # A Korean name starts a word: the preceding character must not be Hangul. Particles may follow.
     if _HANGUL.match(name):
-        return re.compile(rf"(?<![가-힣]){re.escape(name)}")
+        return name_pattern(name)
     return re.compile(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])")
 
 
@@ -226,8 +227,8 @@ def _alias_names(known_names: Iterable[str]) -> set[str]:
         if not value or is_masked_name(value) or not re.fullmatch(r"[가-힣]{2,5}", value):
             continue
         names.add(value)
-        if len(value) >= 3:
-            names.add(value[1:])  # 김민지 → 민지
+        if given_name(value):
+            names.add(given_name(value))
     return names
 
 

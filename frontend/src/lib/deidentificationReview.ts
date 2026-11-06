@@ -17,6 +17,8 @@ export interface DeidItem {
   /** auto: clear identifier. review: the counselor should decide (확인 필요). */
   kind: DeidItemKind
   origin: DeidItemOrigin
+  /** Detected names use word/particle boundaries; manual phrases keep literal matching. */
+  matchMode?: 'name'
 }
 
 export interface DeidSource {
@@ -90,8 +92,54 @@ export function ageBand(age: number): string {
   return `${Math.floor(age / 10) * 10}대`
 }
 
-function countOf(text: string, needle: string): number {
-  return needle ? text.split(needle).length - 1 : 0
+// Keep these local rules in parity with korean_person_names.py (shared golden fixtures).
+const COMPOUND_SURNAMES = ['남궁', '황보', '제갈', '선우', '독고', '사공', '서문', '동방']
+const SURNAMES = '김이박최정강조윤장임한오서신권황안송전홍유고문양손배백허남심노하곽성차주우구민류나진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예봉경사부복태목형피두감음빈동온호'
+const ROLES = '친구|동료|누나|언니|오빠|형|동생|엄마|어머니|아빠|아버지|남편|아내|아들|딸|선배|후배|담임|보호자|학생|교사|교수|상담자|상담사|내담자'
+const NAME_STOP_WORDS = new Set('이야기 이렇게 이어서 이것 이상 이유 이후 이전 이름 성명 정확히 정말로 조금씩 정신과 서로 문제 고민 김치 지원 생각 수면 상담 도움 안정 학교 이번 지난 오늘 내일 아침 저녁 사실 마음 친구 누나 동생 어머니 아버지 선생님 보호자 부모님 내담자 상담자 상담사'.split(' '))
+const AMBIGUOUS_GIVEN_NAMES = new Set('지원 사랑 미래 보람 지혜 수정 희망 안정 시도 시기'.split(' '))
+const NAME_BOUNDARY = '(?=$|[^가-힣A-Za-z0-9_])'
+const NAME_PARTICLES = '(?:에게(?:서)?|한테(?:서)?|께서|께|으로|부터|까지|처럼|보다|이라며|이라고(?:요)?|이라는|입니다|이에요|이었어요|이었고|이며|이고|인데|이요|예요|이라서|(?:씨|님)(?:은|는|이|가|을|를|의|에게|께서)?|이(?:는|가|랑|와|도|를|야|요)?|은|는|가|을|를|의|와|과|도|만|랑|로|야|아)(?:는|도|만)?'
+const NAME_ENDING = `(?=$|[^가-힣A-Za-z0-9_]|${NAME_PARTICLES}${NAME_BOUNDARY})`
+const FULL_NAME = `(?:(?:${COMPOUND_SURNAMES.join('|')})[가-힣]{2}|[${SURNAMES}][가-힣]{2}|[${SURNAMES}][가-힣]{3})`
+const NAME_PATTERNS = [
+  `(?<![가-힣])(?:이름|성명)\\s*(?:[:：]|은|는|이|가)\\s*([가-힣]{3}|[가-힣]{4}|[가-힣]{2})${NAME_ENDING}`,
+  `(?<![가-힣])(?:${ROLES})(?:인)?\\s+(${FULL_NAME})${NAME_ENDING}`,
+  `(?<![가-힣])(${FULL_NAME})(?=\\s*(?:씨|님|선생님)${NAME_ENDING})`,
+  `(?<![가-힣])(?:저는|제가|저|제 이름은)\\s+(${FULL_NAME})(?=입니다|이에요|예요|이고|이라고)`,
+]
+
+function givenName(name: string): string {
+  const length = name.length >= 4 && COMPOUND_SURNAMES.some(s => name.startsWith(s)) ? 2 : 1
+  return name.length - length >= 2 ? name.slice(length) : ''
+}
+
+function namePattern(name: string): RegExp {
+  const ending = AMBIGUOUS_GIVEN_NAMES.has(name)
+    ? `(?=\\s*(?:이(?:는|가|랑|와|도|를|야|요)|에게(?:서)?|한테(?:서)?|씨|님)(?:는|도|만)?${NAME_BOUNDARY})`
+    : NAME_ENDING
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![가-힣A-Za-z0-9_])${escaped}${ending}`, 'g')
+}
+
+/** Full names established by context, then observed given names; '' means ambiguous identity. */
+export function discoverPersonNames(text: string, knownNames: string[] = []): Map<string, string> {
+  const fullNames = [...new Set(knownNames.map(n => n.trim()).filter(n => /^[가-힣]{2,5}$/.test(n)))]
+  for (const pattern of NAME_PATTERNS) {
+    for (const match of text.matchAll(new RegExp(pattern, 'g'))) {
+      if (/(?:약|약물|제품|기관|진단)\s*$/.test(text.slice(Math.max(0, (match.index ?? 0) - 12), match.index))) continue
+      const ordinaryInflection = '이은는을를도와과'.includes(match[1].slice(-1)) && NAME_STOP_WORDS.has(match[1].slice(0, -1))
+      if (!NAME_STOP_WORDS.has(match[1]) && !ordinaryInflection && !fullNames.includes(match[1])) fullNames.push(match[1])
+    }
+  }
+  const result = new Map(fullNames.filter(n => namePattern(n).test(text)).map(n => [n, n]))
+  for (const full of fullNames) {
+    const given = givenName(full)
+    if (given && !fullNames.includes(given) && namePattern(given).test(text)) {
+      result.set(given, !result.has(given) || result.get(given) === full ? full : '')
+    }
+  }
+  return result
 }
 
 /** The name, plus its given-name form when that also appears on its own ("길동이", "길동 씨"). */
@@ -99,7 +147,8 @@ function personNameForms(name: string, text: string): string[] {
   const trimmed = name.trim()
   if (trimmed.length < 2) return []
   const forms = [trimmed]
-  if (/^[가-힣]{3}$/.test(trimmed) && countOf(text, trimmed.slice(1)) > countOf(text, trimmed)) forms.push(trimmed.slice(1))
+  const given = /^[가-힣]{3,5}$/.test(trimmed) ? givenName(trimmed) : ''
+  if (given && namePattern(given).test(text)) forms.push(given)
   return forms
 }
 
@@ -146,20 +195,29 @@ export async function detectDeidentificationItems(
 /** Deterministic rules only (registered names, contacts, exact dates, current ages). */
 export function detectLocalDeidItems(texts: string[], context: DeidDetectionContext = {}): DeidItem[] {
   const found = new Map<string, DeidItem>()
-  const add = (original: string, replacement: string, kind: DeidItemKind) => {
+  const add = (original: string, replacement: string, kind: DeidItemKind, matchMode?: 'name') => {
     const key = original.trim()
     if (!key || found.has(key)) return
-    found.set(key, { id: newDeidItemId(), original: key, replacement, kind, origin: 'detected' })
+    found.set(key, { id: newDeidItemId(), original: key, replacement, kind, origin: 'detected', matchMode })
   }
   const joined = texts.join('\n')
+  const names = discoverPersonNames(joined, [context.clientName ?? '', context.counselorName ?? ''])
+  for (const [name, owner] of names) {
+    if (!owner) add(name, '인물 확인 필요', 'review', 'name')
+  }
 
   for (const form of personNameForms(context.clientName ?? '', joined)) {
-    if (joined.includes(form)) add(form, '내담자 A', 'auto')
+    if (joined.includes(form)) add(form, '내담자 A', 'auto', 'name')
   }
   for (const form of personNameForms(context.counselorName ?? '', joined)) {
-    if (joined.includes(form)) add(form, '상담자', 'auto')
+    if (joined.includes(form)) add(form, '상담자', 'auto', 'name')
   }
-  for (const match of joined.matchAll(/(?:이름|성명)\s*[:：]\s*([가-힣]{2,4})(?![가-힣])/g)) add(match[1], '인물 정보 비공개', 'review')
+  const labels = new Map<string, string>()
+  for (const [name, owner] of names) {
+    if (found.has(name)) continue
+    if (owner && !labels.has(owner)) labels.set(owner, `인물 ${labels.size < 25 ? String.fromCharCode(66 + labels.size) : labels.size + 2}`)
+    add(name, owner ? (found.get(owner)?.replacement ?? labels.get(owner)!) : '인물 확인 필요', 'review', 'name')
+  }
   for (const match of joined.matchAll(/[가-힣A-Za-z0-9]{2,30}(?:초등학교|중학교|고등학교|대학교|대학원|병원|센터|상담소|회사|기관)/g)) add(match[0], '기관 정보 비공개', 'review')
   for (const match of joined.matchAll(RESIDENT_NUMBER)) add(match[0], '******-*******', 'auto')
   for (const match of joined.matchAll(PHONE)) add(match[0], maskPhone(match[0]), 'auto')
@@ -179,12 +237,13 @@ export function findDeidMatches(text: string, items: DeidItem[]): DeidMatch[] {
   const taken: DeidMatch[] = []
   const ordered = [...items].filter((item) => item.original).sort((a, b) => b.original.length - a.original.length)
   for (const item of ordered) {
+    const allowed = item.matchMode === 'name' ? new Set(Array.from(text.matchAll(namePattern(item.original)), m => m.index)) : null
     let from = 0
     while (from <= text.length) {
       const start = text.indexOf(item.original, from)
       if (start === -1) break
       const end = start + item.original.length
-      if (!taken.some((match) => start < match.end && match.start < end)) taken.push({ start, end, itemId: item.id })
+      if ((!allowed || allowed.has(start)) && !taken.some((match) => start < match.end && match.start < end)) taken.push({ start, end, itemId: item.id })
       from = start + 1
     }
   }

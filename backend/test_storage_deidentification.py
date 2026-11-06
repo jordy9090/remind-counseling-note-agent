@@ -61,7 +61,7 @@ class MaskingRuleTests(unittest.TestCase):
         entities = deid._StorageEntities(person_names=["지원", "홍O동"], occupations=[])
         with model_returns(entities):
             texts, _ = deid.deidentify_texts({"memo": "지원이가 상담을 지원했다. 학교지원 프로그램. 홍O동"})
-        self.assertEqual(texts["memo"], "지O이가 상담을 지O했다. 학교지원 프로그램. 홍O동")
+        self.assertEqual(texts["memo"], "지O이가 상담을 지원했다. 학교지원 프로그램. 홍O동")
 
     def test_without_the_model_the_client_alias_is_still_masked(self) -> None:
         with model_returns(None):
@@ -74,12 +74,12 @@ class MaskingRuleTests(unittest.TestCase):
     def test_stub_mode_never_calls_the_provider(self) -> None:
         with patch.object(settings, "use_stub", True), patch("app.services.llm.get_structured_llm",
                                                             side_effect=AssertionError("provider called")):
-            self.assertIsNone(deid._extract_entities(MEMO))
+            self.assertIn("박서준", deid._extract_entities(MEMO).person_names)
 
     def test_provider_errors_fall_back_quietly(self) -> None:
         with patch.object(settings, "use_stub", False), patch.object(settings, "openai_api_key", "synthetic-key"), \
                 patch("app.services.llm.get_structured_llm", side_effect=RuntimeError("synthetic outage")):
-            self.assertIsNone(deid._extract_entities(MEMO))
+            self.assertIn("박서준", deid._extract_entities(MEMO).person_names)
 
     def test_organizations_ages_places_birth_dates_and_contacts(self) -> None:
         entities = deid._StorageEntities(

@@ -188,7 +188,7 @@ class TranscriptStorageTests(unittest.TestCase):
         text = stored[0].sanitized_text
         for raw in ("홍길동", "010-1234-5678", "client@example.com"):
             self.assertNotIn(raw, text)
-        for token in ("[PERSON]", "[PHONE]", "[EMAIL]"):
+        for token in ("[인물 B]", "[PHONE]", "[EMAIL]"):
             self.assertIn(token, text)
         self.assertEqual(self.fake.transcript_turns[0]["sanitized_text"], text)
 

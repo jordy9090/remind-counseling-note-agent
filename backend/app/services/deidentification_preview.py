@@ -13,6 +13,7 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from app.services.korean_person_names import discover_person_names, given_name, name_pattern
 
 from app.services.storage_deidentification import (
     _NAME_TOKEN,
@@ -60,8 +61,8 @@ def _name_forms(name: str, text: str) -> list[str]:
     value = (name or "").strip()
     if not re.fullmatch(r"[가-힣]{2,5}", value) or is_masked_name(value):
         return []
-    given = value[1:]
-    return [value, given] if len(value) >= 3 and text.count(given) > text.count(value) else [value]
+    given = given_name(value)
+    return [value, given] if given and name_pattern(given).search(text) else [value]
 
 
 def _person_label(index: int) -> str:
@@ -97,7 +98,11 @@ def preview_items(texts: list[str], *, client_name: str = "", counselor_name: st
         for name in sorted(names, key=len, reverse=True):
             if not _NAME_TOKEN.match(name) or is_masked_name(name) or name in items or name not in joined:
                 continue
-            owner = next((full for full in people if len(full) == 3 and full[1:] == name), None)
+            owners = [full for full in people if given_name(full) == name]
+            if len(owners) > 1:
+                add(name, "인물 확인 필요", "name")
+                continue
+            owner = owners[0] if owners else None
             label = items[owner].replacement if owner else _person_label(len(people))
             if owner is None:
                 people.append(name)
@@ -116,4 +121,8 @@ def preview_items(texts: list[str], *, client_name: str = "", counselor_name: st
             if len(birth_date.strip()) >= 4:
                 add(birth_date, BIRTH_DATE_LABEL, "birth_date")
 
+    # A registered client's given name is still ambiguous when another person shares it.
+    for name, owner in discover_person_names(joined, (client_name, counselor_name)).items():
+        if not owner:
+            items[name] = DeidentificationPreviewItem(original=name, replacement="인물 확인 필요", category="name")
     return DeidentificationPreviewResponse(items=list(items.values()), model_used=False)
