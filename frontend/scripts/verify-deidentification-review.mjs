@@ -12,6 +12,35 @@ async function loadModule(name) {
 }
 const lib = await loadModule('deidentificationReview')
 
+for (const fixture of JSON.parse(fs.readFileSync('../backend/fixtures/korean_person_names.json', 'utf8'))) {
+  assert.deepEqual(Object.fromEntries(lib.discoverPersonNames(fixture.text, fixture.known_names)), fixture.names)
+  const items = lib.detectLocalDeidItems([fixture.text], { clientName: fixture.known_names?.[0] })
+  // Only test name replacements here; institution/date rules have separate coverage below.
+  const masked = lib.applyDeidItems(fixture.text, items.filter(item => item.matchMode === 'name'))
+  for (const phrase of fixture.preserve ?? []) assert.ok(masked.includes(phrase), `ordinary phrase changed: ${phrase}`)
+  for (const [name, owner] of Object.entries(fixture.names)) {
+    const item = items.find(i => i.original === name)
+    assert.ok(item, `name form missing: ${name}`)
+    if (owner) assert.equal(item.replacement, items.find(i => i.original === owner)?.replacement)
+    else assert.equal(item.replacement, '인물 확인 필요')
+  }
+}
+{
+  const registered = '지혜. 지혜는 안 갔다.'
+  assert.equal(lib.applyDeidItems(registered, lib.detectLocalDeidItems([registered], { clientName: '지혜' })), '[내담자 A]. [내담자 A]는 안 갔다.')
+  const explicit = '이름: 지원. 지원은 안 갔다. 이름: 사랑. 사랑도 말했다.'
+  assert.equal(lib.applyDeidItems(explicit, lib.detectLocalDeidItems([explicit])), '이름: [인물 B]. [인물 B]은 안 갔다. 이름: [인물 C]. [인물 C]도 말했다.')
+  const text = '친구 김하린에게 전화했어요. 하린이는 안 갔어요. 누나 김소윤이요. 소윤에게 2번 말했어요.'
+  const first = lib.applyDeidItems(text, lib.detectLocalDeidItems([text]))
+  assert.equal(first, '친구 [인물 B]에게 전화했어요. [인물 B]이는 안 갔어요. 누나 [인물 C]이요. [인물 C]에게 2번 말했어요.')
+  assert.equal(lib.applyDeidItems(first, lib.detectLocalDeidItems([first])), first)
+  const longText = '내담자: 지원을 받지 않았다. 2회기다.\n'.repeat(4000) + text
+  const longMasked = lib.applyDeidItems(longText, lib.detectLocalDeidItems([longText]))
+  assert.ok(longMasked.startsWith('내담자: 지원을 받지 않았다. 2회기다.'))
+  assert.ok(!longMasked.includes('김하린') && !longMasked.includes('하린') && !longMasked.includes('김소윤'))
+  console.log('shared Korean name/alias boundaries and long-input tail: passed')
+}
+
 {
   // Execute the component's real discovery effect: opening review must not send raw text.
   const source = fs.readFileSync('src/components/deidentification/DeidentificationReviewModal.tsx', 'utf8')
@@ -113,7 +142,7 @@ const transcript = [
 
   const failed = await lib.detectDeidentificationItems([text], { clientName: '가나다' }, async () => { throw new Error('offline') })
   assert.equal(failed.remoteFailed, true)
-  assert.deepEqual(failed.items.map((item) => item.original).sort(), ['32세', '가나다'])
+  assert.deepEqual(failed.items.map((item) => item.original).sort(), ['32세', '가나다', '마바사'])
   console.log('server merge: passed')
 }
 

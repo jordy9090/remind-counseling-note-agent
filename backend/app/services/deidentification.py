@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 from app.schemas.note import SensitiveInfoCandidate
+from app.services.korean_person_names import mask_person_names
 
 
 @dataclass(frozen=True)
@@ -149,8 +150,13 @@ def deidentify_text(text: str, source: str = "") -> tuple[str, list[SensitiveInf
     Candidate text intentionally contains placeholders rather than raw PII so
     persisted sanitized payloads and retrieval logs do not retain identifiers.
     """
-    masked = text or ""
+    masked, names_found = mask_person_names(text or "")
     candidates: list[SensitiveInfoCandidate] = []
+    if names_found:
+        candidates.append(SensitiveInfoCandidate(
+            text="[인물 정보]", source=source, category="person_name",
+            recommendation="성명과 이름만 부른 표현의 치환 및 인물 구분을 확인해주세요.",
+        ))
     for rule in MASK_RULES:
         seen_in_rule = False
 

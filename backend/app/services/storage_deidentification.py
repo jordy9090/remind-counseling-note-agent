@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from app.services.korean_person_names import discover_person_names, given_name, name_pattern
 
 NAME_MASK_CHAR = "O"
 FALLBACK_OCCUPATION = "기타 직업군"
@@ -202,7 +203,7 @@ def _extract_entities(text: str) -> _StorageEntities | None:
     """Find conservative local candidates without importing or calling an LLM provider."""
     from app.services.deidentification import MASK_RULES
 
-    names = list(dict.fromkeys(re.findall(r"(?:이름|성명)\s*[:：]\s*([가-힣]{2,4})(?![가-힣])", text)))
+    names = list(discover_person_names(text))
     organizations: list[_OrganizationMention] = []
     institution_rule = next(rule for rule in MASK_RULES if rule.category == "institution")
     for value in dict.fromkeys(institution_rule.pattern.findall(text)):
@@ -211,10 +212,10 @@ def _extract_entities(text: str) -> _StorageEntities | None:
     return _StorageEntities(person_names=names, organizations=organizations) if names or organizations else None
 
 
-def _name_pattern(name: str) -> re.Pattern[str]:
+def _name_pattern(name: str, *, exact_identity: bool = False) -> re.Pattern[str]:
     # A Korean name starts a word: the preceding character must not be Hangul. Particles may follow.
     if _HANGUL.match(name):
-        return re.compile(rf"(?<![가-힣]){re.escape(name)}")
+        return name_pattern(name, exact_identity=exact_identity)
     return re.compile(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])")
 
 
@@ -226,8 +227,8 @@ def _alias_names(known_names: Iterable[str]) -> set[str]:
         if not value or is_masked_name(value) or not re.fullmatch(r"[가-힣]{2,5}", value):
             continue
         names.add(value)
-        if len(value) >= 3:
-            names.add(value[1:])  # 김민지 → 민지
+        if given_name(value):
+            names.add(given_name(value))
     return names
 
 
@@ -283,7 +284,10 @@ def deidentify_texts(
     """Return the texts with identifying details replaced, plus a value-free report."""
     joined = "\n\n".join(f"[{key}]\n{value}" for key, value in texts.items() if value and value.strip())
     entities = _extract_entities(joined)
+    known_names = tuple(known_names)
     names = _alias_names(known_names)
+    explicit_names = {name.strip() for name in known_names}
+    explicit_names.update(name for name, owner in discover_person_names(joined).items() if name == owner)
     occupations: dict[str, str] = {}
     organizations: dict[str, str] = {}
     ages: dict[str, str] = {}
@@ -331,7 +335,7 @@ def deidentify_texts(
         text, totals["ages"] = _accumulate(totals["ages"], _generalize_explicit_ages(text))
         text, totals["ages"] = _accumulate(totals["ages"], _generalize_grades(text))
         for name in sorted(names, key=len, reverse=True):
-            text, count = _name_pattern(name).subn(mask_name(name), text)
+            text, count = _name_pattern(name, exact_identity=name in explicit_names).subn(mask_name(name), text)
             totals["names"] += count
         result[key] = text
     return result, StorageDeidentificationReport(
