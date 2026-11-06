@@ -256,13 +256,13 @@ class AudioRouteLifecycleTests(unittest.TestCase):
                 self.assertEqual([], list(Path(directory).iterdir()))
 
     def test_privacy_proposal_is_local_and_preserves_negation(self):
-        response = self.client.post("/api/audio/deidentify", json={"text": "안 갔다. 친구 김하린에게 synth@example.org로 연락했다."})
+        response = self.client.post("/api/audio/deidentify", json={"text": "안 갔다. 친구 김하린에게 synth@example.org로 연락했다. 하린이는 대답했다."})
         self.assertEqual(200, response.status_code)
         self.assertEqual("no-store", response.headers["cache-control"])
         self.assertIn("안 갔다", response.json()["text"])
-        # The current main detector does not recognize this unlabeled name.
-        # Keep that limitation explicit; the counselor must review the proposal.
-        self.assertIn("김하린", response.json()["text"])
+        self.assertNotIn("김하린", response.json()["text"])
+        self.assertNotIn("하린", response.json()["text"])
+        self.assertEqual(response.json()["text"].count("[인물 B]"), 2)
         self.assertNotIn("synth@example.org", response.json()["text"])
         self.assertTrue(response.json()["requires_confirmation"])
 
