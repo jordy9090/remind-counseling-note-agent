@@ -10,7 +10,7 @@ import unicodedata
 from uuid import uuid4
 
 from app.schemas.voucher import VoucherForm
-from app.services import supabase_storage as db
+from app.services import supabase_storage as db, voucher_ari
 from app.services.storage_deidentification import deidentify_texts
 from app.services.voucher_renderer import VoucherError, manifest, paragraphs, render_pdf, render_hwpx, verify_assets
 
@@ -22,7 +22,9 @@ def digest(value):
     return sha256(unicodedata.normalize('NFC', json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))).encode()).hexdigest()
 
 
-def template_fingerprint(template=None):
+def template_fingerprint(template=None, edition="standard"):
+    if edition == voucher_ari.EDITION:
+        return voucher_ari.fingerprint(template)
     if template == 'form25':
         bundle = {**manifest('form25')}
         bundle.pop('qualification', None)
@@ -77,6 +79,8 @@ class VoucherDocuments:
     def sources(self, actor, case_id, selections):
         fields, hashes = {}, {}
         for source in selections:
+            if source.note_id is None:
+                continue
             note = db.fetch_generated_note(str(source.note_id), actor=actor, include_input=False)
             if note.case_id != case_id:
                 raise VoucherError('DOCUMENT_NOT_FOUND', '같은 내담자의 회기만 선택해주세요.', 404)
@@ -107,7 +111,10 @@ class VoucherDocuments:
     def prepare(self, actor, request):
         case = self.owned_case(actor, request.case_id)
         actor_storage = db._storage_for_actor(actor)
-        request_hash = digest(request.model_dump(mode='json'))
+        request_data = request.model_dump(mode='json')
+        if request.form.edition == 'standard':
+            request_data['form'].pop('edition')  # Preserve retry identity for earlier clients.
+        request_hash = digest(request_data)
         query = {'user_id': f'eq.{actor}', 'operation_key': f'eq.{request.operation_key}'}
         previous = actor_storage.maybe_single(TABLE, query)
         if previous:
@@ -119,7 +126,7 @@ class VoucherDocuments:
             raise VoucherError('SOURCE_CHANGED', '확정 기록이 바뀌었습니다. 회기를 다시 가져와주세요.', 409)
         data = request.form.model_dump(mode='json')
         # Never transform ids, dates, explicit voucher numbers, or service tier.
-        texts = {key: value for key, value in data.items() if isinstance(value, str) and key not in {'template', 'report_month', 'service_tier'}}
+        texts = {key: value for key, value in data.items() if isinstance(value, str) and key not in {'template', 'edition', 'report_month', 'service_tier'}}
         for index, row in enumerate(data['rows']):
             for key in ('content_left', 'content_right'):
                 texts[f'rows/{index}/{key}'] = row[key]
@@ -131,9 +138,12 @@ class VoucherDocuments:
             else:
                 data[key] = value
         form = VoucherForm.model_validate(data)
-        verify_assets(form.template)
-        paragraphs(form)
-        snapshot = {'form': form.model_dump(mode='json'), 'sources': hashes, 'policy': POLICY, 'template_bundle': template_fingerprint(form.template)}
+        if form.edition == voucher_ari.EDITION:
+            voucher_ari.lines_for(form)
+        else:
+            verify_assets(form.template)
+            paragraphs(form)
+        snapshot = {'form': form.model_dump(mode='json'), 'sources': hashes, 'policy': POLICY, 'template_bundle': template_fingerprint(form.template, form.edition)}
         row = {'id': str(uuid4()), 'case_id': request.case_id, 'user_id': str(actor), 'operation_key': str(request.operation_key),
                'request_hash': request_hash, 'template': form.template, 'snapshot': snapshot, 'fingerprint': digest(snapshot),
                'privacy_status': 'applied' if report.llm_used else 'degraded'}
@@ -152,7 +162,7 @@ class VoucherDocuments:
             raise VoucherError('REVIEW_CHANGED', '출력 내용을 다시 확인해주세요.', 409)
         if row.get('reviewed_at'):
             return row
-        if row['snapshot']['policy'] != POLICY or row['snapshot']['template_bundle'] != template_fingerprint(row['template']):
+        if row['snapshot']['policy'] != POLICY or row['snapshot']['template_bundle'] != template_fingerprint(row['template'], row['snapshot']['form'].get('edition', 'standard')):
             raise VoucherError('POLICY_VERSION_CHANGED', '출력 정책이 바뀌었습니다. 새 미리보기를 만들어주세요.', 409)
         form = VoucherForm.model_validate(row['snapshot']['form'])
         _, hashes = self.sources(actor, row['case_id'], form.rows)
@@ -167,12 +177,14 @@ class VoucherDocuments:
         if not preview and not row.get('reviewed_at'):
             raise VoucherError('REVIEW_REQUIRED', '먼저 출력 내용 검토를 완료해주세요.', 409)
         snapshot = row['snapshot']
-        if digest(snapshot) != row['fingerprint'] or snapshot['template_bundle'] != template_fingerprint(row['template']):
+        if digest(snapshot) != row['fingerprint'] or snapshot['template_bundle'] != template_fingerprint(row['template'], row['snapshot']['form'].get('edition', 'standard')):
             raise VoucherError('TEMPLATE_VERSION_UNAVAILABLE', '이 문서 버전의 서식을 확인할 수 없습니다.', 409)
         bundle = manifest('form25') if row['template'] == 'form25' else manifest()
         if format == 'hwpx' and not bundle['qualification']['hwpx']:
             raise VoucherError('FORMAT_NOT_QUALIFIED', '문서 편집기 호환성 확인 후 제공할 예정입니다.', 503)
         form = VoucherForm.model_validate(snapshot['form'])
+        if form.edition == voucher_ari.EDITION:
+            return voucher_ari.render(form, format)
         return render_pdf(form) if format == 'pdf' else render_hwpx(form)
 
     def delete(self, actor, document_id):

@@ -3,7 +3,7 @@ import type { PDFDocumentLoadingTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 /** Render the downloaded bytes locally, including browsers without a PDF plugin. */
-export default function VoucherPdfPreview({ blob, onReady, maxPages = 8, title = '실제 출력될 전마투 PDF' }: {
+export default function VoucherPdfPreview({ blob, onReady, maxPages = 8, title = '실제 출력될 바우처 PDF' }: {
   blob: Blob; onReady: (ready: boolean) => void; maxPages?: number; title?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
@@ -32,7 +32,7 @@ export default function VoucherPdfPreview({ blob, onReady, maxPages = 8, title =
           canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height)
           canvas.className = 'mx-auto mb-4 block h-auto w-full max-w-[900px] bg-white shadow'
           canvas.setAttribute('role', 'img')
-          canvas.setAttribute('aria-label', `전마투 PDF ${index} / ${pdf.numPages}페이지`)
+          canvas.setAttribute('aria-label', `바우처 PDF ${index} / ${pdf.numPages}페이지`)
           canvas.dataset.pageWidth = String(viewport.width / 1.75)
           canvas.dataset.pageHeight = String(viewport.height / 1.75)
           target.append(canvas)

@@ -10,7 +10,9 @@ from starlette.concurrency import run_in_threadpool
 from app.api.security import require_preview_access, AuthenticatedActor
 from app.schemas.voucher import MapRequest, PrepareRequest, ReviewRequest, ExportRequest
 from app.services.voucher_documents import service
-from app.services.voucher_renderer import VoucherError, manifest
+from app.services.voucher_renderer import VoucherError, bindings, manifest
+from app.services import voucher_ari
+from app.services.voucher_contract import FIELDS, WIDTH, MARGIN
 from app.services.voucher_original import original_file
 from app.services.supabase_storage import SupabaseStorageError, NoteConfirmationError
 
@@ -31,7 +33,7 @@ Actor = Annotated[str, Depends(require_voucher_actor)]
 
 async def call(fn, *args, **kwargs):
     if os.getenv('ENABLE_VOUCHER_DOCUMENTS', '0') != '1':
-        raise HTTPException(503, detail={'code': 'NOT_ENABLED', 'message': '전마투 서식 내보내기를 준비하고 있습니다.'})
+        raise HTTPException(503, detail={'code': 'NOT_ENABLED', 'message': '바우처 서식 내보내기를 준비하고 있습니다.'})
     try:
         return await run_in_threadpool(fn, *args, **kwargs)
     except VoucherError as error:
@@ -47,7 +49,14 @@ async def call(fn, *args, **kwargs):
 @router.get('/capabilities')
 async def capabilities(actor: Actor):
     enabled = os.getenv('ENABLE_VOUCHER_DOCUMENTS', '0') == '1'
-    return {'enabled': enabled, 'formats': manifest()['qualification']}
+    standard = {}
+    for template in ("form10", "form26"):
+        standard[template] = {key: {"width": rect[2]-10, "size": 9, "maxLines": int((rect[3]-8)//11.25)}
+                              for key, (_, rect) in bindings(template).items()}
+    standard["form25"] = {key: {"width": WIDTH-2*MARGIN-20, "size": 10, "maxLines": 10} for key in FIELDS}
+    return {"enabled": enabled, "formats": manifest()["qualification"],
+            "layout": {"standard": standard, voucher_ari.EDITION: voucher_ari.metadata()["fields"]},
+            "fontWidths": voucher_ari.font_profile()}
 
 
 @router.get('/original/{format}')
