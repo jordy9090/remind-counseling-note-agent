@@ -2863,9 +2863,16 @@ const emptyProgressRow: Record<string, string> = { '회기': '', '상담일': ''
 const progressWidths: Record<string, string> = { '회기': '7%', '상담일': '14%', '소요시간': '10%', '회기 주제': '43%', '취소·지각·결석': '13%', '이전 수퍼비전': '13%' }
 type ChangeSupervisionCell = (blockId: string, row: number, column: string, value: string) => void
 
+function supervisionTableHeaders(block: SupervisionContentBlock) {
+  const stored = (block.rows || []).flatMap(row => Object.keys(row))
+  // JSONB may reorder object keys when a counselor reopens a saved report.
+  const formColumns = block.id === 'C-1.table' || block.label === '회기 진행표' ? Object.keys(emptyProgressRow) : []
+  return [...new Set([...formColumns, ...stored])]
+}
+
 function SupervisionTable({ block, onCellChange }: { block: SupervisionContentBlock; onCellChange: ChangeSupervisionCell }) {
   const rows = block.rows?.length ? block.rows : [emptyProgressRow]
-  const headers = Array.from(new Set(rows.flatMap(row => Object.keys(row))))
+  const headers = supervisionTableHeaders(block)
   return (
     <div className="overflow-x-auto border border-slate-400">
       <table aria-label={block.label || '회기 진행표'} className="w-full min-w-[680px] table-fixed border-collapse text-left text-[12px] font-semibold">
@@ -4158,7 +4165,9 @@ function buildSupervisionExportSections(report: SupervisionReportDraft): Documen
           type: block.type,
           text: block.text || null,
           text_html: isFormattableSupervisionBlock(block) && hasRichFormatting(block.textHtml) ? block.textHtml : undefined,
-          rows: block.rows || [],
+          rows: (block.rows || []).map(row => Object.fromEntries(
+            supervisionTableHeaders(block).map(column => [column, row[column] ?? '']),
+          )),
           speaker_turns: block.speakerTurns?.map((turn) => ({
             turn_id: turn.turnId,
             speaker: turn.speaker,
