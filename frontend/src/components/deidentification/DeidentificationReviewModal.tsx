@@ -44,6 +44,7 @@ export default function DeidentificationReviewModal({
   onConfirm,
   onAddMaterial,
   requireConfirmation = false,
+  submitLabel = 'AI 요약 생성하기',
 }: {
   sources: DeidSource[]
   context: DeidDetectionContext
@@ -52,6 +53,8 @@ export default function DeidentificationReviewModal({
   /** "+ 자료 추가": returns to the input screen. Hidden when absent. */
   onAddMaterial?: () => void
   requireConfirmation?: boolean
+  /** The primary button; pages with a following step (등장 인물 정리) say so. */
+  submitLabel?: string
 }) {
   const [items, setItems] = useState<DeidItem[]>([])
   const [detecting, setDetecting] = useState(true)
@@ -217,7 +220,7 @@ export default function DeidentificationReviewModal({
               <ArrowLeft className="h-5 w-5" />뒤로가기
             </OutlineButton>
             <PrimaryButton className="h-[52px] flex-1 rounded-[12px] text-[15px]" disabled={!canSubmit} onClick={submit}>
-              <Sparkles className="h-5 w-5" />AI 요약 생성하기
+              <Sparkles className="h-5 w-5" />{submitLabel}
             </PrimaryButton>
           </div>
         </div>

@@ -20,6 +20,7 @@
     "verify:quick-summary-login-browser": "node scripts/verify-quick-summary-login-browser.mjs",
     "verify:case-list": "node scripts/verify-case-list.mjs",
     "verify:deidentification-review": "node scripts/verify-deidentification-review.mjs",
+    "verify:person-mapping": "node scripts/verify-person-mapping.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

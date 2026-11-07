@@ -115,7 +115,7 @@ function givenName(name: string): string {
   return name.length - length >= 2 ? name.slice(length) : ''
 }
 
-function namePattern(name: string, exactIdentity = false): RegExp {
+export function namePattern(name: string, exactIdentity = false): RegExp {
   const ending = AMBIGUOUS_GIVEN_NAMES.has(name) && !exactIdentity
     ? `(?=\\s*(?:이(?:는|가|랑|와|도|를|야|요)|에게(?:서)?|한테(?:서)?|씨|님)(?:는|도|만)?${NAME_BOUNDARY})`
     : NAME_ENDING

@@ -84,6 +84,7 @@ import { hasRichFormatting, plainTextToRichHtml, sanitizeRichHtml } from '../lib
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
 import DeidentificationReviewModal, { type DeidReviewResult } from '../components/deidentification/DeidentificationReviewModal'
+import PersonMappingModal, { hasPersonMentions } from '../components/deidentification/PersonMappingModal'
 import { SESSION_REVIEW_FIELDS, sessionReviewSources, type DeidSource } from '../lib/deidentificationReview'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
 import ClientListPage from './ClientListPage'
@@ -318,6 +319,8 @@ export default function SessionDraftPage({
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
   // Pre-generation de-identification review: open while the counselor checks what goes to the AI.
   const [reviewSources, setReviewSources] = useState<DeidSource[] | null>(null)
+  // De-identified sources waiting for the person matching step (등장 인물 정리).
+  const [personSources, setPersonSources] = useState<DeidSource[] | null>(null)
   // Reviewed texts of the last generation, reused for later AI calls on the same input (supervision report).
   const reviewedInput = useRef<{ original: Record<string, string>; texts: Record<string, string> } | null>(null)
   const materialsRef = useRef(materials)
@@ -951,12 +954,21 @@ export default function SessionDraftPage({
     return unchanged ? { ...input, ...reviewed.texts } : input
   }
 
-  /** Runs generation with the texts the counselor confirmed in the review step. */
-  const generateReviewed = async (review: DeidReviewResult) => {
+  /** After the de-identification review: match people first when the texts mention any. */
+  const continueReviewed = (review: DeidReviewResult) => {
+    const sources = (reviewSources ?? []).map((source) => ({ ...source, text: review.texts[source.key] ?? source.text }))
     setReviewSources(null)
+    if (hasPersonMentions(sources.map((source) => source.text))) setPersonSources(sources)
+    else void generateReviewed(review.texts)
+  }
+
+  /** Runs generation with the texts the counselor confirmed in the review steps. */
+  const generateReviewed = async (texts: Record<string, string>) => {
+    setReviewSources(null)
+    setPersonSources(null)
     const original = Object.fromEntries(SESSION_REVIEW_FIELDS.map(([key]) => [key, form[key] ?? '']))
-    reviewedInput.current = { original, texts: review.texts }
-    const reviewedForm: SessionInput = { ...form, ...review.texts }
+    reviewedInput.current = { original, texts }
+    const reviewedForm: SessionInput = { ...form, ...texts }
     setHasSubmitted(true)
     setError(null)
     setPersistenceError(null)
@@ -2023,7 +2035,15 @@ export default function SessionDraftPage({
           context={{ clientName: registeredClientName(form.case_id) || getClientAlias(form), counselorName: form.counselor_name }}
           onBack={() => setReviewSources(null)}
           onAddMaterial={() => setReviewSources(null)}
-          onConfirm={(review) => void generateReviewed(review)}
+          submitLabel="다음: 등장 인물 정리"
+          onConfirm={continueReviewed}
+        />
+      )}
+      {personSources && (
+        <PersonMappingModal
+          sources={personSources}
+          onBack={() => setPersonSources(null)}
+          onConfirm={(texts) => void generateReviewed(texts)}
         />
       )}
     </main>
