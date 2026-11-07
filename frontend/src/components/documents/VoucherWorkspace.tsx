@@ -61,7 +61,7 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
     })] : visibleFields.map(([key]) => [key, form[key as keyof typeof fieldLabels] as string])
   const overflowing = profiles && textValues.some(([key, value]) => {
     const fit = measureVoucherText(value, profiles[key], advances, legacyContract)
-    return fit.unsupported || fit.lines > profiles[key].maxLines
+    return fit.unsupported || fit.lines > profiles[key].maxLines || fit.count > fit.capacity
   })
   const changeTemplate = (nextTemplate: VoucherTemplate, nextEdition: VoucherEdition) => {
     drafts.current.set(edition + form.template, form)
