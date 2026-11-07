@@ -1329,6 +1329,21 @@ export default function SessionDraftPage({
     }
   }
 
+  const changeSupervisionCell: ChangeSupervisionCell = (blockId, rowIndex, column, value) => {
+    setFinalDocumentEditedAt(new Date())
+    setSupervisionReportDraft(current => current && ({
+      ...current,
+      sections: current.sections.map(section => ({
+        ...section,
+        contentBlocks: section.contentBlocks.map(block => block.id === blockId ? {
+          ...block,
+          reviewStatus: 'edited',
+          rows: (block.rows?.length ? block.rows : [emptyProgressRow]).map((row, i) => i === rowIndex ? { ...row, [column]: value } : row),
+        } : block),
+      })),
+    }))
+  }
+
   const beginEditSupervisionBlock = (block: SupervisionContentBlock) => {
     setEditingSupervisionBlockId(block.id)
     setEditingSupervisionText(supervisionBlockToEditableText(block))
@@ -1797,7 +1812,7 @@ export default function SessionDraftPage({
         )}
         {backgroundScreen === 'documents' && (
           <>
-          <div className="mx-auto max-w-[1240px] px-6 pt-5"><button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700" onClick={() => setVoucherContext({})}>전마투 기록지·계약서·계획서 작성</button></div>
+          <div className="mx-auto max-w-[1240px] px-6 pt-5"><button className="rounded-lg border bg-white px-4 py-3 font-semibold text-blue-700" onClick={() => setVoucherContext({})}>바우처 서식 작성</button></div>
           <DocumentArchivePage documents={recentDocuments} loading={isCaseListLoading} onOpenDocument={openDocument} />
           </>
         )}
@@ -1895,6 +1910,7 @@ export default function SessionDraftPage({
                     expandedEvidenceId={expandedSupervisionEvidenceId}
                     isLoading={isGeneratingFinalDocument}
                     report={supervisionReportDraft}
+                    onCellChange={changeSupervisionCell}
                     onBeginEdit={beginEditSupervisionBlock}
                     onChangeEditingText={(text, html) => {
                       setEditingSupervisionText(text)
@@ -2487,7 +2503,7 @@ function DocumentTransformWorkspace({
           className={`min-h-[226px] whitespace-normal rounded-[8px] border bg-white p-6 text-center transition hover:-translate-y-0.5 hover:shadow-md ${voucherSelected ? 'border-blue-600 bg-blue-50' : 'border-slate-300'}`}
         >
           <div className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[12px] bg-blue-50 text-blue-700"><ClipboardCheck className="h-7 w-7" /></div>
-          <h2 className="mt-5 text-base font-extrabold text-black">전마투 서식</h2>
+          <h2 className="mt-5 text-base font-extrabold text-black">바우처 서식 작성</h2>
           <p className="mt-3 text-xs font-semibold leading-4 text-slate-500">제10호 기록지 · 제25호 이용계약서 · 제26호 계획서를 작성합니다.</p>
           <span className="mt-4 inline-flex rounded-full bg-blue-50 px-3 py-1 text-[10px] font-bold text-blue-600">PDF · HWPX 다운로드</span>
         </button>
@@ -2510,7 +2526,7 @@ function DocumentTransformWorkspace({
             onClick={() => voucherSelected ? onOpenVoucher() : onCreateFinal(selectedType)}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-7 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
           >
-            {voucherSelected ? '전마투 서식 작성하기' : '변환하기'}
+            {voucherSelected ? '바우처 서식 작성' : '변환하기'}
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -2579,6 +2595,7 @@ function SupervisionReportWorkspace({
   error,
   expandedEvidenceId,
   isLoading,
+  onCellChange,
   onBeginEdit,
   onChangeEditingText,
   onChangeMeta,
@@ -2592,6 +2609,7 @@ function SupervisionReportWorkspace({
   error: string | null
   expandedEvidenceId: string | null
   isLoading: boolean
+  onCellChange: ChangeSupervisionCell
   onBeginEdit: (block: SupervisionContentBlock) => void
   onChangeMeta: (field: SupervisionHeaderField, value: string) => void
   onChangeEditingText: (value: string, html?: string) => void
@@ -2682,6 +2700,7 @@ function SupervisionReportWorkspace({
             evidenceIndex={report.evidenceIndex}
             expandedEvidenceId={expandedEvidenceId}
             section={section}
+            onCellChange={onCellChange}
             onBeginEdit={onBeginEdit}
             onChangeEditingText={onChangeEditingText}
             onCommitEdit={onCommitEdit}
@@ -2703,6 +2722,7 @@ function SupervisionReportSectionView({
   editingText,
   evidenceIndex,
   expandedEvidenceId,
+  onCellChange,
   onBeginEdit,
   onChangeEditingText,
   onCommitEdit,
@@ -2714,6 +2734,7 @@ function SupervisionReportSectionView({
   editingText: string
   evidenceIndex: SupervisionReportDraft['evidenceIndex']
   expandedEvidenceId: string | null
+  onCellChange: ChangeSupervisionCell
   onBeginEdit: (block: SupervisionContentBlock) => void
   onChangeEditingText: (value: string, html?: string) => void
   onCommitEdit: () => void
@@ -2751,6 +2772,7 @@ function SupervisionReportSectionView({
             editingText={editingText}
             evidenceIndex={evidenceIndex}
             evidenceOpen={expandedEvidenceId === block.id}
+            onCellChange={onCellChange}
             onBeginEdit={onBeginEdit}
             onChangeEditingText={onChangeEditingText}
             onCommitEdit={onCommitEdit}
@@ -2769,6 +2791,7 @@ function SupervisionContentBlockView({
   editingText,
   evidenceIndex,
   evidenceOpen,
+  onCellChange,
   onBeginEdit,
   onChangeEditingText,
   onCommitEdit,
@@ -2780,6 +2803,7 @@ function SupervisionContentBlockView({
   editingText: string
   evidenceIndex: SupervisionReportDraft['evidenceIndex']
   evidenceOpen: boolean
+  onCellChange: ChangeSupervisionCell
   onBeginEdit: (block: SupervisionContentBlock) => void
   onChangeEditingText: (value: string, html?: string) => void
   onCommitEdit: () => void
@@ -2791,7 +2815,9 @@ function SupervisionContentBlockView({
         {block.label && <span className="mr-1 text-[12px] font-extrabold text-slate-800">{block.label}</span>}
       </div>}
 
-      {editing && isFormattableSupervisionBlock(block) ? (
+      {block.type === 'table' ? (
+        <SupervisionTable block={block} onCellChange={onCellChange} />
+      ) : editing && isFormattableSupervisionBlock(block) ? (
         <RichTextField
           autoFocus
           ariaLabel={block.label || '보고서 본문'}
@@ -2833,37 +2859,39 @@ function SupervisionContentBlockView({
   )
 }
 
-function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) {
-  if (block.type === 'table' && block.rows?.length) {
-    const headers = Object.keys(block.rows[0])
-    return (
-      <div className="overflow-x-auto border border-slate-400">
-        <table className="w-full min-w-[680px] border-collapse text-left text-[12px] font-semibold">
-          <thead className="bg-slate-100 text-slate-800">
-            <tr>
-              {headers.map((header) => (
-                <th key={header} className="border border-slate-400 px-2 py-2">
-                  {header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="text-slate-900">
-            {block.rows.map((row, index) => (
-              <tr key={`${block.id}-${index}`}>
-                {headers.map((header) => (
-                  <td key={header} className="border border-slate-300 px-2 py-2 align-top">
-                    {cleanSupervisionText(row[header])}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )
-  }
+const emptyProgressRow: Record<string, string> = { '회기': '', '상담일': '', '소요시간': '', '회기 주제': '', '취소·지각·결석': '', '이전 수퍼비전': '' }
+const progressWidths: Record<string, string> = { '회기': '7%', '상담일': '14%', '소요시간': '10%', '회기 주제': '43%', '취소·지각·결석': '13%', '이전 수퍼비전': '13%' }
+type ChangeSupervisionCell = (blockId: string, row: number, column: string, value: string) => void
 
+function SupervisionTable({ block, onCellChange }: { block: SupervisionContentBlock; onCellChange: ChangeSupervisionCell }) {
+  const rows = block.rows?.length ? block.rows : [emptyProgressRow]
+  const headers = Array.from(new Set(rows.flatMap(row => Object.keys(row))))
+  return (
+    <div className="overflow-x-auto border border-slate-400">
+      <table aria-label={block.label || '회기 진행표'} className="w-full min-w-[680px] table-fixed border-collapse text-left text-[12px] font-semibold">
+        <colgroup>{headers.map(header => <col key={header} style={{ width: progressWidths[header] }} />)}</colgroup>
+        <thead className="bg-slate-100"><tr>{headers.map(header => (
+          <th key={header} scope="col" className="break-keep border border-slate-400 px-2 py-2">{header}</th>
+        ))}</tr></thead>
+        <tbody>{rows.map((row, index) => (
+          <tr key={index}>{headers.map(header => (
+            <td key={header} className="border border-slate-300 p-0 align-top">
+              <textarea
+                aria-label={block.label + ' ' + (index + 1) + '행 ' + header}
+                rows={1}
+                value={cleanSupervisionText(row[header])}
+                onChange={event => onCellChange(block.id, index, header, event.target.value)}
+                className={'block w-full resize-y bg-transparent px-2 py-2 leading-5 outline-none [field-sizing:content] focus:bg-blue-50 focus:ring-2 focus:ring-inset focus:ring-blue-500 ' + (header === '회기 주제' ? 'min-w-52' : 'min-w-12')}
+              />
+            </td>
+          ))}</tr>
+        ))}</tbody>
+      </table>
+    </div>
+  )
+}
+
+function SupervisionBlockContent({ block }: { block: SupervisionContentBlock }) {
   if (block.type === 'transcript' && block.speakerTurns?.length) {
     const labels = transcriptTurnLabels(block.speakerTurns)
     return (

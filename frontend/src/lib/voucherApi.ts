@@ -1,8 +1,9 @@
 import { getAccessToken } from './supabase'
 
 export type VoucherTemplate = 'form10' | 'form25' | 'form26'
+export type VoucherEdition = 'ari-2026' | 'standard'
 export interface VoucherRow {
-  note_id: string
+  note_id: string | null
   voucher_session_no: number
   actual_service_date: string
   delivered_attested: true
@@ -11,6 +12,7 @@ export interface VoucherRow {
 }
 export interface VoucherForm {
   template: VoucherTemplate
+  edition?: VoucherEdition
   report_month: string
   service_tier: '' | 'type_1' | 'type_2'
   rows: VoucherRow[]
@@ -35,6 +37,10 @@ export interface VoucherDocument {
   created_at: string
   snapshot: { form: VoucherForm; sources: Record<string, string> }
 }
+export class VoucherRequestError extends Error {
+  constructor(message: string, readonly field?: string) { super(message) }
+}
+
 export async function voucherApi<T>(path: string, method = 'GET', body?: unknown, binary = false): Promise<T> {
   const token = await getAccessToken()
   if (!token) throw new Error('다시 로그인해주세요.')
@@ -50,7 +56,7 @@ export async function voucherApi<T>(path: string, method = 'GET', body?: unknown
     Object.assign(fields, { additional_cost: '추가비용', refund_terms: '환불규정', other_terms: '기타 합의사항' })
     const field = row ? `바우처 ${row[1]}회차 ${row[2] === 'left' ? '서비스 내용' : row[2] === 'right' ? '추가 기록' : '제공일'}` : fields[detail?.field]
     const message = typeof detail === 'string' ? detail : detail?.message || (Array.isArray(detail) ? '입력 항목과 날짜·회차를 확인해주세요.' : '문서 요청을 완료하지 못했습니다.')
-    throw new Error(field ? `${field}: ${message}` : message)
+    throw new VoucherRequestError(field ? `${field}: ${message}` : message, typeof detail?.field === 'string' ? detail.field : undefined)
   }
   if (response.status === 204) return undefined as T
   return (binary ? await response.blob() : await response.json()) as T

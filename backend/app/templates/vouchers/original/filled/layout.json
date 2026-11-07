@@ -1,0 +1,264 @@
+{
+  "sourceHash": "2d9281955b9af4dd7583a052f1821bea8e545a0b75d0b3d5feae959c9081f6af",
+  "fields": {
+    "form10": {
+      "period": {
+        "x": 369.925,
+        "top": 93.7,
+        "width": 163.6,
+        "height": 10.15,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 1
+      },
+      "tier": {
+        "x": 423.625,
+        "top": 108.775,
+        "width": 109.825,
+        "height": 26.575,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 2
+      },
+      "general_comment": {
+        "x": 61.9,
+        "top": 672.4,
+        "width": 397.675,
+        "height": 49.675,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date1": {
+        "x": 61.9,
+        "top": 170.95,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row1_left": {
+        "x": 153.1,
+        "top": 170.95,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date2": {
+        "x": 61.9,
+        "top": 229.0,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row2_left": {
+        "x": 153.1,
+        "top": 229.0,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date3": {
+        "x": 61.9,
+        "top": 286.975,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row3_left": {
+        "x": 153.1,
+        "top": 286.975,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date4": {
+        "x": 61.9,
+        "top": 344.95,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row4_left": {
+        "x": 153.1,
+        "top": 344.95,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date5": {
+        "x": 61.9,
+        "top": 403.0,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row5_left": {
+        "x": 153.1,
+        "top": 403.0,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date6": {
+        "x": 61.9,
+        "top": 460.975,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row6_left": {
+        "x": 153.1,
+        "top": 460.975,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date7": {
+        "x": 61.9,
+        "top": 518.95,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row7_left": {
+        "x": 153.1,
+        "top": 518.95,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "date8": {
+        "x": 61.9,
+        "top": 577.0,
+        "width": 80.8,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "row8_left": {
+        "x": 153.1,
+        "top": 577.0,
+        "width": 306.475,
+        "height": 52.975,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      }
+    },
+    "form25": {
+      "contract_period": {
+        "x": 126.675,
+        "top": 388.275,
+        "width": 406.325,
+        "height": 12,
+        "size": 10,
+        "leading": 12,
+        "maxLines": 1
+      },
+      "other_terms": {
+        "x": 107.325,
+        "top": 420.3,
+        "width": 425.675,
+        "height": 12,
+        "size": 10,
+        "leading": 12,
+        "maxLines": 1
+      }
+    },
+    "form26": {
+      "purpose": {
+        "x": 149.875,
+        "top": 185.5,
+        "width": 384.625,
+        "height": 38.2,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 3
+      },
+      "content": {
+        "x": 149.875,
+        "top": 228.7,
+        "width": 384.625,
+        "height": 39.625,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 3
+      },
+      "schedule": {
+        "x": 149.875,
+        "top": 273.325,
+        "width": 384.625,
+        "height": 43.3,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 3
+      },
+      "price": {
+        "x": 149.875,
+        "top": 321.625,
+        "width": 384.625,
+        "height": 57.7,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 4
+      },
+      "contract_period": {
+        "x": 149.875,
+        "top": 527.575,
+        "width": 384.625,
+        "height": 28.075,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 2
+      },
+      "plan_left": {
+        "x": 63.325,
+        "top": 590.275,
+        "width": 471.175,
+        "height": 92.05,
+        "size": 9,
+        "leading": 12,
+        "maxLines": 7
+      }
+    }
+  },
+  "versions": {
+    "form10": "1e6a91380eaf418c4edd3c62fc113ee64cd882f26d9beb3f59a38f45d06420be",
+    "form25": "4cb7f7c0d4b93a121ee12fa359292f57d20ad9f99f0c283998bcd60e71774220",
+    "form26": "3f6d7362047b70feb88600ca4579927a92a83e53e918e3718cc5865e2afa008c"
+  },
+  "pdfHashes": {
+    "form10": "5315bd9f32a6c5550817a100818b1ab1d078cb52978ac4c45a07ab53d686d224",
+    "form25": "bbd08be0ea8fe8b8b1e008c52e3c83003c8bf069fbdd19ea91ec6ffe9fae63eb",
+    "form26": "595b1b9056423a9e17ab5f23c51f4d7a28e66f6bee828bec2fe6253f8dff3e2c"
+  }
+}

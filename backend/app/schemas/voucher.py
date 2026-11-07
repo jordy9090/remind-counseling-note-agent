@@ -24,12 +24,14 @@ class SourceSelection(StrictModel):
 
 
 class RecordRow(SourceSelection):
+    note_id: UUID | None = None  # Direct entries have an attested date but no linked note.
     content_left: str = Field(max_length=2000)
     content_right: str = Field(default="", max_length=2000)
 
 
 class VoucherForm(StrictModel):
     template: Literal["form10", "form25", "form26"]
+    edition: Literal["ari-2026", "standard"] = "standard"
     report_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     service_tier: Literal["", "type_1", "type_2"] = ""
     rows: list[RecordRow] = Field(default_factory=list, max_length=8)
@@ -49,6 +51,15 @@ class VoucherForm(StrictModel):
     @model_validator(mode="after")
     def check_record(self):
         contract_only = ('additional_cost', 'refund_terms', 'other_terms')
+        if self.edition == 'ari-2026':
+            if self.plan_right or any(row.content_right for row in self.rows):
+                raise ValueError("센터 원본의 서비스 내용 또는 제공계획 칸에 함께 작성해주세요.")
+            if self.template == "form25":
+                if not self.contract_period.strip():
+                    raise ValueError("계약기간을 입력해주세요.")
+                if self.rows or any(getattr(self, key) for key in ("service_tier", "purpose", "content", "schedule", "price", "additional_cost", "refund_terms", "plan_left", "general_comment")):
+                    raise ValueError("센터 계약서에는 계약기간과 기타 합의사항을 입력해주세요.")
+                return self
         if self.template != 'form25' and any(getattr(self, key) for key in contract_only):
             raise ValueError("현재 서식에서 출력할 수 없는 항목이 있습니다.")
         if self.template == "form10":
@@ -57,7 +68,9 @@ class VoucherForm(StrictModel):
             if not self.rows:
                 raise ValueError("기록할 회기를 선택해주세요.")
             numbers = [row.voucher_session_no for row in self.rows]
-            notes = [row.note_id for row in self.rows]
+            notes = [row.note_id for row in self.rows if row.note_id is not None]
+            if self.edition != 'ari-2026' and len(notes) != len(self.rows):
+                raise ValueError('기존 사업안내 기록지는 확인된 회기와 연결해주세요.')
             if len(set(numbers)) != len(numbers) or len(set(notes)) != len(notes):
                 raise ValueError("회기 또는 바우처 회차가 중복되었습니다.")
             for row in self.rows:
