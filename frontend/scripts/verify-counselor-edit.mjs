@@ -58,11 +58,24 @@ assert(original.session_content.text === 'AI 회기 요약', 'original AI respon
 const pageSource = fs.readFileSync(path.resolve('src/pages/SessionDraftPage.tsx'), 'utf8')
 assert(pageSource.includes('applyCounselorEditsToSummary(originalSummary, draftSections)'), 'supervision request must use current draftSections')
 assert(pageSource.includes('markGroundingItemsStale(section.groundingItems)'), 'counselor edits must still mark grounding stale')
-assert(pageSource.includes('rows: block.rows || []'), 'supervision export must normalize nullable rows')
 
 // Exercise the real builder with private recall text; new institutional drafts
 // must contain neither narrative nor the source excerpts attached to it.
 const pageAst = ts.createSourceFile('SessionDraftPage.tsx', pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+// Run the actual export mapper on a stored row whose keys are out of form order.
+const tableBuilderNames = ['buildSupervisionExportSections', 'supervisionBlockHasExportableContent', 'supervisionTableHeaders', 'isFormattableSupervisionBlock']
+const tableSource = pageAst.statements.filter(node => (ts.isFunctionDeclaration(node) && tableBuilderNames.includes(node.name?.text))
+  || (ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText() === 'emptyProgressRow')))
+  .map(node => node.getText(pageAst)).join('\n')
+const tableJs = ts.transpileModule(tableSource, {compilerOptions: {target: ts.ScriptTarget.ES2020}}).outputText
+const exportSections = new Function('hasRichFormatting', tableJs + ';return buildSupervisionExportSections')(() => false)
+const blocks = exportSections({sections: [{id: 'C-1', title: '회기 진행표', level: 2, contentBlocks: [
+  {id: 'memo', type: 'paragraph', text: 'Synthetic text', rows: null},
+  {id: 'C-1.table', type: 'table', rows: [{'이전 수퍼비전': 'memo', '취소·지각·결석': '', '회기 주제': 'first\nsecond', '회기': '1회기', '추가 열': 'retained'}]},
+]}]})[0].content_blocks
+assert(Array.isArray(blocks[0].rows) && blocks[0].rows.length === 0, 'nullable rows export as an empty array')
+assert(Object.keys(blocks[1].rows[0]).join('|') === '회기|상담일|소요시간|회기 주제|취소·지각·결석|이전 수퍼비전|추가 열', 'stored progress rows must use form order')
+assert(blocks[1].rows[0]['회기 주제'] === 'first\nsecond' && blocks[1].rows[0]['추가 열'] === 'retained', 'preserve multiline and additional cells')
 const builder = pageAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'buildFinalDocumentSections')
 assert(builder, 'final document builder must exist')
 const builderJs = ts.transpileModule(builder.getText(pageAst), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
