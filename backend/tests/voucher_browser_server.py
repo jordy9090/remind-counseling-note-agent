@@ -7,7 +7,7 @@ from fastapi import FastAPI
 import uvicorn
 from app.api.routes.vouchers import router
 from app.api.security import require_preview_access
-from backend.test_voucher_documents import ServiceTests, OWNER, CASE, NOTE
+from backend.test_voucher_documents import ServiceTests, OWNER, CASE, NOTE, contract
 
 fixture = ServiceTests()
 fixture.setUp()
@@ -41,6 +41,12 @@ def drafts():
 @app.get('/api/fixture/remaining')
 def remaining():
     return {'remaining': len(fixture.memory.rows)}
+
+
+@app.post('/api/fixture/archived-contract')
+def archived_contract():
+    row, _ = fixture.archived(contract())
+    return {'id': row['id']}
 
 
 if __name__ == '__main__':
