@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.security import require_preview_access, AuthenticatedActor
-from app.schemas.voucher import MapRequest, PrepareRequest, ReviewRequest, ExportRequest
+from app.schemas.voucher import MapRequest, PrepareRequest, ReviewRequest, ExportRequest, RecordRow, VoucherForm
 from app.services.voucher_documents import service
 from app.services.voucher_renderer import VoucherError, bindings, manifest
 from app.services import voucher_ari
@@ -46,6 +46,24 @@ async def call(fn, *args, **kwargs):
         raise HTTPException(503, detail={'code': 'STORAGE_UNAVAILABLE', 'message': '문서를 저장하거나 불러오지 못했습니다.'}) from None
 
 
+TEXT_LIMITS = {
+    field: spec["maxLength"]
+    for model in (RecordRow, VoucherForm)
+    for field, spec in model.model_json_schema()["properties"].items()
+    if spec.get("type") == "string" and "maxLength" in spec
+}
+
+
+def with_text_limits(templates):
+    def limits_for(key):
+        # Record fields have a numbered key in the layout and share the same schema.
+        field = "content_" + key.split("_", 1)[1] if key.startswith("row") and "_" in key else key
+        return {"maxChars": TEXT_LIMITS[field]} if field in TEXT_LIMITS else {}
+
+    return {template: {key: {**metrics, **limits_for(key)} for key, metrics in fields.items()}
+            for template, fields in templates.items()}
+
+
 @router.get('/capabilities')
 async def capabilities(actor: Actor):
     enabled = os.getenv('ENABLE_VOUCHER_DOCUMENTS', '0') == '1'
@@ -55,7 +73,7 @@ async def capabilities(actor: Actor):
                               for key, (_, rect) in bindings(template).items()}
     standard["form25"] = {key: {"width": WIDTH-2*MARGIN-20, "size": 10, "maxLines": 10} for key in FIELDS}
     return {"enabled": enabled, "formats": manifest()["qualification"],
-            "layout": {"standard": standard, voucher_ari.EDITION: voucher_ari.metadata()["fields"]},
+            "layout": {"standard": with_text_limits(standard), voucher_ari.EDITION: with_text_limits(voucher_ari.metadata()["fields"])},
             "fontWidths": voucher_ari.font_profile()}
 
 

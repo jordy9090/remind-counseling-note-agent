@@ -40,6 +40,29 @@ const open = async () => {
   await page.getByRole('button', { name: '내용 입력 · 저장한 문서', exact: true }).click()
   await page.getByRole('heading', { name: '기록할 회기 선택' }).waitFor()
 }
+const checkCharacterCapacity = async () => {
+  const template = page.getByLabel('서식', { exact: true })
+  await template.selectOption('form25')
+  const field = page.getByLabel('기타 합의사항 (선택)', { exact: true })
+  const hint = page.locator('[id="' + await field.getAttribute('aria-describedby') + '"]')
+  const expectCount = async (text, counter, invalid) => {
+    await field.fill(text)
+    await hint.getByText(counter, { exact: true }).waitFor()
+    assert.equal(await field.inputValue(), text)
+    assert.equal(await field.getAttribute('aria-invalid'), String(invalid))
+  }
+  await expectCount('', '0/45자', false)
+  await expectCount('가'.repeat(32), '32/45자', false)
+  await expectCount('가'.repeat(45), '45/45자', false)
+  await expectCount('가'.repeat(46), '46/45자', true)
+  await expectCount('가\n가', '3/45자', true)
+  assert.match(await hint.innerText(), /출력 칸보다 1줄 길어요/)
+  await field.fill('i'.repeat(46))
+  assert.ok(+(await hint.innerText()).match(/46\/([\d,]+)자/)[1].replaceAll(',', '') > 45)
+  assert.equal(await field.getAttribute('aria-invalid'), 'false')
+  await field.fill('')
+  await template.selectOption('form10')
+}
 const approve = async () => {
   const canvas = page.getByRole('img', { name: '바우처 PDF 1 / 1페이지', exact: true })
   await canvas.waitFor()
@@ -63,7 +86,11 @@ const download = async (format = 'pdf') => {
   return data
 }
 try {
-  if (process.env.VOUCHER_SCENARIO === 'preview_retry') {
+  if (process.env.VOUCHER_SCENARIO === 'character_capacity') {
+    await open()
+    await checkCharacterCapacity()
+    console.log('PASS: field-specific character counts match boundary, newline and mixed-width input')
+  } else if (process.env.VOUCHER_SCENARIO === 'preview_retry') {
     await open()
     await page.getByLabel('서식', { exact: true }).selectOption('form26')
     await page.getByLabel('서비스 목적', { exact: true }).fill('연락처 010-1234-5678 확인')
@@ -93,6 +120,7 @@ try {
     console.log('PASS: sanitized preview retry reuses snapshot; failed preview clears stale PDF and blocks approval')
   } else {
   await open()
+  await checkCharacterCapacity()
   await page.getByLabel('출력 기준', { exact: true }).selectOption('standard')
   await page.getByLabel('작성월', { exact: true }).fill('2026-10')
   await page.getByRole('checkbox', { name: '상담 12회기', exact: true }).check()
