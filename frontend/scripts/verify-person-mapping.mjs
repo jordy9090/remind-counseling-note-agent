@@ -12,6 +12,7 @@ function transpile(name) {
 const toUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 const reviewUrl = toUrl(transpile('deidentificationReview'))
 const lib = await import(toUrl(transpile('personMapping').replace("'./deidentificationReview'", `'${reviewUrl}'`)))
+const review = await import(reviewUrl)
 
 const link = (mapping, text, personId) => ({
   ...mapping,
@@ -91,6 +92,59 @@ const link = (mapping, text, personId) => ({
   const mapping = lib.detectPersonMapping([text])
   assert.deepEqual(mapping.mentions.map((mention) => mention.text).sort(), ['남자친구', '형'].sort())
   assert.equal(lib.nextPersonLabel(mapping.persons), '인물 B')
+}
+
+// The client's 인물 사전 carries labels from one session to the next.
+{
+  const sortedPeople = (people) => people.map((p) => ({ ...p, names: [...p.names].sort(), relations: [...p.relations].sort() }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+
+  // Session 1: the review finds 김서영/서영; the counselor links 베프, 친구 and the misheard 서연.
+  const first = '내담자: 친구 김서영이랑 싸웠어요. 서영이가 베프라서요. 서연이가 먼저 연락을 안 해요.'
+  const firstItems = review.detectLocalDeidItems([first])
+  const firstText = review.applyDeidItems(first, firstItems)
+  let mapping = lib.detectPersonMapping([firstText])
+  const b = mapping.persons.find((person) => person.label === '인물 B')
+  const seoyeon = lib.manualMention([firstText], mapping, '서연', 'replace').mention
+  mapping = { ...mapping, mentions: [...mapping.mentions, seoyeon] }
+  mapping = link(link(link(mapping, '베프', b.id), '친구', b.id), '서연', b.id)
+  const afterFirst = lib.updatedPersonDictionary([], mapping, firstItems)
+  assert.deepEqual(sortedPeople(afterFirst), [{ label: '인물 B', names: ['김서영', '서연', '서영'], relations: ['베프', '친구'] }])
+
+  // Session 2: stored names keep 인물 B (even the misheard one); a new person skips the stored label.
+  const second = '내담자: 서연이가 또 연락했어요. 베프니까 받았죠. 선배 박민준이 일을 넘겨요.'
+  const secondItems = review.detectLocalDeidItems([second], { people: afterFirst })
+  const secondText = review.applyDeidItems(second, secondItems)
+  assert.equal(secondText, '내담자: [인물 B]이가 또 연락했어요. 베프니까 받았죠. 선배 [인물 C]이 일을 넘겨요.')
+  const secondMapping = lib.detectPersonMapping([secondText], afterFirst)
+  const stillB = secondMapping.persons.find((person) => person.label === '인물 B')
+  assert.equal(secondMapping.mentions.find((mention) => mention.text === '베프').personId, stillB.id, 'saved relation is preselected')
+  assert.equal(lib.applyPersonMapping(secondText, secondMapping), '내담자: [인물 B]이가 또 연락했어요. 베프[인물 B]니까 받았죠. 선배 [인물 C]이 일을 넘겨요.')
+  const afterSecond = lib.updatedPersonDictionary(afterFirst, secondMapping, secondItems)
+  assert.deepEqual(sortedPeople(afterSecond), [
+    { label: '인물 B', names: ['김서영', '서연', '서영'], relations: ['베프', '친구'] },
+    { label: '인물 C', names: ['박민준'], relations: [] },
+  ])
+  assert.ok(lib.samePersonDictionary(afterFirst, [...afterFirst].reverse()))
+  assert.ok(!lib.samePersonDictionary(afterFirst, afterSecond))
+
+  // Session 3: the counselor says 인물 C is really 인물 B, and 친구 no longer means anyone in particular.
+  const third = '내담자: 박민준이 연락했어요. 친구가 많아졌어요.'
+  const thirdItems = review.detectLocalDeidItems([third], { people: afterSecond })
+  const thirdText = review.applyDeidItems(third, thirdItems)
+  let thirdMapping = lib.detectPersonMapping([thirdText], afterSecond)
+  const bAgain = thirdMapping.persons.find((person) => person.label === '인물 B')
+  thirdMapping = link(link(thirdMapping, '[인물 C]', bAgain.id), '친구', null)
+  assert.deepEqual(sortedPeople(lib.updatedPersonDictionary(afterSecond, thirdMapping, thirdItems)), [
+    { label: '인물 B', names: ['김서영', '박민준', '서연', '서영'], relations: ['베프'] },
+  ])
+
+  // The client's own name is not copied into the dictionary; relations to the client are.
+  const clientText = '내담자: 엄마가 지혜야 하고 불렀어요.'
+  const clientItems = review.detectLocalDeidItems([clientText], { clientName: '지혜' })
+  let clientMapping = lib.detectPersonMapping([review.applyDeidItems(clientText, clientItems)])
+  clientMapping = link(clientMapping, '엄마', lib.createPerson(clientMapping.persons).id)
+  assert.deepEqual(lib.updatedPersonDictionary([], clientMapping, clientItems).filter((p) => p.label === '내담자 A'), [])
 }
 
 console.log('person mapping checks passed')

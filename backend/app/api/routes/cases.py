@@ -12,6 +12,8 @@ from app.schemas.note import (
     CaseCreateRequest,
     CaseDashboardResponse,
     CaseListResponse,
+    CasePersonDictionaryResponse,
+    CasePersonDictionaryUpdate,
     CaseProfileUpdateRequest,
     CaseScheduleUpdateRequest,
     QuickSummarySessionRequest,
@@ -21,8 +23,10 @@ from app.services.supabase_storage import (
     SupabaseStorageError,
     create_case,
     fetch_case_dashboard,
+    fetch_case_person_dictionary,
     list_cases,
     save_quick_summary_session,
+    update_case_person_dictionary,
     update_case_profile,
     update_case_schedule,
 )
@@ -105,6 +109,28 @@ async def patch_case_profile(
     except Exception as error:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"프로필 수정 중 오류가 발생했습니다: {str(error)}")
+
+
+@router.get("/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)
+async def get_case_person_dictionary(case_id: str, actor: PreviewActor) -> CasePersonDictionaryResponse:
+    """내담자의 인물 사전(인물 라벨과 이름·관계 표현)을 반환한다."""
+    _require_storage(actor, "인물 사전")
+    try:
+        return fetch_case_person_dictionary(case_id, actor=actor)
+    except SupabaseStorageError as error:
+        raise HTTPException(status_code=_storage_error_status(error), detail=str(error)) from error
+
+
+@router.put("/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)
+async def put_case_person_dictionary(
+    case_id: str, request: CasePersonDictionaryUpdate, actor: PreviewActor
+) -> CasePersonDictionaryResponse:
+    """내담자의 인물 사전 전체를 교체한다."""
+    _require_storage(actor, "인물 사전")
+    try:
+        return update_case_person_dictionary(case_id, request, actor=actor)
+    except SupabaseStorageError as error:
+        raise HTTPException(status_code=_storage_error_status(error), detail=str(error)) from error
 
 
 @router.get("/{case_id}/dashboard", response_model=CaseDashboardResponse)

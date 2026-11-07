@@ -11,6 +11,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from pydantic import ValidationError
+
 from app.core.config import settings
 from app.schemas.note import (
     CaseDashboardDocument,
@@ -20,6 +22,9 @@ from app.schemas.note import (
     CaseDashboardSession,
     CaseListItem,
     CaseListResponse,
+    CasePersonDictionaryResponse,
+    CasePersonDictionaryUpdate,
+    CasePersonEntry,
     CaseProfileUpdateRequest,
     CaseScheduleUpdateRequest,
     RecentDocumentItem,
@@ -1290,6 +1295,57 @@ def update_case_profile(
                 ) from error
             raise
     return fetch_case_dashboard(case_id, actor=actor)
+
+
+_PERSON_DICTIONARY_MIGRATION_HINT = (
+    "인물 사전 컬럼이 아직 준비되지 않았습니다. migration 20261108000100_case_person_dictionary.sql을 적용해주세요."
+)
+
+
+def fetch_case_person_dictionary(case_id: str, *, actor: str = "server_demo_actor") -> CasePersonDictionaryResponse:
+    """The owned client's 인물 사전. Entries that no longer validate are skipped, not repaired."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; the person dictionary is unavailable.")
+    _require_owned_case(actor_storage, case_id, actor)
+    try:
+        rows = actor_storage.select("cases", {"id": f"eq.{case_id}", "select": "person_dictionary", "limit": 1})
+    except SupabaseStorageError as error:
+        if _is_missing_column_error(error):
+            raise SupabaseStorageError(_PERSON_DICTIONARY_MIGRATION_HINT) from error
+        raise
+    stored = rows[0].get("person_dictionary") if rows else None
+    people: list[CasePersonEntry] = []
+    for entry in stored if isinstance(stored, list) else []:
+        try:
+            people.append(CasePersonEntry.model_validate(entry))
+        except ValidationError:
+            continue
+    return CasePersonDictionaryResponse(case_id=case_id, people=people)
+
+
+def update_case_person_dictionary(
+    case_id: str,
+    request: CasePersonDictionaryUpdate,
+    *,
+    actor: str = "server_demo_actor",
+) -> CasePersonDictionaryResponse:
+    """Replaces the owned client's 인물 사전. Names are stored as entered (no de-identification)."""
+    actor_storage = _storage_for_actor(actor)
+    if not getattr(actor_storage, "configured", settings.supabase_configured):
+        raise SupabaseStorageError("Supabase credentials are missing; the person dictionary is unavailable.")
+    _require_owned_case(actor_storage, case_id, actor)
+    payload = {
+        "person_dictionary": [person.model_dump() for person in request.people],
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    try:
+        actor_storage.update("cases", payload, query={"id": f"eq.{case_id}"}, return_representation=False)
+    except SupabaseStorageError as error:
+        if _is_missing_column_error(error):
+            raise SupabaseStorageError(_PERSON_DICTIONARY_MIGRATION_HINT) from error
+        raise
+    return CasePersonDictionaryResponse(case_id=case_id, people=request.people)
 
 
 def _latest_timestamp(*values: Any) -> str | None:

@@ -547,6 +547,58 @@ class CaseProfileUpdateRequest(ClientProfileFields):
         return value
 
 
+PERSON_LABEL_PATTERN = r"^(?:내담자 A|상담자|인물 (?:[B-Z]|[1-9]\d{1,2}))$"
+PERSON_EXPRESSION_MAX_LENGTH = 30
+
+
+class CasePersonEntry(BaseModel):
+    """One person in a client's 인물 사전: a stable label and the expressions that refer to them.
+
+    names are hidden behind the label in later sessions (names, misheard names); relations keep
+    their wording and gain the label (베프, 친구).
+    """
+
+    label: str = Field(pattern=PERSON_LABEL_PATTERN)
+    names: list[str] = Field(default_factory=list, max_length=30)
+    relations: list[str] = Field(default_factory=list, max_length=30)
+
+    @field_validator("names", "relations")
+    @classmethod
+    def _clean_expressions(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            text = value.strip()
+            if not text:
+                continue
+            if len(text) > PERSON_EXPRESSION_MAX_LENGTH or "[" in text or "]" in text:
+                raise ValueError(f"인물 표현은 {PERSON_EXPRESSION_MAX_LENGTH}자 이하의 일반 문구여야 합니다.")
+            if text not in cleaned:
+                cleaned.append(text)
+        return cleaned
+
+
+class CasePersonDictionaryUpdate(BaseModel):
+    """Replaces a client's whole 인물 사전."""
+
+    people: list[CasePersonEntry] = Field(default_factory=list, max_length=60)
+
+    @field_validator("people")
+    @classmethod
+    def _distinct_people(cls, people: list[CasePersonEntry]) -> list[CasePersonEntry]:
+        labels = [person.label for person in people]
+        if len(labels) != len(set(labels)):
+            raise ValueError("같은 인물 라벨이 두 번 들어 있습니다.")
+        names = [name for person in people for name in person.names]
+        if len(names) != len(set(names)):
+            raise ValueError("한 이름은 한 인물에만 연결할 수 있습니다.")
+        return people
+
+
+class CasePersonDictionaryResponse(BaseModel):
+    case_id: str
+    people: list[CasePersonEntry] = Field(default_factory=list)
+
+
 class CaseDashboardResponse(ClientProfileFields):
     """Aggregated per-case view: profile, sessions, dates, and generated documents."""
 

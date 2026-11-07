@@ -54,6 +54,10 @@
     {
       "source": "/api/cases/:case_id/profile",
       "destination": "/api/cases/dashboard?case_id=:case_id&scope=profile"
+    },
+    {
+      "source": "/api/cases/:case_id/person-dictionary",
+      "destination": "/api/cases/dashboard?case_id=:case_id&scope=person-dictionary"
     }
   ],
   "functions": {

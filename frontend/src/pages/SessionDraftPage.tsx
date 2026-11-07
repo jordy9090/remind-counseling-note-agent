@@ -50,6 +50,8 @@ import {
   fetchCaseDashboard,
   fetchCaseList,
   persistenceErrorMessage,
+  fetchCasePersonDictionary,
+  saveCasePersonDictionary,
   updateCaseProfile,
 } from '../api/client'
 import {
@@ -85,6 +87,7 @@ import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
 import DeidentificationReviewModal, { type DeidReviewResult } from '../components/deidentification/DeidentificationReviewModal'
 import PersonMappingModal, { hasPersonMentions } from '../components/deidentification/PersonMappingModal'
+import { samePersonDictionary, updatedPersonDictionary, type AppliedDeidItem, type PersonMapping, type StoredPerson } from '../lib/personMapping'
 import { SESSION_REVIEW_FIELDS, sessionReviewSources, type DeidSource } from '../lib/deidentificationReview'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
 import ClientListPage from './ClientListPage'
@@ -323,6 +326,10 @@ export default function SessionDraftPage({
   const [personSources, setPersonSources] = useState<DeidSource[] | null>(null)
   // Reviewed texts of the last generation, reused for later AI calls on the same input (supervision report).
   const reviewedInput = useRef<{ original: Record<string, string>; texts: Record<string, string> } | null>(null)
+  // The client's 인물 사전 for the generation in progress. Saved only when it was loaded completely,
+  // so a failed read never overwrites the stored dictionary.
+  const personDictionary = useRef<{ caseId: string; people: StoredPerson[]; loaded: boolean; registered: boolean } | null>(null)
+  const appliedDeidItems = useRef<AppliedDeidItem[]>([])
   const materialsRef = useRef(materials)
   materialsRef.current = materials
   const objectUrlsRef = useRef<Set<string>>(new Set())
@@ -940,7 +947,18 @@ export default function SessionDraftPage({
     if (result && !window.confirm(`저장된 ${form.session_number}회기 요약이 새 요약으로 교체되고, 현재 화면의 편집 내용이 사라집니다. 계속할까요?`)) return
     setError(null)
     const transcriptFiles = materials.filter((material) => material.appliedTargets.includes('transcript_text'))
-    setReviewSources(sessionReviewSources(form, transcriptFiles.length === 1 ? transcriptFiles[0].filename : undefined))
+    const sources = sessionReviewSources(form, transcriptFiles.length === 1 ? transcriptFiles[0].filename : undefined)
+    const caseId = form.case_id.trim()
+    const registered = caseList.some((entry) => entry.case_id === caseId)
+    personDictionary.current = { caseId, people: [], loaded: !registered, registered }
+    if (registered && !isLocalGroundingDemo) {
+      try {
+        personDictionary.current = { caseId, people: await fetchCasePersonDictionary(caseId), loaded: true, registered }
+      } catch {
+        // Review still works without saved labels; the dictionary is then left unchanged.
+      }
+    }
+    setReviewSources(sources)
   }
 
   /** The client's name as registered in the client list (stored records only keep the masked form). */
@@ -958,12 +976,27 @@ export default function SessionDraftPage({
   const continueReviewed = (review: DeidReviewResult) => {
     const sources = (reviewSources ?? []).map((source) => ({ ...source, text: review.texts[source.key] ?? source.text }))
     setReviewSources(null)
-    if (hasPersonMentions(sources.map((source) => source.text))) setPersonSources(sources)
-    else void generateReviewed(review.texts)
+    appliedDeidItems.current = review.items
+    if (hasPersonMentions(sources.map((source) => source.text), personDictionary.current?.people)) setPersonSources(sources)
+    else void generateReviewed(review.texts, null)
+  }
+
+  /** Saves this session's matching as the client's 인물 사전 once the client record exists. */
+  const savePersonDictionary = async (data: NoteDraftResponse, mapping: PersonMapping | null) => {
+    const current = personDictionary.current
+    if (!current?.loaded || isLocalGroundingDemo) return
+    if (!current.registered && !data.full_response?.persistence_report?.stored) return
+    const next = updatedPersonDictionary(current.people, mapping ?? { persons: [], mentions: [] }, appliedDeidItems.current)
+    if (samePersonDictionary(next, current.people)) return
+    try {
+      current.people = await saveCasePersonDictionary(current.caseId, next)
+    } catch (saveError) {
+      setPersistenceError(`요약은 만들었지만 인물 사전을 저장하지 못했습니다. ${persistenceErrorMessage(saveError)}`)
+    }
   }
 
   /** Runs generation with the texts the counselor confirmed in the review steps. */
-  const generateReviewed = async (texts: Record<string, string>) => {
+  const generateReviewed = async (texts: Record<string, string>, mapping: PersonMapping | null) => {
     setReviewSources(null)
     setPersonSources(null)
     const original = Object.fromEntries(SESSION_REVIEW_FIELDS.map(([key]) => [key, form[key] ?? '']))
@@ -981,7 +1014,10 @@ export default function SessionDraftPage({
       generate: () => isLocalGroundingDemo && groundingDemoNote && !devGroundingDemo?.liveGeneration
         ? Promise.resolve(groundingDemoNote)
         : generateNoteDraft({ ...reviewedForm, persist: !isLocalGroundingDemo }),
-      onSuccess: showGeneratedDraft,
+      onSuccess: (data) => {
+        showGeneratedDraft(data)
+        void savePersonDictionary(data, mapping)
+      },
       onError: (requestError) => {
         setError(requestError instanceof Error ? requestError.message : '회기요약 초안을 생성하지 못했습니다.')
       },
@@ -2032,7 +2068,7 @@ export default function SessionDraftPage({
         <DeidentificationReviewModal
           sources={reviewSources}
           requireConfirmation={materials.some((material) => material.kind === 'audio' && material.appliedTargets.length > 0)}
-          context={{ clientName: registeredClientName(form.case_id) || getClientAlias(form), counselorName: form.counselor_name }}
+          context={{ clientName: registeredClientName(form.case_id) || getClientAlias(form), counselorName: form.counselor_name, people: personDictionary.current?.people }}
           onBack={() => setReviewSources(null)}
           onAddMaterial={() => setReviewSources(null)}
           submitLabel="다음: 등장 인물 정리"
@@ -2042,8 +2078,10 @@ export default function SessionDraftPage({
       {personSources && (
         <PersonMappingModal
           sources={personSources}
+          stored={personDictionary.current?.people}
+          savesToClient={Boolean(personDictionary.current?.loaded)}
           onBack={() => setPersonSources(null)}
-          onConfirm={(texts) => void generateReviewed(texts)}
+          onConfirm={(texts, mapping) => void generateReviewed(texts, mapping)}
         />
       )}
     </main>

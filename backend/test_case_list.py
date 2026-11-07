@@ -207,6 +207,74 @@ class CaseListRouteTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/cases", json={"case_alias": "x", "case_id": "bad id!"}, headers=self.headers_a).status_code, 422)
         self.assertEqual(self.client.post("/api/cases", json={"case_alias": "x"}).status_code, 401)
 
+    def test_person_dictionary_round_trip_validation_and_isolation(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from api.cases.dashboard import app as wrapper
+
+        case_id = self.client.post("/api/cases", json={"case_alias": "합성 내담자"}, headers=self.headers_a).json()["case_id"]
+        path = f"/api/cases/{case_id}/person-dictionary"
+        self.assertEqual(self.client.get(path, headers=self.headers_a).json(), {"case_id": case_id, "people": []})
+
+        people = [
+            {"label": "인물 B", "names": ["김서영", " 서영 ", "서연", "서영"], "relations": ["베프", "친구"]},
+            {"label": "인물 D", "names": [], "relations": ["엄마", "어머니"]},
+            {"label": "상담자", "names": [], "relations": ["선생님"]},
+        ]
+        saved = self.client.put(path, json={"people": people}, headers=self.headers_a)
+        self.assertEqual(saved.status_code, 200, saved.text[:300])
+        self.assertEqual(saved.json()["people"][0]["names"], ["김서영", "서영", "서연"], "trimmed and deduplicated")
+        # Names are stored as entered: the dictionary is the counselor's own mapping, not a document.
+        self.assertEqual(self.store.tables["cases"][0]["person_dictionary"][0]["names"], ["김서영", "서영", "서연"])
+        self.assertEqual(self.client.get(path, headers=self.headers_a).json()["people"], saved.json()["people"])
+
+        # Another counselor can neither read nor replace it.
+        self.assertEqual(self.client.get(path, headers=self.headers_b).status_code, 404)
+        self.assertEqual(self.client.put(path, json={"people": []}, headers=self.headers_b).status_code, 404)
+        self.assertEqual(self.client.get(path).status_code, 401)
+        self.assertEqual(len(self.client.get(path, headers=self.headers_a).json()["people"]), 3)
+
+        for invalid in (
+            [{"label": "친구", "names": ["서영"]}],
+            [{"label": "인물 B", "names": ["서영"]}, {"label": "인물 B", "names": []}],
+            [{"label": "인물 B", "names": ["서영"]}, {"label": "인물 C", "names": ["서영"]}],
+            [{"label": "인물 B", "names": ["[인물 C]"]}],
+            [{"label": "인물 B", "names": ["가" * 31]}],
+        ):
+            self.assertEqual(self.client.put(path, json={"people": invalid}, headers=self.headers_a).status_code, 422, invalid)
+
+        # The Vercel wrapper serves the rewritten and direct paths.
+        client = TestClient(wrapper)
+        for get_path in (f"/api/cases/dashboard?case_id={case_id}&scope=person-dictionary", path):
+            response = client.get(get_path, headers=self.headers_a)
+            self.assertEqual(response.status_code, 200, get_path)
+            self.assertEqual(response.json()["people"][0]["label"], "인물 B")
+        for put_path in (f"/api/cases/dashboard?case_id={case_id}&scope=person-dictionary", path):
+            response = client.put(put_path, json={"people": [{"label": "인물 B", "names": ["서영"]}]}, headers=self.headers_a)
+            self.assertEqual(response.status_code, 200, put_path)
+            self.assertEqual(client.put(put_path, json={"people": []}).status_code, 401)
+        self.assertEqual(client.put(f"/api/cases/dashboard?case_id={case_id}&scope=person-dictionary",
+                                    json={"people": [{"label": "x"}]}, headers=self.headers_a).status_code, 422)
+        self.assertEqual(client.put(f"/api/cases/dashboard?case_id={case_id}&scope=profile", json={}, headers=self.headers_a).status_code, 404)
+
+    def test_person_dictionary_reports_missing_migration(self) -> None:
+        case_id = self.client.post("/api/cases", json={"case_alias": "합성"}, headers=self.headers_a).json()["case_id"]
+        original = self.store.request
+
+        def missing_column(method, table, **kwargs):
+            body = kwargs.get("body") or {}
+            query = kwargs.get("query") or {}
+            if table == "cases" and ("person_dictionary" in str(query.get("select", "")) or "person_dictionary" in str(body)):
+                from app.services.supabase_storage import SupabaseStorageError
+                raise SupabaseStorageError("synthetic missing column", error_code="42703")
+            return original(method, table, **kwargs)
+
+        with patch.object(self.store, "request", side_effect=missing_column):
+            path = f"/api/cases/{case_id}/person-dictionary"
+            for response in (self.client.get(path, headers=self.headers_a),
+                             self.client.put(path, json={"people": []}, headers=self.headers_a)):
+                self.assertEqual(response.status_code, 503, response.text[:200])
+                self.assertIn("20261108000100_case_person_dictionary.sql", response.text)
+
     def test_list_falls_back_when_profile_columns_are_missing(self) -> None:
         """원격에 프로필 마이그레이션이 없어도 목록·대시보드는 기본 컬럼으로 동작해야 한다."""
         from app.services import supabase_storage

@@ -13,6 +13,7 @@ import {
   type PersonMapping,
   type PersonMention,
   type PersonMentionKind,
+  type StoredPerson,
 } from '../../lib/personMapping'
 
 export interface PersonMappingSource {
@@ -32,8 +33,8 @@ const KIND_BADGE: Record<PersonMentionKind, { label: string; className: string }
 }
 
 /** True when the reviewed text mentions anyone the counselor could match. */
-export function hasPersonMentions(texts: string[]): boolean {
-  return detectPersonMapping(texts).mentions.length > 0
+export function hasPersonMentions(texts: string[], stored: StoredPerson[] = []): boolean {
+  return detectPersonMapping(texts, stored).mentions.length > 0
 }
 
 /**
@@ -43,16 +44,22 @@ export function hasPersonMentions(texts: string[]): boolean {
  */
 export default function PersonMappingModal({
   sources,
+  stored = [],
+  savesToClient = false,
   onBack,
   onConfirm,
 }: {
   sources: PersonMappingSource[]
+  /** The client's saved 인물 사전; its people and relation links are preselected. */
+  stored?: StoredPerson[]
+  /** The page saves the result as the client's 인물 사전. */
+  savesToClient?: boolean
   onBack: () => void
-  /** Texts per source key as the AI receives them. */
-  onConfirm: (texts: Record<string, string>) => void
+  /** Texts per source key as the AI receives them, and the matching for the 인물 사전. */
+  onConfirm: (texts: Record<string, string>, mapping: PersonMapping) => void
 }) {
   const texts = useMemo(() => sources.map((source) => source.text), [sources])
-  const [mapping, setMapping] = useState<PersonMapping>(() => detectPersonMapping(texts))
+  const [mapping, setMapping] = useState<PersonMapping>(() => detectPersonMapping(texts, stored))
   const [draftText, setDraftText] = useState('')
   const [draftHides, setDraftHides] = useState(true)
   const [formError, setFormError] = useState<string | null>(null)
@@ -94,7 +101,10 @@ export default function PersonMappingModal({
   const removeMention = (mentionId: string) => setMapping((current) => ({ ...current, mentions: current.mentions.filter((mention) => mention.id !== mentionId) }))
 
   const submit = (useMapping: boolean) => {
-    onConfirm(Object.fromEntries(sources.map((source) => [source.key, useMapping ? applyPersonMapping(source.text, mapping) : source.text])))
+    onConfirm(
+      Object.fromEntries(sources.map((source) => [source.key, useMapping ? applyPersonMapping(source.text, mapping) : source.text])),
+      useMapping ? mapping : { persons: mapping.persons, mentions: [] },
+    )
   }
 
   const previewSource = sources.find((source) => source.text.trim()) ?? sources[0]
@@ -130,7 +140,11 @@ export default function PersonMappingModal({
               연결하지 않은 이름 {unresolved.length}개는 그대로 AI에 전달돼요
             </span>
           )}
-          <p className="text-xs text-grey-500">이 정리는 이 브라우저에서만 이루어지고 저장되지 않아요.</p>
+          <p className="text-xs text-grey-500">
+            {savesToClient
+              ? '요약을 만들면 이 정리가 내담자의 인물 사전에 저장되어, 다음 회기에도 같은 라벨로 쓰여요.'
+              : '이 정리는 이 브라우저에서만 이루어지고 저장되지 않아요.'}
+          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
