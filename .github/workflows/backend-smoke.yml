@@ -120,6 +120,7 @@ jobs:
           pnpm verify:auth-flow
           pnpm verify:case-list
           pnpm verify:deidentification-review
+          pnpm verify:person-mapping
 
       - name: Build frontend
         working-directory: frontend

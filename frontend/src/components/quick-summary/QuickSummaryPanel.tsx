@@ -11,6 +11,7 @@ import {
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse } from '../../types/session'
 import DeidentificationReviewModal, { type DeidReviewResult } from '../deidentification/DeidentificationReviewModal'
+import PersonMappingModal, { hasPersonMentions } from '../deidentification/PersonMappingModal'
 import SourceMemoryCues from './SourceMemoryCues'
 import QuickAudioInput from './QuickAudioInput'
 
@@ -56,6 +57,8 @@ export default function QuickSummaryPanel({
   const [audioPending, setAudioPending] = useState(false)
   const [loading, setLoading] = useState(false)
   const [reviewing, setReviewing] = useState(false)
+  // Reviewed text waiting for the person matching step (등장 인물 정리).
+  const [personText, setPersonText] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -76,11 +79,19 @@ export default function QuickSummaryPanel({
     setReviewing(true)
   }
 
-  const summarizeReviewed = async (review: DeidReviewResult) => {
+  /** After the de-identification review: match people first when the text mentions any. */
+  const continueReviewed = (review: DeidReviewResult) => {
     setReviewing(false)
+    const reviewed = review.texts[QUICK_SOURCE_KEY] ?? inputText
+    if (hasPersonMentions([reviewed])) setPersonText(reviewed)
+    else void summarizeReviewed(reviewed)
+  }
+
+  const summarizeReviewed = async (reviewed: string) => {
+    setPersonText(null)
     setLoading(true)
     try {
-      onResult(toResult(await requestQuickSummary(review.texts[QUICK_SOURCE_KEY] ?? inputText)))
+      onResult(toResult(await requestQuickSummary(reviewed)))
       setCopied(false)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
@@ -265,7 +276,15 @@ export default function QuickSummaryPanel({
           sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: inputText }]}
           context={{}}
           onBack={() => setReviewing(false)}
-          onConfirm={(review) => void summarizeReviewed(review)}
+          submitLabel="다음: 등장 인물 정리"
+          onConfirm={continueReviewed}
+        />
+      )}
+      {personText !== null && (
+        <PersonMappingModal
+          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: personText }]}
+          onBack={() => setPersonText(null)}
+          onConfirm={(texts) => void summarizeReviewed(texts[QUICK_SOURCE_KEY] ?? personText)}
         />
       )}
     </section>
