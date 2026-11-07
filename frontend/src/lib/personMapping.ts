@@ -46,6 +46,21 @@ export interface PersonMapping {
   mentions: PersonMention[]
 }
 
+/** One person in the client's saved 인물 사전 (GET/PUT /api/cases/{case_id}/person-dictionary). */
+export interface StoredPerson {
+  label: string
+  /** Hidden behind the label in later sessions: names and misheard names. */
+  names: string[]
+  /** Kept as written with the label added: 베프, 친구. */
+  relations: string[]
+}
+
+/** A replacement the de-identification review applied (original → replacement). */
+export interface AppliedDeidItem {
+  original: string
+  replacement: string
+}
+
 export const CLIENT_PERSON_ID = 'person-client'
 export const COUNSELOR_PERSON_ID = 'person-counselor'
 const UNRESOLVED_LABEL = '인물 확인 필요'
@@ -72,7 +87,7 @@ export const RELATION_TERMS = [
  * A relation word followed by a particle or copula ("베프라서", "엄마한테", "친구였어요"), or by
  * a non-Hangul character. Other continuations make it a different word ("친구들", "형편", "딸기").
  */
-const RELATION_PARTICLES = '이랑|랑|하고|한테서|한테|에게서|에게|께서|께|이라서|라서|이라고|라고|이라는|라는|이라며|라며|이에요|예요|이었|였|이야|야|이고|고|인데|이네|네|이|가|은|는|을|를|의|와|과|도|만|으로|로|부터|까지|처럼|보다|님|씨'
+const RELATION_PARTICLES = '이니까|니까|이라도|라도|이라면|라면|이랑|랑|하고|한테서|한테|에게서|에게|께서|께|이라서|라서|이라고|라고|이라는|라는|이라며|라며|이에요|예요|이었|였|이야|야|이고|고|인데|이네|네|이|가|은|는|을|를|의|와|과|도|만|으로|로|부터|까지|처럼|보다|님|씨'
 
 function relationPattern(term: string): RegExp {
   return new RegExp(`(?<![가-힣A-Za-z0-9_])${term}(?=$|[^가-힣A-Za-z0-9_]|(?:${RELATION_PARTICLES}))`, 'g')
@@ -146,13 +161,21 @@ export function createPerson(persons: Person[]): Person {
  * Everyone the counselor may need to match: de-identification labels (each its own person),
  * names still in the text and relation words. Names and relations start unlinked.
  */
-export function detectPersonMapping(texts: string[]): PersonMapping {
+export function detectPersonMapping(texts: string[], stored: StoredPerson[] = []): PersonMapping {
   const sources = texts.filter((text) => text.trim())
   const joined = sources.join('\n')
   const persons: Person[] = [
     { id: CLIENT_PERSON_ID, label: '내담자 A', fixed: true },
     { id: COUNSELOR_PERSON_ID, label: '상담자', fixed: true },
   ]
+  // Saved people keep their labels even when they are not mentioned this session.
+  for (const entry of stored) {
+    if (!persons.some((person) => person.label === entry.label)) persons.push({ id: newId('person'), label: entry.label, fixed: false })
+  }
+  const savedOwner = (relation: string) => {
+    const label = stored.find((entry) => entry.relations.includes(relation))?.label
+    return persons.find((person) => person.label === label)?.id ?? null
+  }
   const mentions: PersonMention[] = []
   const add = (text: string, kind: PersonMentionKind, mode: PersonMentionMode, personId: string | null) => {
     if (mentions.some((mention) => mention.text === text)) return
@@ -177,8 +200,80 @@ export function detectPersonMapping(texts: string[]): PersonMapping {
   }
   // Names the review left in the text (missed or misheard) are hidden once linked.
   for (const name of discoverPersonNames(joined).keys()) add(name, 'name', 'replace', null)
-  for (const term of RELATION_TERMS) add(term, 'relation', 'annotate', null)
+  for (const term of RELATION_TERMS) add(term, 'relation', 'annotate', savedOwner(term))
+  // Saved nicknames outside the built-in list ("짝꿍") are found literally, like manual expressions.
+  for (const entry of stored) {
+    for (const relation of entry.relations) {
+      if (!RELATION_TERMS.includes(relation)) add(relation, 'manual', 'annotate', savedOwner(relation))
+    }
+  }
   return { persons, mentions }
+}
+
+const PERSON_LABEL_TEXT = /^인물 (?:[B-Z]|[1-9]\d{1,2})$/
+const FIXED_LABELS = new Set(['내담자 A', '상담자'])
+const STORED_EXPRESSION = /^[^[\]]{1,30}$/
+
+/**
+ * The client's 인물 사전 after this session. Names come from the de-identification review (their
+ * label, or the person that label was linked to) and from linked names here; relations from linked
+ * relation words. A saved label linked to another person is merged into it. The client's and
+ * counselor's own names are not stored (they are registered elsewhere); their relations are.
+ * Each expression belongs to one person: this session's choice wins.
+ */
+export function updatedPersonDictionary(stored: StoredPerson[], mapping: PersonMapping, deidItems: AppliedDeidItem[]): StoredPerson[] {
+  const labelOf = (personId: string | null) => mapping.persons.find((person) => person.id === personId)?.label
+  const linkedLabel = (labelText: string) => {
+    const mention = mapping.mentions.find((candidate) => candidate.kind === 'label' && candidate.text === `[${labelText}]`)
+    return mention ? labelOf(mention.personId) : undefined
+  }
+  const entries = new Map<string, StoredPerson>()
+  const entry = (label: string) => {
+    if (!entries.has(label)) entries.set(label, { label, names: [], relations: [] })
+    return entries.get(label)!
+  }
+  for (const saved of stored) {
+    const target = entry(linkedLabel(saved.label) ?? saved.label)
+    target.names.push(...saved.names)
+    target.relations.push(...saved.relations)
+  }
+  const assign = (label: string | undefined, field: 'names' | 'relations', expression: string) => {
+    const value = expression.trim()
+    if (!label || !STORED_EXPRESSION.test(value) || (field === 'names' && FIXED_LABELS.has(label))) return
+    for (const other of entries.values()) other[field] = other[field].filter((existing) => existing !== value)
+    entry(label)[field].push(value)
+  }
+  for (const item of deidItems) {
+    const own = PERSON_LABEL_TEXT.test(item.replacement) ? item.replacement : undefined
+    assign(linkedLabel(item.replacement) ?? own, 'names', item.original)
+  }
+  for (const mention of mapping.mentions) {
+    const hides = mention.kind === 'name' || (mention.kind === 'manual' && mention.mode === 'replace')
+    const relation = mention.kind === 'relation' || (mention.kind === 'manual' && mention.mode === 'annotate')
+    if (mention.personId) {
+      if (hides) assign(labelOf(mention.personId), 'names', mention.text)
+      else if (relation) assign(labelOf(mention.personId), 'relations', mention.text)
+    } else if (relation) {
+      // Unlinked this session on purpose: the word no longer points at a saved person.
+      for (const other of entries.values()) other.relations = other.relations.filter((existing) => existing !== mention.text)
+    }
+  }
+  return [...entries.values()]
+    .map((person) => ({
+      label: person.label,
+      names: FIXED_LABELS.has(person.label) ? [] : [...new Set(person.names)].slice(0, 30),
+      relations: [...new Set(person.relations)].slice(0, 30),
+    }))
+    .filter((person) => person.names.length > 0 || person.relations.length > 0)
+    .slice(0, 60)
+}
+
+/** Same people, names and relations regardless of order. */
+export function samePersonDictionary(a: StoredPerson[], b: StoredPerson[]): boolean {
+  const key = (people: StoredPerson[]) => JSON.stringify(
+    [...people].map((person) => [person.label, [...person.names].sort(), [...person.relations].sort()]).sort(),
+  )
+  return key(a) === key(b)
 }
 
 export type ManualMentionResult = { mention: PersonMention } | { error: string }

@@ -34,6 +34,7 @@ import type {
 import { getAccessToken } from '../lib/supabase'
 import { cleanQuickSummarySections } from '../lib/quickSummary'
 import type { QuickSummaryResult } from '../lib/quickSummary'
+import type { StoredPerson } from '../lib/personMapping'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 // Audio goes directly to the configured self-hosted FastAPI origin.
@@ -506,6 +507,22 @@ export const updateCaseProfile = async (
     payload,
   )
   return response.data
+}
+
+/** The client's 인물 사전 (person labels with their names and relation words). */
+export const fetchCasePersonDictionary = async (caseId: string): Promise<StoredPerson[]> => {
+  const response = await client.get<{ case_id: string; people: StoredPerson[] }>(
+    `/api/cases/${encodeURIComponent(caseId)}/person-dictionary`,
+  )
+  return response.data.people
+}
+
+export const saveCasePersonDictionary = async (caseId: string, people: StoredPerson[]): Promise<StoredPerson[]> => {
+  const response = await client.put<{ case_id: string; people: StoredPerson[] }>(
+    `/api/cases/${encodeURIComponent(caseId)}/person-dictionary`,
+    { people },
+  )
+  return response.data.people
 }
 
 export const fetchCaseDashboard = async (caseId: string): Promise<CaseDashboardResponse> => {

@@ -5,6 +5,7 @@ A single function keeps the deployment under Vercel's 12-function limit. vercel.
   /api/cases/:case_id/dashboard → /api/cases/dashboard?case_id=:case_id     (GET)
   /api/cases/:case_id/schedule  → /api/cases/dashboard?case_id=:case_id&scope=schedule (PATCH)
   /api/cases/:case_id/profile   → /api/cases/dashboard?case_id=:case_id&scope=profile  (PATCH)
+  /api/cases/:case_id/person-dictionary → /api/cases/dashboard?case_id=:case_id&scope=person-dictionary (GET, PUT)
 """
 from __future__ import annotations
 
@@ -26,15 +27,19 @@ from app.api.security import require_preview_access  # noqa: E402
 from app.api.routes.cases import (  # noqa: E402
     get_case_dashboard,
     get_case_list,
+    get_case_person_dictionary,
     patch_case_profile,
     patch_case_schedule,
     post_case,
     post_quick_summary_session,
+    put_case_person_dictionary,
 )
 from app.schemas.note import (  # noqa: E402
     CaseCreateRequest,
     CaseDashboardResponse,
     CaseListResponse,
+    CasePersonDictionaryResponse,
+    CasePersonDictionaryUpdate,
     CaseProfileUpdateRequest,
     CaseScheduleUpdateRequest,
     QuickSummarySessionRequest,
@@ -56,8 +61,10 @@ async def list_or_dashboard(
     actor: PreviewActor,
     case_id: str | None = None,
     scope: str | None = None,
-) -> CaseListResponse | CaseDashboardResponse:
-    """case_id가 없거나 scope=list면 소유 케이스 목록, 있으면 해당 케이스 대시보드."""
+) -> CaseListResponse | CaseDashboardResponse | CasePersonDictionaryResponse:
+    """case_id가 없거나 scope=list면 소유 케이스 목록, scope=person-dictionary면 인물 사전, 그 외는 대시보드."""
+    if case_id and scope == "person-dictionary":
+        return await get_case_person_dictionary(case_id, actor)
     if case_id and scope != "list":
         return await get_case_dashboard(case_id, actor)
     return await get_case_list(actor)
@@ -122,3 +129,32 @@ async def schedule(request: CaseScheduleUpdateRequest, case_id: str, actor: Prev
 @app.patch("/api/cases/{case_id}/profile", response_model=CaseDashboardResponse)
 async def profile(request: CaseProfileUpdateRequest, case_id: str, actor: PreviewActor) -> CaseDashboardResponse:
     return await patch_case_profile(case_id, request, actor)
+
+
+@app.put("/", response_model=CasePersonDictionaryResponse)
+@app.put("/api/cases/dashboard", response_model=CasePersonDictionaryResponse)
+async def put_by_scope(
+    case_id: str,
+    actor: PreviewActor,
+    scope: str | None = None,
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> CasePersonDictionaryResponse:
+    """PUT is only used for the person dictionary (scope=person-dictionary)."""
+    if scope != "person-dictionary":
+        raise HTTPException(status_code=404, detail="Not Found")
+    try:
+        return await put_case_person_dictionary(case_id, CasePersonDictionaryUpdate(**payload), actor)
+    except ValidationError as error:
+        raise _validation_error(error)
+
+
+@app.get("/api/cases/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)
+async def person_dictionary(case_id: str, actor: PreviewActor) -> CasePersonDictionaryResponse:
+    return await get_case_person_dictionary(case_id, actor)
+
+
+@app.put("/api/cases/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)
+async def replace_person_dictionary(
+    request: CasePersonDictionaryUpdate, case_id: str, actor: PreviewActor
+) -> CasePersonDictionaryResponse:
+    return await put_case_person_dictionary(case_id, request, actor)

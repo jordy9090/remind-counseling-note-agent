@@ -18,6 +18,8 @@ export interface DeidReviewResult {
   /** Text per source key, as it will be sent to the AI. */
   texts: Record<string, string>
   skipped: boolean
+  /** Replacements applied to the texts (empty when skipped); the 인물 사전 learns names from them. */
+  items: { original: string; replacement: string }[]
 }
 
 type FormMode = { mode: 'add' } | { mode: 'edit'; itemId: string }
@@ -175,7 +177,7 @@ export default function DeidentificationReviewModal({
     if (detecting || (requireConfirmation ? !confirmed : !(skip || confirmed))) return
     const skipped = skip && !requireConfirmation
     const texts = Object.fromEntries(sources.map((source) => [source.key, skipped ? source.text : applyDeidItems(source.text, items)]))
-    onConfirm({ texts, skipped })
+    onConfirm({ texts, skipped, items: skipped ? [] : items.map(({ original, replacement }) => ({ original, replacement })) })
   }
 
   const canSubmit = !detecting && (requireConfirmation ? confirmed : (skip || confirmed))

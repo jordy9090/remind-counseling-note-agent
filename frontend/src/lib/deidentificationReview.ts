@@ -55,6 +55,8 @@ export interface DeidMatch {
 export interface DeidDetectionContext {
   clientName?: string
   counselorName?: string
+  /** The client's 인물 사전: stored names keep their label across sessions. */
+  people?: { label: string; names: string[] }[]
 }
 
 let idCounter = 0
@@ -202,6 +204,13 @@ export function detectLocalDeidItems(texts: string[], context: DeidDetectionCont
     found.set(key, { id: newDeidItemId(), original: key, replacement, kind, origin: 'detected', matchMode, nameIsIdentity })
   }
   const joined = texts.join('\n')
+  // Names from the client's 인물 사전 were confirmed earlier; they win over fresh guesses.
+  for (const person of context.people ?? []) {
+    for (const name of person.names) {
+      const value = name.trim()
+      if (value.length >= 2 && namePattern(value, true).test(joined)) add(value, person.label, 'auto', 'name', true)
+    }
+  }
   const names = discoverPersonNames(joined, [context.clientName ?? '', context.counselorName ?? ''])
   for (const [name, owner] of names) {
     if (!owner) add(name, '인물 확인 필요', 'review', 'name')
@@ -214,9 +223,19 @@ export function detectLocalDeidItems(texts: string[], context: DeidDetectionCont
     if (joined.includes(form)) add(form, '상담자', 'auto', 'name', form === context.counselorName?.trim())
   }
   const labels = new Map<string, string>()
+  // A new person gets the first label used neither in this text nor in the 인물 사전.
+  const nextLabel = () => {
+    const used = new Set([...labels.values(), ...Array.from(found.values(), (item) => item.replacement), ...(context.people ?? []).map((person) => person.label)])
+    for (let code = 66; code <= 90; code += 1) {
+      if (!used.has(`인물 ${String.fromCharCode(code)}`)) return `인물 ${String.fromCharCode(code)}`
+    }
+    let index = 27
+    while (used.has(`인물 ${index}`)) index += 1
+    return `인물 ${index}`
+  }
   for (const [name, owner] of names) {
     if (found.has(name)) continue
-    if (owner && !labels.has(owner)) labels.set(owner, `인물 ${labels.size < 25 ? String.fromCharCode(66 + labels.size) : labels.size + 2}`)
+    if (owner && !labels.has(owner) && !found.has(owner)) labels.set(owner, nextLabel())
     add(name, owner ? (found.get(owner)?.replacement ?? labels.get(owner)!) : '인물 확인 필요', 'review', 'name', name === owner)
   }
   for (const match of joined.matchAll(/[가-힣A-Za-z0-9]{2,30}(?:초등학교|중학교|고등학교|대학교|대학원|병원|센터|상담소|회사|기관)/g)) add(match[0], '기관 정보 비공개', 'review')
