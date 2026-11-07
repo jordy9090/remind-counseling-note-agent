@@ -15,7 +15,7 @@ from lxml import etree as ET
 
 from app.api.security import AuthenticatedActor, require_preview_access
 from app.schemas.voucher import VoucherForm, MapRequest, PrepareRequest, ReviewRequest
-from app.services.voucher_documents import service, confirmed_fields, digest
+from app.services.voucher_documents import POLICY, service, confirmed_fields, digest, template_fingerprint
 from app.services.voucher_renderer import VoucherError, render_pdf, render_hwpx, paragraphs, manifest, NS
 
 NOTE = '00000000-0000-4000-8000-000000000010'
@@ -31,8 +31,8 @@ def record():
     return VoucherForm(template='form10', report_month='2026-10', rows=[{**selection(), 'content_left': '합성사례: 업무 중 긴장을 탐색함.', 'content_right': '감정을 구분하고 호흡을 연습함.'}])
 
 
-def plan():
-    return VoucherForm(template='form26', report_month='2026-10', purpose='정서 이해를 돕는다.', content='감정과 대처방식을 탐색한다.', plan_left='상담 목표를 함께 정한다.')
+def plan(edition='standard'):
+    return VoucherForm(template='form26', edition=edition, report_month='2026-10', purpose='정서 이해를 돕는다.', content='감정과 대처방식을 탐색한다.', plan_left='상담 목표를 함께 정한다.')
 
 
 def contract():
@@ -220,10 +220,40 @@ class ServiceTests(TestCase):
         raise VoucherError('DOCUMENT_NOT_FOUND', '문서를 찾을 수 없습니다.', 404)
 
     def prepared(self, form=None, key=None):
-        form = form or record()
+        form = form or VoucherForm(template='form10', edition='ari-2026', report_month='2026-10',
+                                   rows=[{**selection(), 'content_left': '합성사례: 업무 중 긴장을 탐색함.'}])
         _, hashes = service.sources(OWNER, CASE, form.rows)
         req = PrepareRequest(case_id=CASE, operation_key=key or uuid4(), form=form, source_hashes=hashes)
         return service.prepare(OWNER, req), req
+
+    def archived(self, form):
+        """Seed an immutable row in the format used before the source edition was stored."""
+        _, hashes = service.sources(OWNER, CASE, form.rows)
+        data = form.model_dump(mode='json', exclude={'edition'})
+        request = {'case_id': CASE, 'operation_key': str(uuid4()), 'form': data, 'source_hashes': hashes}
+        snapshot = {'form': data, 'sources': hashes, 'policy': POLICY, 'template_bundle': template_fingerprint(form.template)}
+        row = self.memory.insert('voucher_documents', [{
+            'id': str(uuid4()), 'user_id': str(OWNER), 'case_id': CASE, 'template': form.template,
+            'operation_key': request['operation_key'], 'request_hash': digest(request), 'snapshot': snapshot,
+            'fingerprint': digest(snapshot), 'privacy_status': 'degraded',
+        }])[0]
+        return row, request
+
+    def test_only_new_packet_snapshots_can_be_created(self):
+        archived, payload = self.archived(plan())
+        retry = PrepareRequest.model_validate(payload)
+        self.assertEqual(service.prepare(OWNER, retry)['id'], archived['id'])
+        fresh = service.prepare(OWNER, retry.model_copy(update={'operation_key': uuid4()}))
+        self.assertEqual(fresh['snapshot']['form']['edition'], 'ari-2026')
+        for old_form in (plan(), contract()):
+            with self.subTest(template=old_form.template), self.assertRaises(VoucherError) as failure:
+                self.prepared(old_form)
+            self.assertEqual(failure.exception.code, 'TEMPLATE_RETIRED')
+        retry.form.purpose += ' 수정'
+        with self.assertRaises(VoucherError) as changed:
+            service.prepare(OWNER, retry)
+        self.assertEqual(changed.exception.code, 'IDEMPOTENCY_KEY_REUSED')
+        self.assertEqual(len(self.memory.rows), 2)
 
     def review(self, row):
         return service.review(OWNER, row['id'], ReviewRequest(fingerprint=row['fingerprint'], human_privacy_reviewed=True, acknowledged_offline_completion=True))
@@ -243,7 +273,9 @@ class ServiceTests(TestCase):
 
     def test_contract_without_notes_review_download_reopen_and_cleanup(self):
         with patch('app.services.voucher_documents.db.fetch_generated_note', side_effect=AssertionError('contract must not read notes')):
-            row, request = self.prepared(contract())
+            form = VoucherForm(template='form25', edition='ari-2026', report_month='2026-11',
+                               contract_period='2026년 11월', other_terms='일정을 확인합니다.')
+            row, request = self.prepared(form)
             self.assertEqual(row['snapshot']['sources'], {})
             before = service.export(OWNER, row['id'], 'pdf', preview=True)
             with self.assertRaises(VoucherError):
@@ -252,19 +284,19 @@ class ServiceTests(TestCase):
             with patch('app.services.voucher_documents.deidentify_texts', side_effect=AssertionError('no second transformation')):
                 self.assertEqual(before, service.export(OWNER, row['id'], 'pdf'))
                 self.assertIn(row['id'], [d['id'] for d in service.list(OWNER, CASE)])
-                self.assertEqual(service.get(OWNER, row['id'])['snapshot']['form']['price'], request.form.price)
+                self.assertEqual(service.get(OWNER, row['id'])['snapshot']['form']['other_terms'], request.form.other_terms)
             service.delete(OWNER, row['id'])
             self.assertEqual(self.memory.rows, [])
 
     def test_contract_bundle_change_fails_closed_without_invalidating_old_forms(self):
         from app.services.voucher_renderer import manifest as real_manifest
-        row, _ = self.prepared(contract())
+        row, _ = self.archived(contract())
         changed = real_manifest('form25'); changed['assets']['source/form25-clauses.json'] = '0'*64
         with patch('app.services.voucher_documents.manifest', side_effect=lambda template=None: changed if template == 'form25' else real_manifest()):
             with self.assertRaises(VoucherError) as error:
                 self.review(row)
             self.assertEqual(error.exception.code, 'POLICY_VERSION_CHANGED')
-            old, _ = self.prepared(plan())
+            old, _ = self.archived(plan())
             self.review(old)
             self.assertTrue(service.export(OWNER, old['id'], 'pdf'))
 
@@ -273,7 +305,7 @@ class ServiceTests(TestCase):
         released_bundle = '1d19fc6fb00cf7e604d8d718f56a4ede711feda5a41b604a94d9ab5cdced9641'
         for form in [record(), plan()]:
             with self.subTest(template=form.template):
-                row, _ = self.prepared(form)
+                row, _ = self.archived(form)
                 self.assertEqual(row['snapshot']['template_bundle'], released_bundle)
                 before = service.export(OWNER, row['id'], 'pdf', preview=True)
                 self.review(row)
@@ -297,7 +329,7 @@ class ServiceTests(TestCase):
             self.assertEqual(error.exception.code, 'FORMAT_NOT_QUALIFIED')
 
     def test_rendering_bundle_changes_still_invalidate_saved_snapshot(self):
-        row, _ = self.prepared()
+        row, _ = self.archived(record())
         for field in ['assets', 'version', 'layout']:
             changed = manifest()
             if field == 'assets':
@@ -350,7 +382,7 @@ class ServiceTests(TestCase):
                 self.assertEqual(mapped['rows'][0]['content_left'], '')
                 self.assertEqual(mapped['rows'][0]['content_right'], '')
                 request = {'case_id': CASE, 'operation_key': str(uuid4()), 'source_hashes': mapped['source_hashes'],
-                           'form': {**record().model_dump(mode='json'), 'rows': mapped['rows']}}
+                           'form': {**record().model_dump(mode='json'), 'edition': 'ari-2026', 'rows': mapped['rows']}}
                 self.assertEqual(client.post(prefix+'prepare', json=request).status_code, 422)
                 request['form']['rows'][0]['content_left'] = '기관 제출용 직접 작성: 대처 방식을 점검함.'
                 prepared = client.post(prefix+'prepare', json=request)
@@ -394,7 +426,7 @@ class ServiceTests(TestCase):
         with self.assertRaises(VoucherError): service.prepare(OWNER, req.model_copy(update={'operation_key': uuid4()}))
 
     def test_privacy_before_preview_plan_without_notes_and_delete(self):
-        form = plan(); form.purpose = '연락처 010-1234-5678'
+        form = plan('ari-2026'); form.purpose = '연락처 010-1234-5678'
         row, req = self.prepared(form)
         self.assertNotIn('010-1234-5678', str(row['snapshot']))
         self.assertEqual(row['privacy_status'], 'degraded')
@@ -418,7 +450,7 @@ class ServiceTests(TestCase):
             self.addCleanup(app.dependency_overrides.clear)
             with patch.dict('os.environ', {'ENABLE_VOUCHER_DOCUMENTS': '1'}):
                 self.assertTrue(client.get(prefix+'capabilities').json()['formats']['hwpx'])
-                request = PrepareRequest(case_id=CASE, operation_key=uuid4(), form=plan()).model_dump(mode='json')
+                request = PrepareRequest(case_id=CASE, operation_key=uuid4(), form=plan('ari-2026')).model_dump(mode='json')
                 row = client.post(prefix+'prepare', json=request)
                 self.assertEqual(row.status_code, 200, row.text)
                 row = row.json(); base = prefix+'saved/'+row['id']
@@ -436,7 +468,7 @@ class ServiceTests(TestCase):
                 self.assertEqual(hwpx.headers['cache-control'], 'private, no-store')
                 self.assertIn('.hwpx', hwpx.headers['content-disposition'])
                 with ZipFile(BytesIO(hwpx.content)) as archive:
-                    self.assertIn('정서 이해를 돕는다.', archive.read('Preview/PrvText.txt').decode('utf-8'))
+                    self.assertIn('정서 이해를 돕는다.', ''.join(ET.fromstring(archive.read('Contents/section0.xml')).itertext()))
                 self.assertEqual(client.delete(base).status_code, 204)
                 self.assertEqual(client.get(base).status_code, 404)
                 app.dependency_overrides[require_preview_access] = lambda: 'shared-preview'

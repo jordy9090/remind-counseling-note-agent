@@ -93,10 +93,15 @@ class MapRequest(StrictModel):
     sources: list[SourceSelection] = Field(min_length=1, max_length=8)
 
 
+class PacketForm(VoucherForm):
+    edition: Literal["ari-2026"] = "ari-2026"
+
+
 class PrepareRequest(StrictModel):
     case_id: str = Field(min_length=1, max_length=100)
     operation_key: UUID
-    form: VoucherForm
+    # Older request shapes are accepted here so an exact retry can retrieve its saved snapshot.
+    form: PacketForm | VoucherForm = Field(union_mode="left_to_right")
     source_hashes: dict[str, str] = Field(default_factory=dict, max_length=8)
 
 

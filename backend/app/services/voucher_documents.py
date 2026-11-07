@@ -12,7 +12,7 @@ from uuid import uuid4
 from app.schemas.voucher import VoucherForm
 from app.services import supabase_storage as db, voucher_ari
 from app.services.storage_deidentification import deidentify_texts
-from app.services.voucher_renderer import VoucherError, manifest, paragraphs, render_pdf, render_hwpx, verify_assets
+from app.services.voucher_renderer import VoucherError, manifest, render_pdf, render_hwpx
 
 TABLE = 'voucher_documents'
 POLICY = 'storage-deidentification-v1'
@@ -111,16 +111,20 @@ class VoucherDocuments:
     def prepare(self, actor, request):
         case = self.owned_case(actor, request.case_id)
         actor_storage = db._storage_for_actor(actor)
-        request_data = request.model_dump(mode='json')
-        if request.form.edition == 'standard':
-            request_data['form'].pop('edition')  # Preserve retry identity for earlier clients.
-        request_hash = digest(request_data)
         query = {'user_id': f'eq.{actor}', 'operation_key': f'eq.{request.operation_key}'}
         previous = actor_storage.maybe_single(TABLE, query)
+        request_data = request.model_dump(mode='json')
+        legacy_retry = (previous and 'edition' not in request.form.model_fields_set
+                        and previous['snapshot']['form'].get('edition', 'standard') == 'standard')
+        if request.form.edition == 'standard' or legacy_retry:
+            request_data['form'].pop('edition')  # Earlier clients hashed requests without this field.
+        request_hash = digest(request_data)
         if previous:
             if previous['request_hash'] != request_hash:
                 raise VoucherError('IDEMPOTENCY_KEY_REUSED', '변경된 내용은 새로 미리보기를 만들어주세요.', 409)
             return previous
+        if request.form.edition != voucher_ari.EDITION:
+            raise VoucherError('TEMPLATE_RETIRED', '정신건강바우처 서류 양식으로 새로 작성해주세요. 작성 창을 다시 열어주세요.', 409)
         _, hashes = self.sources(actor, request.case_id, request.form.rows)
         if hashes != request.source_hashes:
             raise VoucherError('SOURCE_CHANGED', '확정 기록이 바뀌었습니다. 회기를 다시 가져와주세요.', 409)
@@ -138,11 +142,7 @@ class VoucherDocuments:
             else:
                 data[key] = value
         form = VoucherForm.model_validate(data)
-        if form.edition == voucher_ari.EDITION:
-            voucher_ari.lines_for(form)
-        else:
-            verify_assets(form.template)
-            paragraphs(form)
+        voucher_ari.lines_for(form)
         snapshot = {'form': form.model_dump(mode='json'), 'sources': hashes, 'policy': POLICY, 'template_bundle': template_fingerprint(form.template, form.edition)}
         row = {'id': str(uuid4()), 'case_id': request.case_id, 'user_id': str(actor), 'operation_key': str(request.operation_key),
                'request_hash': request_hash, 'template': form.template, 'snapshot': snapshot, 'fingerprint': digest(snapshot),
