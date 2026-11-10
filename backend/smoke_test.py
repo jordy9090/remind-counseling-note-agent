@@ -999,6 +999,19 @@ begin
 end $$;"""
             assert sql.count(cleanup) == 1
             sql = sql.replace(cleanup, "")
+        elif migration_path.name == "20261110033500_restrict_voucher_note_cleanup.sql":
+            # Allow only the linked-snapshot delete inside the replacement trigger.
+            declaration = "create or replace function public.delete_note_voucher_documents() returns trigger language plpgsql security definer set search_path = '' as $$"
+            prefix, found, tail = sql.partition(declaration)
+            body, end, suffix = tail.partition("$$;")
+            cleanup = """delete from public.voucher_documents as v
+    where v.user_id::pg_catalog.text = old.user_id
+      and exists (
+        select 1 from pg_catalog.jsonb_object_keys(v.snapshot->'sources') as source(key)
+        where source.key::pg_catalog.uuid = old.id
+      );"""
+            assert found and end and body.count(cleanup) == 1
+            sql = prefix + body.replace(cleanup, "") + suffix
         assert "drop table" not in sql
         assert "drop schema" not in sql
         assert "truncate " not in sql

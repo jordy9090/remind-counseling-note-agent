@@ -43,7 +43,9 @@ def main():
       create policy user_owns_rows on public.generated_notes for all to authenticated using (user_id=(select auth.uid())::text) with check (user_id=(select auth.uid())::text);
       grant select, insert, update, delete on public.cases, public.generated_notes to authenticated;
     """)
-    run(Path('supabase/migrations/20261030000100_voucher_documents.sql').read_text(encoding='utf-8'))
+    migrations = Path('supabase/migrations')
+    for migration in ('20261030000100_voucher_documents.sql', '20261101000100_voucher_form25.sql', '20261107102900_voucher_packet_insert_only.sql'):
+        run((migrations / migration).read_text(encoding='utf-8'))
     run(f"insert into auth.users values ('{owner}'),('{other}'); insert into cases values ('test-case','{owner}'),('other-case','{other}'); insert into generated_notes values ('{note}','test-case','{owner}');")
 
     def actor(sql, user=owner):
@@ -51,15 +53,65 @@ def main():
 
     def insert(doc=None, key=None, user=owner, case='test-case', sources=None, reviewed=False):
         doc, key = doc or str(uuid4()), key or str(uuid4())
-        snapshot = json.dumps({'sources': {note: 'synthetic-hash'} if sources is None else sources})
+        snapshot = json.dumps({'form': {'edition': 'ari-2026'}, 'sources': {note: 'synthetic-hash'} if sources is None else sources})
         cols = ',reviewed_at,reviewed_by' if reviewed else ''
         vals = f",now(),'{user}'" if reviewed else ''
         return doc, f"insert into voucher_documents(id,case_id,user_id,operation_key,request_hash,template,snapshot,fingerprint,privacy_status{cols}) values ('{doc}','{case}','{user}','{key}','synthetic','form10','{snapshot}','synthetic','degraded'{vals});"
 
     doc, sql = insert()
     run(actor(sql))
+    other_note = str(uuid4())
+    run(actor(f"insert into generated_notes values ('{other_note}','other-case','{other}');", other))
+    other_doc, sql = insert(user=other, case='other-case', sources={other_note: 'synthetic-hash'})
+    run(actor(sql, other))
+
+    # Stage a valid legacy snapshot whose source was rekeyed before the migration.
+    stale_id, replacement = str(uuid4()), str(uuid4())
+    run(actor(f"insert into generated_notes values ('{stale_id}','other-case','{other}');", other))
+    stale_doc, sql = insert(user=other, case='other-case', sources={stale_id: 'synthetic-hash'})
+    run(actor(sql + f"update generated_notes set id='{replacement}' where id='{stale_id}';", other))
+
+    # Model Supabase's direct role grants and bindings created before the fix.
+    # Keep the temporary bindings in this connection across CREATE OR REPLACE.
+    phases = ['grant execute on function public.delete_note_voucher_documents() to anon, authenticated;']
+    for role in ('anon', 'authenticated'):
+        phases.append(f"""
+          set role {role};
+          create temporary table forged_{role}(id uuid);
+          insert into forged_{role} values ('{other_note}');
+          create trigger forged after delete on forged_{role} for each row execute function public.delete_note_voucher_documents();
+          reset role;
+        """)
+    phases.append((migrations / '20261110033500_restrict_voucher_note_cleanup.sql').read_text(encoding='utf-8'))
+    for role in ('anon', 'authenticated'):
+        phases.append(f"""
+          set role {role};
+          do $$ begin
+            if has_function_privilege(current_user, 'public.delete_note_voucher_documents()', 'EXECUTE') then
+              raise exception 'cleanup function is still executable';
+            end if;
+            begin
+              create trigger new_binding after delete on forged_{role} for each row execute function public.delete_note_voucher_documents();
+              raise exception 'new binding allowed';
+            exception when insufficient_privilege then null; end;
+            begin
+              delete from forged_{role};
+              raise exception 'old binding allowed';
+            exception when insufficient_privilege then null; end;
+          end $$;
+          reset role;
+        """)
+    run('\n'.join(phases))
+    run(actor(f"update generated_notes set id='{uuid4()}' where id='{note}';"), error='ID cannot be changed')
+    assert run(actor(f"update generated_notes set id=id, case_id=case_id where id='{note}' returning id;")) == note
+    run(actor(f"insert into generated_notes values ('{stale_id}','test-case','{owner}'); delete from generated_notes where id='{stale_id}';"))
+    assert run(actor(f"select id from voucher_documents where id='{stale_doc}'", other)) == stale_doc
+    alias = '{' + note.upper().replace('-', '') + '}'
+    alias_doc, sql = insert(sources={alias: 'synthetic-hash'})
+    run(actor(sql))
+    assert run(actor(f"select id from voucher_documents where id='{other_doc}'", other)) == other_doc
     assert run(actor(f"select id from voucher_documents where id='{doc}'")) == doc
-    assert run(actor('select count(*) from voucher_documents', other)) == '0'
+    assert run(actor(f"select id from voucher_documents where id='{doc}'", other)) == ''
     run('set role anon; select * from voucher_documents;', error='permission denied')
     run(actor(insert(user=other, case='other-case', sources={})[1]), error='owner mismatch')
     run(actor(insert(case='other-case', sources={})[1]), error='owner mismatch')
@@ -74,11 +126,16 @@ def main():
     assert run(actor(f"delete from voucher_documents where id='{doc}' returning id", other)) == ''
     assert run(actor(f"select id from voucher_documents where id='{doc}'")) == doc
     key = str(uuid4())
-    run(actor(insert(key=key, sources={})[1]))
+    unlinked, sql = insert(key=key, sources={})
+    run(actor(sql))
     run(actor(insert(key=key, sources={})[1]), error='duplicate key')
     run(actor(f"delete from generated_notes where id='{note}'"))
     assert run(actor(f"select count(*) from voucher_documents where id='{doc}'")) == '0'
+    assert run(actor(f"select count(*) from voucher_documents where id='{alias_doc}'")) == '0'
+    assert run(actor(f"select id from voucher_documents where id='{unlinked}'")) == unlinked
+    assert run(actor(f"select id from voucher_documents where id='{other_doc}'", other)) == other_doc
     run(actor("delete from cases where id='test-case'"))
+    run(actor("delete from cases where id='other-case'", other))
     assert run('select count(*) from voucher_documents') == '0'
     run(f"insert into cases values ('test-case','{owner}'); insert into generated_notes values ('{note}','test-case','{owner}');")
 
@@ -115,7 +172,7 @@ def main():
     assert run('select count(*) from voucher_documents') == '0'
     run('delete from cases; delete from auth.users;')
     assert run('select (select count(*) from voucher_documents)+(select count(*) from cases)+(select count(*) from generated_notes)+(select count(*) from auth.users)') == '0'
-    print('PASS: migration, owner CRUD/review, other-user/anonymous isolation, forged ownership/source/pre-review rejection, immutability, idempotency, source/case/account cascades, both insert/delete race orders; cleanup=0 rows')
+    print('PASS: migration, owner CRUD/review, role isolation, forged triggers denied, immutable source IDs, legacy ID reuse, UUID spellings, scoped cascades, both insert/delete race orders; cleanup=0 rows')
 
 
 if __name__ == '__main__':
