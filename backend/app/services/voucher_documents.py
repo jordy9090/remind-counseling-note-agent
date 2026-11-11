@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import unicodedata
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.schemas.voucher import VoucherForm
 from app.services import supabase_storage as db, voucher_ari
@@ -168,7 +168,8 @@ class VoucherDocuments:
         detached = set(row.get('detached_source_ids') or [])
         linked_rows = [item for item in form.rows if str(item.note_id) not in detached]
         _, hashes = self.sources(actor, row['case_id'], linked_rows)
-        expected = {key: value for key, value in row['snapshot']['sources'].items() if key not in detached}
+        expected = {str(UUID(key)): value for key, value in row['snapshot']['sources'].items()
+                    if str(UUID(key)) not in detached}
         if hashes != expected:
             raise VoucherError('SOURCE_CHANGED', '확정 기록이 바뀌었습니다. 새 미리보기를 만들어주세요.', 409)
         values = {'reviewed_at': datetime.now(timezone.utc).isoformat(), 'reviewed_by': str(actor)}
@@ -205,8 +206,6 @@ class VoucherDocuments:
             return self.get(actor, result['id'])
         if status == 'expired':
             raise VoucherError('RECOVERY_EXPIRED', '7일의 복구 기간이 지났습니다.', 410)
-        if status == 'conflict':
-            raise VoucherError('RECOVERY_CONFLICT', '같은 문서가 이미 있어 복구할 수 없습니다.', 409)
         if status == 'consumed':
             raise VoucherError('ALREADY_RESTORED', '이미 복구한 기록입니다. 최근 삭제 기록을 확인해주세요.', 409)
         raise VoucherError('DOCUMENT_NOT_FOUND', '삭제 기록을 찾을 수 없습니다.', 404)

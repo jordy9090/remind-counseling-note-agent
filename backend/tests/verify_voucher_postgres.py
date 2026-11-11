@@ -190,6 +190,19 @@ def main():
     run(f"update voucher_recovery.deletions set deleted_at=now()-interval '91 days' where event_id='{expired}'; select voucher_recovery.purge_expired();")
     assert restore(expired) == 'missing'
     assert run('select count(*) from voucher_recovery.source_context') == '0'
+    # Someone who knows a deleted UUID can occupy it from another account.
+    # The owner must recover without exposing or overwriting either document.
+    run(f"insert into cases values ('other-case','{other}');")
+    occupied, sql = insert(sources={})
+    run(actor(sql + f"delete from voucher_documents where id='{occupied}';"))
+    event = latest(occupied)
+    run(actor(insert(doc=occupied, user=other, case='other-case', sources={})[1], other))
+    restored = json.loads(run(actor(f"select restore_deleted_voucher('{event}')")))
+    assert restored['status'] == 'ok' and restored['id'] != occupied
+    assert json.loads(run(actor(f"select restore_deleted_voucher('{event}')"))) == restored
+    assert run(actor(f"select id from voucher_documents where id='{occupied}'", other)) == occupied
+    run(actor(f"delete from voucher_documents where id='{restored['id']}'"))
+    run(actor("delete from cases where id='other-case'", other))
     run(actor(f"insert into generated_notes values ('{note}','test-case','{owner}');"))
 
     # First insert, then delete: deletion waits for the insert's source lock and

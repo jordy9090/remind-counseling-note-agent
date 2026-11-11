@@ -13,6 +13,7 @@ type Selection = { number: string; date: string; attested: boolean }
 const complete = (s: Selection) => Number.isInteger(Number(s.number)) && Number(s.number) >= 1 && Number(s.number) <= 8 && Boolean(s.date) && s.attested
 const selectionsFor = (rows: VoucherRow[]) => Object.fromEntries(rows.map(row => [row.note_id || 'manual-' + crypto.randomUUID(), { number: String(row.voucher_session_no), date: row.actual_service_date, attested: true }]))
 const packetEdition = 'ari-2026'
+const comparableNoteId = (id: string) => id.replace(/[{}-]/g, '').toLowerCase()
 const blank = (template: VoucherTemplate): VoucherForm => ({ template, edition: packetEdition, report_month: monthNow(), service_tier: '', rows: [], general_comment: '', purpose: '', content: '', schedule: '', price: '', contract_period: '', plan_left: '', plan_right: '', additional_cost: '', refund_terms: '', other_terms: '' })
 const planFields = [
   ['purpose', '서비스 목적'], ['content', '서비스 내용'], ['schedule', '제공 횟수·시간·일정'],
@@ -146,10 +147,10 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
   const openPreview = async (doc: VoucherDocument) => {
     setPreview(null); setPreviewReady(false); setCandidate(doc); setPrivacy(false); setOffline(false)
     if (doc.snapshot.form.edition === packetEdition) {
-      const detached = new Set(doc.detached_source_ids)
-      const rows = doc.snapshot.form.rows.map(row => row.note_id && detached.has(row.note_id) ? { ...row, note_id: null } : row)
+      const detached = new Set((doc.detached_source_ids || []).map(comparableNoteId))
+      const rows = doc.snapshot.form.rows.map(row => row.note_id && detached.has(comparableNoteId(row.note_id)) ? { ...row, note_id: null } : row)
       setForm({ ...blank(doc.template), ...doc.snapshot.form, rows }); rowText.current.clear()
-      setSelections(selectionsFor(rows)); setHashes(Object.fromEntries(Object.entries(doc.snapshot.sources).filter(([id]) => !detached.has(id))))
+      setSelections(selectionsFor(rows)); setHashes(Object.fromEntries(Object.entries(doc.snapshot.sources).filter(([id]) => !detached.has(comparableNoteId(id)))))
     }
     const blob = await voucherApi<Blob>(`saved/${doc.id}/preview`, 'GET', undefined, true)
     setPreview(blob)

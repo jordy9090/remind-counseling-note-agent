@@ -24,7 +24,8 @@ create table voucher_recovery.deletions (
   backup jsonb,
   unavailable_sources uuid[] not null,
   restored_at timestamptz,
-  restored_by uuid
+  restored_by uuid,
+  restored_document_id uuid
 );
 create index voucher_deletions_owner_case on voucher_recovery.deletions(owner_id, case_id, deleted_at desc);
 create index voucher_deletions_expiry on voucher_recovery.deletions(expires_at) where backup is not null;
@@ -155,9 +156,9 @@ begin
     for update of e for share of c;
   if not found then return jsonb_build_object('status','missing'); end if;
   if entry.restored_at is not null then
-    if exists (select from public.voucher_documents v where v.id = entry.document_id and v.user_id = entry.owner_id
+    if exists (select from public.voucher_documents v where v.id = entry.restored_document_id and v.user_id = entry.owner_id
           and v.case_id = entry.case_id and v.restored_from = entry.event_id) then
-      return jsonb_build_object('status','ok','id',entry.document_id);
+      return jsonb_build_object('status','ok','id',entry.restored_document_id);
     end if;
     return jsonb_build_object('status','consumed');
   end if;
@@ -179,9 +180,15 @@ begin
   -- this restore from an unrelated document that happens to reuse its ID.
   doc.restored_from := entry.event_id;
   insert into public.voucher_documents select doc.* on conflict do nothing;
-  if not found then return jsonb_build_object('status','conflict'); end if;
+  if not found then
+    -- An API client may reuse a deleted UUID, and an old prepare may reuse its
+    -- operation key. Neither is allowed to overwrite or block the owner's copy.
+    doc.id := gen_random_uuid();
+    doc.operation_key := gen_random_uuid();
+    insert into public.voucher_documents select doc.*;
+  end if;
   update voucher_recovery.deletions set backup = null, unavailable_sources = '{}',
-    restored_at = clock_timestamp(), restored_by = auth.uid() where event_id = p_event;
+    restored_at = clock_timestamp(), restored_by = auth.uid(), restored_document_id = doc.id where event_id = p_event;
   return jsonb_build_object('status','ok','id',doc.id);
 end $$;
 
