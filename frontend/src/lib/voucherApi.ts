@@ -36,6 +36,19 @@ export interface VoucherDocument {
   reviewed_at: string | null
   created_at: string
   snapshot: { form: VoucherForm; sources: Record<string, string> }
+  detached_source_ids?: string[]
+}
+export interface VoucherDeletion {
+  event_id: string
+  template: VoucherTemplate
+  deleted_at: string
+  expires_at: string
+  deleted_by: string | null
+  actor_role: string
+  by_me: boolean | null
+  reason: 'direct' | 'source'
+  restored_at: string | null
+  can_restore: boolean
 }
 export class VoucherRequestError extends Error {
   constructor(message: string, readonly field?: string) { super(message) }

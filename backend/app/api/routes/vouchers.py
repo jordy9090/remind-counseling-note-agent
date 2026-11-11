@@ -103,6 +103,16 @@ async def get_document(document_id: UUID, actor: Actor):
     return await call(service.get, actor, str(document_id))
 
 
+@router.get('/deletions')
+async def deletion_history(case_id: str, actor: Actor):
+    return await call(service.deletion_history, actor, case_id)
+
+
+@router.post('/deletions/{event_id}/restore')
+async def restore_document(event_id: UUID, actor: Actor):
+    return await call(service.restore, actor, str(event_id))
+
+
 @router.delete('/saved/{document_id}', status_code=204)
 async def delete_document(document_id: UUID, actor: Actor):
     await call(service.delete, actor, str(document_id))

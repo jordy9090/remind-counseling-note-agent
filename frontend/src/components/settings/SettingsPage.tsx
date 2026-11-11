@@ -7,6 +7,7 @@ import { ClientAvatar, OutlineButton } from '../app-shell/ui'
 
 /** What the service actually does with counselor data. Keep each line true to the code it describes. */
 export const DATA_HANDLING_NOTICES = [
+  { title: '바우처 삭제·복구', text: '바우처를 직접 지우거나 원본 회기와 함께 지우면 바우처 사본을 7일 동안 복구할 수 있어요. 삭제자·삭제 경로·복구 여부는 90일 동안 확인할 수 있어요. 내담자나 계정을 삭제하면 해당 사본과 삭제 기록도 함께 지워져요.' },
   { title: '음성 파일', text: '동의 후 원본 음성과 짧은 화자 참조를 네이버클라우드 CLOVA Speech로 보내 축어록을 만들어요. Re:mind 서버 임시 파일은 성공·실패 후 삭제하며, 제공업체의 보관 정책은 별도로 적용돼요.' },
   { title: '문서 파일', text: 'PDF·DOCX·TXT 파일은 글자만 추출하고 파일은 저장하지 않아요.' },
   { title: '문서 비식별화', text: '요약·회기 기록·임시저장·내려받는 문서에서는 개인을 알아볼 수 있는 내용을 바꿔요. 이름은 가운데 글자를 가리고(홍길동 → 홍O동), 직업은 큰 분류(초등학교 교사 → 교육자), 학교·회사·병원 등 기관명은 종류(OO고등학교 → 고등학교), 나이는 연령대(28세 → 20대), 거주지는 [지역], 생년월일은 [생년월일], 연락처는 "비공개"로 바꿔요. 이런 내용을 찾을 때 입력 원문이 AI(OpenAI)에 한 번 전달돼요.' },

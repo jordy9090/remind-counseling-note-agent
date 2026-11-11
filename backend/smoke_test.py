@@ -1012,6 +1012,30 @@ end $$;"""
       );"""
             assert found and end and body.count(cleanup) == 1
             sql = prefix + body.replace(cleanup, "") + suffix
+        elif migration_path.name == "20261111044950_voucher_deletion_recovery.sql":
+            # Only these exact, scoped runtime deletes may appear inside their
+            # named procedures. Keep the top-level migration DML ban intact.
+            scoped_deletes = {
+                "create or replace function public.delete_note_voucher_documents()": (
+                    "delete from public.voucher_documents as v\n"
+                    "    where v.user_id::text = old.user_id and not (old.id = any(v.detached_source_ids))\n"
+                    "      and exists (select from jsonb_object_keys(v.snapshot->'sources') k where k::uuid = old.id);",
+                    "delete from voucher_recovery.source_context\n"
+                    "    where transaction_id = pg_current_xact_id() and source_id = old.id;",
+                ),
+                "create function voucher_recovery.purge_expired()": (
+                    "delete from voucher_recovery.deletions where deleted_at <= clock_timestamp() - interval '90 days';",
+                ),
+            }
+            for declaration, statements in scoped_deletes.items():
+                prefix, found, tail = sql.partition(declaration)
+                signature, start, tail = tail.partition("as $$")
+                body, end, suffix = tail.partition("$$;")
+                assert found and start and end and ";" not in signature
+                for statement in statements:
+                    assert body.count(statement) == 1
+                    body = body.replace(statement, "")
+                sql = prefix + signature + body + suffix
         assert "drop table" not in sql
         assert "drop schema" not in sql
         assert "truncate " not in sql
