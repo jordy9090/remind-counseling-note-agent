@@ -83,6 +83,10 @@ def main():
           reset role;
         """)
     phases.append((migrations / '20261110033500_restrict_voucher_note_cleanup.sql').read_text(encoding='utf-8'))
+    recovery_sql = (migrations / '20261111044950_voucher_deletion_recovery.sql').read_text(encoding='utf-8')
+    # pg_cron is a hosted extension; exercise its purge function locally and
+    # verify job registration and execution in the deployment environment.
+    phases.append(recovery_sql.split('-- Hosted scheduler', 1)[0])
     for role in ('anon', 'authenticated'):
         phases.append(f"""
           set role {role};
@@ -139,6 +143,68 @@ def main():
     assert run('select count(*) from voucher_documents') == '0'
     run(f"insert into cases values ('test-case','{owner}'); insert into generated_notes values ('{note}','test-case','{owner}');")
 
+    assert run('select count(*) from voucher_recovery.deletions') == '0'
+    def restore(event, user=owner):
+        return json.loads(run(actor(f"select public.restore_deleted_voucher('{event}')", user)))['status']
+
+    def latest(document):
+        return run(f"select event_id from voucher_recovery.deletions where document_id='{document}' order by deleted_at desc limit 1")
+
+    doc, sql = insert()
+    run(actor(sql))
+    run(actor(f"delete from voucher_documents where id='{doc}'"))
+    direct = latest(doc)
+    entry = json.loads(run(actor("select voucher_deletion_history('test-case')")))[0]
+    assert entry['reason'] == 'direct' and entry['deleted_by'] == owner and entry['can_restore'] and entry['by_me']
+    assert not {'backup', 'snapshot', 'unavailable_sources'}.intersection(entry)
+    assert run(actor("select voucher_deletion_history('test-case')", other)) == '[]'
+    assert restore(direct, other) == 'missing'
+    for sql in ("select * from voucher_recovery.deletions", "select * from voucher_recovery.source_context",
+                "select voucher_recovery.purge_expired()"):
+        run(actor(sql), error='permission denied')
+    run(f"set role anon; select restore_deleted_voucher('{direct}')", error='permission denied')
+    assert restore(direct) == 'ok' and restore(direct) == 'ok'
+    assert run(f"select backup is null and restored_by='{owner}' from voucher_recovery.deletions where event_id='{direct}'") == 't'
+    assert run(f"select detached_source_ids='{{}}' and reviewed_at is null from voucher_documents where id='{doc}'") == 't'
+    archived, sql = insert()
+    run(actor(sql + f"delete from voucher_documents where id='{archived}';"))
+    run(actor(f"delete from generated_notes where id='{note}';"))
+    cascaded = latest(doc)
+    assert cascaded != direct and restore(direct) == 'consumed'
+    assert run(f"select source_note_id='{note}' and deleted_by='{owner}' from voucher_recovery.deletions where event_id='{cascaded}'") == 't'
+    run(actor(f"insert into generated_notes values ('{note}','test-case','{owner}')"))
+    for event, document in ((cascaded, doc), (latest(archived), archived)):
+        assert restore(event) == 'ok'
+        assert run(f"select detached_source_ids=array['{note}'::uuid] from voucher_documents where id='{document}'") == 't'
+    run(actor(f"delete from generated_notes where id='{note}';"))
+    assert run(f"select count(*) from voucher_documents where id in ('{doc}','{archived}')") == '2'
+    run(actor(f"update voucher_documents set detached_source_ids='{{}}' where id='{doc}'"), error='immutable')
+    forged, sql = insert(sources={})
+    run(actor(sql.replace("privacy_status)", "privacy_status,detached_source_ids)").replace("'degraded');", f"'degraded',array['{note}'::uuid]);")), error='row-level security')
+    run(actor(f"delete from voucher_documents where id in ('{doc}','{archived}')"))
+    expired = latest(doc)
+    run(f"update voucher_recovery.deletions set expires_at=now()-interval '1 second' where event_id='{expired}'")
+    assert restore(expired) == 'expired'
+    run('select voucher_recovery.purge_expired()')
+    assert run(f"select backup is null from voucher_recovery.deletions where event_id='{expired}'") == 't'
+    run(f"update voucher_recovery.deletions set deleted_at=now()-interval '91 days' where event_id='{expired}'; select voucher_recovery.purge_expired();")
+    assert restore(expired) == 'missing'
+    assert run('select count(*) from voucher_recovery.source_context') == '0'
+    # Someone who knows a deleted UUID can occupy it from another account.
+    # The owner must recover without exposing or overwriting either document.
+    run(f"insert into cases values ('other-case','{other}');")
+    occupied, sql = insert(sources={})
+    run(actor(sql + f"delete from voucher_documents where id='{occupied}';"))
+    event = latest(occupied)
+    run(actor(insert(doc=occupied, user=other, case='other-case', sources={})[1], other))
+    restored = json.loads(run(actor(f"select restore_deleted_voucher('{event}')")))
+    assert restored['status'] == 'ok' and restored['id'] != occupied
+    assert json.loads(run(actor(f"select restore_deleted_voucher('{event}')"))) == restored
+    assert run(actor(f"select id from voucher_documents where id='{occupied}'", other)) == occupied
+    run(actor(f"delete from voucher_documents where id='{restored['id']}'"))
+    run(actor("delete from cases where id='other-case'", other))
+    run(actor(f"insert into generated_notes values ('{note}','test-case','{owner}');"))
+
     # First insert, then delete: deletion waits for the insert's source lock and
     # removes the newly committed snapshot as part of the same deletion.
     def transaction(sql):
@@ -171,6 +237,7 @@ def main():
     run(f"delete from auth.users where id='{owner}'")
     assert run('select count(*) from voucher_documents') == '0'
     run('delete from cases; delete from auth.users;')
+    assert run('select count(*) from voucher_recovery.deletions') == '0'
     assert run('select (select count(*) from voucher_documents)+(select count(*) from cases)+(select count(*) from generated_notes)+(select count(*) from auth.users)') == '0'
     print('PASS: migration, owner CRUD/review, role isolation, forged triggers denied, immutable source IDs, legacy ID reuse, UUID spellings, scoped cascades, both insert/delete race orders; cleanup=0 rows')
 

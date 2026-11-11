@@ -5,7 +5,7 @@ import VoucherPdfPreview from './VoucherPdfPreview'
 import VoucherOriginalForms from './VoucherOriginalForms'
 import { fetchCaseDashboard } from '../../api/client'
 import type { CaseDashboardResponse, CaseListItem } from '../../types/session'
-import { voucherApi, VoucherRequestError, type VoucherDocument, type VoucherForm, type VoucherRow, type VoucherTemplate } from '../../lib/voucherApi'
+import { voucherApi, VoucherRequestError, type VoucherDeletion, type VoucherDocument, type VoucherForm, type VoucherRow, type VoucherTemplate } from '../../lib/voucherApi'
 
 const label = { form10: '서비스 제공기록지 · 제10호', form25: '서비스 제공(이용)계약서 · 제25호', form26: '서비스 제공계획서 · 제26호' }
 const monthNow = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit' }).format(new Date())
@@ -13,6 +13,7 @@ type Selection = { number: string; date: string; attested: boolean }
 const complete = (s: Selection) => Number.isInteger(Number(s.number)) && Number(s.number) >= 1 && Number(s.number) <= 8 && Boolean(s.date) && s.attested
 const selectionsFor = (rows: VoucherRow[]) => Object.fromEntries(rows.map(row => [row.note_id || 'manual-' + crypto.randomUUID(), { number: String(row.voucher_session_no), date: row.actual_service_date, attested: true }]))
 const packetEdition = 'ari-2026'
+const comparableNoteId = (id: string) => id.replace(/[{}-]/g, '').toLowerCase()
 const blank = (template: VoucherTemplate): VoucherForm => ({ template, edition: packetEdition, report_month: monthNow(), service_tier: '', rows: [], general_comment: '', purpose: '', content: '', schedule: '', price: '', contract_period: '', plan_left: '', plan_right: '', additional_cost: '', refund_terms: '', other_terms: '' })
 const planFields = [
   ['purpose', '서비스 목적'], ['content', '서비스 내용'], ['schedule', '제공 횟수·시간·일정'],
@@ -31,6 +32,9 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
   const [hashes, setHashes] = useState<Record<string, string>>({})
   const [candidate, setCandidate] = useState<VoucherDocument | null>(null)
   const [history, setHistory] = useState<VoucherDocument[]>([])
+  const [deletions, setDeletions] = useState<VoucherDeletion[] | null>(null)
+  const [showDeletions, setShowDeletions] = useState(false)
+  const [historyRevision, setHistoryRevision] = useState(0)
   const [caps, setCaps] = useState<VoucherCapabilities | null>(null)
   const [preview, setPreview] = useState<Blob | null>(null)
   const [previewReady, setPreviewReady] = useState(false)
@@ -95,6 +99,7 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
     const current = ++run.current
     drafts.current.clear(); rowText.current.clear(); setError('')
     setDashboard(null); setSelections({}); setHashes({}); setHistory([]); setForm(blank('form10')); clearReview()
+    setDeletions(null); setShowDeletions(false)
     if (!caseId) return
     fetchCaseDashboard(caseId).then(value => {
       if (current !== run.current) return
@@ -109,7 +114,15 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
     let cancelled = false
     if (caseId && caps?.enabled) voucherApi<VoucherDocument[]>(`saved?case_id=${encodeURIComponent(caseId)}`).then(value => { if (!cancelled) setHistory(value) }).catch(e => { if (!cancelled) setError(e.message) })
     return () => { cancelled = true }
-  }, [caseId, caps, candidate?.id, candidate?.reviewed_at])
+  }, [caseId, caps, candidate?.id, candidate?.reviewed_at, historyRevision])
+  useEffect(() => {
+    if (!caseId || !showDeletions) return
+    let cancelled = false
+    voucherApi<VoucherDeletion[]>(`deletions?case_id=${encodeURIComponent(caseId)}`)
+      .then(events => { if (!cancelled) setDeletions(events) })
+      .catch(e => { if (!cancelled) setError(e.message) })
+    return () => { cancelled = true }
+  }, [caseId, showDeletions, historyRevision])
   const numbers = form.rows.map(row => row.voucher_session_no)
   const dateProblem = form.template === 'form10' && (new Set(numbers).size !== numbers.length
     ? '같은 바우처 회차가 두 번 선택됐습니다. 회차를 확인해주세요.'
@@ -134,8 +147,10 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
   const openPreview = async (doc: VoucherDocument) => {
     setPreview(null); setPreviewReady(false); setCandidate(doc); setPrivacy(false); setOffline(false)
     if (doc.snapshot.form.edition === packetEdition) {
-      setForm({ ...blank(doc.template), ...doc.snapshot.form }); rowText.current.clear()
-      setSelections(selectionsFor(doc.snapshot.form.rows)); setHashes(doc.snapshot.sources)
+      const detached = new Set((doc.detached_source_ids || []).map(comparableNoteId))
+      const rows = doc.snapshot.form.rows.map(row => row.note_id && detached.has(comparableNoteId(row.note_id)) ? { ...row, note_id: null } : row)
+      setForm({ ...blank(doc.template), ...doc.snapshot.form, rows }); rowText.current.clear()
+      setSelections(selectionsFor(rows)); setHashes(Object.fromEntries(Object.entries(doc.snapshot.sources).filter(([id]) => !detached.has(comparableNoteId(id)))))
     }
     const blob = await voucherApi<Blob>(`saved/${doc.id}/preview`, 'GET', undefined, true)
     setPreview(blob)
@@ -232,7 +247,34 @@ export default function VoucherWorkspace({ cases, initialCaseId, initialNoteId, 
         {candidate && <section className="mt-5 rounded-xl border bg-white p-5"><h2 className="font-bold">출력 미리보기</h2><p className="my-2 text-sm">{candidate.privacy_status === 'degraded' ? '자동 식별정보 확인이 제한되었습니다. 남은 이름·기관·연락처를 확인해 주세요.' : '출력 내용을 확인해주세요. 자동 처리가 모든 식별정보를 제거한다고 보장하지 않습니다.'}</p>{preview && <VoucherPdfPreview blob={preview} onReady={setPreviewReady} />}
           {candidate.reviewed_at ? <p className="my-3 font-bold text-green-700">검토 완료 · 기관 보완 필요</p> : <div className="my-4 space-y-3"><label className="block"><input type="checkbox" checked={privacy} onChange={e => setPrivacy(e.target.checked)} /> 미리보기의 식별정보를 확인하고 직접 인용·사생활 세부내용을 기관 제출에 필요한 수준으로 줄였습니다.</label><label className="block"><input type="checkbox" checked={offline} onChange={e => setOffline(e.target.checked)} /> 기본정보·서명·미기입 항목은 기관에서 보완하겠습니다.</label><button type="button" disabled={busy || !privacy || !offline || !previewReady} className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40" onClick={() => task(async () => setCandidate(await voucherApi<VoucherDocument>(`saved/${candidate.id}/review`, 'POST', { fingerprint: candidate.fingerprint, human_privacy_reviewed: true, acknowledged_offline_completion: true }))) }>내용 검토 완료</button></div>}
           <div className="flex gap-3">{(['pdf', 'hwpx'] as const).map(format => <button type="button" key={format} className="rounded border px-4 py-2 disabled:opacity-40" disabled={busy || !candidate.reviewed_at || !caps.formats[format]} onClick={() => download(format)}>{format.toUpperCase()} 다운로드</button>)}</div>{!caps.formats.hwpx && <p className="mt-2 text-sm text-slate-500">HWPX는 문서 편집기 호환성 확인 후 제공됩니다.</p>}</section>}
-        <section className="mt-5 rounded-xl border bg-white p-5"><h2 className="font-bold">저장한 바우처 문서</h2>{history.map(doc => <div key={doc.id} className="mt-2 flex justify-between border-b py-2"><button disabled={busy} type="button" onClick={() => task(async () => openPreview(await voucherApi<VoucherDocument>(`saved/${doc.id}`)))}>{label[doc.template]} · {doc.reviewed_at ? '검토 완료' : '검토 전'} · {new Date(doc.created_at).toLocaleDateString('ko-KR')}</button><button disabled={busy} type="button" onClick={() => { if (window.confirm('이 서식 문서를 삭제할까요? 원래 회기 기록은 유지됩니다.')) void task(async () => { await voucherApi(`saved/${doc.id}`, 'DELETE'); setHistory(history.filter(d => d.id !== doc.id)); if (candidate?.id === doc.id) clearReview() }) }}>삭제</button></div>)}</section>
+        <section className="mt-5 rounded-xl border bg-white p-5">
+          <div className="flex items-center justify-between gap-3"><h2 className="font-bold">저장한 바우처 문서</h2>
+            <button type="button" aria-expanded={showDeletions} className="rounded border px-3 py-2" onClick={() => setShowDeletions(!showDeletions)}>삭제 기록 · 복구</button>
+          </div>
+          {history.map(doc => <div key={doc.id} className="mt-2 flex justify-between gap-3 border-b py-2">
+            <button disabled={busy} type="button" onClick={() => task(async () => openPreview(await voucherApi<VoucherDocument>(`saved/${doc.id}`)))}>{label[doc.template]} · {doc.reviewed_at ? '검토 완료' : '검토 전'} · {new Date(doc.created_at).toLocaleDateString('ko-KR')}</button>
+            <button disabled={busy} type="button" onClick={() => {
+              if (window.confirm('이 바우처를 삭제할까요? 삭제 후 7일 동안 이 화면에서 복구할 수 있습니다.')) void task(async () => {
+                await voucherApi(`saved/${doc.id}`, 'DELETE'); setHistoryRevision(v => v + 1)
+                if (candidate?.id === doc.id) clearReview()
+              })
+            }}>삭제</button>
+          </div>)}
+          {showDeletions && <div className="mt-4 rounded-lg border bg-slate-50 p-4">
+            <p className="text-sm text-slate-700">최근 90일의 삭제 기록입니다. 삭제 후 7일 동안 복구할 수 있습니다. 원본 회기를 지웠다면 바우처만 복구되며 출력 전 내용을 다시 검토합니다.</p>
+            {deletions === null && !error && <p className="mt-3 text-sm" role="status">삭제 기록을 불러오는 중입니다.</p>}
+            {deletions?.length === 0 && <p className="mt-3 text-sm">삭제 기록이 없습니다.</p>}
+            {deletions?.map(event => <div key={event.event_id} className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+              <div><p className="font-semibold">{label[event.template]}</p>
+                <p className="text-sm">{event.reason === 'source' ? '원본 회기 삭제로 함께 삭제' : '바우처 직접 삭제'} · {event.by_me ? '내 계정' : event.deleted_by || `시스템 (${event.actor_role})`} · {new Date(event.deleted_at).toLocaleString('ko-KR')}</p>
+              </div>
+              {event.can_restore ? <button type="button" disabled={busy} className="rounded border border-blue-600 bg-white px-3 py-2 font-semibold text-blue-700" onClick={() => task(async () => {
+                const doc = await voucherApi<VoucherDocument>(`deletions/${event.event_id}/restore`, 'POST')
+                setHistoryRevision(v => v + 1); await openPreview(doc)
+              })}>바우처 복구</button> : <span className="text-sm">{event.restored_at ? '복구 완료' : '복구 기간 만료'}</span>}
+            </div>)}
+          </div>}
+        </section>
       </>}
       </div>
     </div>
