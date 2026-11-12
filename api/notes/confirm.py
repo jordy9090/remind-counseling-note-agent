@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import sys
-import traceback
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -17,7 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.note import ConfirmGeneratedNoteRequest, ConfirmGeneratedNoteResponse  # noqa: E402
-from app.services.supabase_storage import NoteConfirmationError, confirm_generated_note  # noqa: E402
+from app.api.routes.notes import confirm_note as reviewed_confirm
 
 app = FastAPI(title="Re:mind Note Confirmation API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -28,13 +27,6 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 async def confirm_note(
     request: ConfirmGeneratedNoteRequest,
     actor: PreviewActor,
+    review_receipt: str = Header(default="", alias="X-Review-Receipt"),
 ) -> ConfirmGeneratedNoteResponse:
-    try:
-        return confirm_generated_note(request, actor=actor)
-    except NoteConfirmationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.message)
-    except HTTPException:
-        raise
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Note confirmation failed: {str(error)}")
+    return await reviewed_confirm(request, actor, review_receipt)

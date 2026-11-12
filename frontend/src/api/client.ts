@@ -35,6 +35,8 @@ import { getAccessToken, supabase } from '../lib/supabase'
 import { cleanQuickSummarySections } from '../lib/quickSummary'
 import type { QuickSummaryResult } from '../lib/quickSummary'
 import type { StoredPerson } from '../lib/personMapping'
+import { reviewForAI, type ReviewPurpose, type ReviewTask, type ReviewedPayload } from '../lib/aiReview'
+import type { DeidSource } from '../lib/deidentificationReview'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 // Audio goes directly to the configured self-hosted FastAPI origin.
@@ -76,6 +78,22 @@ client.interceptors.request.use(async (config) => {
   if (accessToken) {
     config.headers = config.headers ?? {}
     config.headers.Authorization = `Bearer ${accessToken}`
+  }
+  const reviewPurposes: Record<string, ReviewPurpose> = {
+    '/api/notes/generate': 'generate', '/api/notes/quick-summary': 'quick',
+    '/api/notes/recompose': 'recompose', '/api/notes/supervision-report': 'supervision',
+    '/api/notes/confirm': 'memory',
+  }
+  const purpose = reviewPurposes[config.url || '']
+  if (purpose && (purpose !== 'memory' || config.data?.create_case_memory !== false)) {
+    const session = (await supabase?.auth.getSession())?.data.session
+    const ownerId = config.expectedOwnerId !== undefined ? config.expectedOwnerId : session?.user.id || null
+    await scopedSession(ownerId)
+    const reviewed = await reviewForAI(purpose, config.data, ownerId, config.signal as AbortSignal | undefined)
+    const currentSession = await scopedSession(ownerId)
+    if (currentSession?.access_token) config.headers.Authorization = `Bearer ${currentSession.access_token}`
+    config.data = reviewed.payload
+    config.headers['X-Review-Receipt'] = reviewed.receipt
   }
   return config
 })
@@ -252,21 +270,46 @@ export const requestQuickSummary = async (text: string, scope?: RequestScope): P
 export interface DeidPreviewItem {
   original: string
   replacement: string
-  category: 'name' | 'occupation' | 'organization' | 'age' | 'location' | 'birth_date'
+  category: 'name' | 'occupation' | 'organization' | 'age' | 'location' | 'birth_date' | 'contact' | 'identifier'
 }
 
-/** Model-detected identifiers for the pre-generation review step. Public (guests use it before a quick summary). */
-export const requestDeidentificationPreview = async (payload: {
-  texts: string[]
-  client_name?: string
-  counselor_name?: string
-}): Promise<DeidPreviewItem[]> => {
-  try {
-    const response = await client.post<{ items: DeidPreviewItem[] }>('/api/notes/deidentification-preview', payload, { timeout: 60000 })
-    return response.data.items
-  } catch (error) {
-    throw normalizeApiError(error, '식별 정보를 찾지 못했어요. 직접 확인해주세요.')
+export interface AIReviewPreview {
+  payload: Record<string, unknown>
+  sources: DeidSource[]
+  items: DeidPreviewItem[]
+  detection_token: string
+  model_used: boolean
+}
+
+export async function startAIReview(task: ReviewTask, signal: AbortSignal): Promise<AIReviewPreview> {
+  let jobToken = ''
+  const deadline = Date.now() + 20 * 60 * 1000
+  while (Date.now() < deadline) {
+    const response = await client.post<AIReviewPreview & { status?: string; job_token?: string }>('/api/notes/deidentification-preview',
+      { purpose: task.purpose, payload: task.payload, job_token: jobToken }, { timeout: 30000, signal, expectedOwnerId: task.ownerId })
+    if (response.data.status !== 'pending') {
+      if (!response.data.model_used) throw new Error('자체 서버 탐지를 완료하지 못했습니다.')
+      return response.data
+    }
+    jobToken = response.data.job_token || ''
+    if (!jobToken) throw new Error('탐지 작업을 확인하지 못했습니다.')
+    await new Promise<void>((resolve, reject) => {
+      if (signal.aborted) return reject(new Error('요청이 취소되었습니다.'))
+      const abort = () => { clearTimeout(timer); reject(new Error('요청이 취소되었습니다.')) }
+      const timer = window.setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 5000)
+      signal.addEventListener('abort', abort, { once: true })
+    })
   }
+  throw new Error('탐지 시간이 초과되었습니다. 분량을 나누어 다시 시도해주세요.')
+}
+
+export async function confirmAIReview(task: ReviewTask, preview: AIReviewPreview, edits: {
+  path: string; start: number; end: number; original: string; replacement: string
+}[]): Promise<ReviewedPayload> {
+  const response = await client.post<ReviewedPayload>('/api/notes/deidentification-confirm', {
+    purpose: task.purpose, payload: preview.payload, detection_token: preview.detection_token, edits,
+  }, { signal: task.signal, expectedOwnerId: task.ownerId })
+  return response.data
 }
 
 export const getAudioCapabilities = async (): Promise<AudioCapabilitiesResponse> => {

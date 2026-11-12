@@ -49,6 +49,9 @@ class OpenAIEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        from app.services.deid_review import embedding_is_reviewed
+        if any(not embedding_is_reviewed(text) for text in texts):
+            raise EmbeddingError("Embedding input has not been reviewed.")
         body = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
         request = Request(
             "https://api.openai.com/v1/embeddings",

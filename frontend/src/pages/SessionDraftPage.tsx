@@ -87,7 +87,6 @@ import RichTextField from '../components/final-document/RichTextField'
 import { hasRichFormatting, plainTextToRichHtml, sanitizeRichHtml } from '../lib/richText'
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
-import DeidentificationReviewModal, { type DeidReviewResult } from '../components/deidentification/DeidentificationReviewModal'
 import PersonMappingModal, { hasPersonMentions } from '../components/deidentification/PersonMappingModal'
 import { samePersonDictionary, updatedPersonDictionary, type AppliedDeidItem, type PersonMapping, type StoredPerson } from '../lib/personMapping'
 import { SESSION_REVIEW_FIELDS, sessionReviewSources, type DeidSource } from '../lib/deidentificationReview'
@@ -324,7 +323,6 @@ export default function SessionDraftPage({
   const [isDeidentified, setIsDeidentified] = useState(true)
   const [materials, setMaterials] = useState<UploadedMaterial[]>([])
   // Pre-generation de-identification review: open while the counselor checks what goes to the AI.
-  const [reviewSources, setReviewSources] = useState<DeidSource[] | null>(null)
   // De-identified sources waiting for the person matching step (등장 인물 정리).
   const [personSources, setPersonSources] = useState<DeidSource[] | null>(null)
   // Reviewed texts of the last generation, reused for later AI calls on the same input (supervision report).
@@ -972,7 +970,8 @@ export default function SessionDraftPage({
         // Review still works without saved labels; the dictionary is then left unchanged.
       }
     }
-    setReviewSources(sources)
+    if (hasPersonMentions(sources.map(source => source.text), personDictionary.current?.people)) setPersonSources(sources)
+    else void generateReviewed(Object.fromEntries(sources.map(source => [source.key, source.text])), null)
   }
 
   /** The client's name as registered in the client list (stored records only keep the masked form). */
@@ -984,15 +983,6 @@ export default function SessionDraftPage({
     if (!reviewed) return input
     const unchanged = SESSION_REVIEW_FIELDS.every(([key]) => (input[key] ?? '') === reviewed.original[key])
     return unchanged ? { ...input, ...reviewed.texts } : input
-  }
-
-  /** After the de-identification review: match people first when the texts mention any. */
-  const continueReviewed = (review: DeidReviewResult) => {
-    const sources = (reviewSources ?? []).map((source) => ({ ...source, text: review.texts[source.key] ?? source.text }))
-    setReviewSources(null)
-    appliedDeidItems.current = review.items
-    if (hasPersonMentions(sources.map((source) => source.text), personDictionary.current?.people)) setPersonSources(sources)
-    else void generateReviewed(review.texts, null)
   }
 
   /** Saves this session's matching as the client's 인물 사전 once the client record exists. */
@@ -1011,7 +1001,6 @@ export default function SessionDraftPage({
 
   /** Runs generation with the texts the counselor confirmed in the review steps. */
   const generateReviewed = async (texts: Record<string, string>, mapping: PersonMapping | null) => {
-    setReviewSources(null)
     setPersonSources(null)
     const original = Object.fromEntries(SESSION_REVIEW_FIELDS.map(([key]) => [key, form[key] ?? '']))
     reviewedInput.current = { original, texts }
@@ -2092,17 +2081,6 @@ export default function SessionDraftPage({
       )}
       </fieldset>
       <GeneratingOverlay active={isLoading} />
-      {reviewSources && (
-        <DeidentificationReviewModal
-          sources={reviewSources}
-          requireConfirmation={materials.some((material) => material.kind === 'audio' && material.appliedTargets.length > 0)}
-          context={{ clientName: registeredClientName(form.case_id) || getClientAlias(form), counselorName: form.counselor_name, people: personDictionary.current?.people }}
-          onBack={() => setReviewSources(null)}
-          onAddMaterial={() => setReviewSources(null)}
-          submitLabel="다음: 등장 인물 정리"
-          onConfirm={continueReviewed}
-        />
-      )}
       {personSources && (
         <PersonMappingModal
           sources={personSources}

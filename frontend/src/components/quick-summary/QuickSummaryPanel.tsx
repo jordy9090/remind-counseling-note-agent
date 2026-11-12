@@ -10,7 +10,6 @@ import {
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse } from '../../types/session'
-import DeidentificationReviewModal, { type DeidReviewResult } from '../deidentification/DeidentificationReviewModal'
 import PersonMappingModal, { hasPersonMentions } from '../deidentification/PersonMappingModal'
 import SourceMemoryCues from './SourceMemoryCues'
 import QuickAudioInput from './QuickAudioInput'
@@ -61,7 +60,7 @@ export default function QuickSummaryPanel({
   const [audioText, setAudioText] = useState('')
   const [audioPending, setAudioPending] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [reviewing, setReviewing] = useState(false)
+  const reviewing = false
   // Reviewed text waiting for the person matching step (등장 인물 정리).
   const [personText, setPersonText] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
@@ -98,15 +97,8 @@ export default function QuickSummaryPanel({
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
     if (overLimit) return setError(`간편 요약은 ${maxChars.toLocaleString()}자까지 입력할 수 있어요.${canExtractDocuments ? '' : ' 로그인하면 2시간 상담 분량까지 이용할 수 있어요.'}`)
     setError(null)
-    setReviewing(true)
-  }
-
-  /** After the de-identification review: match people first when the text mentions any. */
-  const continueReviewed = (review: DeidReviewResult) => {
-    setReviewing(false)
-    const reviewed = review.texts[QUICK_SOURCE_KEY] ?? inputText
-    if (hasPersonMentions([reviewed])) setPersonText(reviewed)
-    else void summarizeReviewed(reviewed)
+    if (hasPersonMentions([inputText])) setPersonText(inputText)
+    else void summarizeReviewed(inputText)
   }
 
   const summarizeReviewed = async (reviewed: string) => {
@@ -197,7 +189,6 @@ export default function QuickSummaryPanel({
     setCopied(false)
     setLoading(false)
     setExtracting(false)
-    setReviewing(false)
     setPersonText(null)
     setAudioRevision(value => value + 1)
   }
@@ -325,15 +316,6 @@ export default function QuickSummaryPanel({
 
       {below && <div className="mt-6 w-full">{below}</div>}
 
-      {reviewing && (
-        <DeidentificationReviewModal
-          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: inputText }]}
-          context={{}}
-          onBack={() => setReviewing(false)}
-          submitLabel="다음: 등장 인물 정리"
-          onConfirm={continueReviewed}
-        />
-      )}
       {personText !== null && (
         <PersonMappingModal
           sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: personText }]}

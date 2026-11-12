@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)
     use_stub: bool = False
     runtime_environment: str = "production"
+    # Raw entity discovery is sent only to the authenticated, self-hosted service.
+    deid_service_url: str = ""
+    deid_service_token: str = ""
+    deid_service_ca_pem: str = ""
+    deid_timeout_seconds: float = Field(default=15, ge=1, le=30)
+    deid_review_signing_key: str = ""
+    require_deid_review: bool = True
 
     # API guard. Production uses Supabase Auth; the preview token is an
     # explicitly enabled legacy path for synthetic-data demos only.

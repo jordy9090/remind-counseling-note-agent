@@ -175,6 +175,10 @@ def run_note_pipeline(
     # failure, not permission to generate and store a sample counseling record.
     if not settings.use_stub and not settings.openai_api_key:
         raise RuntimeError("AI 회기요약 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+    if settings.require_deid_review:
+        # Legacy stored sources have no review receipt. Only explicitly reviewed
+        # previous-session material in this request may enter generation.
+        allow_retrieval = False
     if use_summary_skill and (
         allow_retrieval or session_input.persist or session_input.previous_session_summary.strip()
         or requested_section_ids or session_topic or session_input.target_document_type != "session_note"

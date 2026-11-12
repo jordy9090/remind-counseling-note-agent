@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from typing import Annotated
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.security import require_preview_access  # noqa: E402
 from app.graph.supervision_report import run_supervision_report_pipeline  # noqa: E402
 from app.schemas.note import SupervisionReportDraft, SupervisionReportRequest  # noqa: E402
+from app.api.routes.notes import generate_supervision_report as reviewed_supervision
 
 app = FastAPI(title="Re:mind Supervision Report API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -27,11 +28,6 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 async def generate_supervision_report(
     request: SupervisionReportRequest,
     actor: PreviewActor,
+    review_receipt: str = Header(default="", alias="X-Review-Receipt"),
 ) -> SupervisionReportDraft:
-    try:
-        return run_supervision_report_pipeline(request)
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"수퍼비전 보고서 초안 생성 중 오류가 발생했습니다: {str(error)}",
-        ) from error
+    return await reviewed_supervision(request, actor, review_receipt)

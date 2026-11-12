@@ -20,6 +20,10 @@
       "destination": "/api/notes/generate?scope=deid-preview"
     },
     {
+      "source": "/api/notes/deidentification-confirm",
+      "destination": "/api/notes/generate?scope=deid-confirm"
+    },
+    {
       "source": "/api/cases/:case_id/quick-summary",
       "destination": "/api/cases/dashboard?case_id=:case_id&scope=quick-summary"
     },

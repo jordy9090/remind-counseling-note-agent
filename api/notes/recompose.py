@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from typing import Annotated
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header
 
 ROOT_DIR = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "backend" / "app").exists()
@@ -16,8 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.note import RecomposeNoteRequest, RecomposeNoteResponse  # noqa: E402
-from app.services.recompose_cache import recompose_note_with_cache  # noqa: E402
-from app.services.summary_quality import SummaryQualityError  # noqa: E402
+from app.api.routes.notes import recompose_note_draft as reviewed_recompose
 
 app = FastAPI(title="Re:mind Note Recompose API")
 PreviewActor = Annotated[str, Depends(require_preview_access)]
@@ -28,13 +27,6 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 async def recompose_note_draft(
     request: RecomposeNoteRequest,
     actor: PreviewActor,
+    review_receipt: str = Header(default="", alias="X-Review-Receipt"),
 ) -> RecomposeNoteResponse:
-    try:
-        return recompose_note_with_cache(request, actor=actor)
-    except SummaryQualityError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="요약초안 재구성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-        ) from None
+    return await reviewed_recompose(request, actor, review_receipt)

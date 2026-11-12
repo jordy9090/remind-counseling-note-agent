@@ -59,6 +59,7 @@ for (const fixture of JSON.parse(fs.readFileSync('../backend/fixtures/korean_per
   let calls = 0
   const sources = [{ key: 'transcript_text', label: '합성', text: '이름: 윤다온, 가상누리병원에 안 갔다. 2회기다.' }]
   execute(effects[0], {
+    initialItems: undefined,
     sources, context: { clientName: '윤다온' }, detectDeidentificationItems: lib.detectDeidentificationItems,
     requestDeidentificationPreview: () => { calls++; throw new Error('raw text left browser') },
     setItems: value => { detected = value }, setDetecting: value => { detecting = value },

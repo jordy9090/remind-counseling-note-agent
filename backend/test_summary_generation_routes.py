@@ -60,7 +60,7 @@ class SummaryGenerationRouteTests(unittest.TestCase):
     def test_recomposition_reports_quality_failure_on_both_hosts(self):
         payload = {"session_input": INPUT, "visible_section_ids": ["session_content"]}
         for app, target in (
-            (recompose_app, "api.notes.recompose.recompose_note_with_cache"),
+            (recompose_app, "app.api.routes.notes.recompose_note_with_cache"),
             (main_app, "app.api.routes.notes.recompose_note_with_cache"),
         ):
             with self.subTest(app=app.title), patch(target, side_effect=SummaryQualityError()) as generate:

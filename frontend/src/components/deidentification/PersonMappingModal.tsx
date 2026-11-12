@@ -122,10 +122,10 @@ export default function PersonMappingModal({
             <ArrowLeft className="h-5 w-5" />뒤로가기
           </OutlineButton>
           <OutlineButton className="h-[52px] rounded-[12px] text-[15px] sm:w-[200px]" onClick={() => submit(false)}>
-            정리 없이 생성하기
+            정리 없이 다음으로
           </OutlineButton>
           <PrimaryButton className="h-[52px] flex-1 rounded-[12px] text-[15px]" onClick={() => submit(true)}>
-            <Sparkles className="h-5 w-5" />AI 요약 생성하기
+            <Sparkles className="h-5 w-5" />정리한 내용 확인하기
           </PrimaryButton>
         </div>
       )}

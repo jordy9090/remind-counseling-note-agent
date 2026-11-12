@@ -4,6 +4,7 @@ import { Loader2, Mail, MailCheck, X } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
 import { AuthSessionProvider } from '../lib/authSession'
+import AIReviewHost from './deidentification/AIReviewHost'
 import { confirmDiscardWork } from '../lib/unsavedWork'
 import LandingPage from '../pages/LandingPage'
 
@@ -135,7 +136,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   if (!session) {
     const closeAuth = () => { setAuthOpen(false); setMessage(''); setUnconfirmed(false) }
     // The landing (quick summary) stays mounted under the modal so an open summary stays on screen.
-    const landing = <LandingPage onLogin={() => openAuth('signin')} />
+    const landing = <><LandingPage onLogin={() => openAuth('signin')} /><AIReviewHost /></>
     if (!authOpen) return landing
 
     if (mode === 'verify') {
@@ -235,6 +236,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-slate-50">
       {message && <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 lg:px-8"><Feedback message={message} /></div>}
       {children}
+      <AIReviewHost />
     </div>
   </AuthSessionProvider>
 }

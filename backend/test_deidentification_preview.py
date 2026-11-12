@@ -9,6 +9,8 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.config import settings
+from app.services.qwen_deidentification import Entities, DetectionUnavailable
 from app.services import deidentification_preview as preview
 from app.services import storage_deidentification as deid
 from app.services.quick_summary import rate_limiter
@@ -67,15 +69,24 @@ class PreviewRouteTests(unittest.TestCase):
     def setUp(self):
         rate_limiter.reset()
         self.addCleanup(rate_limiter.reset)
+        for target, attribute, value in [(settings, "deid_review_signing_key", "synthetic-signing-key-" * 3)]:
+            change = patch.object(target, attribute, value)
+            change.start()
+            self.addCleanup(change.stop)
+        detector = patch("app.services.deid_review.detect_entities", return_value=Entities(entities=[]))
+        detector.start()
+        self.addCleanup(detector.stop)
 
     def test_guest_route_and_vercel_rewrite(self):
-        body = {"texts": [TEXT], "client_name": "윤다온"}
+        body = {"purpose": "generate", "payload": {"case_id": "synthetic", "session_number": 1,
+                "counselor_memo": "", "transcript_text": TEXT, "client_alias": "윤다온"}}
         with model_returns(ENTITIES):
             direct = TestClient(app).post("/api/notes/deidentification-preview", json=body)
             rewritten = TestClient(_load_vercel_generate().app).post("/api/notes/generate?scope=deid-preview", json=body)
         for response in (direct, rewritten):
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertFalse(response.json()["model_used"])
+            self.assertTrue(response.json()["model_used"])
+            self.assertTrue(response.json()["detection_token"])
             items = {item["original"]: item for item in response.json()["items"]}
             self.assertEqual(items["윤다온"]["replacement"], "내담자 A")
             self.assertEqual(items["박서준"]["category"], "name")
@@ -91,15 +102,15 @@ class PreviewRouteTests(unittest.TestCase):
         headers = {"x-real-ip": "203.0.113.21"}
         with model_returns(None):
             for _ in range(preview.ANONYMOUS_PREVIEW_LIMIT[0]):
-                self.assertEqual(client.post("/api/notes/deidentification-preview", json={"texts": ["안녕하세요"]}, headers=headers).status_code, 200)
-            blocked = client.post("/api/notes/deidentification-preview", json={"texts": ["안녕하세요"]}, headers=headers)
+                self.assertEqual(client.post("/api/notes/deidentification-preview", json={"purpose": "quick", "payload": {"text": "안녕하세요"}}, headers=headers).status_code, 200)
+            blocked = client.post("/api/notes/deidentification-preview", json={"purpose": "quick", "payload": {"text": "안녕하세요"}}, headers=headers)
         self.assertEqual(blocked.status_code, 429)
         self.assertIn("Retry-After", blocked.headers)
 
     def test_errors_do_not_echo_the_input(self):
-        with patch.object(preview, "_extract_entities", side_effect=RuntimeError(TEXT)):
-            response = TestClient(app).post("/api/notes/deidentification-preview", json={"texts": [TEXT]})
-        self.assertEqual(response.status_code, 502)
+        with patch("app.services.deid_review.detect_entities", side_effect=DetectionUnavailable(TEXT)):
+            response = TestClient(app).post("/api/notes/deidentification-preview", json={"purpose": "quick", "payload": {"text": TEXT}})
+        self.assertEqual(response.status_code, 503)
         self.assertNotIn("윤다온", response.text)
 
 

@@ -1064,6 +1064,8 @@ def _ensure_sentence(text: str) -> str:
 
 
 def _json(data: Any) -> str:
+    from app.services.deid_review import prompt_material
+    data = prompt_material(data)
     if hasattr(data, "model_dump"):
         data = data.model_dump()
     elif isinstance(data, list):

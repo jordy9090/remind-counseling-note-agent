@@ -62,7 +62,8 @@ APPS = {"backend": app, **{name: module.app for name, module in WRAPPER_MODULES.
 QUICK_SUMMARY_ROUTES = {("backend", "/api/notes/quick-summary"), ("generate", "/api/notes/quick-summary")}
 # The review step before summarizing is public too: guests review before a quick summary.
 DEID_PREVIEW_ROUTES = {("backend", "/api/notes/deidentification-preview"), ("generate", "/api/notes/deidentification-preview")}
-PUBLIC_ROUTES = QUICK_SUMMARY_ROUTES | DEID_PREVIEW_ROUTES
+DEID_CONFIRM_ROUTES = {("backend", "/api/notes/deidentification-confirm"), ("generate", "/api/notes/deidentification-confirm")}
+PUBLIC_ROUTES = QUICK_SUMMARY_ROUTES | DEID_PREVIEW_ROUTES | DEID_CONFIRM_ROUTES
 QUICK_SUMMARY_TEXT = "Synthetic counseling note for the public quick summary boundary test."
 USERS = {"a": "11111111-1111-4111-8111-111111111111", "b": "22222222-2222-4222-8222-222222222222"}
 TOKENS = {"a": "synthetic-access-a", "b": "synthetic-access-b"}
@@ -488,7 +489,10 @@ class AccessBoundaryTests(unittest.TestCase):
         # enabled for signed-in requests a guest reaches no storage.
         with ExitStack() as blockers:
             blockers.enter_context(patch.multiple(settings, enable_rag=True, enable_dense_retrieval=True,
-                                                  enable_raw_region_grounding=True))
+                                                  enable_raw_region_grounding=True,
+                                                  deid_review_signing_key="synthetic-signing-secret-" * 3))
+            from app.services.qwen_deidentification import Entities
+            blockers.enter_context(patch("app.services.deid_review.detect_entities", return_value=Entities(entities=[])))
             spies = [blockers.enter_context(patch(target, side_effect=AssertionError("Protected service reached by a guest")))
                      for target in ("app.api.routes.notes.save_temporary_draft", "app.api.routes.notes.persist_generated_note")]
             for name, path in sorted(QUICK_SUMMARY_ROUTES):
@@ -501,10 +505,13 @@ class AccessBoundaryTests(unittest.TestCase):
             for name, path in sorted(DEID_PREVIEW_ROUTES):
                 rate_limiter.reset()
                 with self.subTest(name=name, path=path):
-                    response = self.clients[name].post(path, json={"texts": [QUICK_SUMMARY_TEXT]})
+                    response = self.clients[name].post(path, json={"purpose": "quick", "payload": {"text": QUICK_SUMMARY_TEXT}})
                     self.assertEqual(response.status_code, 200, response.text)
                     self.assertIn("items", response.json())
                     self.assert_private(response)
+            for name, path in sorted(DEID_CONFIRM_ROUTES):
+                response = self.clients[name].post(path, json={"purpose": "quick", "payload": {"text": QUICK_SUMMARY_TEXT}, "detection_token": "invalid"})
+                self.assertEqual(409, response.status_code)
             for spy in spies:
                 spy.assert_not_called()
         rate_limiter.reset()

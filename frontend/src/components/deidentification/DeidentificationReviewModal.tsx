@@ -20,6 +20,7 @@ export interface DeidReviewResult {
   skipped: boolean
   /** Replacements applied to the texts (empty when skipped); the 인물 사전 learns names from them. */
   items: { original: string; replacement: string }[]
+  fullItems?: DeidItem[]
 }
 
 type FormMode = { mode: 'add' } | { mode: 'edit'; itemId: string }
@@ -47,6 +48,9 @@ export default function DeidentificationReviewModal({
   onAddMaterial,
   requireConfirmation = false,
   submitLabel = 'AI 요약 생성하기',
+  initialItems,
+  submitting = false,
+  error,
 }: {
   sources: DeidSource[]
   context: DeidDetectionContext
@@ -57,6 +61,9 @@ export default function DeidentificationReviewModal({
   requireConfirmation?: boolean
   /** The primary button; pages with a following step (등장 인물 정리) say so. */
   submitLabel?: string
+  initialItems?: DeidItem[]
+  submitting?: boolean
+  error?: string
 }) {
   const [items, setItems] = useState<DeidItem[]>([])
   const [detecting, setDetecting] = useState(true)
@@ -73,6 +80,11 @@ export default function DeidentificationReviewModal({
   const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
+    if (initialItems) {
+      setItems(initialItems)
+      setDetecting(false)
+      return
+    }
     let cancelled = false
     // Unreviewed counseling text stays in the browser during candidate discovery.
     detectDeidentificationItems(sources.map((source) => source.text), context)
@@ -177,10 +189,10 @@ export default function DeidentificationReviewModal({
     if (detecting || (requireConfirmation ? !confirmed : !(skip || confirmed))) return
     const skipped = skip && !requireConfirmation
     const texts = Object.fromEntries(sources.map((source) => [source.key, skipped ? source.text : applyDeidItems(source.text, items)]))
-    onConfirm({ texts, skipped, items: skipped ? [] : items.map(({ original, replacement }) => ({ original, replacement })) })
+    onConfirm({ texts, skipped, fullItems: items, items: skipped ? [] : items.map(({ original, replacement }) => ({ original, replacement })) })
   }
 
-  const canSubmit = !detecting && (requireConfirmation ? confirmed : (skip || confirmed))
+  const canSubmit = !detecting && !submitting && (requireConfirmation ? confirmed : (skip || confirmed))
 
   return (
     <ModalShell
@@ -222,13 +234,14 @@ export default function DeidentificationReviewModal({
               <ArrowLeft className="h-5 w-5" />뒤로가기
             </OutlineButton>
             <PrimaryButton className="h-[52px] flex-1 rounded-[12px] text-[15px]" disabled={!canSubmit} onClick={submit}>
-              <Sparkles className="h-5 w-5" />{submitLabel}
+              <Sparkles className="h-5 w-5" />{submitting ? '확인 중…' : submitLabel}
             </PrimaryButton>
           </div>
         </div>
       )}
     >
       <div className="flex flex-col gap-6">
+        {error && <p role="alert" className="text-danger-500">{error}</p>}
         <div className="flex flex-wrap gap-3">
           <span className="inline-flex h-9 items-center rounded-[10px] bg-primary-50 px-3 text-sm font-bold text-primary-400">
             {detecting ? '항목을 찾는 중…' : `자동 탐지된 항목 총 ${detectedCount}건`}
@@ -238,7 +251,7 @@ export default function DeidentificationReviewModal({
           )}
           {!detecting && (
             <p role="status" className="flex items-center text-xs text-grey-500">
-              자동 탐지는 이 브라우저에서만 실행됩니다. 놓친 이름·기관·지역·직업은 원문을 보고 직접 추가해주세요.
+              {initialItems ? '자체 서버 모델과 규칙으로 탐지했습니다.' : '브라우저 규칙으로 탐지했습니다.'} 놓친 이름·기관·지역은 원문을 보고 직접 추가해주세요.
             </p>
           )}
         </div>

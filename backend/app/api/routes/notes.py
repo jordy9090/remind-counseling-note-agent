@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import traceback
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -48,6 +47,7 @@ from app.services.deidentification_preview import (
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
+from app.services.deid_review import ReviewStart, ReviewConfirm, start_review, confirm_review, reviewed_request
 from app.schemas.storage_policy import NoteStoragePolicy
 from app.services.storage_policy import note_storage_policy
 from app.services.supabase_storage import (
@@ -73,9 +73,10 @@ async def get_note_storage_policy(actor: PreviewActor, response: Response) -> No
 
 
 @router.post("/generate", response_model=GenerateNoteResponse)
-async def generate_note(session_input: SessionInput, actor: PreviewActor) -> GenerateNoteResponse:
+async def generate_note(session_input: SessionInput, actor: PreviewActor,
+                        review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> GenerateNoteResponse:
     """Run the note-generation workflow and return Pydantic-validated JSON."""
-    return _run_pipeline_with_stub_fallback(session_input, actor=actor)
+    return _run_pipeline_with_stub_fallback(session_input, actor=actor, review_receipt=review_receipt)
 
 
 @router.post("/quick-summary", response_model=GenerateNoteResponse)
@@ -87,27 +88,43 @@ async def quick_summary(
     return run_quick_summary(payload, request=request, authorization=authorization)
 
 
-@router.post("/deidentification-preview", response_model=DeidentificationPreviewResponse)
-async def deidentification_preview(
-    payload: DeidentificationPreviewRequest,
+@router.post("/deidentification-preview")
+def deidentification_preview(
+    payload: ReviewStart,
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> DeidentificationPreviewResponse:
-    return run_deidentification_preview(payload, request=request, authorization=authorization)
+) -> dict:
+    actor = review_actor(request, authorization)
+    try:
+        if not payload.job_token:
+            rate_limiter.check(f"review:{actor}", 200 if authorization else 20, 3600)
+    except QuickSummaryRateLimited as error:
+        raise HTTPException(429, "확인 요청이 많아요. 잠시 후 다시 시도해주세요.", headers={"Retry-After": str(error.retry_after)}) from None
+    return start_review(payload, actor)
+
+
+@router.post("/deidentification-confirm")
+def deidentification_confirm(payload: ReviewConfirm, request: Request,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None) -> dict:
+    return confirm_review(payload, review_actor(request, authorization))
 
 
 @router.post("/confirm", response_model=ConfirmGeneratedNoteResponse)
-async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor) -> ConfirmGeneratedNoteResponse:
+async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor,
+                       review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> ConfirmGeneratedNoteResponse:
     """Mark a generated note as counselor-confirmed and create case memory chunks."""
     try:
+        if request.create_case_memory:
+            with reviewed_request("memory", request, review_receipt, str(actor)):
+                return confirm_generated_note(request, actor=actor)
         return confirm_generated_note(request, actor=actor)
     except NoteConfirmationError as error:
         raise HTTPException(status_code=error.status_code, detail=error.message)
     except HTTPException:
         raise
     except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Note confirmation failed: {str(error)}")
+        logger.warning("note_confirmation_failed exception_type=%s", type(error).__name__)
+        raise HTTPException(status_code=500, detail="기록을 확정하지 못했습니다. 현재 내용을 유지한 채 다시 시도해주세요.") from None
 
 
 @router.get("/records/{note_id}", response_model=GeneratedNoteRecord)
@@ -139,10 +156,14 @@ async def delete_note_session_input(note_id: str, actor: PreviewActor, response:
 
 
 @router.post("/recompose", response_model=RecomposeNoteResponse)
-async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActor) -> RecomposeNoteResponse:
+async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActor,
+                              review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
     try:
-        return recompose_note_with_cache(request, actor=actor)
+        with reviewed_request("recompose", request, review_receipt, str(actor)):
+            return recompose_note_with_cache(request, actor=actor)
+    except HTTPException:
+        raise
     except SummaryQualityError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except Exception:
@@ -153,21 +174,25 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
 
 
 @router.post("/supervision-report", response_model=SupervisionReportDraft)
-async def generate_supervision_report(request: SupervisionReportRequest, actor: PreviewActor) -> SupervisionReportDraft:
+async def generate_supervision_report(request: SupervisionReportRequest, actor: PreviewActor,
+                                     review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> SupervisionReportDraft:
     """Generate a Korean personal counseling case supervision report draft."""
     try:
-        if request.persist and settings.enable_persistence:
-            request = request.model_copy(update={"session_input": deidentify_session_input(request.session_input)[0]})
-        report = run_supervision_report_pipeline(request)
-        # persist=true면 생성 성공 후에만 문서 레코드를 만든다 (실패 시 pending 레코드가 남지 않음)
-        report.persistence = persist_supervision_report(request, report, actor=actor)
-        return report
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"수퍼비전 보고서 초안 생성 중 오류가 발생했습니다: {str(error)}",
-        )
+        with reviewed_request("supervision", request, review_receipt, str(actor)):
+            return _generate_supervision(request, actor)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "수퍼비전 보고서를 생성하지 못했습니다. 입력 내용을 유지한 채 다시 시도해주세요.") from None
+
+
+def _generate_supervision(request: SupervisionReportRequest, actor: str) -> SupervisionReportDraft:
+    if request.persist and settings.enable_persistence:
+        request = request.model_copy(update={"session_input": deidentify_session_input(request.session_input)[0]})
+    report = run_supervision_report_pipeline(request)
+    # Persist only completed reports, without leaving pending records on failure.
+    report.persistence = persist_supervision_report(request, report, actor=actor)
+    return report
 
 
 @router.post("/drafts", response_model=TemporaryDraftSaveResponse)
@@ -191,7 +216,12 @@ async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> l
     return list_temporary_drafts(actor=actor, case_id=case_id)
 
 
-def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:
+def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str, review_receipt: str = "") -> GenerateNoteResponse:
+    with reviewed_request("generate", session_input, review_receipt, str(actor)):
+        return _generate_reviewed(session_input, actor=actor)
+
+
+def _generate_reviewed(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:
     """Generate once and persist only success; retain the helper name for wrappers.
 
     Explicit demo mode still runs the configured stub. A failed real generation
@@ -239,6 +269,14 @@ def _optional_actor(authorization: str | None) -> str | None:
         return None
 
 
+def review_actor(request: Request, authorization: str | None) -> str:
+    if authorization:
+        return str(_require_supabase_user(authorization))
+    if settings.local_preview_bypass_enabled:
+        return settings.remind_preview_actor
+    return "guest:" + rate_limit_key(client_ip=client_ip(request), actor=None)[0]
+
+
 def run_deidentification_preview(
     payload: DeidentificationPreviewRequest,
     *,
@@ -283,7 +321,10 @@ def run_quick_summary(
             headers={"Retry-After": str(error.retry_after)},
         ) from error
     try:
-        return generate_quick_summary(payload.text, max_chars=AUTHENTICATED_MAX_CHARS if actor else QUICK_SUMMARY_MAX_CHARS)
+        with reviewed_request("quick", payload, request.headers.get("x-review-receipt", ""), review_actor(request, authorization)):
+            return generate_quick_summary(payload.text, max_chars=AUTHENTICATED_MAX_CHARS if actor else QUICK_SUMMARY_MAX_CHARS)
+    except HTTPException:
+        raise
     except QuickSummaryInputError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception:

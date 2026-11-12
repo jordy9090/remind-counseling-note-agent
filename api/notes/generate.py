@@ -23,19 +23,18 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.security import require_preview_access  # noqa: E402
 from app.api.routes.notes import (  # noqa: E402
     _run_pipeline_with_stub_fallback,
-    run_deidentification_preview,
+    deidentification_preview as review_preview,
+    deidentification_confirm as review_confirm,
     run_quick_summary,
 )
-from app.services.deidentification_preview import (  # noqa: E402
-    DeidentificationPreviewRequest,
-    DeidentificationPreviewResponse,
-)
+from app.services.deid_review import ReviewStart, ReviewConfirm
 from app.schemas.note import GenerateNoteResponse, SessionInput  # noqa: E402
 from app.services.quick_summary import QuickSummaryRequest  # noqa: E402
 
 QUICK_SUMMARY_PATH = "/api/notes/quick-summary"
 DEID_PREVIEW_PATH = "/api/notes/deidentification-preview"
-SCOPE_PATHS = {"scope=quick": QUICK_SUMMARY_PATH, "scope=deid-preview": DEID_PREVIEW_PATH}
+SCOPE_PATHS = {"scope=quick": QUICK_SUMMARY_PATH, "scope=deid-preview": DEID_PREVIEW_PATH,
+               "scope=deid-confirm": "/api/notes/deidentification-confirm"}
 
 
 class QuickSummaryPathMiddleware:
@@ -62,8 +61,9 @@ PreviewActor = Annotated[str, Depends(require_preview_access)]
 async def generate_note(
     session_input: SessionInput,
     actor: PreviewActor,
+    review_receipt: str = Header(default="", alias="X-Review-Receipt"),
 ) -> GenerateNoteResponse:
-    return _run_pipeline_with_stub_fallback(session_input, actor=actor)
+    return _run_pipeline_with_stub_fallback(session_input, actor=actor, review_receipt=review_receipt)
 
 
 @app.post(QUICK_SUMMARY_PATH, response_model=GenerateNoteResponse)
@@ -75,10 +75,16 @@ async def quick_summary(
     return run_quick_summary(payload, request=request, authorization=authorization)
 
 
-@app.post(DEID_PREVIEW_PATH, response_model=DeidentificationPreviewResponse)
-async def deidentification_preview(
-    payload: DeidentificationPreviewRequest,
+@app.post(DEID_PREVIEW_PATH)
+def deidentification_preview(
+    payload: ReviewStart,
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> DeidentificationPreviewResponse:
-    return run_deidentification_preview(payload, request=request, authorization=authorization)
+) -> dict:
+    return review_preview(payload, request=request, authorization=authorization)
+
+
+@app.post("/api/notes/deidentification-confirm")
+def deidentification_confirm(payload: ReviewConfirm, request: Request,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None) -> dict:
+    return review_confirm(payload, request=request, authorization=authorization)
