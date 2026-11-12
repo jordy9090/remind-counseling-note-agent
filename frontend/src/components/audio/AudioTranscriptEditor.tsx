@@ -79,6 +79,9 @@ export function AudioTranscriptEditor({
   const [privacyError, setPrivacyError] = useState('')
   const [editError, setEditError] = useState('')
   const segments = material.segments || []
+  const hasIncompleteAudio = Boolean(material.failedRanges?.length)
+  const isTranscribing = material.status === 'transcribing'
+  const canEditTranscript = material.status === 'transcribed' && !hasIncompleteAudio
   const speakerRoleMap = material.speakerRoleMap || {}
   const reviewKey = JSON.stringify([material.id, segments.map(s => [s.id, s.start, s.end, s.speaker, s.text]), speakerRoleMap,
     material.failedRanges, material.reviewRanges])
@@ -93,10 +96,11 @@ export function AudioTranscriptEditor({
   const speakerKeys = useMemo(() => {
     return Array.from(new Set(segments.map(getSegmentSpeakerKey)))
   }, [segments])
-  const canApply = material.status === 'transcribed' && Boolean(privacy?.text.trim())
+  const canApply = canEditTranscript && Boolean(privacy?.text.trim())
     && privacy?.key === reviewKey && confirmedReviewKey === reviewKey
 
   const preparePrivacyReview = async () => {
+    if (!canEditTranscript) return
     setPrivacyBusy(true)
     setPrivacyError('')
     setConfirmedReviewKey(null)
@@ -146,6 +150,7 @@ export function AudioTranscriptEditor({
           예상 화자 수
           <select
             value={material.expectedSpeakers || 2}
+            disabled={isTranscribing || hasIncompleteAudio}
             onChange={(event) => onExpectedSpeakersChange(Number(event.target.value))}
             className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm"
           >
@@ -158,7 +163,7 @@ export function AudioTranscriptEditor({
         </label>
       </div>
 
-      {material.status !== 'transcribed' && (
+      {(material.status !== 'transcribed' || hasIncompleteAudio) && (
         <button
           type="button"
           disabled={!transcriptionAvailable || material.status === 'transcribing'}
@@ -166,10 +171,10 @@ export function AudioTranscriptEditor({
           className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RefreshCcw className="h-4 w-4" />
-          {material.status === 'transcribing' ? material.transcriptionProgress || '축어록 생성 중' : '축어록 생성'}
+          {isTranscribing ? material.transcriptionProgress || '축어록 생성 중' : hasIncompleteAudio ? '미처리 구간 이어서 처리' : material.status === 'failed' ? '축어록 생성 다시 시도' : '축어록 생성'}
         </button>
       )}
-      {!transcriptionAvailable && material.status !== 'transcribed' && (
+      {!transcriptionAvailable && (material.status !== 'transcribed' || hasIncompleteAudio) && (
         <p className="text-xs text-slate-500">{transcriptionReason || '음성 자동 축어록은 현재 비활성화되어 있습니다.'}</p>
       )}
 
@@ -181,6 +186,9 @@ export function AudioTranscriptEditor({
       {material.error && <p className="text-xs font-semibold text-rose-600">{material.error}</p>}
       {!!material.failedRanges?.length && <p className="text-sm text-rose-700">미처리 구간: {material.failedRanges.map(range =>
         `${formatTimestamp(range.start)}–${formatTimestamp(range.end)}`).join(', ')}</p>}
+      {hasIncompleteAudio && <p role="alert" className="rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+        아직 처리하지 못한 음성이 있습니다. 위의 ‘미처리 구간 이어서 처리’를 눌러주세요. 모든 구간이 완료되면 축어록을 수정하고 요약에 반영할 수 있습니다. 이 화면을 유지하면 완료된 구간은 다시 전송하지 않습니다.
+      </p>}
       {!!material.reviewRanges?.length && <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
         <p>음성·텍스트 연결 확인 필요: 음성 시각이 부정확하거나 말이 누락되었을 수 있습니다.</p>
         <div className="mt-2 flex flex-wrap gap-2">{material.reviewRanges.map((range, index) =>
@@ -201,6 +209,7 @@ export function AudioTranscriptEditor({
               {speakerKey}
               <select
                 value={speakerRoleMap[speakerKey] || 'unassigned'}
+                disabled={!canEditTranscript}
                 onChange={(event) => onUpdateSpeakerRole(speakerKey, event.target.value as SpeakerRole)}
                 className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm"
               >
@@ -236,6 +245,7 @@ export function AudioTranscriptEditor({
                 </div>
                 <textarea
                   aria-label={`${segment.id}번 발화 텍스트`}
+                  readOnly={!canEditTranscript}
                   value={segment.text}
                   onChange={(event) => onUpdateSegmentText(segment.id, event.target.value)}
                   onSelect={(event) => { const position = event.currentTarget.selectionStart; setSplitPositions(current => ({ ...current, [segment.id]: position })) }}
@@ -243,23 +253,24 @@ export function AudioTranscriptEditor({
                 />
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                   <label>이 발화의 화자
-                    <select aria-label={`${segment.id}번 발화 화자`} value={segment.speaker || 'unknown'}
+                    <select aria-label={`${segment.id}번 발화 화자`} value={segment.speaker || 'unknown'} disabled={!canEditTranscript}
                       onChange={event => onUpdateSegments(segments.map(s => s.id === segment.id ? { ...s, speaker: event.target.value } : s))}
                       className="ml-2 rounded border p-1">
                       {[...new Set([...speakerKeys, 'speaker_0', 'speaker_1', 'unknown'])].map(key => <option key={key} value={key}>{key}</option>)}
                     </select>
                   </label>
-                  <button type="button" disabled={!segments[index + 1] || segment.speaker !== segments[index + 1].speaker}
+                  <button type="button" disabled={!canEditTranscript || !segments[index + 1] || segment.speaker !== segments[index + 1].speaker}
                     className="rounded border p-1 disabled:opacity-40" onClick={() => onUpdateSegments(mergeAudioSegments(segments, segment.id))}>
                     다음 발화와 병합
                   </button>
                   <label>분리 시각(초)
                     <input type="number" step="0.01" min={segment.start} max={segment.end}
+                      disabled={!canEditTranscript}
                       aria-label={`${segment.id}번 발화 분리 시각`} value={splitTimes[segment.id] || ''}
                       onChange={event => setSplitTimes(current => ({ ...current, [segment.id]: event.target.value }))}
                       className="ml-2 w-24 rounded border p-1" />
                   </label>
-                  <button type="button" className="rounded border p-1" onClick={() => {
+                  <button type="button" disabled={!canEditTranscript} className="rounded border p-1" onClick={() => {
                     const next = splitAudioSegment(segments, segment.id, splitPositions[segment.id] || 0, Number(splitTimes[segment.id]))
                     if (next === segments) setEditError('본문 중간에 커서를 놓고 발화 시작과 끝 사이의 시각을 입력해주세요.')
                     else { setEditError(''); onUpdateSegments(next) }
@@ -316,7 +327,7 @@ export function AudioTranscriptEditor({
 
       {material.status === 'transcribed' && (
         <div className="space-y-3">
-          <button type="button" disabled={privacyBusy || !transcriptPreview.trim()} onClick={() => void preparePrivacyReview()}
+          <button type="button" disabled={!canEditTranscript || privacyBusy || !transcriptPreview.trim()} onClick={() => void preparePrivacyReview()}
             className="rounded border border-blue-600 px-3 py-2 text-sm text-blue-700">
             {privacyBusy ? '개인정보 후보 확인 중' : '수정본의 개인정보 후보 확인'}
           </button>

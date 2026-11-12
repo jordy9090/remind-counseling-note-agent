@@ -9,7 +9,7 @@ const { openWavSource } = await import(wavUrl)
 const { outputText } = ts.transpileModule(fs.readFileSync('src/lib/hostedAudio.ts', 'utf8').replace("'./wavSource'", JSON.stringify(wavUrl)), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 })
-const { planAudioChunks, encodeWav, transcribePcmChunks, transcribeHostedAudio } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const { planAudioChunks, encodeWav, transcribePcmChunks, transcribeHostedAudio, AudioChunkRequestError, clearHostedAudioCheckpoint } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 const duration = 7200
 const pcm = new Float32Array(duration * 16000)
 const chunks = planAudioChunks(pcm)
@@ -55,13 +55,13 @@ assert.equal(joined.raw_segments[0].speaker, 'A')
 assert.equal(joined.segments[0].text, '안 갔다. 3회기.')
 let calls = 0
 const partial = await transcribePcmChunks(pcm.subarray(0, 240 * 16000), 'synthetic.wav', 2, async () => {
-  if (calls++) throw new Error('synthetic timeout')
+  if (calls++) throw new AudioChunkRequestError('synthetic timeout', true)
   return result('A')
 })
 assert.equal(partial.status, 'partial')
 assert.equal(partial.segments.length, 1)
 assert.equal(partial.failed_ranges.at(-1).end, 240)
-assert.equal(calls, 3)
+assert.equal(calls, 4)
 let silenceCalls = 0
 const withSilence = await transcribePcmChunks(pcm.subarray(0, 240 * 16000), 'silence.wav', 2, async () => {
   const index = silenceCalls++
@@ -160,3 +160,67 @@ delete globalThis.AudioContext
 const malformed = new File([header], 'truncated.wav')
 await assert.rejects(openWavSource(malformed))
 console.log('Two-hour WAV: bounded 61-second reads, 2 GB stereo source, tail coverage, decoder failure retention and cleanup PASS')
+
+// Retry the exact payload, then reuse only the contiguous successful prefix on manual resume.
+const retryPcm = pcm.subarray(0, 180 * 16000)
+const retryChunks = planAudioChunks(retryPcm)
+let retryCalls = 0
+const automatic = await transcribePcmChunks(retryPcm, 'retry.wav', 2, async () => {
+  if (retryCalls++ === 1) throw new AudioChunkRequestError('Synthetic network error', true)
+  return result('speaker_0')
+})
+assert.equal(automatic.status, 'completed')
+assert.equal(retryCalls, retryChunks.length + 1)
+assert.equal(automatic.segments.length, retryChunks.length)
+
+let resumeCalls = 0, failTail = true
+const retryFile = new File(['synthetic'], 'resume.m4a')
+globalThis.AudioContext = class {
+  async decodeAudioData() { return { sampleRate: 16000, numberOfChannels: 1, getChannelData: () => retryPcm } }
+  async close() {}
+}
+const resumedSend = async () => {
+  const call = resumeCalls++
+  if (call > 0 && failTail) throw new AudioChunkRequestError('Synthetic network error', true)
+  return result('speaker_0')
+}
+const interrupted = await transcribeHostedAudio(retryFile, 2, resumedSend, undefined, undefined, 'owner-a')
+assert.equal(interrupted.status, 'partial')
+assert.equal(interrupted.segments.length, 1)
+assert.equal(resumeCalls, 4)
+failTail = false
+const resumed = await transcribeHostedAudio(retryFile, 2, resumedSend, undefined, undefined, 'owner-a')
+assert.equal(resumed.status, 'completed')
+assert.equal(resumeCalls, 4 + retryChunks.length - 1)
+assert.deepEqual(resumed.segments[0], interrupted.segments[0])
+assert.equal(resumed.segments.length, retryChunks.length)
+assert.equal(new Set(resumed.segments.map(s => s.segment_id)).size, retryChunks.length)
+
+for (const [file, speakers, scope] of [[retryFile, 2, 'owner-b'], [retryFile, 3, 'owner-b'],
+  [new File(['synthetic'], 'resume.m4a'), 3, 'owner-b']]) {
+  let freshCalls = 0
+  await transcribeHostedAudio(file, speakers, async () => { freshCalls++; return result('speaker_0') }, undefined, undefined, scope)
+  assert.equal(freshCalls, retryChunks.length, 'Different user, speaker count or File must never replay cached content')
+}
+clearHostedAudioCheckpoint(retryFile)
+let clearedCalls = 0
+await transcribeHostedAudio(retryFile, 3, async () => { clearedCalls++; return result('speaker_0') }, undefined, undefined, 'owner-b')
+assert.equal(clearedCalls, retryChunks.length)
+delete globalThis.AudioContext
+
+for (const status of [401, 403, 413, 422]) {
+  let deniedCalls = 0
+  await assert.rejects(transcribePcmChunks(retryPcm, 'denied.wav', 2, async () => {
+    deniedCalls++
+    if (deniedCalls === 1) return result('speaker_0')
+    throw new AudioChunkRequestError(`Synthetic ${status}`, false)
+  }), /Synthetic/)
+  assert.equal(deniedCalls, 2, 'Permanent errors must stop immediately, including after earlier successful chunks')
+}
+let active = true, cancelledCalls = 0
+await assert.rejects(transcribePcmChunks(retryPcm, 'cancel.wav', 2, async () => {
+  cancelledCalls++
+  throw new AudioChunkRequestError('Synthetic network error', true)
+}, () => { if (cancelledCalls) active = false }, () => active), /취소/)
+assert.equal(cancelledCalls, 1)
+console.log('Hosted recovery: bounded retry, exact prefix resume, cancellation, tenant/File/speaker isolation and permanent rejection PASS')

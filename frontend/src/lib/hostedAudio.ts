@@ -6,6 +6,37 @@ export interface AudioChunk { start: number; end: number }
 const RATE = 16000
 interface PcmChunk extends AudioChunk { samples: Float32Array }
 
+export class AudioChunkRequestError extends Error {
+  constructor(message: string, readonly retryable: boolean) { super(message) }
+}
+
+// Completed chunks stay only in this tab's memory and are isolated by File identity and login.
+const checkpoints = new WeakMap<File, { scope: string; speakers: number; results: AudioTranscriptionResponse[] }>()
+export function clearHostedAudioCheckpoint(file: File): void { checkpoints.delete(file) }
+
+async function retryChunk(
+  send: () => Promise<AudioTranscriptionResponse>, stillActive: () => boolean,
+  onRetry?: (attempt: number) => void,
+): Promise<AudioTranscriptionResponse> {
+  for (let attempt = 0; ; attempt++) {
+    if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
+    try {
+      const result = await send()
+      if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
+      return result
+    } catch (error) {
+      if (!stillActive() || !(error instanceof AudioChunkRequestError) || !error.retryable || attempt >= 2) throw error
+      onRetry?.(attempt + 1)
+      // Short cancellable waits avoid another upload after the user removes the recording.
+      const deadline = Date.now() + (attempt === 0 ? 1000 : 3000)
+      while (Date.now() < deadline) {
+        if (!stillActive()) throw new Error('음성 처리가 취소되었습니다.')
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())))
+      }
+    }
+  }
+}
+
 function mono(decoded: AudioBuffer): Float32Array {
   if (decoded.sampleRate !== RATE) throw new Error('이 브라우저에서는 음성 변환을 지원하지 않습니다.')
   // Reuse the decoder's first channel rather than allocating a full-length copy.
@@ -70,7 +101,26 @@ export async function transcribeHostedAudio(
   send: (file: File, references: SpeakerReference[]) => Promise<AudioTranscriptionResponse>,
   onProgress?: (message: string) => void,
   stillActive: () => boolean = () => true,
+  scope = '',
 ): Promise<AudioTranscriptionResponse> {
+  let checkpoint = scope ? checkpoints.get(file) : undefined
+  if (!checkpoint || checkpoint.scope !== scope || checkpoint.speakers !== expectedSpeakers) {
+    checkpoint = { scope, speakers: expectedSpeakers, results: [] }
+    if (scope) checkpoints.set(file, checkpoint)
+  }
+  let chunkIndex = 0
+  const chunkIndexes = new WeakMap<File, number>()
+  const sendOrResume = async (audio: File, references: SpeakerReference[]) => {
+    let index = chunkIndexes.get(audio)
+    if (index === undefined) { index = chunkIndex++; chunkIndexes.set(audio, index) }
+    const cached = checkpoint.results[index]
+    if (cached) return structuredClone(cached)
+    const result = await send(audio, references)
+    if (stillActive() && result.status !== 'partial' && !result.failed_ranges?.length) {
+      checkpoint.results[index] = structuredClone(result)
+    }
+    return result
+  }
   onProgress?.('음성을 준비하는 중…')
   const wav = await openWavSource(file)
   const context = new AudioContext({ sampleRate: RATE })
@@ -91,10 +141,10 @@ export async function transcribeHostedAudio(
           frame += usedFrames
         }
       }
-      return await transcribeChunks(windows(), wav.duration, file.name, expectedSpeakers, send, onProgress, stillActive)
+      return await transcribeChunks(windows(), wav.duration, file.name, expectedSpeakers, sendOrResume, onProgress, stillActive)
     }
     const samples = mono(await context.decodeAudioData(await file.arrayBuffer()))
-    return await transcribePcmChunks(samples, file.name, expectedSpeakers, send, onProgress, stillActive)
+    return await transcribePcmChunks(samples, file.name, expectedSpeakers, sendOrResume, onProgress, stillActive)
   } finally { await context.close() }
 }
 
@@ -119,7 +169,7 @@ async function transcribeChunks(
   const references: SpeakerReference[] = [], segments: AudioSegment[] = [], raw: AudioSegment[] = []
   const failed: { start: number; end: number; code: string }[] = []
   const noSpeech: { start: number; end: number; code: string }[] = []
-  let last: AudioTranscriptionResponse | undefined, consecutiveFailures = 0, lastError: unknown
+  let last: AudioTranscriptionResponse | undefined, lastError: unknown
   let fallback = false, index = -1, processedEnd = 0
   try {
     for await (const { samples, ...chunk } of chunks) {
@@ -129,10 +179,10 @@ async function transcribeChunks(
       processedEnd = chunk.end
       try {
         const audio = new File([encodeWav(samples) as BlobPart], 'chunk.wav', { type: 'audio/wav' })
-        const result = await send(audio, references)
+        const result = await retryChunk(() => send(audio, references), stillActive,
+          attempt => onProgress?.(`연결을 다시 시도하는 중 ${attempt}/2 · ${Math.floor(chunk.start / 60)}분 구간부터 이어갑니다`))
         if (result.error_codes?.includes('no_speech')) {
           noSpeech.push({ ...chunk, code: 'no_speech' })
-          consecutiveFailures = 0
           continue
         }
         last = result
@@ -140,7 +190,6 @@ async function transcribeChunks(
           failed.push({ start: range.start + chunk.start, end: range.end + chunk.start, code: range.code || 'asr_failed' })
         }
         fallback ||= result.diarization_status !== 'completed'
-        consecutiveFailures = 0
         const names = new Map<string, string>(references.map(ref => [ref.name, ref.name]))
         for (const speaker of new Set(result.segments.map(s => s.speaker).filter(Boolean) as string[])) {
           if (names.has(speaker)) continue
@@ -171,17 +220,21 @@ async function transcribeChunks(
               end: word.end == null ? word.end : word.end + chunk.start })),
             review_flags: flags, source_segment_ids: [`chunk_${index}_${segment.segment_id || segment.id}`] })
         }
-      } catch (error) {
-        lastError = error
-        failed.push({ ...chunk, code: 'asr_failed' })
-        if (++consecutiveFailures >= 2) {
+        if (result.status === 'partial' || result.failed_ranges?.length) {
+          if (!result.failed_ranges?.length) failed.push({ ...chunk, code: 'asr_failed' })
           if (chunk.end < duration) failed.push({ start: chunk.end, end: duration, code: 'not_processed' })
           break
         }
+      } catch (error) {
+        if (error instanceof AudioChunkRequestError && !error.retryable) throw error
+        lastError = error
+        failed.push({ ...chunk, code: 'asr_failed' })
+        if (chunk.end < duration) failed.push({ start: chunk.end, end: duration, code: 'not_processed' })
+        break
       }
     }
   } catch (error) {
-    if (!stillActive() || !segments.length) throw error
+    if (!stillActive() || !segments.length || (error instanceof AudioChunkRequestError && !error.retryable)) throw error
     lastError = error
     failed.push({ start: processedEnd, end: duration, code: 'decode_failed' })
   }

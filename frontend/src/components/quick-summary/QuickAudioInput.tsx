@@ -3,6 +3,7 @@ import { Mic, Loader2, X } from 'lucide-react'
 import { transcribeAudio } from '../../api/client'
 import { AUDIO_CONSENT_MESSAGE, AUDIO_FILE_ACCEPT, AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
 import { buildTranscriptText } from '../../lib/audioTranscriptWorkflow'
+import { clearHostedAudioCheckpoint } from '../../lib/hostedAudio'
 import { AudioTranscriptEditor, type AudioTranscriptEditorMaterial } from '../audio/AudioTranscriptEditor'
 
 /** Keeps raw audio/ASR in memory; only explicitly reviewed text reaches quick summary. */
@@ -29,6 +30,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
 
   useEffect(() => () => {
     run.current += 1
+    if (fileRef.current) clearHostedAudioCheckpoint(fileRef.current)
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
     fileRef.current = null
   }, [])
@@ -45,6 +47,8 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
   }
 
   const transcribe = async (file: File, expectedSpeakers = 2) => {
+    const resuming = fileRef.current === file && material?.expectedSpeakers === expectedSpeakers
+    if (fileRef.current && !resuming) clearHostedAudioCheckpoint(fileRef.current)
     const currentRun = ++run.current
     invalidate()
     setError('')
@@ -52,8 +56,8 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
     objectUrl.current = URL.createObjectURL(file)
     fileRef.current = file
-    setMaterial({ id: `quick-audio-${currentRun}`, filename: file.name, status: 'transcribing',
-      objectUrl: objectUrl.current, expectedSpeakers, warnings: [] })
+    setMaterial(current => ({ ...(resuming ? current : null), id: `quick-audio-${currentRun}`, filename: file.name, status: 'transcribing',
+      objectUrl: objectUrl.current || undefined, expectedSpeakers, warnings: [], error: undefined }))
     try {
       const response = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers,
         message => { if (run.current === currentRun) setMaterial(current => current ? { ...current, transcriptionProgress: message } : current) },
@@ -74,6 +78,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
 
   const remove = () => {
     run.current += 1
+    if (fileRef.current) clearHostedAudioCheckpoint(fileRef.current)
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
     objectUrl.current = null
     fileRef.current = null
@@ -125,7 +130,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
                 onUpdateSegments={segments => update(current => ({ ...current, segments }))}
                 onUpdateSpeakerRole={(speaker, role) => update(current => ({ ...current, speakerRoleMap: { ...current.speakerRoleMap, [speaker]: role } }))}
                 onApply={(reviewed, source) => {
-                  if (!reviewed.trim() || source !== buildTranscriptText(material.segments || [], material.speakerRoleMap || {})) return
+                  if (material.failedRanges?.length || !reviewed.trim() || source !== buildTranscriptText(material.segments || [], material.speakerRoleMap || {})) return
                   onApply(reviewed)
                   onPendingChange(false)
                   setApplied(true)

@@ -299,14 +299,15 @@ for (const initialMode of ['append', 'replace']) {
 const editorAst = ts.createSourceFile('AudioTranscriptEditor.tsx', editorSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 const gateExpressions = {}
 function collectGates(node) {
-  if (ts.isVariableDeclaration(node) && ['reviewKey', 'canApply'].includes(node.name.getText(editorAst))) {
+  if (ts.isVariableDeclaration(node) && ['reviewKey', 'hasIncompleteAudio', 'canEditTranscript', 'canApply', 'preparePrivacyReview'].includes(node.name.getText(editorAst))) {
     gateExpressions[node.name.getText(editorAst)] = node.initializer.getText(editorAst)
   }
   ts.forEachChild(node, collectGates)
 }
 collectGates(editorAst)
 const keyFor = new Function('material', 'segments', 'speakerRoleMap', `return ${gateExpressions.reviewKey}`)
-const gateFor = new Function('material', 'privacy', 'reviewKey', 'confirmedReviewKey', `return ${gateExpressions.canApply}`)
+const editGates = `const hasIncompleteAudio = ${gateExpressions.hasIncompleteAudio}; const canEditTranscript = ${gateExpressions.canEditTranscript};`
+const gateFor = new Function('material', 'privacy', 'reviewKey', 'confirmedReviewKey', `${editGates} return ${gateExpressions.canApply}`)
 const material = { id: 'gate', status: 'transcribed' }
 const key = keyFor(material, editable, {})
 const privacy = { key, text: '검토할 텍스트' }
@@ -317,6 +318,18 @@ for (const changed of [{ ...editable[0], text: '갔다' }, { ...editable[0], spe
 }
 assert(!gateFor(material, privacy, keyFor(material, editable, { speaker_0: 'counselor' }), key), 'global role assignment invalidates confirmation')
 assert(!gateFor(material, privacy, keyFor({ ...material, reviewRanges: [{ start: 2, end: 3 }] }, editable, {}), key), 'new omission candidates invalidate confirmation')
+
+// Even a matching privacy confirmation cannot permit a partial transcript.
+const partialMaterial = { ...material, failedRanges: [{ start: 60, end: 3600, code: 'not_processed' }] }
+const partialKey = keyFor(partialMaterial, editable, {})
+assert(!gateFor(partialMaterial, { key: partialKey, text: 'Synthetic partial transcript' }, partialKey, partialKey), 'failed audio ranges must block summary application')
+assert(!gateFor({ ...material, status: 'transcribing' }, privacy, key, key), 'retry in progress must block summary application')
+let partialPrivacyCalls = 0
+const privacyAction = new Function('material', 'reviewAudioPrivacy', 'setPrivacyBusy', 'setPrivacyError', 'setConfirmedReviewKey', 'setPrivacy', 'transcriptPreview', 'reviewKey',
+  `${editGates} return ${gateExpressions.preparePrivacyReview}`)(partialMaterial, () => { partialPrivacyCalls++; return { text: 'Synthetic', candidates: [] } },
+  () => {}, () => {}, () => {}, () => {}, 'Synthetic partial transcript', partialKey)
+await privacyAction()
+assert(partialPrivacyCalls === 0, 'incomplete audio must not reach privacy or summary preparation')
 
 // Execute the actual upload consent callbacks; no file may be sent before approval.
 const inputSource = fs.readFileSync(path.resolve('src/components/session-input/SessionInputPage.tsx'), 'utf8')
