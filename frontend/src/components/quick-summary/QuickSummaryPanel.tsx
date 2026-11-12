@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Copy, Loader2, Mic, Plus, RotateCcw } from 'lucide-react'
 
 import { extractDocumentMaterial, requestQuickSummary } from '../../api/client'
@@ -14,6 +14,8 @@ import DeidentificationReviewModal, { type DeidReviewResult } from '../deidentif
 import PersonMappingModal, { hasPersonMentions } from '../deidentification/PersonMappingModal'
 import SourceMemoryCues from './SourceMemoryCues'
 import QuickAudioInput from './QuickAudioInput'
+import { useAuthSession } from '../../lib/authSession'
+import { useUnsavedWork } from '../../lib/unsavedWork'
 
 const ACCEPTED_FILES = '.txt,.pdf,.docx'
 const QUICK_SOURCE_KEY = 'quick_summary_text'
@@ -35,6 +37,7 @@ export default function QuickSummaryPanel({
   notice,
   below,
   onAudioLogin,
+  hasUnsavedResult = false,
 }: {
   result: QuickSummaryResult | null
   onResult: (result: QuickSummaryResult | null) => void
@@ -51,7 +54,9 @@ export default function QuickSummaryPanel({
   notice?: ReactNode
   below?: ReactNode
   onAudioLogin?: () => void
+  hasUnsavedResult?: boolean
 }) {
+  const { userId } = useAuthSession()
   const [text, setText] = useState('')
   const [audioText, setAudioText] = useState('')
   const [audioPending, setAudioPending] = useState(false)
@@ -63,12 +68,29 @@ export default function QuickSummaryPanel({
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [audioRevision, setAudioRevision] = useState(0)
+  const owner = useRef(userId)
+  owner.current = userId
+  const visibleResult = useRef(result)
+  visibleResult.current = result
+  const generation = useRef({ id: 0, controller: null as AbortController | null })
+  const extraction = useRef({ id: 0, controller: null as AbortController | null })
+  const invalidateRequests = () => {
+    for (const request of [generation.current, extraction.current]) {
+      request.id += 1
+      request.controller?.abort()
+      request.controller = null
+    }
+  }
+  useEffect(() => () => invalidateRequests(), [userId])
 
   // A reviewed audio contribution is replaced on reapplication, never appended twice.
   const inputText = [text.trim(), audioText.trim()].filter(Boolean).join('\n\n')
   const length = inputText.length
   const maxChars = canExtractDocuments ? AUTHENTICATED_QUICK_SUMMARY_MAX_CHARS : QUICK_SUMMARY_MAX_CHARS
   const overLimit = length > maxChars
+  const hasInputWork = Boolean(inputText.trim() || audioPending || loading || extracting || reviewing || personText !== null)
+  useUnsavedWork(!result && hasInputWork)
 
   /** Validates, then opens the review step; generation starts from the modal. */
   const summarize = () => {
@@ -88,21 +110,41 @@ export default function QuickSummaryPanel({
   }
 
   const summarizeReviewed = async (reviewed: string) => {
+    generation.current.controller?.abort()
+    const id = ++generation.current.id
+    const controller = new AbortController()
+    generation.current.controller = controller
+    const requestOwner = userId
+    const requestResult = result
+    const current = () => generation.current.id === id && !controller.signal.aborted
+      && owner.current === requestOwner && visibleResult.current === requestResult
     setPersonText(null)
     setLoading(true)
     try {
-      onResult(toResult(await requestQuickSummary(reviewed)))
+      const note = await requestQuickSummary(reviewed, { ownerId: requestOwner, signal: controller.signal })
+      if (!current()) return
+      onResult(toResult(note))
       setCopied(false)
     } catch (requestError) {
+      if (!current()) return
       setError(requestError instanceof Error ? requestError.message : '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
     } finally {
-      setLoading(false)
+      if (generation.current.id === id && owner.current === requestOwner) setLoading(false)
     }
   }
 
   const addFile = async (file: File | undefined) => {
     if (!file) return
+    extraction.current.controller?.abort()
+    const id = ++extraction.current.id
+    const controller = new AbortController()
+    extraction.current.controller = controller
+    const requestOwner = userId
+    const requestResult = result
+    const current = () => extraction.current.id === id && !controller.signal.aborted
+      && owner.current === requestOwner && visibleResult.current === requestResult
     setError(null)
+    setExtracting(true)
     const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
     try {
       let content = ''
@@ -113,19 +155,22 @@ export default function QuickSummaryPanel({
           setError('PDF·DOCX 파일은 로그인 후 올릴 수 있어요. 텍스트(.txt) 파일은 바로 올릴 수 있어요.')
           return
         }
-        setExtracting(true)
-        content = (await extractDocumentMaterial(file)).extracted_text
+        content = (await extractDocumentMaterial(file, { ownerId: requestOwner, signal: controller.signal })).extracted_text
       } else {
         setError('TXT, PDF, DOCX 파일만 올릴 수 있어요.')
         return
       }
+      if (!current()) return
       if (!content.trim()) return setError('파일에서 읽을 수 있는 내용이 없어요.')
       setText((current) => (current.trim() ? `${current.trimEnd()}\n\n${content.trim()}` : content.trim()))
     } catch (fileError) {
+      if (!current()) return
       setError(fileError instanceof Error ? fileError.message : '파일을 읽지 못했어요.')
     } finally {
-      setExtracting(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      if (extraction.current.id === id && owner.current === requestOwner) {
+        setExtracting(false)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+      }
     }
   }
 
@@ -141,12 +186,20 @@ export default function QuickSummaryPanel({
   }
 
   const startOver = () => {
+    if ((hasUnsavedResult || (!result && hasInputWork))
+      && !window.confirm('작성 중인 내용과 진행 중인 작업을 지울까요? 저장하지 않은 내용은 사라집니다.')) return
+    invalidateRequests()
     onResult(null)
     setText('')
     setAudioText('')
     setAudioPending(false)
     setError(null)
     setCopied(false)
+    setLoading(false)
+    setExtracting(false)
+    setReviewing(false)
+    setPersonText(null)
+    setAudioRevision(value => value + 1)
   }
 
   return (
@@ -258,13 +311,14 @@ export default function QuickSummaryPanel({
       )}
 
       {!result && (canExtractDocuments ? (
-        <QuickAudioInput onApply={setAudioText} onPendingChange={setAudioPending} disabled={loading || reviewing} />
+        <QuickAudioInput key={audioRevision} onApply={setAudioText} onPendingChange={setAudioPending} disabled={loading || reviewing} />
       ) : (
         <button type="button" onClick={onAudioLogin} className="mt-4 inline-flex items-center gap-2 rounded-full border border-primary-400 bg-white px-5 py-3 text-sm font-bold text-primary-400">
           <Mic className="h-4 w-4" />로그인하고 음성 추가
         </button>
       ))}
       {!result && audioPending && <p role="status" className="mt-2 text-xs text-grey-500">축어록의 화자와 개인정보를 확인한 뒤 요약 입력에 반영해주세요.</p>}
+      {!result && hasInputWork && <button type="button" onClick={startOver} className="mt-3 text-sm text-grey-500 underline">입력 비우기</button>}
 
       {error && <p role="alert" className="mt-4 w-full rounded-lg bg-danger-50 px-4 py-3 text-sm text-danger-500">{error}</p>}
       {!result && <p className="mt-4 w-full text-center text-xs leading-5 text-grey-500">{privacyNote}</p>}

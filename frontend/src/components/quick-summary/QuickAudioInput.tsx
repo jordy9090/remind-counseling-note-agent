@@ -4,6 +4,7 @@ import { transcribeAudio } from '../../api/client'
 import { AUDIO_CONSENT_MESSAGE, AUDIO_FILE_ACCEPT, AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
 import { buildTranscriptText } from '../../lib/audioTranscriptWorkflow'
 import { clearHostedAudioCheckpoint } from '../../lib/hostedAudio'
+import { useUnsavedWork } from '../../lib/unsavedWork'
 import { AudioTranscriptEditor, type AudioTranscriptEditorMaterial } from '../audio/AudioTranscriptEditor'
 
 /** Keeps raw audio/ASR in memory; only explicitly reviewed text reaches quick summary. */
@@ -22,6 +23,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
   const fileRef = useRef<File | null>(null)
   const objectUrl = useRef<string | null>(null)
   const run = useRef(0)
+  useUnsavedWork(Boolean(material || pendingFile))
 
   useEffect(() => {
     if (pendingFile && dialog.current && !dialog.current.open) dialog.current.showModal()
@@ -77,6 +79,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
   }
 
   const remove = () => {
+    if (material && !window.confirm('음성과 작성 중인 축어록을 지울까요? 저장하지 않은 내용은 사라집니다.')) return
     run.current += 1
     if (fileRef.current) clearHostedAudioCheckpoint(fileRef.current)
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
@@ -95,6 +98,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
     if (!/\.(mp3|m4a|wav)$/i.test(file.name)) return setError('MP3, M4A, WAV 음성을 선택해주세요.')
     if (file.size > AUDIO_UPLOAD_MAX_BYTES) return setError(`음성 파일은 ${AUDIO_UPLOAD_LIMIT_LABEL}까지 올릴 수 있어요.`)
     if (!file.size) return setError('빈 음성 파일은 올릴 수 없어요.')
+    if (material && !window.confirm('다른 음성으로 바꿀까요? 현재 음성과 작성 중인 축어록은 사라집니다.')) return
     setPendingFile(file)
   }
 
@@ -107,6 +111,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
         </button>
         <span className="text-xs text-grey-500">MP3 · M4A · WAV · 2시간 상담 지원 · 최대 {AUDIO_UPLOAD_LIMIT_LABEL}</span>
       </div>
+      <p className="mt-2 text-xs leading-5 text-grey-500">처리 중에는 이 탭을 열어두세요. 서비스 안에서 메뉴 이동은 가능합니다.</p>
       <input ref={fileInput} type="file" accept={AUDIO_FILE_ACCEPT} disabled={disabled || material?.status === 'transcribing'} aria-label="간편요약 음성 파일 선택" className="sr-only"
         onChange={event => { selectFile(event.target.files?.[0]); event.target.value = '' }} />
       {!material && <p className="mt-2 text-xs leading-5 text-grey-500">음성을 올린 뒤 화자와 축어록을 수정하고, 개인정보를 확인해 요약에 반영하세요.</p>}
