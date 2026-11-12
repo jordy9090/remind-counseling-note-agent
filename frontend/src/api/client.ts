@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { transcribeHostedAudio, type SpeakerReference } from '../lib/hostedAudio'
+import { AudioChunkRequestError, transcribeHostedAudio, type SpeakerReference } from '../lib/hostedAudio'
 import type {
   AudioCapabilitiesResponse,
   AudioTranscriptionResponse,
@@ -31,7 +31,7 @@ import type {
   QuickSummarySessionResponse,
   SessionInputDeletionResponse,
 } from '../types/session'
-import { getAccessToken } from '../lib/supabase'
+import { getAccessToken, supabase } from '../lib/supabase'
 import { cleanQuickSummarySections } from '../lib/quickSummary'
 import type { QuickSummaryResult } from '../lib/quickSummary'
 import type { StoredPerson } from '../lib/personMapping'
@@ -259,8 +259,15 @@ export const transcribeAudio = async (
   // silently send the recording to a different company.
   if (capabilities.provider === 'openai') throw new Error('CLOVA Speech로 전환 중입니다. 잠시 후 다시 시도해주세요.')
   if (capabilities.provider === 'clova') {
-    return transcribeHostedAudio(file, expectedSpeakers, (chunk, references) =>
-      sendAudioChunk(chunk, language, task, expectedSpeakers, references), onProgress, stillActive)
+    const session = (await supabase?.auth.getSession())?.data.session
+    if (!session) throw new AudioChunkRequestError('로그인이 필요하거나 로그인 세션이 만료되었습니다.', false)
+    const owner = session.user.id
+    return transcribeHostedAudio(file, expectedSpeakers, async (chunk, references) => {
+      if ((await supabase?.auth.getSession())?.data.session?.user.id !== owner) {
+        throw new AudioChunkRequestError('로그인 계정이 변경되었습니다. 음성을 다시 선택해주세요.', false)
+      }
+      return sendAudioChunk(chunk, language, task, expectedSpeakers, references)
+    }, onProgress, stillActive, `${owner}:${language}:${task}:${AUDIO_API_BASE_URL}`)
   }
   return sendAudioChunk(file, language, task, expectedSpeakers)
 }
@@ -280,11 +287,14 @@ const sendAudioChunk = async (file: File, language: string, task: string, expect
   try {
     const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', formData, {
       baseURL: AUDIO_API_BASE_URL,
-      timeout: 7200000,
+      timeout: references ? 120000 : 7200000,
     })
     return response.data
   } catch (error) {
-    throw normalizeApiError(error, '음성 축어록을 생성하지 못했습니다.')
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined
+    const retryable = axios.isAxiosError(error) && !axios.isCancel(error)
+      && (status === undefined || status === 408 || status === 429 || status >= 500)
+    throw new AudioChunkRequestError(normalizeApiError(error, '음성 축어록을 생성하지 못했습니다.').message, retryable)
   }
 }
 

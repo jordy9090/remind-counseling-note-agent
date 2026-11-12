@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
 import { AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../lib/audioConsent'
+import { clearHostedAudioCheckpoint } from '../lib/hostedAudio'
 import GroundingEvidenceReview, {
   EvidenceDrawer,
   EvidenceSourcePanel,
@@ -462,6 +463,7 @@ export default function SessionDraftPage({
 
   useEffect(() => {
     return () => {
+      materialsRef.current.forEach(material => { if (material.file) clearHostedAudioCheckpoint(material.file) })
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
       objectUrlsRef.current.clear()
     }
@@ -894,6 +896,8 @@ export default function SessionDraftPage({
 
   const revokeObjectUrl = (objectUrl?: string) => {
     if (!objectUrl) return
+    const file = materialsRef.current.find(material => material.objectUrl === objectUrl)?.file
+    if (file) clearHostedAudioCheckpoint(file)
     URL.revokeObjectURL(objectUrl)
     objectUrlsRef.current.delete(objectUrl)
   }
@@ -1087,6 +1091,7 @@ export default function SessionDraftPage({
         ...current, counselor_memo: '', transcript_text: '', previous_session_summary: '', counseling_goal: '',
         psychological_test_summary: '', nonverbal_notes: '', key_issue_tags: [],
       }))
+      materialsRef.current.forEach(material => { if (material.file) clearHostedAudioCheckpoint(material.file) })
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
       objectUrlsRef.current.clear()
       setMaterials([])
@@ -1177,6 +1182,7 @@ export default function SessionDraftPage({
       setConfirmedFingerprint(null)
       setSavedDraft(null)
       setSelectedPreviousSessionIds([])
+      materialsRef.current.forEach(material => { if (material.file) clearHostedAudioCheckpoint(material.file) })
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
       objectUrlsRef.current.clear()
       setMaterials([])
@@ -1580,6 +1586,7 @@ export default function SessionDraftPage({
       setSessionTopic(draft.session_topic)
       setIsDeidentified(draft.is_deidentified)
       setSelectedPreviousSessionIds(draft.selected_previous_session_ids)
+      materialsRef.current.forEach(material => { if (material.file) clearHostedAudioCheckpoint(material.file) })
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
       objectUrlsRef.current.clear()
       setMaterials(draft.attachments.filter((material): material is UploadedMaterial =>
@@ -1658,6 +1665,7 @@ export default function SessionDraftPage({
       setStoredNote(record)
       setConfirmedFingerprint(confirmed ? sectionFingerprint(sections) : null)
       setSavedDraft(null)
+      materialsRef.current.forEach(material => { if (material.file) clearHostedAudioCheckpoint(material.file) })
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
       objectUrlsRef.current.clear()
       setMaterials([])
