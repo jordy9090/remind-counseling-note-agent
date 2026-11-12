@@ -28,6 +28,7 @@ import {
 import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
 import { AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../lib/audioConsent'
 import { clearHostedAudioCheckpoint } from '../lib/hostedAudio'
+import { useAuthSession } from '../lib/authSession'
 import GroundingEvidenceReview, {
   EvidenceDrawer,
   EvidenceSourcePanel,
@@ -304,6 +305,7 @@ export default function SessionDraftPage({
 }: {
   devGroundingDemo?: DevGroundingDemoData
 } = {}) {
+  const { userId } = useAuthSession()
   const isLocalGroundingDemo = localGroundingDemoRequested && Boolean(devGroundingDemo)
   const localGroundingDemoScreen: AppScreen = isLocalGroundingDemo
     && (localGroundingDemoView === 'final' || localGroundingDemoView === 'supervision')
@@ -427,6 +429,14 @@ export default function SessionDraftPage({
   const [quickSaveError, setQuickSaveError] = useState<string | null>(null)
   // Signed-in quick summary shown on the 간편 요약하기 screen; kept while moving between screens.
   const [quickResult, setQuickResult] = useState<QuickSummaryResult | null>(null)
+  const quickResultRef = useRef(quickResult)
+  quickResultRef.current = quickResult
+  const quickClientSaveRun = useRef(0)
+  const [quickWorkspaceVisited, setQuickWorkspaceVisited] = useState(false)
+  const [quickWorkspaceRevision, setQuickWorkspaceRevision] = useState(0)
+  useEffect(() => {
+    if (currentScreen === 'quick_summary') setQuickWorkspaceVisited(true)
+  }, [currentScreen])
   // 새 회기 기록 모달을 닫을 때 돌아갈 화면
   const [inputReturnScreen, setInputReturnScreen] = useState<AppScreen>('home')
   // 'new': a session that does not exist yet. 'existing': re-summarizing a stored session, which
@@ -1114,6 +1124,7 @@ export default function SessionDraftPage({
   }
 
   const requestQuickClientSave = (summary: QuickSummaryResult) => {
+    quickClientSaveRun.current += 1
     setQuickClientSave(summary)
     setQuickSaveError(null)
     setQuickPickerOpen(true)
@@ -1121,26 +1132,32 @@ export default function SessionDraftPage({
 
   /** Closing the picker abandons the save, so the summary cannot attach to a client created later. */
   const cancelQuickClientSave = () => {
+    quickClientSaveRun.current += 1
+    setQuickSaving(false)
     setQuickPickerOpen(false)
     setQuickClientSave(null)
   }
 
   const saveQuickSummaryToCase = async (caseId: string, summary: QuickSummaryResult) => {
+    const run = ++quickClientSaveRun.current
     setQuickSaving(true)
     setQuickSaveError(null)
     try {
-      await saveQuickSummaryToClient(caseId, summary)
+      await saveQuickSummaryToClient(caseId, summary, { ownerId: userId })
+      if (run !== quickClientSaveRun.current || quickResultRef.current !== summary) return
       setQuickPickerOpen(false)
       setQuickClientSave(null)
       setQuickResult(null)
+      setQuickWorkspaceRevision(value => value + 1)
       setDetailRefreshKey((value) => value + 1)
       // Enter the saved client immediately; the screen effect refreshes the list.
       openClientDetail(caseId)
     } catch (requestError) {
+      if (run !== quickClientSaveRun.current) return
       cancelQuickClientSave()
       setQuickSaveError(caseRequestErrorMessage(requestError, '내담자 회기로 저장하지 못했습니다. 잠시 후 다시 시도해주세요.'))
     } finally {
-      setQuickSaving(false)
+      if (run === quickClientSaveRun.current) setQuickSaving(false)
     }
   }
 
@@ -1218,7 +1235,7 @@ export default function SessionDraftPage({
     setClientModalError(null)
     try {
       if (clientModal.mode === 'create') {
-        const created = await createCase(payload)
+        const created = await createCase(payload, { ownerId: userId })
         const forQuickSummary = clientModal.purpose === 'quick-summary' ? quickClientSave : null
         setClientModal(null)
         if (forQuickSummary) {
@@ -1818,14 +1835,17 @@ export default function SessionDraftPage({
           </div>}
         </section>}
 
-        {backgroundScreen === 'quick_summary' && (
+        {(quickWorkspaceVisited || backgroundScreen === 'quick_summary') && (
+          <div hidden={backgroundScreen !== 'quick_summary'}>
           <QuickSummaryWorkspace
+            key={quickWorkspaceRevision}
             toResult={quickSummaryResultFromNote}
             result={quickResult}
             onResult={(next) => { setQuickResult(next); setQuickSaveError(null) }}
             onSaveToClient={requestQuickClientSave}
             saveError={quickSaveError}
           />
+          </div>
         )}
         {backgroundScreen === 'home' && (
           <HomeDashboardPage

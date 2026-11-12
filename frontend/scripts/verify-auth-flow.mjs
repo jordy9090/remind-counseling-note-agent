@@ -29,8 +29,9 @@ assert(/if \(!next\) clearPendingQuickSummary\(\)/.test(landing), '새로 요약
 const panel = read('src/components/quick-summary/QuickSummaryPanel.tsx')
 assert(!/'저장하기'/.test(panel) && /saveAction\?:/.test(panel), 'The panel has no fixed save button, only an optional save action')
 const quickWorkspace = read('src/components/quick-summary/QuickSummaryWorkspace.tsx')
-assert(/saveTemporaryDraft\(temporaryDraftPayload\(quickSummaryDraftPayload\(next\)\)\)/.test(quickWorkspace),
-  'Signed-in quick summaries must be saved automatically')
+assert(/createSummarySaveJob\(temporaryDraftPayload\(quickSummaryDraftPayload\(next\)\), userId\)/.test(quickWorkspace)
+  && /saveSummaryWithRetry\(job, saveTemporaryDraft, isRetryableRequestError\)/.test(quickWorkspace),
+  'Signed-in quick summaries must use an owner-scoped stable-ID retry job')
 assert(/const pending = takePendingQuickSummary\(\)[\s\S]{0,200}handleResult\(pending\)/.test(quickWorkspace),
   'A summary waiting for login must be saved through the same auto-save path')
 assert(/label: '내담자에 저장하기', onSave: onSaveToClient/.test(quickWorkspace), 'Signed-in users can save a summary to a client')
@@ -40,7 +41,7 @@ assert(/const cancelQuickClientSave = \(\) => \{[^}]*setQuickClientSave\(null\)/
   'Closing the client picker abandons the quick-summary save')
 assert(/clientModal\.purpose === 'quick-summary' \? quickClientSave : null/.test(page),
   'Only a client created from the quick-summary picker receives the summary')
-assert(/saveQuickSummaryToClient\(caseId, summary\)/.test(page), 'The summary is saved as a session of the chosen client')
+assert(/saveQuickSummaryToClient\(caseId, summary, \{ ownerId: userId \}\)/.test(page), 'The summary is saved as an owner-scoped session of the chosen client')
 assert(/onLogin=\{\(\) => openAuth\('signin'\)\}/.test(authGate), 'AuthGate must route onLogin to signin')
 assert(/setMode\('signup'\)/.test(authGate), 'Login modal must link to signup')
 
@@ -77,3 +78,6 @@ console.log('  - anonymous entry removed')
 console.log('  - landing quick summary saves nothing until 로그인 후 저장하기; signed-in summaries save automatically')
 console.log('  - signup/login/logout/verify-resend/password-reset present')
 console.log('  - workspace gated on session; token attached to API calls')
+
+// Exercise retry behavior in the existing CI entry point, beyond the wiring assertions above.
+await import('./verify-quick-summary-save.mjs')

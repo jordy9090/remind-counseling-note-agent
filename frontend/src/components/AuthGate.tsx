@@ -4,6 +4,7 @@ import { Loader2, Mail, MailCheck, X } from 'lucide-react'
 
 import { getAvailableOAuthProviders, isAuthConfigured, supabase, type AvailableOAuthProviders } from '../lib/supabase'
 import { AuthSessionProvider } from '../lib/authSession'
+import { confirmDiscardWork } from '../lib/unsavedWork'
 import LandingPage from '../pages/LandingPage'
 
 // signin/signup/reset: 비로그인 폼. verify: 가입 직후 인증 메일 안내. recovery: 재설정 링크로 돌아온 뒤 새 비밀번호 설정.
@@ -95,6 +96,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     if (!supabase) return
+    if (!confirmDiscardWork()) return
     setSubmitting(true)
     const { error } = await supabase.auth.signOut()
     setSubmitting(false)
@@ -229,7 +231,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   // 로그인 후: 워크스페이스가 사이드바에서 계정·로그아웃을 직접 그리므로 상단 바 없이 컨텍스트만 제공한다.
-  return <AuthSessionProvider value={{ email: session.user.email || null, signOut, signingOut: submitting }}>
+  return <AuthSessionProvider key={session.user.id} value={{ userId: session.user.id, email: session.user.email || null, signOut, signingOut: submitting }}>
     <div className="min-h-screen bg-slate-50">
       {message && <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 lg:px-8"><Feedback message={message} /></div>}
       {children}

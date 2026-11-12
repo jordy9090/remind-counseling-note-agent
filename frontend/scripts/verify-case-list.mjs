@@ -37,10 +37,15 @@ const lib = await loadModule('caseList')
     const summary = { sections: [{ id: 'supervision_memo', title: '슈퍼비전 메모', content: '합성 인사이트 보존 확인' }] }
     const state = { screen: 'quick_summary', caseId: null, result: summary, error: null, saving: false, writes: 0 }
     const dependencies = {
-      saveQuickSummaryToClient: (caseId, value) => {
+      quickClientSaveRun: { current: 0 },
+      quickResultRef: { current: summary },
+      userId: 'synthetic-owner',
+      setQuickWorkspaceRevision: () => {},
+      saveQuickSummaryToClient: (caseId, value, scope) => {
         state.writes += 1
         assert.equal(caseId, 'SYNTHETIC-NAVIGATION')
         assert.equal(value, summary)
+        assert.deepEqual(scope, { ownerId: 'synthetic-owner' })
         return save.promise
       },
       loadCaseList: () => list.promise,
@@ -186,7 +191,7 @@ const item = (overrides) => ({
   assert.match(page, /fetchCaseList\(\)/, 'page must load the owned case list from the API')
   assert.doesNotMatch(page, /const caseSummaries: CaseSummary\[\] = \[\]/, 'hard-coded empty case list must be gone')
   assert.match(page, /'client_detail'/, 'client detail screen must exist')
-  assert.match(page, /createCase\(payload\)/, 'client creation must call the create API')
+  assert.match(page, /createCase\(payload, \{ ownerId: userId \}\)/, 'client creation must call the owner-scoped create API')
   assert.match(page, /updateCaseProfile\(clientModal\.caseId, payload\)/, 'profile edit must call the profile API')
   assert.match(page, /<GeneratingOverlay active=\{isLoading\} \/>/, 'generation overlay must reflect loading state')
   assert.match(page, /onStartSession=\{startSessionForCase\}/, 'client detail must open the session input page')

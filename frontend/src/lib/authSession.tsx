@@ -1,12 +1,14 @@
 import { createContext, useContext } from 'react'
 
 export interface AuthSessionValue {
+  userId: string | null
   email: string | null
   signOut: () => Promise<void>
   signingOut: boolean
 }
 
 const AuthSessionContext = createContext<AuthSessionValue>({
+  userId: null,
   email: null,
   signOut: async () => {},
   signingOut: false,

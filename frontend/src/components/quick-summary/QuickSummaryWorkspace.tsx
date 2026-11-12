@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, History, Loader2 } from 'lucide-react'
 
-import { listTemporaryDrafts, saveTemporaryDraft } from '../../api/client'
+import { isRetryableRequestError, listTemporaryDrafts, persistenceErrorMessage, saveTemporaryDraft } from '../../api/client'
+import { useAuthSession } from '../../lib/authSession'
+import { useUnsavedWork } from '../../lib/unsavedWork'
+import { createSummarySaveJob, saveSummaryWithRetry, type SummarySaveJob } from '../../lib/quickSummarySave'
 import { temporaryDraftPayload } from '../../lib/temporaryDraft'
 import {
   isQuickSummaryDraft,
@@ -39,41 +42,84 @@ export default function QuickSummaryWorkspace({
   onSaveToClient: (result: QuickSummaryResult) => void
   saveError?: string | null
 }) {
+  const { userId } = useAuthSession()
+  const ownerRef = useRef(userId)
+  ownerRef.current = userId
+  const mounted = useRef(true)
+  const saveJob = useRef<SummarySaveJob | null>(null)
+  const [saveFailure, setSaveFailure] = useState('')
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [records, setRecords] = useState<TemporaryDraftRecord[]>([])
   const [loaded, setLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Ignores a save that finishes after the counselor already moved on to another summary.
-  const saveRun = useRef(0)
+  const hasUnsavedResult = saveState === 'saving' || saveState === 'failed'
+  useUnsavedWork(hasUnsavedResult)
 
   useEffect(() => {
-    let cancelled = false
-    listTemporaryDrafts()
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      // StrictMode immediately reattaches this instance; real unmounts still cancel its requests.
+      queueMicrotask(() => { if (!mounted.current) saveJob.current?.controller.abort() })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (saveJob.current && saveJob.current.ownerId !== userId) {
+      saveJob.current.controller.abort()
+      saveJob.current = null
+      setSaveState(null)
+    }
+    const controller = new AbortController()
+    setHistoryError(null)
+    setLoaded(false)
+    listTemporaryDrafts(undefined, { ownerId: userId, signal: controller.signal })
       .then((drafts) => {
-        if (cancelled) return
+        if (controller.signal.aborted || ownerRef.current !== userId) return
         setRecords(drafts
           .filter(isQuickSummaryDraft)
           .sort((a, b) => b.saved_at.localeCompare(a.saved_at))
           .slice(0, RECENT_LIMIT))
       })
-      .catch(() => { if (!cancelled) setRecords([]) })
-      .finally(() => { if (!cancelled) setLoaded(true) })
-    return () => { cancelled = true }
-  }, [refreshKey])
+      .catch(() => {
+        if (!controller.signal.aborted && ownerRef.current === userId) {
+          setHistoryError('이전 요약 기록을 불러오지 못했어요. 다시 시도해주세요.')
+        }
+      })
+      .finally(() => { if (!controller.signal.aborted && ownerRef.current === userId) setLoaded(true) })
+    return () => { controller.abort() }
+  }, [refreshKey, userId])
+
+  const attemptSave = async (job: SummarySaveJob) => {
+    if (job.running || job.controller.signal.aborted || ownerRef.current !== job.ownerId) return
+    setSaveState('saving')
+    setSaveFailure('')
+    const isCurrent = () => mounted.current && saveJob.current === job
+      && !job.controller.signal.aborted && ownerRef.current === job.ownerId
+    try {
+      const saved = await saveSummaryWithRetry(job, saveTemporaryDraft, isRetryableRequestError)
+      if (!saved || !isCurrent()) return
+      setSaveState('saved')
+      setRefreshKey((value) => value + 1)
+    } catch (error) {
+      if (!isCurrent()) return
+      setSaveFailure(persistenceErrorMessage(error))
+      setSaveState('failed')
+    }
+  }
 
   const handleResult = (next: QuickSummaryResult | null) => {
+    saveJob.current?.controller.abort()
+    saveJob.current = null
     onResult(next)
-    const run = ++saveRun.current
-    setSaveState(next ? 'saving' : null)
-    if (!next) return
-    saveTemporaryDraft(temporaryDraftPayload(quickSummaryDraftPayload(next)))
-      .then(() => {
-        if (run !== saveRun.current) return
-        setSaveState('saved')
-        setRefreshKey((value) => value + 1)
-      })
-      .catch(() => { if (run === saveRun.current) setSaveState('failed') })
+    setSaveState(null)
+    setSaveFailure('')
+    if (!next || !userId) return
+    const job = createSummarySaveJob(temporaryDraftPayload(quickSummaryDraftPayload(next)), userId)
+    saveJob.current = job
+    void attemptSave(job)
   }
 
   useEffect(() => {
@@ -89,7 +135,8 @@ export default function QuickSummaryWorkspace({
   const openRecord = (draft: TemporaryDraftRecord) => {
     const summary = quickSummaryFromDraft(draft)
     if (!summary) return
-    saveRun.current += 1
+    saveJob.current?.controller.abort()
+    saveJob.current = null
     setSaveState('saved')
     setNotice(null)
     onResult(summary)
@@ -100,12 +147,21 @@ export default function QuickSummaryWorkspace({
     : saveState === 'saved'
       ? <span role="status" className="inline-flex items-center gap-1 text-xs text-grey-500"><Check className="h-3.5 w-3.5 text-success-500" />이전 요약한 기록에 저장됨</span>
       : saveState === 'failed'
-        ? <span role="alert" className="text-xs text-danger-500">저장하지 못했어요. 복사해서 보관해주세요.</span>
+        ? <div className="flex flex-wrap items-center gap-2">
+          <span role="alert" className="text-xs text-danger-500">{saveFailure || '저장하지 못했어요. 현재 요약은 유지됩니다.'}</span>
+          <button type="button" onClick={() => { if (saveJob.current) void attemptSave(saveJob.current) }}
+            className="rounded border border-primary-400 px-3 py-2 text-xs font-bold text-primary-400">다시 저장</button>
+        </div>
         : null
 
-  const history = loaded && records.length > 0 && !result ? (
+  const history = loaded && (historyError || records.length > 0) && !result ? (
     <section aria-label="이전 요약한 기록" className="rounded-2xl bg-[#dfe6f6] p-4">
       <h2 className="flex items-center gap-1.5 text-sm font-bold text-grey-800"><History className="h-4 w-4" />이전 요약한 기록</h2>
+      {historyError && <div className="mt-2 space-y-2">
+        <p role="alert" className="text-sm text-danger-500">{historyError}</p>
+        <button type="button" onClick={() => setRefreshKey(value => value + 1)}
+          className="rounded border border-primary-400 px-3 py-2 text-sm font-bold text-primary-400">기록 다시 불러오기</button>
+      </div>}
       <ul className="mt-2 divide-y divide-[#c7d2ea]">
         {records.map((draft) => {
           const summary = quickSummaryFromDraft(draft)
@@ -137,6 +193,7 @@ export default function QuickSummaryWorkspace({
           handleResult(next)
         }}
         canExtractDocuments
+        hasUnsavedResult={hasUnsavedResult}
         notice={saveError
           ? <p role="alert" className="rounded-lg bg-danger-50 px-4 py-3 text-center text-sm text-danger-500">{saveError}</p>
           : notice ? <p role="status" className="rounded-lg bg-primary-50 px-4 py-3 text-center text-sm text-primary-900">{notice}</p> : undefined}

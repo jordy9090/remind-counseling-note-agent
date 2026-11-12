@@ -40,13 +40,34 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 // Audio goes directly to the configured self-hosted FastAPI origin.
 const AUDIO_API_BASE_URL = import.meta.env.VITE_AUDIO_API_BASE_URL || API_BASE_URL
 
+declare module 'axios' {
+  interface AxiosRequestConfig { expectedOwnerId?: string | null }
+}
+
+export interface RequestScope { ownerId?: string | null; signal?: AbortSignal }
+const requestScope = (scope?: RequestScope) => ({ signal: scope?.signal, expectedOwnerId: scope?.ownerId })
+
+export function isRetryableRequestError(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || axios.isCancel(error)) return false
+  const status = error.response?.status
+  return status === undefined || status === 408 || status === 429 || status >= 500
+}
+
+async function scopedSession(owner: string | null) {
+  const session = (await supabase?.auth.getSession())?.data.session
+  if ((session?.user.id || null) !== owner) throw new Error('로그인 상태가 변경되었습니다. 현재 계정에서 다시 시작해주세요.')
+  return session
+}
+
 const client = axios.create({
   baseURL: API_BASE_URL,
   timeout: 90000,
 })
 
 client.interceptors.request.use(async (config) => {
-  const accessToken = await getAccessToken()
+  const accessToken = config.expectedOwnerId !== undefined
+    ? (await scopedSession(config.expectedOwnerId))?.access_token || null
+    : await getAccessToken()
   const needsPersistenceToken = /^\/api\/notes\/(drafts|confirm|records)(\/|$)/.test(config.url || '')
     || (config.url === '/api/notes/generate' && config.data?.persist === true)
   if (needsPersistenceToken && !accessToken) {
@@ -57,6 +78,11 @@ client.interceptors.request.use(async (config) => {
     config.headers.Authorization = `Bearer ${accessToken}`
   }
   return config
+})
+
+client.interceptors.response.use(async response => {
+  if (response.config.expectedOwnerId !== undefined) await scopedSession(response.config.expectedOwnerId)
+  return response
 })
 
 export const generateNoteDraft = async (
@@ -97,13 +123,15 @@ export const confirmGeneratedNote = async (
 
 export const saveTemporaryDraft = async (
   draft: TemporaryDraftSaveRequest,
+  scope?: RequestScope,
 ): Promise<TemporaryDraftSaveResponse> => {
-  const response = await client.post<TemporaryDraftSaveResponse>('/api/notes/drafts', draft)
+  const response = await client.post<TemporaryDraftSaveResponse>('/api/notes/drafts', draft, requestScope(scope))
   return response.data
 }
 
-export const listTemporaryDrafts = async (caseId?: string): Promise<TemporaryDraftRecord[]> => {
+export const listTemporaryDrafts = async (caseId?: string, scope?: RequestScope): Promise<TemporaryDraftRecord[]> => {
   const response = await client.get<TemporaryDraftRecord[]>('/api/notes/drafts', {
+    ...requestScope(scope),
     params: caseId ? { case_id: caseId } : undefined,
   })
   return response.data
@@ -193,11 +221,12 @@ export const getDocumentCapabilities = async (): Promise<DocumentCapabilitiesRes
   return response.data
 }
 
-export const extractDocumentMaterial = async (file: File): Promise<DocumentExtractionResponse> => {
+export const extractDocumentMaterial = async (file: File, scope?: RequestScope): Promise<DocumentExtractionResponse> => {
   const formData = new FormData()
   formData.append('file', file)
   try {
     const response = await client.post<DocumentExtractionResponse>('/api/materials/documents/extract', formData, {
+      ...requestScope(scope),
       timeout: 120000,
     })
     return response.data
@@ -211,9 +240,9 @@ export const extractDocumentMaterial = async (file: File): Promise<DocumentExtra
  * Public quick summary: the regular summary pipeline without login. The server de-identifies the
  * input, stores nothing, and returns the same response as a signed-in generation.
  */
-export const requestQuickSummary = async (text: string): Promise<NoteDraftResponse> => {
+export const requestQuickSummary = async (text: string, scope?: RequestScope): Promise<NoteDraftResponse> => {
   try {
-    const response = await client.post<GenerateNoteResponse>('/api/notes/quick-summary', { text }, { timeout: 310000 })
+    const response = await client.post<GenerateNoteResponse>('/api/notes/quick-summary', { text }, { ...requestScope(scope), timeout: 310000 })
     return toNoteDraftResponse(response.data)
   } catch (error) {
     throw normalizeApiError(error, '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.')
@@ -493,8 +522,8 @@ export const fetchCaseList = async (): Promise<CaseListResponse> => {
 }
 
 /** 새 내담자(케이스) 생성. 서버가 케이스 ID를 만들고 소유자를 로그인 사용자로 기록한다. */
-export const createCase = async (payload: CaseCreateRequest): Promise<CaseDashboardResponse> => {
-  const response = await client.post<CaseDashboardResponse>('/api/cases', payload)
+export const createCase = async (payload: CaseCreateRequest, scope?: RequestScope): Promise<CaseDashboardResponse> => {
+  const response = await client.post<CaseDashboardResponse>('/api/cases', payload, requestScope(scope))
   return response.data
 }
 
@@ -502,9 +531,10 @@ export const createCase = async (payload: CaseCreateRequest): Promise<CaseDashbo
 export const saveQuickSummaryToClient = async (
   caseId: string,
   summary: Pick<QuickSummaryResult, 'sections'>,
+  scope?: RequestScope,
 ): Promise<QuickSummarySessionResponse> => {
   const sections = cleanQuickSummarySections(summary.sections)
-  const response = await client.post<QuickSummarySessionResponse>(`/api/cases/${encodeURIComponent(caseId)}/quick-summary`, { sections })
+  const response = await client.post<QuickSummarySessionResponse>(`/api/cases/${encodeURIComponent(caseId)}/quick-summary`, { sections }, requestScope(scope))
   return response.data
 }
 
