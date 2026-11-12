@@ -18,6 +18,11 @@ class PlanEvidence(BaseModel):
 class PlanAssessment(BaseModel):
     status: Literal["supported_future", "in_session_only", "not_documented", "uncertain"] = "uncertain"
     evidence: list[PlanEvidence] = Field(default_factory=list)
+    prior_context_evidence: list[PlanEvidence] = Field(default_factory=list, description=(
+        "Exact prior-record quotes defining a method explicitly continued in the current plan. "
+        "Only stored_session_note IDs; never evidence of current consent, timing or performance. "
+        "Leave empty for discontinued, unrelated or ambiguously referenced methods."
+    ))
 
 
 class SummaryAssessment(VerificationReport):
@@ -113,11 +118,22 @@ def apply_summary_verification(
             and any(_literal(item.quote) in line for line in cited_lines([item.source_ref], catalog))
             for item in assessment.evidence
         )
+        # Historical definitions supplement, but never replace, current agreement.
+        supported = supported and all(
+            item.source_ref.startswith("stored_session_note:")
+            and item.source_ref in catalog
+            and bool(_literal(item.quote))
+            and any(_literal(item.quote) in line for line in cited_lines([item.source_ref], catalog))
+            for item in assessment.prior_context_evidence
+        )
         if supported:
             # The dedicated assessment validates the entire plan against current
             # sources, including consent and conditions. Generic citation pruning
             # cannot veto its exact anchors or turn a supported plan into a blank.
-            plan.source_refs = list(dict.fromkeys(item.source_ref for item in assessment.evidence))
+            plan.source_refs = list(dict.fromkeys(item.source_ref for item in
+                [*assessment.evidence, *assessment.prior_context_evidence]))
+            if assessment.prior_context_evidence:
+                plan.evidence_type = "mixed"
         if not supported:
             flag("next_plan", "회기 이후 계획의 시점·조건·합의와 원문 근거를 확인할 수 없습니다.")
             plan.text = ("[자료에서 확인되지 않음]" if assessment.status in {"in_session_only", "not_documented"}
