@@ -339,26 +339,17 @@ class TestVercelWrappers(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         mock_get_draft.assert_called_once_with("draft_test1234", actor="preview_server_actor")
 
-    def test_vercel_rewrite_routes_draft_detail_to_function(self):
+    def test_retired_vercel_api_does_not_rewrite_storage_requests(self):
         import json
+        import re
 
         config = json.loads((ROOT_DIR / "vercel.json").read_text(encoding="utf-8"))
-        self.assertIn(
-            {
-                "source": "/api/notes/drafts/:draft_id",
-                "destination": "/api/notes/draft?draft_id=:draft_id",
-            },
-            config["rewrites"],
-        )
-        self.assertIn({"source": "/api/cases", "destination": "/api/cases/dashboard?scope=list"}, config["rewrites"])
-        self.assertIn(
-            {"source": "/api/cases/:case_id/profile", "destination": "/api/cases/dashboard?case_id=:case_id&scope=profile"},
-            config["rewrites"],
-        )
-        self.assertIn(
-            {"source": "/api/cases/:case_id/schedule", "destination": "/api/cases/dashboard?case_id=:case_id&scope=schedule"},
-            config["rewrites"],
-        )
+        self.assertNotIn("rewrites", config)
+        retired = config["routes"][0]
+        self.assertEqual(retired["status"], 410)
+        for path in ["/api/notes/drafts/synthetic", "/api/cases", "/api/cases/synthetic/profile",
+                     "/api/cases/synthetic/schedule"]:
+            self.assertIsNotNone(re.fullmatch(retired["src"], path))
 
     def test_case_list_endpoint_requires_token_and_fails_closed_without_storage(self):
         from api.cases.dashboard import app as case_app

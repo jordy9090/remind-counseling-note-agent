@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "verify:api-origin": "node scripts/verify-api-origin.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "verify:material-workflow": "node scripts/verify-material-workflow.mjs",

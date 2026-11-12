@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { API_BASE_URL, AUDIO_API_BASE_URL } from '../lib/apiOrigin'
 import { AudioChunkRequestError, transcribeHostedAudio, type SpeakerReference } from '../lib/hostedAudio'
 import type {
   AudioCapabilitiesResponse,
@@ -37,10 +38,6 @@ import type { QuickSummaryResult } from '../lib/quickSummary'
 import type { StoredPerson } from '../lib/personMapping'
 import { reviewForAI, type ReviewPurpose, type ReviewTask, type ReviewedPayload } from '../lib/aiReview'
 import type { DeidSource } from '../lib/deidentificationReview'
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-// Audio goes directly to the configured self-hosted FastAPI origin.
-const AUDIO_API_BASE_URL = import.meta.env.VITE_AUDIO_API_BASE_URL || API_BASE_URL
 
 declare module 'axios' {
   interface AxiosRequestConfig { expectedOwnerId?: string | null }

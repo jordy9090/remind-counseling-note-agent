@@ -112,6 +112,7 @@ jobs:
       - name: Verify frontend workflows
         working-directory: frontend
         run: |
+          pnpm verify:api-origin
           pnpm verify:material-workflow
           pnpm verify:audio-transcript-workflow
           pnpm verify:hosted-audio

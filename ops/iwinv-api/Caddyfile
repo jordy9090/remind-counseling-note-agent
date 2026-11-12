@@ -1,0 +1,27 @@
+{
+	# TLS-ALPN validation uses the existing public HTTPS port.
+	auto_https disable_redirects
+}
+
+api.remind.ai.kr {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	request_body {
+		max_size 502MiB
+	}
+	header Cache-Control no-store
+	reverse_proxy 127.0.0.1:8000
+}
+
+# Preserve the existing pinned-certificate detector URL for rollback and the API.
+# The existing worker moves to loopback; its shared-token boundary is unchanged.
+https://49.247.174.195 {
+	tls /etc/caddy/remind-deid/server.crt /etc/caddy/remind-deid/server.key
+	request_body {
+		max_size 2MB
+	}
+	reverse_proxy 127.0.0.1:8001
+}

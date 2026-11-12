@@ -52,10 +52,9 @@ class SessionSummaryMemoryTests(unittest.TestCase):
         verifier = nodes._build_verification_prompt(source, state["structured_case_data"], state["evidence_mapped_data"], _summary())
         self.assertIn("[transcript.turn_3] 상담자:", verifier)
 
-    def test_all_summary_serverless_entries_package_the_shared_skill(self):
-        config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
-        for route in ("api/notes/generate.py", "api/notes/recompose.py"):
-            self.assertEqual("backend/app/skills/**", config["functions"][route]["includeFiles"])
+    def test_standalone_backend_contains_the_shared_skill(self):
+        self.assertTrue(summary_rules.SKILL_PATH.is_file())
+        self.assertTrue(summary_rules.SKILL_PATH.read_text(encoding="utf-8").strip())
 
     def test_acceptance_examples_survive_both_generation_adapters(self):
         for name, transcript, field, text, lines in CASES:
