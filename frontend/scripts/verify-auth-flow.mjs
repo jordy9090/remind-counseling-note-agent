@@ -41,7 +41,7 @@ assert(/const cancelQuickClientSave = \(\) => \{[^}]*setQuickClientSave\(null\)/
   'Closing the client picker abandons the quick-summary save')
 assert(/clientModal\.purpose === 'quick-summary' \? quickClientSave : null/.test(page),
   'Only a client created from the quick-summary picker receives the summary')
-assert(/saveQuickSummaryToClient\(caseId, summary\)/.test(page), 'The summary is saved as a session of the chosen client')
+assert(/saveQuickSummaryToClient\(caseId, summary, \{ ownerId: userId \}\)/.test(page), 'The summary is saved as an owner-scoped session of the chosen client')
 assert(/onLogin=\{\(\) => openAuth\('signin'\)\}/.test(authGate), 'AuthGate must route onLogin to signin')
 assert(/setMode\('signup'\)/.test(authGate), 'Login modal must link to signup')
 
