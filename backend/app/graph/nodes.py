@@ -202,6 +202,8 @@ def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
                 sanitized.case_id,
                 max_sessions=3,
                 user_id=counselor_id,
+                current_session_number=sanitized.session_number,
+                confirmed_only=True,
                 storage_client=actor_storage,
             )
     except Exception as error:
@@ -937,7 +939,10 @@ def _source_catalog(
     for match in previous_pattern.finditer(sanitized.sources.previous_session_summary):
         catalog[f"previous_session.{match.group(1)}"] = " ".join(match.group(2).split())
     for item in case_context:
-        catalog[item.source_ref] = item.summary or json.dumps(item.confirmed_note, ensure_ascii=False)
+        catalog[item.source_ref] = "\n".join(part for part in (
+            item.summary,
+            json.dumps(item.confirmed_note, ensure_ascii=False) if item.confirmed_note else "",
+        ) if part)
         for evidence in item.evidence_items:
             catalog[evidence.source_ref] = evidence.source_text
     return {ref: text for ref, text in catalog.items() if text}

@@ -67,6 +67,8 @@ def retrieve_case_context(
     max_sessions: int = 3,
     *,
     user_id: str | None = None,
+    current_session_number: int | None = None,
+    confirmed_only: bool = False,
     storage_client: SupabaseStorage | None = None,
 ) -> list[RetrievedCaseContextItem]:
     """Retrieve recent prior sessions for the same case id.
@@ -88,8 +90,14 @@ def retrieve_case_context(
     }
     if current_session_id:
         query["id"] = f"neq.{current_session_id}"
+    if current_session_number is not None:
+        query["session_number"] = f"lt.{current_session_number}"
 
     sessions = client.select("sessions", query)
+    if current_session_number is not None:
+        sessions = [row for row in sessions if
+                    (number := _as_int(row.get("session_number"))) is not None
+                    and number < current_session_number]
     if not sessions:
         return []
 
@@ -99,8 +107,10 @@ def retrieve_case_context(
         case_id=case_id,
         user_id=user_id,
         storage_client=client,
+        confirmed_only=confirmed_only,
     )
-    evidence_by_session = _evidence_by_session(
+    # A confirmed record supersedes its raw/draft evidence, including removed text.
+    evidence_by_session = {} if confirmed_only else _evidence_by_session(
         session_ids,
         user_id=user_id,
         storage_client=client,
@@ -112,6 +122,8 @@ def retrieve_case_context(
         if not session_id:
             continue
         note = notes_by_session.get(session_id, {})
+        if confirmed_only and not note:
+            continue
         context.append(
             RetrievedCaseContextItem(
                 source_ref=f"stored_session_note:{session_id}",
@@ -522,6 +534,7 @@ def _latest_notes_by_session(
     case_id: str,
     user_id: str,
     storage_client: SupabaseStorage,
+    confirmed_only: bool = False,
 ) -> dict[str, dict[str, Any]]:
     if not session_ids:
         return {}
@@ -534,10 +547,15 @@ def _latest_notes_by_session(
             "select": "id,user_id,case_id,session_id,note_type,draft_json,confirmed_json,confirmation_status,created_at",
             "order": "created_at.desc",
             "limit": 50,
+            **({"confirmation_status": "eq.confirmed", "note_type": "eq.session_note"}
+               if confirmed_only else {}),
         },
     )
     latest: dict[str, dict[str, Any]] = {}
     for row in rows:
+        if confirmed_only and (row.get("confirmation_status") != "confirmed"
+                               or row.get("note_type") != "session_note"):
+            continue
         session_id = str(row.get("session_id") or "")
         # Legacy rows can reference a session from a different case. Keep the
         # admitted sources within the same scope used by cache revision checks.

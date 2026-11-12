@@ -28,7 +28,7 @@ class SyntheticStorage:
         self.tables = {
             "sessions": [{"id": SESSION, "session_number": 1, "session_date": "2026-10-13"}],
             "generated_notes": [{"id": NOTE, "user_id": "synthetic-owner", "case_id": "synthetic-case",
-                "session_id": SESSION, "confirmation_status": "confirmed", "confirmed_json": {
+                "session_id": SESSION, "note_type": "session_note", "confirmation_status": "confirmed", "confirmed_json": {
                 "sections": {"session_content": TEXT},
                 "nested": [{"source_ref": EMAIL, "id": PHONE, "metadata": {EMAIL: TEXT}}],
                 "score": 0.75, "visible": True, "empty": None,
