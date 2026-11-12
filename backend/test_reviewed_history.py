@@ -2,16 +2,19 @@
 import copy
 import unittest
 from contextlib import ExitStack
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
 from app.api.security import AuthenticatedActor
 from app.core.config import settings
 from app.graph import nodes
-from app.schemas.note import SessionInput
+from app.schemas.note import SessionInput, RetrievedCaseContextItem, SummarySection
 from app.services import deid_review as review
 from app.services.qwen_deidentification import Entities, PendingDetection
+from app.services.summary_verification import SummaryVerification
+from app.services.summary_corrections import SourceRefReview
+from test_summary_quality import _state, _summary
 from test_security_retrieval_privacy import SyntheticStorage, SESSION
 
 
@@ -39,12 +42,14 @@ class ReviewedHistoryTests(unittest.TestCase):
             detection_token=found["detection_token"], edits=edits or []), self.actor)
 
     def test_history_is_detected_reviewed_and_uses_authenticated_storage(self):
+        self.client.tables["generated_notes"][0]["confirmed_json"]["source_ref"] = "UNREVIEWED_METADATA"
         found = self.start()
         self.assertIs(self.storage.call_args.args[0], self.actor)
         self.assertEqual(1, len(found["payload"]["prior_session_context"]))
         material = " ".join(self.detect.call_args.args[0])
         self.assertIn("PRIOR_PLAN", material)
         self.assertNotIn(SESSION, material)
+        self.assertNotIn("UNREVIEWED_METADATA", str(found["payload"]))
         self.assertTrue(any(source["key"].startswith("/prior_session_context/") for source in found["sources"]))
 
     def test_only_reviewed_edits_enter_graph_context_and_context_is_reset(self):
@@ -113,6 +118,28 @@ class ReviewedHistoryTests(unittest.TestCase):
         self.client.calls.clear()
         self.start("quick", {"text": "Current material only"})
         self.assertEqual([], self.client.calls)
+
+    def test_verifier_receives_historical_evidence_and_preserves_supported_quote(self):
+        state = _state()
+        summary = _summary()
+        reference = f"stored_session_note:{SESSION}"
+        summary.session_content = SummarySection(text='이전 회기의 "PRIOR_PLAN_MARKER"를 배경으로 확인함.',
+            evidence_type="prior_context_based", source_refs=[reference])
+        summary.next_plan.text = "[자료에서 확인되지 않음]"
+        state["session_summary_draft"] = summary
+        state["retrieved_case_context"] = [RetrievedCaseContextItem(source_ref=reference,
+            session_id=SESSION, session_number=1, confirmed_note={"sections": {"next_plan": "PRIOR_PLAN_MARKER"}})]
+        assessment = SummaryVerification(source_ref_reviews=[
+            SourceRefReview(field=field, keep_source_refs=section.source_refs)
+            for field, section in summary if field != "session_info"
+        ])
+        llm = Mock(invoke=Mock(return_value=assessment))
+        with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-offline"), patch.object(nodes, "get_structured_llm", return_value=llm):
+            result = nodes.verify_output(state)
+        self.assertIn("PRIOR_PLAN_MARKER", llm.invoke.call_args.args[0])
+        self.assertIn(reference, llm.invoke.call_args.args[0])
+        self.assertEqual(summary.session_content.text, result["session_summary_draft"].session_content.text)
+        self.assertNotIn("인용 원문 확인 필요", result["session_summary_draft"].session_content.text)
 
 
 if __name__ == "__main__":

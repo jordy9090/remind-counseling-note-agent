@@ -49,7 +49,7 @@ def _history_session(purpose: Purpose, payload: dict) -> dict | None:
 
 def _history_snapshot(session: dict, actor: str) -> list[dict]:
     """Read only the authenticated owner's prior confirmed notes through RLS."""
-    from app.services.retrieval import retrieve_case_context
+    from app.services.retrieval import _confirmed_field_text, retrieve_case_context
     from app.services.supabase_storage import _storage_for_actor
     if not settings.enable_rag or not getattr(actor, "access_token", ""):
         return []
@@ -57,7 +57,17 @@ def _history_snapshot(session: dict, actor: str) -> list[dict]:
         items = retrieve_case_context(session["case_id"], user_id=str(actor),
             current_session_number=session["session_number"], confirmed_only=True,
             storage_client=_storage_for_actor(actor))
-        return [item.model_dump(exclude={"evidence_items"}) for item in items]
+        context = []
+        for item in items:
+            source = item.model_dump(exclude={"evidence_items"})
+            # Stored metadata is not counseling material and must not bypass review.
+            source["confirmed_note"] = {"sections": {
+                field: text for field in ("session_theme", "presenting_problem", "session_content",
+                    "counselor_intervention", "client_response", "reflection", "next_plan")
+                if (text := _confirmed_field_text(item.confirmed_note, field))
+            }}
+            context.append(source)
+        return context
     except Exception:
         raise HTTPException(503, "이전 확정 회기를 불러오지 못했어요. 잠시 후 다시 시도해주세요.") from None
 
