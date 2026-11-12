@@ -414,8 +414,8 @@ export function toNoteDraftResponse(fullResponse: GenerateNoteResponse): NoteDra
   const verification = fullResponse.verification_report
 
   return {
-    case_id: draft.session_info.case_id,
-    session_number: draft.session_info.session_number,
+    case_id: fullResponse.sanitized_input.case_id,
+    session_number: fullResponse.sanitized_input.session_number,
     session_summary: draft.session_content.text,
     main_issue: draft.presenting_problem.text,
     counselor_intervention: draft.counselor_intervention.text,

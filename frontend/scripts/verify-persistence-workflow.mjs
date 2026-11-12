@@ -22,6 +22,29 @@ async function loadModule(name) {
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 }
 const workflow = await loadModule('persistenceWorkflow')
+{
+  const source = fs.readFileSync('src/api/client.ts', 'utf8')
+  const ast = ts.createSourceFile('client.ts', source, ts.ScriptTarget.Latest, true)
+  const mapper = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'toNoteDraftResponse')
+  assert(mapper, 'exercise the real response adapter')
+  const compiled = ts.transpileModule(mapper.getText(ast), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+  }).outputText
+  const moduleSource = 'const buildEvidenceCheck=()=>[]; const unique=values=>[...new Set(values)];\n' + compiled
+  const { toNoteDraftResponse } = await import(`data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`)
+  const section = { text: 'Synthetic summary' }
+  const result = toNoteDraftResponse({
+    sanitized_input: { case_id: 'OWNED-CASE', session_number: 2 },
+    session_summary_draft: { session_info: { case_id: 'MODEL-INVENTED-CASE', session_number: 99 },
+      session_content: section, presenting_problem: section, counselor_intervention: section,
+      client_response: section, next_plan: section },
+    verification_report: { requires_counselor_review: [], unsupported_or_risky_claims: [], sensitive_info_items: [] },
+    document_transform_preview: { missing_required_fields: [] },
+  })
+  assert.equal(result.case_id, 'OWNED-CASE')
+  assert.equal(result.session_number, 2)
+  console.log('Confirmation routing uses authoritative session identity: passed')
+}
 const quickEvidence = await loadModule('quickSummary')
 const transient = { sections: [{ id: 'session_content', title: 'Content', content: 'Summary',
   evidence: [{ label: 'Transcript', excerpt: 'SYNTHETIC-PRIVATE-EXCERPT', needsReview: true }], requiresReview: true }] }

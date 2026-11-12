@@ -415,6 +415,8 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         )
         if summary_quality_issues(summary):
             raise SummaryQualityError()
+    # Identity metadata is application state, never a model-generated claim.
+    summary.session_info = fallback.session_info.model_copy(deep=True)
     _normalize_summary_refs(summary, sanitized, case_context)
     if not has_documented_counselor_reflection(sanitized.sources.counselor_memo):
         summary.reflection = SummarySection(

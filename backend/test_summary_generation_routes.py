@@ -1,13 +1,14 @@
 """Synthetic regression coverage for failed summary generation boundaries."""
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -53,9 +54,59 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                     self.assertEqual(502, response.status_code)
                     self.assertNotIn("PRIVATE_PROVIDER_DETAIL", response.text)
                     self.assertNotIn("session_summary_draft", response.json())
-                    pipeline.assert_called_once()
+                    self.assertEqual(2 if isinstance(failure, SummaryQualityError) else 1, pipeline.call_count)
                     persist.assert_not_called()
                     self.assertFalse(settings.use_stub)
+
+    def test_transient_quality_failure_regenerates_and_persists_only_the_valid_result(self):
+        with patch.object(settings, "use_stub", True):
+            valid = run_note_pipeline(SessionInput(**INPUT), actor="synthetic-owner")
+        for app in (generate_app, main_app):
+            gates = []
+
+            @contextmanager
+            def reviewed(*args):
+                gates.append(args)
+                yield
+
+            with self.subTest(app=app.title), patch("app.api.routes.notes.reviewed_request", reviewed), patch(
+                "app.api.routes.notes.run_note_pipeline", side_effect=[SummaryQualityError(), valid],
+            ) as pipeline, patch("app.api.routes.notes.persist_generated_note", return_value=valid.persistence_report) as persist:
+                response = TestClient(app).post("/api/notes/generate", json=INPUT, headers={"X-Review-Receipt": "synthetic-receipt"})
+                self.assertEqual(200, response.status_code)
+                self.assertEqual(2, pipeline.call_count)
+                self.assertEqual(2, len(gates))
+                self.assertEqual(gates[0], gates[1])
+                persist.assert_called_once()
+                self.assertIs(valid, persist.call_args.args[1])
+                self.assertFalse(settings.use_stub)
+
+    def test_retry_stops_if_reviewed_history_changes(self):
+        gates = []
+
+        @contextmanager
+        def reviewed(*args):
+            gates.append(args)
+            if len(gates) == 2:
+                raise HTTPException(409, "Synthetic history changed")
+            yield
+
+        with patch("app.api.routes.notes.reviewed_request", reviewed), patch(
+            "app.api.routes.notes.run_note_pipeline", side_effect=SummaryQualityError(),
+        ) as pipeline, patch("app.api.routes.notes.persist_generated_note") as persist:
+            response = TestClient(generate_app).post("/api/notes/generate", json=INPUT)
+        self.assertEqual(409, response.status_code)
+        pipeline.assert_called_once()
+        persist.assert_not_called()
+
+    def test_slow_quality_failure_does_not_start_another_pipeline(self):
+        with patch("app.api.routes.notes.monotonic", side_effect=[0, 90]), patch(
+            "app.api.routes.notes.run_note_pipeline", side_effect=SummaryQualityError(),
+        ) as pipeline, patch("app.api.routes.notes.persist_generated_note") as persist:
+            response = TestClient(generate_app).post("/api/notes/generate", json=INPUT)
+        self.assertEqual(502, response.status_code)
+        pipeline.assert_called_once()
+        persist.assert_not_called()
 
     def test_recomposition_reports_quality_failure_on_both_hosts(self):
         payload = {"session_input": INPUT, "visible_section_ids": ["session_content"]}

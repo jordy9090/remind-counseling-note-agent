@@ -60,6 +60,20 @@ def _state() -> dict:
 
 
 class SummaryQualityTests(unittest.TestCase):
+    def test_generated_metadata_is_bound_to_the_authoritative_session(self) -> None:
+        state = _state()
+        state["sanitized_input"].client_alias = "SYNTHETIC-ALIAS"
+        state["sanitized_input"].counselor_name = "SYNTHETIC-COUNSELOR"
+        generated = _summary()
+        generated.session_info = SessionInfo(case_id="MODEL-INVENTED-CASE", session_number=99,
+            session_date="1900-01-01", client_alias="MODEL-ALIAS", counselor_name="MODEL-NAME")
+        with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key"), patch(
+            "app.graph.nodes.get_structured_llm", return_value=Mock(invoke=Mock(return_value=generated)),
+        ):
+            result = generate_summary(state)["session_summary_draft"]
+        self.assertEqual({key: getattr(state["sanitized_input"], key) for key in SessionInfo.model_fields},
+                         result.session_info.model_dump())
+
     def test_concise_prose_and_ready_written_memo_are_accepted(self) -> None:
         summary = _summary()
         self.assertEqual({}, summary_quality_issues(summary))
