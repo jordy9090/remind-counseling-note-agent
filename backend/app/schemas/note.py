@@ -24,6 +24,17 @@ EvidenceType = Literal[
 TargetDocumentType = Literal["session_note", "supervision_report", "termination_report"]
 
 
+class ReviewedPriorSession(BaseModel):
+    """A stored source included in the signed, counselor-reviewed payload."""
+
+    source_ref: str
+    session_id: str
+    session_number: int
+    session_date: str = ""
+    summary: str = ""
+    confirmed_note: dict[str, Any] = Field(default_factory=dict)
+
+
 class SessionInput(BaseModel):
     """Raw session materials submitted by a counselor."""
 
@@ -50,6 +61,8 @@ class SessionInput(BaseModel):
     )
     persist: bool = False
     insight_lens: Literal["none", "psychodynamic_relational"] = "psychodynamic_relational"
+    prior_session_context: list[ReviewedPriorSession] = Field(default_factory=list, max_length=3)
+    prior_context_revision: str = ""
 
 
 class SensitiveInfoCandidate(BaseModel):

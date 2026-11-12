@@ -397,6 +397,8 @@ class AccessBoundaryTests(unittest.TestCase):
 
     def test_recomposition_cache_cannot_reuse_another_actors_retrieved_context(self):
         payload = {"session_input": input_payload(CASES["b"]), "visible_section_ids": []}
+        # The confirmed fixture is session 1; retrieval only admits earlier sessions.
+        payload["session_input"]["session_number"] = 2
         with patch.object(settings, "enable_rag", True):
             owner = self.request("backend", "POST", "/api/notes/recompose", user="b", json=payload)
             self.assertEqual(owner.status_code, 200)

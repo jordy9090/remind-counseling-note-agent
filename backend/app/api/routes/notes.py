@@ -160,7 +160,7 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
                               review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
     try:
-        with reviewed_request("recompose", request, review_receipt, str(actor)):
+        with reviewed_request("recompose", request, review_receipt, actor):
             return recompose_note_with_cache(request, actor=actor)
     except HTTPException:
         raise
@@ -217,7 +217,7 @@ async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> l
 
 
 def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str, review_receipt: str = "") -> GenerateNoteResponse:
-    with reviewed_request("generate", session_input, review_receipt, str(actor)):
+    with reviewed_request("generate", session_input, review_receipt, actor):
         return _generate_reviewed(session_input, actor=actor)
 
 
@@ -271,7 +271,7 @@ def _optional_actor(authorization: str | None) -> str | None:
 
 def review_actor(request: Request, authorization: str | None) -> str:
     if authorization:
-        return str(_require_supabase_user(authorization))
+        return _require_supabase_user(authorization)
     if settings.local_preview_bypass_enabled:
         return settings.remind_preview_actor
     return "guest:" + rate_limit_key(client_ip=client_ip(request), actor=None)[0]

@@ -114,8 +114,12 @@ def formulate_retrieval_query(state: dict[str, Any]) -> dict[str, Any]:
     sanitized: SanitizedInput = state["sanitized_input"]
     session_input: SessionInput = state["session_input"]
     actor_storage = _storage_for_actor(state.get("actor") or settings.remind_preview_actor)
-    report = RetrievalReport(enabled=settings.enable_rag and state.get("allow_retrieval", True))
-    if state.get("allow_retrieval") is False:
+    reviewed_context = state.get("reviewed_case_context")
+    report = RetrievalReport(enabled=settings.enable_rag and
+                             (state.get("allow_retrieval", True) or reviewed_context is not None))
+    if reviewed_context is not None:
+        report.notices.append("Using the counselor-reviewed snapshot of prior confirmed sessions.")
+    elif state.get("allow_retrieval") is False:
         report.notices.append("Retrieval is off for this request (quick summary).")
     elif not settings.enable_rag:
         report.notices.append("ENABLE_RAG is false; retrieval skipped.")
@@ -178,6 +182,9 @@ def retrieve_case_memory(state: dict[str, Any]) -> dict[str, Any]:
     case_context: list[RetrievedCaseContextItem] = []
     chunks: list[Any] = []
 
+    if settings.enable_rag and state.get("reviewed_case_context") is not None:
+        return {"retrieved_case_context": state["reviewed_case_context"],
+                "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
     if not settings.enable_rag or state.get("allow_retrieval") is False:
         return {"retrieved_case_context": case_context, "retrieved_case_memory_chunks": chunks, "retrieval_report": report}
 
