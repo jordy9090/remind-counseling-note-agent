@@ -15,7 +15,7 @@ from app.services.supabase_storage import _storage_for_actor
 
 
 # Older results did not validate their current confirmed-note sources.
-CACHE_VERSION = "recompose-v6-confirmed-source-validity"
+CACHE_VERSION = "recompose-v7-prior-confirmed-context"
 SOURCE_REVISION_LIMIT = 500
 _CACHE_REPLACE_LOCK = Lock()
 

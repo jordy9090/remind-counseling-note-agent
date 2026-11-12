@@ -33,6 +33,48 @@ LABELS = {"text": "상담 자료", "transcript_text": "축어록", "counselor_me
           "key_issue_tags": "핵심 이슈", "client_alias": "내담자 별칭", "counselor_name": "상담사 이름",
           "session_topic": "회기 주제", "session_date": "상담일"}
 _approved: ContextVar[tuple[str, ...] | None] = ContextVar("reviewed_ai_material", default=None)
+_prior_approved: ContextVar[list | None] = ContextVar("reviewed_prior_sessions", default=None)
+INTERNAL.update({"source_ref", "prior_context_revision"})
+LABELS.update({"prior_session_context": "이전 확정 회기 (자동 검색)", "summary": "이전 회기 요약",
+               "confirmed_note": "이전 확정 기록"})
+
+
+def _history_session(purpose: Purpose, payload: dict) -> dict | None:
+    if purpose == "generate":
+        return payload
+    if purpose == "recompose":
+        return payload["session_input"]
+    return None
+
+
+def _history_snapshot(session: dict, actor: str) -> list[dict]:
+    """Read only the authenticated owner's prior confirmed notes through RLS."""
+    from app.services.retrieval import _confirmed_field_text, retrieve_case_context
+    from app.services.supabase_storage import _storage_for_actor
+    if not settings.enable_rag or not getattr(actor, "access_token", ""):
+        return []
+    try:
+        items = retrieve_case_context(session["case_id"], user_id=str(actor),
+            current_session_number=session["session_number"], confirmed_only=True,
+            storage_client=_storage_for_actor(actor))
+        context = []
+        for item in items:
+            source = item.model_dump(exclude={"evidence_items"})
+            # Stored metadata is not counseling material and must not bypass review.
+            source["confirmed_note"] = {"sections": {
+                field: text for field in ("session_theme", "presenting_problem", "session_content",
+                    "counselor_intervention", "client_response", "reflection", "next_plan")
+                if (text := _confirmed_field_text(item.confirmed_note, field))
+            }}
+            context.append(source)
+        return context
+    except Exception:
+        raise HTTPException(503, "이전 확정 회기를 불러오지 못했어요. 잠시 후 다시 시도해주세요.") from None
+
+
+def reviewed_prior_sessions() -> list | None:
+    """Return the receipt-validated snapshot, never caller-supplied context."""
+    return _prior_approved.get()
 
 
 class ReviewStart(BaseModel):
@@ -121,6 +163,12 @@ def _verify(token: str, stage: str, purpose: Purpose, payload: dict, actor: str)
 def start_review(request: ReviewStart, actor: str) -> dict:
     _key()  # Do not start expensive work when receipts cannot be issued.
     payload = normalize(request.purpose, request.payload)
+    session = _history_session(request.purpose, payload)
+    if session is not None:
+        # Re-read on pending-job polls too; a changed source invalidates that job's receipt.
+        context = _history_snapshot(session, actor)
+        session["prior_session_context"] = context
+        session["prior_context_revision"] = digest(context) if settings.enable_rag else ""
     material = sources(payload)
     texts = [source["text"] for source in material]
     if len(material) > 500 or sum(map(len, texts)) > 200_000:
@@ -195,12 +243,22 @@ def confirm_review(request: ReviewConfirm, actor: str) -> dict:
 @contextmanager
 def reviewed_request(purpose: Purpose, payload: BaseModel, receipt: str, actor: str):
     normalized = payload.model_dump(mode="json")
+    prior = None
     if settings.require_deid_review:
         _verify(receipt, "reviewed", purpose, normalized, actor)
+        session = _history_session(purpose, normalized)
+        if settings.enable_rag and session is not None:
+            # A receipt cannot resurrect a deleted or edited historical source.
+            if session["prior_context_revision"] != digest(_history_snapshot(session, actor)):
+                raise HTTPException(409, "이전 회기 기록이 변경되었어요. AI 전달 내용을 다시 확인해주세요.")
+            from app.schemas.note import RetrievedCaseContextItem
+            prior = [RetrievedCaseContextItem.model_validate(item) for item in session["prior_session_context"]]
     token = _approved.set(tuple(source["text"] for source in sources(normalized)))
+    prior_token = _prior_approved.set(prior)
     try:
         yield
     finally:
+        _prior_approved.reset(prior_token)
         _approved.reset(token)
 
 

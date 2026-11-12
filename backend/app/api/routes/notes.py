@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -160,7 +161,7 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
                               review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> RecomposeNoteResponse:
     """Regenerate a note draft for the selected checklist configuration."""
     try:
-        with reviewed_request("recompose", request, review_receipt, str(actor)):
+        with reviewed_request("recompose", request, review_receipt, actor):
             return recompose_note_with_cache(request, actor=actor)
     except HTTPException:
         raise
@@ -217,8 +218,18 @@ async def list_note_drafts(actor: PreviewActor, case_id: str | None = None) -> l
 
 
 def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str, review_receipt: str = "") -> GenerateNoteResponse:
-    with reviewed_request("generate", session_input, review_receipt, str(actor)):
-        return _generate_reviewed(session_input, actor=actor)
+    started = monotonic()
+    for attempt in range(2):
+        try:
+            # A retry must revalidate the same receipt and current historical sources.
+            with reviewed_request("generate", session_input, review_receipt, actor):
+                return _generate_reviewed(session_input, actor=actor)
+        except SummaryQualityError as error:
+            # Generate a new candidate once; never approve a rejected correction or
+            # persist a failed attempt. Leave room in the 300-second hosted request.
+            if attempt or monotonic() - started >= 90:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+    raise AssertionError("Unreachable generation attempt")
 
 
 def _generate_reviewed(session_input: SessionInput, *, actor: str) -> GenerateNoteResponse:
@@ -233,8 +244,8 @@ def _generate_reviewed(session_input: SessionInput, *, actor: str) -> GenerateNo
     session_input, _ = deidentify_session_input(session_input)
     try:
         result = run_note_pipeline(session_input, actor=actor)
-    except SummaryQualityError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+    except SummaryQualityError:
+        raise
     except Exception as error:
         # Exception messages and tracebacks may contain model input or credentials.
         logger.warning("session_summary_failed exception_type=%s", type(error).__name__)
@@ -271,7 +282,7 @@ def _optional_actor(authorization: str | None) -> str | None:
 
 def review_actor(request: Request, authorization: str | None) -> str:
     if authorization:
-        return str(_require_supabase_user(authorization))
+        return _require_supabase_user(authorization)
     if settings.local_preview_bypass_enabled:
         return settings.remind_preview_actor
     return "guest:" + rate_limit_key(client_ip=client_ip(request), actor=None)[0]

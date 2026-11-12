@@ -62,6 +62,7 @@ class NoteGraphState(TypedDict, total=False):
     evidence_needs: list[EvidenceNeed]
     raw_regions_by_need: dict[str, list[CandidateTranscriptRegion]]
     retrieved_case_context: list[RetrievedCaseContextItem]
+    reviewed_case_context: list[RetrievedCaseContextItem] | None
     retrieved_case_memory_chunks: list[Any]
     retrieved_authoritative_kb_chunks: list[Any]
     retrieved_template_context: RetrievedTemplateContext | None
@@ -175,9 +176,12 @@ def run_note_pipeline(
     # failure, not permission to generate and store a sample counseling record.
     if not settings.use_stub and not settings.openai_api_key:
         raise RuntimeError("AI 회기요약 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+    reviewed_context = None
     if settings.require_deid_review:
-        # Legacy stored sources have no review receipt. Only explicitly reviewed
-        # previous-session material in this request may enter generation.
+        from app.services.deid_review import reviewed_prior_sessions
+        if allow_retrieval and settings.enable_rag:
+            reviewed_context = reviewed_prior_sessions()
+        # Never perform unreviewed storage/embedding lookups during generation.
         allow_retrieval = False
     if use_summary_skill and (
         allow_retrieval or session_input.persist or session_input.previous_session_summary.strip()
@@ -188,6 +192,7 @@ def run_note_pipeline(
         "session_input": session_input,
         "actor": actor or settings.remind_preview_actor,
         "allow_retrieval": allow_retrieval,
+        "reviewed_case_context": reviewed_context,
         "use_summary_skill": use_summary_skill,
     }
     if requested_section_ids is not None:
