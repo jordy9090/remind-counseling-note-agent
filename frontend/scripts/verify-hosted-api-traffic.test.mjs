@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { observeHostedFlow } from './verify-hosted-api-traffic.mjs'
 
 // Contract tests for the observer, not evidence that a deployed flow passed.
-const api = 'https://api.remind.ai.kr', auth = 'https://synthetic.supabase.co'
+const api = 'https://49.247.174.195:8443', auth = 'https://synthetic.supabase.co'
 function fixture(type, { wrongId, failedSave } = {}) {
   const ctx = new EventEmitter()
   const page = () => {

@@ -1,7 +1,7 @@
 # Direct iwinv API deployment
 
 Vercel serves only `frontend/dist`. The production browser API origin is
-`https://api.remind.ai.kr`; ordinary requests, audio, review, persistence, reads,
+`https://49.247.174.195:8443`; ordinary requests, audio, review, persistence, reads,
 and voucher exports share that origin. Supabase authentication remains direct.
 No Vercel rewrite or serverless function proxies counseling data. Retired `/api`
 paths return 410; clients with an older tab must reload before continuing.
@@ -14,7 +14,7 @@ project settings until the candidate and iwinv backend are ready for promotion.
 
 ## Release prerequisites
 
-- `api.remind.ai.kr` A record points directly to `49.247.174.195`, without a CDN proxy.
+- Permit public TCP 80 for ACME HTTP-01 and TCP 8443 for the browser API on the dedicated iwinv IP. The existing detector keeps its pinned certificate and port 443.
 - Public TCP 443 and administrator SSH from the authorized `/32` are reachable.
 - Provision only the existing OpenAI and CLOVA credentials, Supabase public
   URL/key, detector token/certificate, review signing key, and the current
@@ -38,15 +38,18 @@ project settings until the candidate and iwinv backend are ready for promotion.
    systemd unit, and check the loopback API before switching HTTPS. Uvicorn and
    Caddy access logging stay disabled; temporary uploads use the private runtime
    directory and existing success/failure cleanup.
-4. Validate the supplied Caddy configuration with the installed Caddy version.
-   Preserve the existing worker unit and certificate for rollback. Move that
-   same worker to `127.0.0.1:8001`, without changing its model, packages, token,
-   or request handling; Caddy terminates its existing pinned TLS endpoint.
-   Copy only that certificate/key into the root-owned Caddy directory with
-   private-key access restricted to Caddy. The API keeps the existing
-   `DEID_SERVICE_URL=https://49.247.174.195` and certificate trust.
-5. Start HTTPS on 443, verify the public API certificate without bypassing trust,
-   and verify both the browser API and the legacy detector health route.
+4. Install Certbot with IP certificate support. Install
+   `deploy-ip-certificate.sh` as a root-owned executable in
+   `/etc/letsencrypt/renewal-hooks/deploy/`. Place the reviewed Caddyfile at
+   `/etc/caddy/remind-api-ip/Caddyfile` and configure the dedicated
+   `remind-api-caddy` unit to use that file.
+5. Issue the certificate using `certbot certonly --standalone --required-profile shortlived --ip-address 49.247.174.195 --cert-name remind-api-ip`.
+   Certbot binds the idle port 80 only during validation. The hook checks the IP,
+   publishes the matching certificate and key together, and forces Caddy to reload
+   if already running. Enable the gateway after the first issuance. Verify the
+   Certbot renewal timer, run `certbot renew --cert-name remind-api-ip --dry-run`,
+   compare the live certificate with the current lineage and check legacy detector
+   health before promotion. Do not enable a staging certificate for browser traffic.
 
 ## Validation and promotion
 
@@ -59,7 +62,7 @@ project settings until the candidate and iwinv backend are ready for promotion.
   Qwen review, real summary generation, drafts, persistence, reload, and export.
   Before creating a test user, run `npm run verify:hosted-api` from `frontend`
   (append `-- https://<candidate>.vercel.app` for a Preview). This is a
-  read-only check of DNS, trusted HTTPS, CORS, and retired frontend API paths.
+  read-only check of trusted HTTPS, CORS, and retired frontend API paths.
   If it passes, attach `observeHostedFlow` from the same script to each real
   browser flow and verify the saved text is visible on a fresh page.
   Record request origins and operation statuses, never credentials or bodies.
@@ -68,7 +71,7 @@ project settings until the candidate and iwinv backend are ready for promotion.
   detector failure without an external-AI fallback. Clean synthetic rows/users
   once and verify zero remaining rows.
 - Promote only the tested commit/build. Run one production smoke and record
-  the backend release, frontend deployment, DNS/TLS checks, and rollback target.
+  the backend release, frontend deployment, IP certificate and renewal checks, and rollback target.
 
 ## Rollback
 

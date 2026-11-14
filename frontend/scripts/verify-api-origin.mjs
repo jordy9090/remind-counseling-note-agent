@@ -11,13 +11,13 @@ async function loadConfig(env) {
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 }
 
-for (const config of [{ PROD: true }, { PROD: true, VITE_API_BASE_URL: 'https://api.remind.ai.kr/' }]) {
+for (const config of [{ PROD: true }, { PROD: true, VITE_API_BASE_URL: 'https://49.247.174.195:8443/' }]) {
   const result = await loadConfig(config)
-  assert.equal(result.API_BASE_URL, 'https://api.remind.ai.kr')
+  assert.equal(result.API_BASE_URL, 'https://49.247.174.195:8443')
   assert.equal(result.AUDIO_API_BASE_URL, result.API_BASE_URL)
 }
 for (const badOrigin of ['https://remind.ai.kr', 'https://preview.vercel.app', '/api',
-  'http://api.remind.ai.kr', 'https://api.remind.ai.kr.evil.invalid', 'https://api.remind.ai.kr/path']) {
+  'http://49.247.174.195:8443', 'https://49.247.174.195.evil.invalid:8443', 'https://49.247.174.195:8443/path']) {
   await assert.rejects(loadConfig({ PROD: true, VITE_API_BASE_URL: badOrigin }))
   await assert.rejects(loadConfig({ PROD: true, VITE_AUDIO_API_BASE_URL: badOrigin }))
 }

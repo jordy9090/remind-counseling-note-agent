@@ -1,4 +1,4 @@
-const HOSTED_API_ORIGIN = 'https://api.remind.ai.kr'
+const HOSTED_API_ORIGIN = 'https://49.247.174.195:8443'
 
 /** Keep production counseling traffic off the frontend host, including on misconfiguration. */
 export function resolveApiOrigin(configured: string | undefined, production: boolean): string {

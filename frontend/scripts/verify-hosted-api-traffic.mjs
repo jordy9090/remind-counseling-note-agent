@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import { resolve4, resolve6 } from 'node:dns/promises'
 import { pathToFileURL } from 'node:url'
 
-const api = 'https://api.remind.ai.kr'
+const api = 'https://49.247.174.195:8443'
 const production = 'https://remind.ai.kr'
 const authRoutes = new Set(['GET /auth/v1/settings', 'POST /auth/v1/token', 'GET /auth/v1/user', 'POST /auth/v1/logout'])
 const operations = new Map([
@@ -82,12 +81,6 @@ export async function preflight(frontend = production) {
   assert.ok(frontend === url.origin && (frontend === production || (url.protocol === 'https:' && url.hostname.endsWith('.vercel.app'))), 'Expected a bare production or candidate frontend origin')
   const get = (target, init) => fetch(target, { redirect: 'error', signal: AbortSignal.timeout(10000), ...init })
   const checks = {
-    'API resolves directly to the configured iwinv address': async () => {
-      const host = new URL(api).hostname
-      assert.deepEqual([...new Set(await resolve4(host))], ['49.247.174.195'])
-      const v6 = await resolve6(host).catch(e => { if (e.code === 'ENODATA' || e.code === 'ENOTFOUND') return []; throw e })
-      assert.equal(v6.length, 0)
-    },
     'Frontend serves the application': async () => {
       const r = await get(frontend)
       assert.ok(r.status === 200 && r.headers.get('content-type')?.includes('text/html') && (await r.text()).includes('<div id="root"></div>'))
