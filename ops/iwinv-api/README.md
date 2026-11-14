@@ -57,6 +57,11 @@ project settings until the candidate and iwinv backend are ready for promotion.
   serverless functions and returns 410 for retired API paths.
 - Use one synthetic browser run to cover WAV and document upload, real CLOVA,
   Qwen review, real summary generation, drafts, persistence, reload, and export.
+  Before creating a test user, run `npm run verify:hosted-api` from `frontend`
+  (append `-- https://<candidate>.vercel.app` for a Preview). This is a
+  read-only check of DNS, trusted HTTPS, CORS, and retired frontend API paths.
+  If it passes, attach `observeHostedFlow` from the same script to each real
+  browser flow and verify the saved text is visible on a fresh page.
   Record request origins and operation statuses, never credentials or bodies.
   Assert no counseling request/response reaches any Vercel frontend origin.
 - Check guest access, owner isolation, missing/modified review receipts, and a
