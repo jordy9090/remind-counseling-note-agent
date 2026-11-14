@@ -1103,11 +1103,22 @@ def _prior_context_guidance(case_context: list[RetrievedCaseContextItem]) -> str
   검색된 확정 기록에서 그 대상을 하나로 확인할 수 있으면 session_content에 연결해 기록하세요.
   예: '이전 회기에서 합의한 X를 이번 주에 시도했다고 보고함'. 이전 기록에 있는 X의 구체적 내용을
   보존하되, 이번 시도·반응은 이번 입력으로만 뒷받침하고 두 출처를 함께 인용하세요.
+- 연결한 방법의 수행 시간·단위·순서·1회 수행 내 반복 횟수는 방법 이름으로 압축하지 마세요.
+  session_content에 해당 세부사항을 기록하고, 이번 회기에서 같은 방법을 계속하기로 명시한 경우
+  next_plan에도 세부사항과 과거 기록 source_ref를 포함하세요. 이번 합의의 근거도 함께 인용하세요.
+  예: 과거 방법이 '4초 들이마시고 6초 내쉬기를 세 번'이고 이번에는 '다음 주 두 번 시도'라면,
+  한 번 시도할 때의 호흡 순서·초·세 번과 다음 주 시도 횟수 두 번을 구분해 둘 다 보존하세요.
+  요약의 권장 길이보다 이 세부사항 보존을 우선하되 항목별 최대 길이는 지키세요.
+- '같은 방법을 계속한다'는 말은 과거 계획 문단 전체를 다시 합의했다는 뜻이 아닙니다.
+  이어받을 것은 방법 자체를 정의하는 동작·시간·순서·1회 내 반복 횟수입니다.
+  과거에만 있던 수행 상황, 기록·관찰·보고 항목, 다음 회기에 확인할 과제·시기를 덧붙이지 마세요.
+  예: 이번에 '두 상황의 차이를 살펴보기'만 합의했다면 과거의 '불안 정도 확인'을 새 계획에 추가하지 마세요.
 - 이전 내용은 '이전 회기에서'처럼 시점을 밝히고 evidence_type을 mixed 또는 prior_context_based로 표시하세요.
 - 이전 회기의 문제·상담자 개입·반응을 이번 회기에서 새로 일어난 일로 옮기지 마세요.
   이번 주제와 무관한 이력은 요약에서 제외하고, 연결 대상이 여러 개이면 추정하지 마세요.
 - 현재의 변경·중단·거절이 과거 계획보다 우선합니다. 과거 계획만으로 새 과제나 합의를 만들지 마세요.
   next_plan의 행동·시점·조건·합의는 이번 입력에서 확인되는 수준으로 기록하세요.
+  현재 수치·횟수가 바뀌었다면 변경된 값을 사용하고, 중단한 방법의 세부사항을 다음 과제로 되살리지 마세요.
 """
 
 
@@ -1313,13 +1324,23 @@ conditions and suggestion versus agreement versus actual performance. An existin
 Empty structured data/evidence maps are expected in quick summaries: verify directly against current input.
 Session metadata and explicit unknown/counselor-input placeholders are not factual counseling claims;
 do not label them fabricated or unsupported for lacking clinical evidence.
-Complete next_plan_assessment for the draft's next_plan. supported_future requires that the entire
-draft plan, including actor, action, timing, conditions, deferral and agreement level, is supported by
-current-session input. Return exact contiguous quotes with canonical transcript.turn_N or counselor_memo
-IDs covering that support. Never use a prior summary or counseling_goal as proof of a new plan.
+Complete next_plan_assessment for the draft's next_plan. supported_future requires current-session
+support for the actor, chosen action or explicit continuation, timing, conditions, deferral and agreement.
+Return exact contiguous quotes with canonical transcript.turn_N or counselor_memo IDs in evidence
+covering that support. Never use a prior summary or counseling_goal as proof of a new agreement.
+When current input explicitly continues an unambiguously identified prior method, its definition may
+come from reviewed history. Return exact stored_session_note quotes in prior_context_evidence for
+that definition, including inherited duration, units, sequence and per-attempt repetitions.
+Current evidence must establish continuing that method; prior_context_evidence cannot replace it.
+Keep the method's internal repetitions distinct from the current plan's frequency of attempts.
+Reject changed or invented parameters and flag omitted defining details; do not prune the historical
+definition merely because current input refers to it as 'the same method' instead of repeating it.
+Current modifications override inherited parameters. For stopped, unrelated or ambiguous methods,
+leave prior_context_evidence empty; do not revive an old task or infer continuation from history alone.
 Use a minimal sufficient set of exact current-source anchors covering the plan's actions, timing,
 agreement, conditions and deferral. Anchors may include a necessary current-source turn omitted by
-the draft's generic source_refs. These validated anchors determine next_plan's final citations;
+the draft's generic source_refs. Validated current anchors and prior_context_evidence together
+determine next_plan's final citations;
 generic source_ref_reviews must not remove evidence required for the plan. A counselor suggestion
 alone is insufficient to prove client agreement; retain the client's acceptance and qualifications.
 in_session_only means the alleged plan describes the present session: '앉아 있을게요', '잠깐 기다릴게요',

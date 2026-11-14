@@ -12,7 +12,7 @@ from app.graph import nodes
 from app.schemas.note import SessionInput, RetrievedCaseContextItem, SummarySection
 from app.services import deid_review as review
 from app.services.qwen_deidentification import Entities, PendingDetection
-from app.services.summary_verification import SummaryVerification
+from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryVerification
 from app.services.summary_corrections import SourceRefReview
 from test_summary_quality import _state, _summary
 from test_security_retrieval_privacy import SyntheticStorage, SESSION
@@ -140,6 +140,32 @@ class ReviewedHistoryTests(unittest.TestCase):
         self.assertIn(reference, llm.invoke.call_args.args[0])
         self.assertEqual(summary.session_content.text, result["session_summary_draft"].session_content.text)
         self.assertNotIn("인용 원문 확인 필요", result["session_summary_draft"].session_content.text)
+
+    def test_next_plan_history_survives_the_complete_verification_node(self):
+        state = _state()
+        summary = _summary()
+        reference = f"stored_session_note:{SESSION}"
+        prior = "4초 들이마시고 6초 내쉬는 호흡을 세 번"
+        current = "다음 주에도 같은 방법을 두 번 시도하기로 합의했다."
+        state["sanitized_input"].sources.counselor_memo = current
+        summary.next_plan = SummarySection(
+            text="이전 회기의 4초 들이마시고 6초 내쉬는 호흡을 세 번 하는 방법을 다음 주 두 번 시도하기로 함.",
+            evidence_type="mixed", source_refs=["counselor_memo", reference])
+        state["session_summary_draft"] = summary
+        state["retrieved_case_context"] = [RetrievedCaseContextItem(source_ref=reference,
+            session_id=SESSION, session_number=1, confirmed_note={"sections": {"next_plan": prior}})]
+        assessment = SummaryVerification(source_ref_reviews=[
+            SourceRefReview(field=field, keep_source_refs=section.source_refs)
+            for field, section in summary if field != "session_info"
+        ], next_plan_assessment=PlanAssessment(status="supported_future",
+            evidence=[PlanEvidence(source_ref="counselor_memo", quote=current)],
+            prior_context_evidence=[PlanEvidence(source_ref=reference, quote=prior)]))
+        llm = Mock(invoke=Mock(return_value=assessment))
+        with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-offline"), patch.object(nodes, "get_structured_llm", return_value=llm):
+            result = nodes.verify_output(state)
+        self.assertEqual(["counselor_memo", reference], result["session_summary_draft"].next_plan.source_refs)
+        self.assertEqual(summary.next_plan.text, result["session_summary_draft"].next_plan.text)
+        self.assertNotIn("next_plan_assessment", result["verification_report"].model_dump())
 
 
 if __name__ == "__main__":

@@ -83,6 +83,64 @@ class SummaryVerificationTests(unittest.TestCase):
         self.assertEqual(list(self.catalog), plan.source_refs)
         self.assertFalse(any(item.field == "next_plan" for item in report.requires_counselor_review))
 
+    def test_continued_method_keeps_prior_definition_and_current_agreement(self):
+        current = "다음 주에도 같은 방법을 두 번 시도할게요."
+        prior = "4초 들이마시고 6초 내쉬는 호흡을 세 번"
+        ref = "stored_session_note:synthetic-prior"
+        self.catalog.update({"transcript.turn_6": current, ref: prior})
+        plan = self.summary.next_plan
+        plan.text = "이전 회기의 4초 들이마시고 6초 내쉬는 호흡을 세 번 하는 방법을 다음 주 두 번 시도하기로 함."
+        plan.source_refs = ["transcript.turn_6"]
+        assessment = SummaryVerification(next_plan_assessment=PlanAssessment(
+            status="supported_future", evidence=[PlanEvidence(source_ref="transcript.turn_6", quote=current)],
+            prior_context_evidence=[PlanEvidence(source_ref=ref, quote=prior)]))
+        before = plan.text
+        apply_summary_verification(self.summary, assessment, self.catalog)
+        self.assertEqual(before, plan.text)
+        self.assertEqual(["transcript.turn_6", ref], plan.source_refs)
+        self.assertEqual("mixed", plan.evidence_type)
+
+    def test_historical_definition_never_substitutes_for_current_agreement(self):
+        ref = "stored_session_note:synthetic-prior"
+        self.catalog[ref] = "4초 들이마시고 6초 내쉬는 호흡을 세 번"
+        for status in ("supported_future", "not_documented", "uncertain", "in_session_only"):
+            with self.subTest(status=status):
+                summary = _summary()
+                apply_summary_verification(summary, SummaryVerification(next_plan_assessment=PlanAssessment(
+                    status=status, prior_context_evidence=[PlanEvidence(source_ref=ref, quote=self.catalog[ref])])), self.catalog)
+                self.assertEqual([], summary.next_plan.source_refs)
+                self.assertTrue(summary.next_plan.requires_review)
+                self.assertTrue(summary.next_plan.text.startswith("["))
+
+    def test_forged_or_nonhistorical_definition_anchors_fail_closed(self):
+        self.catalog.update({"transcript.turn_6": "같은 방법을 두 번 시도할게요.",
+                             "stored_session_note:synthetic-prior": "4초 들이마시고 6초 내쉬기"})
+        for ref, quote in (("stored_session_note:synthetic-prior", "5초 들이마시기"),
+                           ("stored_session_note:missing", "4초 들이마시기"),
+                           ("transcript.turn_6", "같은 방법을 두 번 시도할게요."),
+                           ("stored_session_note:synthetic-prior", "")):
+            with self.subTest(ref=ref, quote=quote):
+                summary = _summary()
+                apply_summary_verification(summary, SummaryVerification(next_plan_assessment=PlanAssessment(
+                    status="supported_future", evidence=[PlanEvidence(source_ref="transcript.turn_6", quote=self.catalog["transcript.turn_6"])],
+                    prior_context_evidence=[PlanEvidence(source_ref=ref, quote=quote)])), self.catalog)
+                self.assertEqual("[다음 계획은 원문 확인 필요]", summary.next_plan.text)
+                self.assertEqual([], summary.next_plan.source_refs)
+
+    def test_changed_or_stopped_plan_does_not_keep_unvalidated_history(self):
+        ref = "stored_session_note:synthetic-prior"
+        self.catalog[ref] = "4초 들이마시고 6초 내쉬기"
+        for text in ("이번 주에는 호흡 과제를 중단하기로 함.", "2초 들이마시고 5초 내쉬기를 한 번만 하기로 함."):
+            with self.subTest(text=text):
+                summary = _summary()
+                self.catalog["counselor_memo"] = text
+                summary.next_plan.text = text
+                summary.next_plan.source_refs = ["counselor_memo", ref]
+                apply_summary_verification(summary, SummaryVerification(next_plan_assessment=PlanAssessment(
+                    status="supported_future", evidence=[PlanEvidence(source_ref="counselor_memo", quote=text)])), self.catalog)
+                self.assertEqual(text, summary.next_plan.text)
+                self.assertEqual(["counselor_memo"], summary.next_plan.source_refs)
+
     def test_added_plan_anchor_still_requires_literal_current_source_support(self):
         for source_ref, quote in (("transcript.turn_1", "보내기로 확정했어요."),
                                   ("previous_session_summary", "다음 회기에"),
