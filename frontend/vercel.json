@@ -1,0 +1,24 @@
+{
+  "installCommand": "npx --yes pnpm@10.28.2 install --frozen-lockfile",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "routes": [
+    {
+      "src": "/api(?:/.*)?",
+      "headers": {
+        "Cache-Control": "no-store"
+      },
+      "status": 410
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/.*",
+      "dest": "/index.html",
+      "headers": {
+        "Cache-Control": "no-store"
+      }
+    }
+  ]
+}

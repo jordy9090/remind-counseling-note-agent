@@ -104,8 +104,10 @@ class StoragePolicyTests(unittest.TestCase):
             self.assertEqual(client.get("/api/notes/record?note_id=synthetic",headers=self.headers).status_code,404)
             self.assertEqual(get_record.call_args.args[0],"synthetic")
             self.assertEqual(client.get("/api/notes/records/synthetic",headers=self.headers).status_code,404)
-        routes=json.loads((ROOT/"vercel.json").read_text(encoding="utf-8"))["rewrites"]
-        self.assertIn({"source":"/api/notes/storage-policy","destination":"/api/notes/record?scope=storage-policy"},routes)
+        # The old wrapper remains testable for rollback but is no longer deployed.
+        deployment=json.loads((ROOT/"vercel.json").read_text(encoding="utf-8"))
+        self.assertNotIn("rewrites",deployment)
+        self.assertEqual(deployment["routes"][0]["status"],410)
 
 
 if __name__=="__main__":

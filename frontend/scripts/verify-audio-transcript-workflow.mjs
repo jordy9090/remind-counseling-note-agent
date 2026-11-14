@@ -223,7 +223,8 @@ assert(JSON.stringify(editable) === beforeEdit, 'edits cannot mutate original AS
 assert(mergeAudioSegments([editable[0], { ...editable[1], speaker: 'speaker_1' }], 1).length === 2, 'different speaker merge requires explicit reassignment')
 assert(pageSource.includes('sourceText !== currentText'), 'stale privacy review cannot be applied')
 assert(editorSource.includes('confirmedReviewKey === reviewKey'), 'privacy confirmation is bound to exact text, speakers and timestamps')
-assert(clientSource.includes('VITE_AUDIO_API_BASE_URL'), 'audio has a separate self-hosted origin')
+assert(clientSource.includes("import { API_BASE_URL, AUDIO_API_BASE_URL } from '../lib/apiOrigin'")
+  && clientSource.includes('baseURL: AUDIO_API_BASE_URL'), 'audio uses the validated self-hosted origin')
 
 // Execute the actual page callback: only the reviewed masked text may reach the
 // summary form, and an obsolete review must not overwrite a later correction.

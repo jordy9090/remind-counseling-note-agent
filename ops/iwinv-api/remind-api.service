@@ -1,0 +1,35 @@
+[Unit]
+Description=ReMind counseling API
+After=network-online.target remind-deid.service
+Wants=network-online.target
+
+[Service]
+User=remind-api
+Group=remind-api
+WorkingDirectory=/opt/remind-api/current/backend
+EnvironmentFile=/etc/remind-api/runtime.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=UPLOAD_TMP_DIR=/run/remind-api/uploads
+Environment=XDG_CACHE_HOME=/run/remind-api/cache
+Environment=RETAIN_DERIVED_CACHE=false
+Environment=DISABLE_EMBEDDING_CACHE=true
+RuntimeDirectory=remind-api
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/mkdir -p /run/remind-api/uploads /run/remind-api/cache
+ExecStartPre=/opt/remind-api/current/backend/.venv/bin/python -c "from app.core.config import settings, validate_runtime_security; validate_runtime_security(); assert not settings.stub_mode and settings.enable_real_user_auth and settings.require_deid_review, 'Production API requires real AI, authentication, and review'"
+ExecStart=/opt/remind-api/current/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2 --no-access-log --limit-concurrency 32 --timeout-keep-alive 5 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=300
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=4G
+
+[Install]
+WantedBy=multi-user.target
