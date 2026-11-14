@@ -12,6 +12,8 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 Environment=UPLOAD_TMP_DIR=/run/remind-api/uploads
 Environment=XDG_CACHE_HOME=/run/remind-api/cache
+Environment=RETAIN_DERIVED_CACHE=false
+Environment=DISABLE_EMBEDDING_CACHE=true
 RuntimeDirectory=remind-api
 RuntimeDirectoryMode=0700
 ExecStartPre=/usr/bin/mkdir -p /run/remind-api/uploads /run/remind-api/cache

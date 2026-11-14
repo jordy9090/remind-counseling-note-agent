@@ -72,5 +72,5 @@ rollback changes the `current` symlink to a validated previous API release and
 restarts only `remind-api`. Restoring the previous Vercel frontend also restores
 its previous data path through Vercel, so disclose that consequence before using
 that fallback; do not describe it as retaining the direct-data-path guarantee.
-No database migration, retention-policy change, or existing-data deletion is
-part of this deployment.
+The separately scoped [beta retention procedure](beta-retention.md) applies to newly
+enrolled cases, including their application recovery snapshots.

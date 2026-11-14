@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     embedding_cache_ttl_seconds: int = 300
     embedding_cache_max_entries: int = 256
     disable_embedding_cache: bool = False
+    retain_derived_cache: bool = True
 
     class Config:
         env_file = str(BACKEND_ENV_FILE)
