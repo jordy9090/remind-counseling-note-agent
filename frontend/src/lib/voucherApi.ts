@@ -1,4 +1,5 @@
 import { getAccessToken } from './supabase'
+import { API_BASE_URL } from './apiOrigin'
 
 export type VoucherTemplate = 'form10' | 'form25' | 'form26'
 export type VoucherEdition = 'ari-2026' | 'standard'
@@ -57,7 +58,7 @@ export class VoucherRequestError extends Error {
 export async function voucherApi<T>(path: string, method = 'GET', body?: unknown, binary = false): Promise<T> {
   const token = await getAccessToken()
   if (!token) throw new Error('다시 로그인해주세요.')
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/documents/vouchers/${path}`, {
+  const response = await fetch(`${API_BASE_URL}/api/documents/vouchers/${path}`, {
     method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store',
   })

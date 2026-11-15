@@ -195,6 +195,16 @@ class RecomposeSourceRevisionTests(MemorySourceTestBase):
     def recompose(self):
         return recompose_cache.recompose_note_with_cache(self.request, actor=self.actor)
 
+    def test_no_retention_recomposes_without_reading_or_writing_a_disk_cache(self):
+        with patch.object(settings, "retain_derived_cache", False), \
+             patch.object(recompose_cache, "_read_cached_result") as read, \
+             patch.object(recompose_cache, "_write_cached_result") as write:
+            self.assertFalse(self.recompose().cache_hit)
+            self.assertFalse(self.recompose().cache_hit)
+        read.assert_not_called()
+        write.assert_not_called()
+        self.assertEqual(self.pipeline.call_count, 2)
+
     def test_fresh_cache_then_source_edit_invalidates_and_unchanged_source_reuses(self):
         first = self.recompose()
         self.assertFalse(first.cache_hit)

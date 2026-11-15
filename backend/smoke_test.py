@@ -1036,6 +1036,25 @@ end $$;"""
                     assert body.count(statement) == 1
                     body = body.replace(statement, "")
                 sql = prefix + signature + body + suffix
+        elif migration_path.name == "20261114044911_beta_case_retention.sql":
+            # Only the opt-in executor may erase registered cases or expired receipts.
+            prefix, found, tail = sql.partition("create function beta_retention.erase_due(p_receipt uuid default null)")
+            signature, start, tail = tail.partition("as $$")
+            body, end, suffix = tail.partition("$$;")
+            assert found and start and end and ";" not in signature
+            assert "and erased_at is null and (withdrawn_at is not null or ends_at <= clock_timestamp())" in body
+            statements = [
+                f"delete from public.{table} where user_id=e.owner_id::text and case_id=e.case_id;"
+                for table in ("counseling_drafts", "document_exports", "retrieval_logs")
+            ] + [
+                "delete from public.cases where id=e.case_id and user_id=e.owner_id::text;",
+                "delete from beta_retention.enrollments where p_receipt is null and erased_at is not null\n"
+                "        and least(ends_at,withdrawn_at) + interval '1 year' <= clock_timestamp();",
+            ]
+            for statement in statements:
+                assert body.count(statement) == 1
+                body = body.replace(statement, "")
+            sql = prefix + signature + body + suffix
         assert "drop table" not in sql
         assert "drop schema" not in sql
         assert "truncate " not in sql

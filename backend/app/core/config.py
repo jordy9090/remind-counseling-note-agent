@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)
     use_stub: bool = False
     runtime_environment: str = "production"
+    # Exact frontend origins; preview deployments are added explicitly during validation.
+    api_cors_allowed_origins: str = "https://remind.ai.kr"
     # Raw entity discovery is sent only to the authenticated, self-hosted service.
     deid_service_url: str = ""
     deid_service_token: str = ""
@@ -65,6 +67,7 @@ class Settings(BaseSettings):
     embedding_cache_ttl_seconds: int = 300
     embedding_cache_max_entries: int = 256
     disable_embedding_cache: bool = False
+    retain_derived_cache: bool = True
 
     class Config:
         env_file = str(BACKEND_ENV_FILE)

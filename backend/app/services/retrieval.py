@@ -737,7 +737,7 @@ def _log_retrieval(
     rpc_latency_ms: int,
     total_latency_ms: int,
 ) -> None:
-    if not storage_client.retrieval_enabled:
+    if not storage_client.retrieval_enabled or (case_id is None and not settings.retain_derived_cache):
         return
     try:
         storage_client.insert(

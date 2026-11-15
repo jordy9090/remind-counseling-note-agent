@@ -1,0 +1,13 @@
+{
+	auto_https off
+	default_sni 49.247.174.195
+}
+
+https://49.247.174.195:8443 {
+	tls /etc/caddy/remind-api-ip/current/fullchain.pem /etc/caddy/remind-api-ip/current/privkey.pem
+	request_body {
+		max_size 502MiB
+	}
+	header Cache-Control no-store
+	reverse_proxy 127.0.0.1:8000
+}

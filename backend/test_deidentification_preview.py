@@ -92,10 +92,10 @@ class PreviewRouteTests(unittest.TestCase):
             self.assertEqual(items["박서준"]["category"], "name")
             self.assertTrue(items["박서준"]["replacement"].startswith("인물 "))
 
-    def test_vercel_rewrite_is_configured(self):
+    def test_vercel_does_not_proxy_detection_requests(self):
         config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text(encoding="utf-8"))
-        self.assertIn({"source": "/api/notes/deidentification-preview",
-                       "destination": "/api/notes/generate?scope=deid-preview"}, config["rewrites"])
+        self.assertNotIn("rewrites", config)
+        self.assertEqual(config["routes"][0]["status"], 410)
 
     def test_guests_are_rate_limited_separately_from_the_summary(self):
         client = TestClient(app)

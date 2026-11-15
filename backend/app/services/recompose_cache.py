@@ -26,7 +26,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
     visible_section_ids = _normalize_section_ids(request.visible_section_ids)
     source_revision = _case_source_revision(request.session_input.case_id, actor=actor)
     cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor_id, source_revision=source_revision)
-    cached = _read_cached_result(cache_key)
+    cached = _read_cached_result(cache_key) if settings.retain_derived_cache else None
     if cached is not None:
         _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
         return RecomposeNoteResponse(
@@ -43,7 +43,8 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
         actor=actor,
     )
     _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
-    _write_cached_result(cache_key, result)
+    if settings.retain_derived_cache:
+        _write_cached_result(cache_key, result)
     return RecomposeNoteResponse(
         result=result,
         visible_section_ids=visible_section_ids,

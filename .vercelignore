@@ -15,3 +15,8 @@ frontend/dist
 remind-counseling-note-agent
 research_pilot_crew
 sample_data/*
+
+# Vercel serves the frontend only. Counseling handlers run exclusively on iwinv.
+/api
+/backend
+/requirements.txt

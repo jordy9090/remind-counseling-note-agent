@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import audio, cases, documents, health, materials, notes
 from app.api.routes.vouchers import router as voucher_router
-from app.core.config import validate_runtime_security
+from app.core.config import settings, validate_runtime_security
 
 app = FastAPI(
     title="Re:mind MVP API",
@@ -14,16 +14,25 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
+    allow_origins=[origin.strip() for origin in settings.api_cors_allowed_origins.split(",") if origin.strip()] + ([
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:8501",
         "http://127.0.0.1:8501",
-    ],
+    ] if settings.is_local_environment else []),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "Retry-After"],
 )
+
+
+@app.middleware("http")
+async def prevent_api_caching(request, call_next):
+    response = await call_next(request)
+    if "no-store" not in response.headers.get("Cache-Control", "").lower():
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 app.include_router(health.router)
 app.include_router(notes.router)

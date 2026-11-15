@@ -2,82 +2,23 @@
   "installCommand": "npm --prefix frontend install",
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/audio/:path*",
-      "destination": "/api/materials/documents/extract?audio_path=:path*"
+      "src": "/api(?:/.*)?",
+      "headers": {
+        "Cache-Control": "no-store"
+      },
+      "status": 410
     },
     {
-      "source": "/api/documents/vouchers/:path*",
-      "destination": "/api/documents/export?voucher_path=:path*"
+      "handle": "filesystem"
     },
     {
-      "source": "/api/notes/quick-summary",
-      "destination": "/api/notes/generate?scope=quick"
-    },
-    {
-      "source": "/api/notes/deidentification-preview",
-      "destination": "/api/notes/generate?scope=deid-preview"
-    },
-    {
-      "source": "/api/notes/deidentification-confirm",
-      "destination": "/api/notes/generate?scope=deid-confirm"
-    },
-    {
-      "source": "/api/cases/:case_id/quick-summary",
-      "destination": "/api/cases/dashboard?case_id=:case_id&scope=quick-summary"
-    },
-    {
-      "source": "/api/notes/storage-policy",
-      "destination": "/api/notes/record?scope=storage-policy"
-    },
-    {
-      "source": "/api/notes/records/:note_id/input-deletion",
-      "destination": "/api/notes/record?note_id=:note_id&scope=input-deletion"
-    },
-    {
-      "source": "/api/notes/records/:note_id",
-      "destination": "/api/notes/record?note_id=:note_id"
-    },
-    {
-      "source": "/api/notes/drafts/:draft_id",
-      "destination": "/api/notes/draft?draft_id=:draft_id"
-    },
-    {
-      "source": "/api/cases",
-      "destination": "/api/cases/dashboard?scope=list"
-    },
-    {
-      "source": "/api/cases/:case_id/dashboard",
-      "destination": "/api/cases/dashboard?case_id=:case_id"
-    },
-    {
-      "source": "/api/cases/:case_id/schedule",
-      "destination": "/api/cases/dashboard?case_id=:case_id&scope=schedule"
-    },
-    {
-      "source": "/api/cases/:case_id/profile",
-      "destination": "/api/cases/dashboard?case_id=:case_id&scope=profile"
-    },
-    {
-      "source": "/api/cases/:case_id/person-dictionary",
-      "destination": "/api/cases/dashboard?case_id=:case_id&scope=person-dictionary"
+      "src": "/.*",
+      "dest": "/index.html",
+      "headers": {
+        "Cache-Control": "no-store"
+      }
     }
-  ],
-  "functions": {
-    "api/notes/generate.py": {
-      "maxDuration": 300,
-      "includeFiles": "backend/app/skills/**"
-    },
-    "api/notes/recompose.py": {
-      "includeFiles": "backend/app/skills/**"
-    },
-    "api/materials/documents/extract.py": {
-      "maxDuration": 300
-    },
-    "api/documents/export.py": {
-      "maxDuration": 60,
-      "includeFiles": "backend/app/templates/vouchers/**"
-    }
-  }
+  ]
 }
