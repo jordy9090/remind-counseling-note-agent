@@ -27,7 +27,7 @@ const NEW_PERSON = '__new__'
 
 const KIND_BADGE: Record<PersonMentionKind, { label: string; className: string }> = {
   label: { label: '비식별 라벨', className: 'bg-primary-50 text-primary-400' },
-  name: { label: '남은 이름 · 연결하면 가려짐', className: 'bg-danger-50 text-danger-500' },
+  name: { label: '남은 이름 · 연결하면 가려짐', className: 'bg-grey-200 text-grey-700' },
   relation: { label: '관계 표현', className: 'bg-grey-100 text-grey-600' },
   manual: { label: '직접 추가', className: 'bg-grey-100 text-grey-600' },
 }
@@ -136,7 +136,7 @@ export default function PersonMappingModal({
             찾은 표현 {mapping.mentions.length}개 · 연결 {linkedCount}개
           </span>
           {unresolved.length > 0 && (
-            <span role="status" className="inline-flex h-9 items-center rounded-[10px] bg-danger-50 px-3 text-sm font-bold text-danger-500">
+            <span role="status" className="inline-flex h-9 items-center rounded-[10px] bg-grey-100 px-3 text-sm font-bold text-grey-700">
               연결하지 않은 이름 {unresolved.length}개는 그대로 AI에 전달돼요
             </span>
           )}
@@ -215,7 +215,7 @@ export default function PersonMappingModal({
                   <Plus className="h-4 w-4" />표현 추가
                 </button>
               </div>
-              {formError && <p role="alert" className="mt-2 text-xs text-danger-500">{formError}</p>}
+              {formError && <p role="alert" className="mt-2 text-xs font-semibold text-grey-700">{formError}</p>}
             </form>
           </section>
         </div>
