@@ -169,11 +169,28 @@ class QwenTests(unittest.TestCase):
         self.assertEqual({"경계이름", "꼬리이름"}, {item.original for item in result.entities})
         self.assertTrue(seen[-1].endswith("꼬리이름"))
 
-    def test_incomplete_malformed_hallucinated_or_unavailable_detection_never_succeeds(self):
-        for reply in [self.reply('{"entities": []}', done_reason="length"), self.reply("bad JSON"),
-                      self.reply('{"entities":[{"original":"not-in-source","category":"name"}]}')]:
+    def test_spacing_changes_map_to_source_and_reworded_entities_are_dropped(self):
+        text = "내담자: 1994년 7월 21일생이고, 수빈이 아버님이 편찮으셨어요. 임수빈이 도와줬어요."
+        reply = {"entities": [
+            {"original": "1994 년 7 월 21 일", "category": "birth_date"},
+            {"original": "수빈이 아버지", "category": "name"},
+            {"original": "임수빈", "category": "name"},
+        ]}
+        with patch.object(qwen, "urlopen", return_value=self.reply(json.dumps(reply))):
+            result = qwen.detect_on_ollama([text])
+        self.assertEqual({("1994년 7월 21일", "birth_date"), ("임수빈", "name")},
+                         {(item.original, item.category) for item in result.entities})
+        self.assertTrue(all(item.original in text for item in result.entities), "only exact source spans are returned")
+        self.assertIsNone(qwen.source_span("가 나", "다라마"))
+        self.assertIsNone(qwen.source_span(" 가 ", "가나다"), "one character is never a span")
+
+    def test_incomplete_malformed_or_unavailable_detection_never_succeeds(self):
+        for reply in [self.reply('{"entities": []}', done_reason="length"), self.reply("bad JSON")]:
             with patch.object(qwen, "urlopen", return_value=reply), self.assertRaises(qwen.DetectionUnavailable):
                 qwen.detect_on_ollama([RAW])
+        hallucinated = self.reply('{"entities":[{"original":"not-in-source","category":"name"}]}')
+        with patch.object(qwen, "urlopen", return_value=hallucinated):
+            self.assertEqual([], qwen.detect_on_ollama([RAW]).entities)
         with patch.object(qwen, "urlopen", side_effect=TimeoutError()), self.assertRaises(qwen.DetectionUnavailable):
             qwen.detect_on_ollama([RAW])
 
