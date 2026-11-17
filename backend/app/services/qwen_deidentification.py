@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import ssl
 import time
 from typing import Literal
@@ -50,6 +51,22 @@ def chunks(text: str, size: int = 3000, overlap: int = 200):
         start += size - overlap
 
 
+def source_span(original: str, chunk: str) -> str | None:
+    """The exact chunk text the model meant, or None when it is not in the chunk.
+
+    The model sometimes changes spacing ("1994년 7월 21일" → "1994 년 7 월 21 일"). Such a reply is
+    mapped back to the source characters so the identifier is still replaced. A reply that differs in
+    anything but whitespace is not source text and has nothing to replace.
+    """
+    if original in chunk:
+        return original
+    compact = "".join(original.split())
+    if len(compact) < 2:
+        return None
+    match = re.search(r"\s*".join(map(re.escape, compact)), chunk)
+    return match.group(0) if match else None
+
+
 def detect_on_ollama(texts: list[str], *, model: str = "qwen3.5:27b", timeout: float = 240) -> Entities:
     deadline = time.monotonic() + timeout
     found: dict[tuple[str, str], Entity] = {}
@@ -76,9 +93,11 @@ def detect_on_ollama(texts: list[str], *, model: str = "qwen3.5:27b", timeout: f
                     raise ValueError("Incomplete detection")
                 parsed = Entities.model_validate_json(raw["message"]["content"])
                 for entity in parsed.entities:
-                    if entity.original not in chunk:
-                        raise ValueError("Entity is not a source span")
-                    found[(entity.original, entity.category)] = entity
+                    # Only source spans are returned; a reworded reply would replace nothing.
+                    span = source_span(entity.original, chunk)
+                    if span is None or len(span) > 200:
+                        continue
+                    found[(span, entity.category)] = Entity(original=span, category=entity.category)
                 if len(found) > 500:
                     raise ValueError("Too many entities")
             except Exception:
