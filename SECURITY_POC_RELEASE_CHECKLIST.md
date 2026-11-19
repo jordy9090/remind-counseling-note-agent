@@ -1,0 +1,66 @@
+# Restricted real-data PoC release checklist
+
+Decision: **HOLD real data and production rollout** until the blocked environment and policy checks are signed off. This is an engineering evidence ledger, not a security certification or legal opinion.
+
+## Completion criteria and boundaries
+
+1. Independently review PR #100, reproduce surviving P0/P1 paths with synthetic inputs, and apply narrow corrections to that branch.
+2. Provide safe, reproducible authentication/RLS verification procedures and automated local checks; distinguish mock results from installed database policy.
+3. Account for deletion targets, retained derivatives, caches, temporary files, failure/retry behavior and backup blockers without deleting real data.
+4. Restore usable saved evidence only for unchanged, supported claims; preserve final notes and never reconstruct deleted originals.
+5. Inspect application errors and tracing for sensitive content and close locally reproducible exposure paths.
+6. Keep small commits, independent review, relevant CI and this checklist current; use stacked Draft PRs for separate P1 changes.
+
+Authorized: source/templates/tests, synthetic data, mocks, local isolated worktrees, commits and Draft PRs. Not authorized: production access/deployment, main merge, real data or keys, production DB changes, real-data deletion, legal/contract decisions or major architecture replacement. Operational checks below remain BLOCKED while local work continues.
+
+Baseline checked 2026-11-19 07:33 UTC: main `f942db4ecb6e696d75022d3f01a52b8bf2a37cf0`; PR #100 `536d2047305257fd8b12268a2503e606ad98a2a9`, open Draft, no submitted human reviews. Existing dirty development checkout is untouched. Historical `SECURITY_POC_REVIEW.md` describes the November 17 local snapshot; `SECURITY_POC_REMEDIATION.md` describes the newer PR baseline. Historical findings must be revalidated, not assumed current.
+
+## Completed
+
+| Item | Evidence | Limits |
+| --- | --- | --- |
+| PR #100 baseline implementation and CI | [PR #100](https://github.com/jordy9090/remind-counseling-note-agent/pull/100); backend 25 and frontend 12 new mock regressions; [Product CI](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44468942429), [security CI](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44468942399) passed at `536d204` | Reused because unchanged; not proof of installed RLS or deployment settings |
+| Original-input column and recompose cache guards | `poc_mode` overrides raw-input and cache flags; effective policy exposed to UI | Existing copies, drafts, sanitized narratives, excerpts and downloads remain sensitive |
+| Guest handoff removed | Legacy pending summary discarded without display/import; signed-in save remains covered | Does not establish browser/device backup erasure |
+| P0 follow-up: reviewed-history consumption | `398344b`: the graph now uses the same effective review predicate as receipt validation; a real graph-node/prompt regression proves counselor-masked history is not fetched again | Five synthetic history controls; no live model |
+| P0 follow-up: shared identity disabled throughout PoC APIs | `398344b`: common dependency requires a verified bearer in PoC, authentication has no service-key fallback, startup rejects missing real-auth/public configuration | Six synthetic checks and independent review; actual participant roster remains blocked |
+
+## Remaining: prioritized engineering work
+
+| Priority / item | Evidence and action | Status / owner |
+| --- | --- | --- |
+| PR #100 follow-up integration | Verify CI for reviewed-history/identity corrections; both configuration templates now require real-user auth | Local green; CI pending |
+| P1: reopened evidence projection | Historical failure still appears in `noteFromRecord`; retain only owned, validated saved excerpts for unchanged claims | Isolated reproduction/fix in progress; stacked branch `codex/poc-evidence-reopen` |
+| P1: residual retention and cleanup | Inspect deletion response semantics, partial failures, scratch cleanup and detector jobs against existing retention tools | Source review in progress |
+| P1: tracing and diagnostics | Inspect graph/LLM callbacks in addition to application exception handlers; synthetic egress/log canaries | Source review in progress |
+| Release verification pack | Safe preflight and disposable-database RLS/ownership procedure; no remote targets by default | In progress |
+
+## Blocked: evidence or approval required outside local engineering
+
+| Item | Required evidence / safe verification | Why blocked |
+| --- | --- | --- |
+| Deployment/version/identity | Exact frontend, API, audio and detector revisions; approved origins/TLS; invitation/participant settings; real JWT enforcement; effective PoC flags | Actual server access and configuration attestation are not authorized |
+| Installed RLS, grants, storage and RPCs | Two synthetic users in an explicitly designated disposable environment; direct SELECT/INSERT/UPDATE/DELETE, relationship and RPC checks, including unauthenticated roles | No production DB access or real credentials; local PostgreSQL tooling availability must be recorded |
+| Existing retained data and backups | Approved inventory, retention periods, deletion authority, backup/PITR expiry and restore reconciliation; provider deletion evidence | Real-data cleanup and retention/legal decisions require owner approval |
+| Key/operator access | Redacted access matrix for data, signing/encryption keys, privileged accounts, support access and backups | Requires actual infrastructure/secret-manager permission review; no keys may be supplied to these tests |
+| Vendors and legal basis | Actual processors, locations, training/retention terms, subprocessors, consent/legal review | Contract and legal review are separate external decisions |
+| Monitoring outside the app | Proxy/APM/crash-dump configuration and synthetic canary observation in an authorized environment | Local mocks cannot establish external collector behavior |
+
+## Consent and privacy notice: technical facts and limits
+
+Source-backed facts are conditional on deployment of the reviewed version with its required settings. Approved text versions are scoped by actor/purpose/body hash; changing a request requires renewed approval. PoC saves omit the optional original-input column and do not use recompose disk caches. Guest results are not automatically imported into another account. Application errors use fixed messages in tested paths.
+
+Do not claim that no identifiable content is retained, that pseudonymization is complete, that all processing is local/self-owned, that only counselors can decrypt data, that original-input deletion erases summaries/drafts/downloads/backups, or that approval proves legal compliance. Existing one-hour receipts can retry the same approved version; browser edits do not revoke a token for an older approved body. Unresolved history/evidence paths above must close before describing them as verified.
+
+## Validation ledger
+
+For each new change record commit, environment, exact command/check, UTC time, result and synthetic cleanup. Prior passing checks above are reused until their relevant code/configuration changes. No deployment or real accounts are part of the local verification environment. Optional scanner integration previously rejected this Git worktree; no scanner pass is claimed, and focused independent source review is required.
+
+| Code version | Environment / check | Result and time | Cleanup |
+| --- | --- | --- | --- |
+| `536d204` / main `f942db4` | Source/Git/PR metadata assessment; one initial fetch | Clean task worktree; unchanged baseline; 2026-11-19 07:33 UTC | No data created or deleted |
+| `536d204` + regression additions | Protected `test_poc_reviewed_history`; `test_poc_auth_boundary` | Red: reviewed-history prompt restored the removed synthetic identifier; shared identity and service-key fallback controls failed. Positive non-PoC controls passed. 2026-11-19 before correction | In-memory mocks; scratch removed |
+| `398344b` | `python backend/tests/run_poc_review.py test_poc_auth_boundary test_poc_reviewed_history` | 11 passed; 2026-11-19 07:38 UTC checkpoint | No external accounts/data; scratch removed |
+| `398344b` | Protected runner `--legacy test_auth_guard test_reviewed_history test_iwinv_review test_security_access_boundaries` | 54 passed; 2026-11-19 07:38 UTC checkpoint | No network or credential access |
+
+Independent review of the follow-up inspected both outcomes of the shared guard, history consumer, public-key selection, configured audio startup and non-PoC compatibility. No additional P0/P1 was found within that scope. Stale preparation tokens still require cancel/restart after an expiry/history change; this is a fail-closed UX limitation, not an authorization bypass.
