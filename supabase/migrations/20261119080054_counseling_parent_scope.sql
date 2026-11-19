@@ -10,6 +10,7 @@ declare
     parent_session uuid := nullif(row_data->>'session_id', '')::uuid;
     parent_note uuid;
     note_column text;
+    lock_parents boolean := true;
 begin
     -- The application updates content in place; it never moves saved parents.
     -- A later parent move would strand already-validated children in another scope.
@@ -25,16 +26,37 @@ begin
        and row_data - 'source_note_id' = to_jsonb(old) - 'source_note_id' then
         return new;
     end if;
-    -- Shared row locks keep a checked parent stable until this write commits.
-    perform 1 from public.cases c
-      where c.id = new.case_id and c.user_id = new.user_id for share;
+    if tg_op = 'UPDATE' then
+        lock_parents := row(row_data->>'user_id', row_data->>'case_id',
+                            row_data->>'session_id', row_data->>'note_id', row_data->>'source_note_id')
+            is distinct from row(old.user_id, old.case_id, to_jsonb(old)->>'session_id',
+                                 to_jsonb(old)->>'note_id', to_jsonb(old)->>'source_note_id');
+    end if;
+    -- An unchanged relationship is already protected by the child's row lock:
+    -- parent deletion must cascade through it (or clear its source-note link).
+    -- Locking the parent again would invert that deletion/update lock order.
+    -- Still validate existing links, including malformed rows predating this guard.
+    -- New or changed links retain the original shared-lock validation.
+    if lock_parents then
+        perform 1 from public.cases c
+          where c.id = new.case_id and c.user_id = new.user_id for share;
+    else
+        perform 1 from public.cases c
+          where c.id = new.case_id and c.user_id = new.user_id;
+    end if;
     if not found then
         raise exception using errcode = '23514', message = 'Counseling parent scope mismatch';
     end if;
     if parent_session is not null then
-        perform 1 from public.sessions s
-          where s.id = parent_session and s.case_id = new.case_id
-            and s.user_id = new.user_id for share;
+        if lock_parents then
+            perform 1 from public.sessions s
+              where s.id = parent_session and s.case_id = new.case_id
+                and s.user_id = new.user_id for share;
+        else
+            perform 1 from public.sessions s
+              where s.id = parent_session and s.case_id = new.case_id
+                and s.user_id = new.user_id;
+        end if;
         if not found then
             raise exception using errcode = '23514', message = 'Counseling parent scope mismatch';
         end if;
@@ -43,11 +65,18 @@ begin
         parent_note := nullif(row_data->>note_column, '')::uuid;
         if parent_note is not null then
             -- Source notes can come from earlier sessions of the same owned case.
-            perform 1 from public.generated_notes n
-              where n.id = parent_note and n.case_id = new.case_id
-                and n.user_id = new.user_id
-                and (note_column <> 'note_id' or parent_session is null or n.session_id = parent_session)
-              for share;
+            if lock_parents then
+                perform 1 from public.generated_notes n
+                  where n.id = parent_note and n.case_id = new.case_id
+                    and n.user_id = new.user_id
+                    and (note_column <> 'note_id' or parent_session is null or n.session_id = parent_session)
+                  for share;
+            else
+                perform 1 from public.generated_notes n
+                  where n.id = parent_note and n.case_id = new.case_id
+                    and n.user_id = new.user_id
+                    and (note_column <> 'note_id' or parent_session is null or n.session_id = parent_session);
+            end if;
             if not found then
                 raise exception using errcode = '23514', message = 'Counseling parent scope mismatch';
             end if;

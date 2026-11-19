@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/poc-parent-scope": false
+    }
+  },
   "installCommand": "npx --yes pnpm@10.28.2 install --frozen-lockfile",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",

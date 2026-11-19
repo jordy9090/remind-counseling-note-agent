@@ -1,6 +1,7 @@
 """Deterministic parent/child transactions in the runner's disposable database."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import re
 import subprocess
 import time
 from uuid import uuid4
@@ -49,8 +50,13 @@ def held_transaction(command, env, name, sql):
 
 def verify_parent_scope(command, env, run, require_success):
     """Report every ordering failure and clean each committed synthetic fixture."""
-    def query(sql, phase="Parent scope concurrency"):
-        return require_success(run(command, env=env, sql=sql, timeout=30), phase)
+    def query(sql, phase="Parent scope concurrency", expected_error=None):
+        result = run(command, env=env, sql=sql, timeout=30)
+        if expected_error:
+            if not result.returncode or not re.search(r"\bERROR:\s+" + expected_error + r":", result.stderr):
+                raise RuntimeError("Expected SQLSTATE=" + expected_error + ": " + phase)
+            return
+        return require_success(result, phase)
 
     def wait_until(predicate, phase):
         deadline = time.monotonic() + 8
@@ -62,7 +68,8 @@ def verify_parent_scope(command, env, run, require_success):
 
     passed, failed = [], []
     for parent, child in EDGES:
-        for ordering in ("child_before_delete", "delete_before_child", "parent_child_updates"):
+        for ordering in ("child_before_delete", "delete_before_child", "parent_child_updates",
+                         "insert_before_delete", "delete_before_insert"):
             scenario = f"{parent}:{child}:{ordering}"
             owner, session, note, child_id, control_note = (str(uuid4()) for _ in range(5))
             case, control = "poc_parent_" + session, "poc_control_" + session
@@ -85,6 +92,8 @@ def verify_parent_scope(command, env, run, require_success):
                 "case_memory_chunks": "(id,case_id,user_id,session_id,source_note_id,counselor_id,field_type,chunk_text,source_ref) "
                     f"values ({shared},{linked_session},{linked_note},'{owner}','session_content','Synthetic memory','synthetic:{child_id}')",
             }
+            inserting = ordering in ("insert_before_delete", "delete_before_insert")
+            insert_child = f"insert into public.{child} {child_rows[child]};"
             query(f"""begin;
                 insert into auth.users(id) values ('{owner}');
                 {actor}
@@ -96,13 +105,17 @@ def verify_parent_scope(command, env, run, require_success):
                   values ('{note}','{case}','{owner}','{session}');
                 insert into public.generated_notes(id,case_id,user_id,confirmed_json)
                   values ('{control_note}','{control}','{owner}','{{"synthetic":"retained"}}');
-                insert into public.{child} {child_rows[child]};
+                {'' if inserting else insert_child}
                 commit;
             """, "Create synthetic parent fixture")
             update_child = f"update public.{child} set {EDITS[child]} where id='{child_id}';"
             delete_parent = f"delete from public.{parent} where id='{parent_id}';"
             try:
-                if ordering == "delete_before_child":
+                if ordering == "delete_before_insert":
+                    first, second, final = delete_parent, insert_child, "select 1;"
+                elif ordering == "insert_before_delete":
+                    first, second, final = insert_child, delete_parent, "select 1;"
+                elif ordering == "delete_before_child":
                     first, second, final = delete_parent, update_child, "select 1;"
                 else:
                     first = f"select 1 from public.{child} where id='{child_id}' for update;"
@@ -117,7 +130,8 @@ def verify_parent_scope(command, env, run, require_success):
                         wait_until(f"application_name='{holding}' and state='idle in transaction'", scenario)
                         future = pool.submit(query,
                             f"set application_name='{waiting}'; set statement_timeout='20s'; "
-                            f"begin; {actor}{second} commit;", scenario)
+                            f"begin; {actor}{second} commit;", scenario,
+                            "23514" if ordering == "delete_before_insert" else None)
                         wait_until(f"application_name='{waiting}' and wait_event_type='Lock' and exists "
                             f"(select from pg_stat_activity h where h.application_name='{holding}' "
                             "and h.pid=any(pg_blocking_pids(pg_stat_activity.pid)))", scenario)
@@ -131,9 +145,10 @@ def verify_parent_scope(command, env, run, require_success):
                                 f"and exists(select from public.{child} where id='{child_id}' and {EDITS[child]})")
                 else:
                     expected = f"not exists(select from public.{parent} where id='{parent_id}') and "
-                    if retained_link:
+                    if retained_link and ordering != "delete_before_insert":
                         expected += (f"exists(select from public.{child} where id='{child_id}' "
-                                     f"and source_note_id is null and {EDITS[child]})")
+                                     f"and source_note_id is null and "
+                                     f"{EDITS[child] if not inserting else 'true'})")
                     else:
                         expected += f"not exists(select from public.{child} where id='{child_id}')"
                 if query(f"""select ({expected}) and exists(select from public.generated_notes

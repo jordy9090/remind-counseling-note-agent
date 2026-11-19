@@ -54,6 +54,34 @@ Do not claim that no identifiable content is retained, that pseudonymization is 
 
 ## Validation ledger
 
+### PR #104 parent/child contention follow-up (2026-11-19)
+
+Completion criteria: reproduce the remaining parent/child lock contention; make only the necessary correction; retain ownership, immutable scope, nullable-link and deletion behavior; pass the PR's disposable SQL, synthetic security and Product CI checks; record evidence and remaining issues here. No main merge, deployment, existing database access or real data is authorized.
+
+Baseline: PR head `780465008f498b822aeb02cc97ac1be890bc8c80`, stacked base `e684f74a12b6e70e096d7b3520f0ed77dba205ad`, fetched main `f942db4ecb6e696d75022d3f01a52b8bf2a37cf0`. The development checkout remains untouched. The existing uncommitted parent-lock correction in the PR worktree is retained and reviewed. Windows has no Docker/PostgreSQL executable; real SQL execution uses the existing Linux CI runner with mock Auth roles/claims and a network-disabled, uniquely owned disposable PostgreSQL 15 container. No real Auth users, endpoints or credentials are used.
+
+The unchanged baseline's [database run 44490958754](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44490958754) reproduced **24 deadlocks (`40P01`) across 12 parent edges**: child-before-delete and parent/child content updates failed; all 12 delete-before-child controls and 469 role/RLS assertions passed. Logs confirm zero remaining synthetic rows and container removal at 08:51 UTC. This immutable red evidence is reused rather than rerunning the same baseline.
+
+Correction: content-only updates still validate every parent through invoker/RLS reads, but do not reacquire parent row locks when all five relationship fields are unchanged. The already locked child forces parent cascade/SET NULL operations to wait, avoiding the inverted lock order. Inserts and relationship changes retain shared parent locks; session/note scope immutability and source-only detachment remain unchanged. The SQL contract now also rejects malformed legacy case/session/source-note links on content-only updates. The concurrency matrix adds insert-before-delete and delete-before-insert controls for every edge (60 scenarios total).
+
+Both Vercel configuration roots disable Git deployments only for `codex/poc-parent-scope`, using the [documented branch setting](https://vercel.com/docs/project-configuration/git-configuration#git.deploymentenabled), so CI pushes do not create Preview deployments. No deployment/promotion command is part of this work.
+
+| Code version | Environment / exact check | Result and UTC time | Deployment / cleanup |
+| --- | --- | --- | --- |
+| `7804650` | `python3 backend/tests/run_poc_database.py --run-disposable`, run 44490958754 | Reproduced: 24/36 concurrency failures (`40P01`); 469 SQL assertions passed, 2026-11-19 08:51 | No deployment for this check; zero fixture rows; container/tmpfs removed |
+| `7804650` + candidate diff | Local `python backend/tests/run_poc_database.py --static`; `python -m unittest discover -s backend/tests/poc_database -p test_runner.py -v`; Python AST / Vercel JSON parse; `git diff --check` | Passed: 18 migrations, 469 assertions inventoried; 4 runner safety tests; syntax/config/diff checks, 2026-11-19 09:47 | No database or accounts created |
+| Working candidate | Disposable SQL, synthetic security and Product CI | Pending push and execution | Deployment disabled for this branch |
+
+Security review: one optional diff-scan attempt rejected this checkout with `Review changes requires a non-bare Git worktree with a resolvable HEAD.` No scanner pass is claimed. A separate focused source pass reviewed all six changed files and the parent FK/RLS/immutability contracts: the unlocked branch retains identical ownership/scope predicates, changes to any relationship field retain locking, the detachment exception cannot add a reference, test-only trigger bypasses roll back, and generated SQL has only authored identifiers/UUID fixtures. No additional issue was found within this correction; beta retention and privileged scope changes remain outside its proof. Review completed 2026-11-19 09:49 UTC.
+
+Remaining issues and limits:
+
+- The older beta retention guard also locks enrollment rows and rejects writes after withdrawal/expiry. Its `ON DELETE SET NULL` interaction for linked source notes can block beta erasure; ordinary `poc_parent_*` cases do not prove this beta path. It remains a separate release blocker, not silently fixed by this migration.
+- Inserts and changed relationships deliberately retain locking. The matrix covers insert/delete races and unchanged-link updates, not every multi-row reparenting transaction or isolation level. No universal deadlock-free guarantee is claimed.
+- Existing malformed rows are not rewritten; content updates fail closed until separately reviewed repair. Installed-policy parity, privileged operator behavior and all real-data/deployment gates above remain blocked.
+
+### Earlier validation
+
 For each new change record commit, environment, exact command/check, UTC time, result and synthetic cleanup. Prior passing checks above are reused until their relevant code/configuration changes. No deployment or real accounts are part of the local verification environment. Optional scanner integration previously rejected this Git worktree; no scanner pass is claimed, and focused independent source review is required.
 
 | Code version | Environment / check | Result and time | Cleanup |

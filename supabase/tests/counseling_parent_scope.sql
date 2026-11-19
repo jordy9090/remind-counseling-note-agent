@@ -55,6 +55,44 @@ begin
         raise exception using errcode='P9001', message='Cross-case note link accepted';
     exception when check_violation then null;
     end;
+    -- Model malformed rows predating this migration. Only fixture setup bypasses
+    -- the guard; authenticated content-only updates must still validate parents.
+    reset role;
+    alter table public.sessions disable trigger counseling_parent_scope;
+    update public.sessions set case_id=case_b,session_number=991 where id=session_a;
+    alter table public.sessions enable trigger counseling_parent_scope;
+    set local role authenticated;
+    begin
+        update public.generated_notes set draft_json='{"synthetic":"edited"}' where id=note_a;
+        raise exception using errcode='P9001', message='Unchanged malformed session link accepted';
+    exception when check_violation then null;
+    end;
+    reset role;
+    alter table public.sessions disable trigger counseling_parent_scope;
+    update public.sessions set case_id=case_a,session_number=1 where id=session_a;
+    alter table public.sessions enable trigger counseling_parent_scope;
+    alter table public.generated_notes disable trigger counseling_parent_scope;
+    update public.generated_notes set source_note_id=note_b where id=note_a;
+    alter table public.generated_notes enable trigger counseling_parent_scope;
+    set local role authenticated;
+    begin
+        update public.generated_notes set draft_json='{"synthetic":"edited"}' where id=note_a;
+        raise exception using errcode='P9001', message='Unchanged malformed source-note link accepted';
+    exception when check_violation then null;
+    end;
+    update public.generated_notes set source_note_id=earlier_note where id=note_a;
+    -- An invisible legacy parent must also fail without acquiring its row lock.
+    reset role;
+    update public.cases set user_id=gen_random_uuid()::text where id=case_b;
+    set local role authenticated;
+    begin
+        update public.sessions set session_title='Synthetic edit' where id=session_b;
+        raise exception using errcode='P9001', message='Unchanged foreign case link accepted';
+    exception when check_violation then null;
+    end;
+    reset role;
+    update public.cases set user_id=owner_a::text where id=case_b;
+    set local role authenticated;
     -- Nullable parent links and legitimate same-case source links remain supported.
     insert into public.generated_notes(id,case_id,session_id,user_id,source_note_id)
       values(note_linked,case_a,session_a,owner_a::text,note_a);
