@@ -129,6 +129,7 @@ jobs:
           pnpm verify:deidentification-review
           pnpm verify:person-mapping
           node --test scripts/verify-poc-guest-isolation.test.mjs scripts/verify-poc-detection-approval.test.mjs
+          node scripts/verify-poc-reopen.mjs
 
       - name: Build frontend
         working-directory: frontend

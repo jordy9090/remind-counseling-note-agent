@@ -1,9 +1,9 @@
 import { AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Info, X } from 'lucide-react'
 import {
   counselorSourceField,
+  groundingReviewStatus,
   isInlineGroundingItem,
   parseTranscriptEvidence,
-  supportStateLabel,
   type GroundingReviewItem,
 } from '../../lib/groundingReview'
 import type { GroundingSource, GroundingSupportType } from '../../types/session'
@@ -67,6 +67,7 @@ export default function GroundingEvidenceReview({ items, onSelect, renderedText,
 }
 
 export function EvidenceSourcePanel({ item, onClose }: { item: GroundingReviewItem; onClose: () => void }) {
+  const status = groundingReviewStatus(item)
   return (
     <aside className="rounded-[7px] border border-slate-200 bg-white shadow-sm" aria-label="근거 원문">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
@@ -75,6 +76,7 @@ export function EvidenceSourcePanel({ item, onClose }: { item: GroundingReviewIt
           <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
             {item.stale
               ? '수정된 AI 문장과 기존 근거를 다시 확인해주세요.'
+              : item.missingSource ? '근거 정보를 불러올 수 없습니다.'
               : '이 AI 문장을 뒷받침하는 과거 상담 원문입니다.'}
           </p>
         </div>
@@ -87,8 +89,8 @@ export function EvidenceSourcePanel({ item, onClose }: { item: GroundingReviewIt
         <div className="rounded-md bg-amber-50 px-3 py-2 ring-1 ring-amber-200">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[10px] font-bold text-amber-800">선택한 문장</p>
-            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${stateStyle[item.claim.support_type]}`}>
-              {supportStateLabel[item.claim.support_type]}
+            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${stateStyle[status.supportType]}`}>
+              {status.label}
             </span>
           </div>
           <p className="mt-1 text-xs font-semibold leading-5 text-slate-800">{item.claim.text}</p>
@@ -124,6 +126,7 @@ function GroundingClaimIndicator({ item, onSelect, selected }: {
   selected: boolean
 }) {
   const { claim, missingSource, sources, stale } = item
+  const status = groundingReviewStatus(item)
   const controlLabel = claim.support_type === 'clinical_inference'
     ? sources.length > 1 ? `참고 원문 ${sources.length}개` : '참고 원문'
     : claim.support_type === 'counselor_judgment'
@@ -136,9 +139,9 @@ function GroundingClaimIndicator({ item, onSelect, selected }: {
         {claim.support_type === 'clinical_inference' ? null : (
           <span className="text-[10px] font-bold text-slate-500">근거 검토</span>
         )}
-        <SupportIcon supportType={claim.support_type} />
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${stateStyle[claim.support_type]}`}>
-          {supportStateLabel[claim.support_type]}
+        <SupportIcon supportType={status.supportType} />
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${stateStyle[status.supportType]}`}>
+          {status.label}
         </span>
         {stale ? (
           <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-200">
