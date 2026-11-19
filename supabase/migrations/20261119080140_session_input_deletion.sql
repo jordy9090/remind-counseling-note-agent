@@ -40,12 +40,23 @@ begin
        row(old.user_id, old.counselor_id, old.case_id, old.session_id) then
         raise exception 'Transcript scope cannot change' using errcode = '23514';
     end if;
-    -- SHARE conflicts with the deletion RPC's UPDATE lock and is held until
-    -- transaction end. This guard also runs for service-role writes that bypass RLS.
-    select s.input_deleted_at into deleted_at from public.sessions s
-        where s.id = new.session_id and s.case_id = new.case_id
-          and s.user_id = new.user_id and new.counselor_id = new.user_id
-        for share of s;
+    if tg_op = 'UPDATE' then
+        -- UPDATE already locks this transcript row, so deletion must wait for it.
+        -- Taking a parent lock here would invert deletion's session -> transcript
+        -- order and deadlock. Keep the scope/marker check without another lock;
+        -- the immutable scope prevents moving this row out of the pending delete.
+        select s.input_deleted_at into deleted_at from public.sessions s
+            where s.id = new.session_id and s.case_id = new.case_id
+              and s.user_id = new.user_id and new.counselor_id = new.user_id;
+    else
+        -- INSERT has no existing child row to serialize with deletion. Hold SHARE
+        -- until commit so deletion sees the insert, or the writer sees the marker.
+        -- This also protects service-role writes that bypass RLS.
+        select s.input_deleted_at into deleted_at from public.sessions s
+            where s.id = new.session_id and s.case_id = new.case_id
+              and s.user_id = new.user_id and new.counselor_id = new.user_id
+            for share of s;
+    end if;
     if not found or deleted_at is not null then
         raise exception 'Session input is unavailable' using errcode = '23514';
     end if;
