@@ -122,7 +122,8 @@ reset role;
 
 -- Give this synthetic bypass-RLS role table access to prove the trigger, not a missing grant, rejects it.
 grant select, insert, update on public.sessions, public.transcript_turns, public.transcript_windows to service_role;
-grant select on public.cases to service_role;
+-- The invoker parent guard uses FOR SHARE, which also requires UPDATE privilege.
+grant select, update on public.cases to service_role;
 set local role service_role;
 select poc_deletion_test.expect_sqlstate('select public.delete_session_input(note_id) from poc_deletion_test.fixture', '42501');
 select poc_deletion_test.expect_sqlstate('update public.sessions set input_deleted_at=null where id=(select session_id from poc_deletion_test.fixture)', '23514');
