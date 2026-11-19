@@ -161,15 +161,20 @@ def run_disposable():
             if tests == 0:
                 raise RuntimeError("The SQL contract returned no test evidence")
             failures = [item for item in results if item.get("passed") is not True]
-            # Run the repository's existing retention procedure contract unchanged, in its own rollback transaction.
-            retention = ROOT / "supabase" / "tests" / "beta_case_retention.sql"
-            require_success(run(command, env=env, sql=retention.read_text(encoding="utf-8")), "Synthetic retention procedure contract")
+            # Every checked-in SQL contract owns a rollback transaction in this empty fixture.
+            contracts = sorted((ROOT / "supabase" / "tests").glob("*.sql"))
+            for contract in contracts:
+                sql = contract.read_text(encoding="utf-8")
+                if not re.search(r"(?im)^begin;", sql) or not sql.rstrip().lower().endswith("rollback;"):
+                    raise RuntimeError("SQL contracts must use explicit rollback transactions")
+                require_success(run(command, env=env, sql=sql), "Synthetic SQL contract " + contract.name)
             remaining = require_success(run(command, env=env, sql=cleanup_query()), "Synthetic row cleanup verification")
             cleanup_ok = remaining == "0"
             if not cleanup_ok:
                 raise RuntimeError("Synthetic rows remain after transaction rollback")
             print(json.dumps({"status": "failed" if failures else "passed", "sql_tests": tests,
                 "failed_tests": failures, "retention_contract": "passed", "remaining_synthetic_rows": 0,
+                "sql_contracts": [contract.name for contract in contracts],
                 "migration_sha256": manifest}, indent=2))
         finally:
             if container_id and not owned:
