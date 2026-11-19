@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     @property
     def effective_supabase_auth_key(self) -> str | None:
         """Server-side key used only to ask Supabase Auth to validate a user JWT."""
+        if self.poc_mode:
+            return self.supabase_publishable_key or self.supabase_anon_key
         return self.supabase_publishable_key or self.supabase_anon_key or self.effective_supabase_key
 
     @property
@@ -115,6 +117,11 @@ class Settings(BaseSettings):
 
 def validate_runtime_security() -> None:
     """Fail closed when persistent counseling state could be exposed."""
+    if settings.poc_mode:
+        if not settings.enable_real_user_auth:
+            raise RuntimeError("PoC mode requires real user authentication; shared preview identities are disabled.")
+        if not settings.supabase_url or not (settings.supabase_publishable_key or settings.supabase_anon_key):
+            raise RuntimeError("PoC mode requires a Supabase URL and a public authentication key.")
     has_access_guard = (
         bool(settings.remind_preview_api_token) and settings.allow_legacy_preview_token
     ) or settings.enable_real_user_auth

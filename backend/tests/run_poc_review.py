@@ -14,6 +14,8 @@ SUITES = (
     "test_poc_approval",
     "test_poc_diagnostics",
     "test_poc_storage",
+    "test_poc_reviewed_history",
+    "test_poc_auth_boundary",
 )
 
 

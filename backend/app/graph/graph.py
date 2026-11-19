@@ -177,8 +177,8 @@ def run_note_pipeline(
     if not settings.use_stub and not settings.openai_api_key:
         raise RuntimeError("AI 회기요약 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.")
     reviewed_context = None
-    if settings.require_deid_review:
-        from app.services.deid_review import reviewed_prior_sessions
+    from app.services.deid_review import review_required, reviewed_prior_sessions
+    if review_required():
         if allow_retrieval and settings.enable_rag:
             reviewed_context = reviewed_prior_sessions()
         # Never perform unreviewed storage/embedding lookups during generation.

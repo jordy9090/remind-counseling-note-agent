@@ -22,6 +22,7 @@ from app.main import app
 
 def real_auth_settings(**overrides):
     base = dict(
+        poc_mode=False,
         enable_real_user_auth=True,
         local_preview_bypass_enabled=False,
         allow_legacy_preview_token=False,

@@ -37,7 +37,7 @@ def require_preview_access(
     authorization: AuthorizationHeader = None,
 ) -> str:
     """Return the authenticated user id, or use the explicitly enabled legacy guard."""
-    if settings.enable_real_user_auth:
+    if settings.enable_real_user_auth or settings.poc_mode:
         return _require_supabase_user(authorization)
     if settings.local_preview_bypass_enabled:
         return settings.remind_preview_actor
