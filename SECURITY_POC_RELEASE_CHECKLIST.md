@@ -58,13 +58,21 @@ Do not claim that no identifiable content is retained, that pseudonymization is 
 
 Completion criteria: reproduce linked-note erasure and enrollment/child lock interactions under expiry and withdrawal; apply the narrowest demonstrated fix; preserve late-write rejection, owner/role boundaries, retries, unrelated final notes and synthetic cleanup; pass disposable SQL and existing PR CI; record results and unresolved limits. Continue on Draft PR #104 with branch deployments disabled. No main merge, deployment or existing database/real data access.
 
-Baseline: `fcb48cf480dbc2a65f5a8c06148d839a4e9635a0`; fetched main remains `f942db4ecb6e696d75022d3f01a52b8bf2a37cf0`. Existing ownership/parent concurrency evidence below remains valid. New tests add a case-level note referencing a session note so the session cascade must execute `ON DELETE SET NULL`; all identities are mock SQL Auth rows/claims in the runner's isolated PostgreSQL container.
+Baseline: `fcb48cf480dbc2a65f5a8c06148d839a4e9635a0`; fetched main remains `f942db4ecb6e696d75022d3f01a52b8bf2a37cf0`. Existing ownership/parent concurrency evidence below remains valid. New tests add a case-level note referencing a session note so source/session-only deletion must execute `ON DELETE SET NULL`; all identities are mock SQL Auth rows/claims in the runner's isolated PostgreSQL container.
 
 | Code version | Environment / exact check | Result and UTC time | Deployment / cleanup |
 | --- | --- | --- | --- |
-| `fcb48cf` + lifecycle regression tests | `python3 backend/tests/run_poc_database.py --run-disposable` in CI | Pending reproduction: 33 lifecycle scenarios, including all 12 guarded tables in both row-lock/retirement orders | No deployment; only owned synthetic fixtures |
+| `3fa5035d1bddcfd3bde392bfd8d75447d442a120` | `python3 backend/tests/run_poc_database.py --run-disposable`; [red CI 44501246941](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44501246941) | 26/33 failures: 2 ended-source deletions (`P0001`) and 24 enrollment/row deadlocks (`40P01`) across all 12 guarded tables; 7 controls passed. 2026-11-19 10:00 UTC | No deployment. Cleanup row check failed because the failure-path harness omitted 3 non-FK tables; owned container/tmpfs removed. Harness cleanup corrected before the green run |
+| Candidate after `3fa5035` | 35 lifecycle scenarios, 60 parent concurrency scenarios and 469 role/RLS assertions in disposable CI | Pending correction verification | Only synthetic fixture rows; zero-row cleanup required |
+| Candidate after `3fa5035` | Local `python backend/tests/run_poc_database.py --static`; `python -m unittest discover -s backend/tests/poc_database -p test_runner.py -v`; Python AST parse; `git diff --check` | Passed: 19 migrations inventoried, 4 safety tests, syntax/diff checks; 2026-11-19 10:02 UTC | No database/accounts created locally |
 
-Remaining: linked-note cascades and enrollment lock ordering are under reproduction. Installed policies, scheduler execution, privileged operator controls, backups/restores and real-data release remain external gates.
+Confirmed scope: whole-case expiry/withdrawal cascades passed in the red run; source-only deletion failed because beta validation rejected the FK's reference-only update. The new migration permits only nested, reference-only nulling after the source is actually absent. Direct detachment, nulling plus content edits, late inserts/updates and ownership checks remain guarded. Unchanged case/owner updates retain enrollment validation without reacquiring its row lock: an in-flight pre-withdrawal write can finish, and erasure waits for and removes it; already expired writes remain rejected. Inserts and scope changes retain shared enrollment locks. No flags, grants or existing records are weakened or rewritten.
+
+The migration was created by local Supabase CLI 3.2.0 with an empty credential environment; it is source for review/disposable CI only. Two session-cascade controls complement the 33 baseline scenarios. The failure cleanup explicitly removes owned drafts, exports and retrieval logs before deleting the synthetic case. Red evidence is retained rather than rerunning unchanged failing product code.
+
+Security review (2026-11-19 10:03 UTC): one optional scan attempt for this final sensitive diff returned the same unsupported-worktree error recorded below. A separate source pass covered the four changed files, all 12 trigger targets, explicit non-FK deletion predicates, RLS and private-function grants. The exact reference-only/nested/missing-source conditions cannot change content, owner or case; enrollment reads still reject ended/mismatched scopes; inserts retain locking. Existing security-definer scope, empty search path and revocations are preserved. No scanner pass is claimed. Runtime confirmation remains the CI gate.
+
+Remaining: candidate runtime verification is pending. Installed policies, scheduler execution, privileged operator controls, backups/restores and real-data release remain external gates. Arbitrary multi-row relationship changes and non-default isolation levels are outside the tested lock-order matrix.
 
 ### PR #104 parent/child contention follow-up (2026-11-19)
 
@@ -92,7 +100,7 @@ The follow-up commit records these results only; it does not change the tested S
 
 Remaining issues and limits:
 
-- The older beta retention guard also locks enrollment rows and rejects writes after withdrawal/expiry. Its `ON DELETE SET NULL` interaction for linked source notes can block beta erasure; ordinary `poc_parent_*` cases do not prove this beta path. It remains a separate release blocker, not silently fixed by this migration.
+- The older beta retention guard's enrollment locks and ended-source `ON DELETE SET NULL` interaction are addressed by the subsequent beta lifecycle follow-up above; the original ordinary `poc_parent_*` matrix did not prove this path.
 - Inserts and changed relationships deliberately retain locking. The matrix covers insert/delete races and unchanged-link updates, not every multi-row reparenting transaction or isolation level. No universal deadlock-free guarantee is claimed.
 - Existing malformed rows are not rewritten; content updates fail closed until separately reviewed repair. Installed-policy parity, privileged operator behavior and all real-data/deployment gates above remain blocked.
 

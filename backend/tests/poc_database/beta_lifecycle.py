@@ -41,7 +41,7 @@ def verify_beta_lifecycle(command, env, run, require_success):
         raise RuntimeError("Expected transaction state not observed: " + phase)
 
     scenarios = [(mode, operation, None) for mode in ("expiry", "withdrawal")
-                 for operation in ("cascade", "source_delete", "late_writes", "insert_before_retire")]
+                 for operation in ("cascade", "source_delete", "session_delete", "late_writes", "insert_before_retire")]
     scenarios += [("active", "source_delete", None)]
     scenarios += [(mode, "row_before_retire", table)
                   for mode in ("expiry", "withdrawal") for table in TABLES]
@@ -68,7 +68,7 @@ def verify_beta_lifecycle(command, env, run, require_success):
             insert into auth.users(id) values ('{owner}');
             select beta_retention.enroll('{receipt}','{owner}',clock_timestamp()-interval '10 minutes');
             {actor} {setup}
-            -- A case-level child survives the session cascade long enough for SET NULL.
+            -- A case-level child survives a session-only delete and requires SET NULL.
             insert into public.generated_notes(id,case_id,user_id,source_note_id,confirmed_json)
               values ('{linked}','{case}','{owner}','{ids['generated_notes']}','{{"synthetic":"retained"}}');
             insert into public.cases(id,user_id) values ('{control}','{owner}');
@@ -78,10 +78,11 @@ def verify_beta_lifecycle(command, env, run, require_success):
         try:
             if mode == "expiry" and operation != "insert_before_retire":
                 query(expiry)
-            if mode == "withdrawal" and operation in ("source_delete", "late_writes"):
+            if mode == "withdrawal" and operation in ("source_delete", "session_delete", "late_writes"):
                 query(withdrawn)
-            if operation == "source_delete":
-                query(f"begin; {actor} delete from public.generated_notes where id='{ids['generated_notes']}'; commit;", scenario)
+            if operation in ("source_delete", "session_delete"):
+                source_table = "sessions" if operation == "session_delete" else "generated_notes"
+                query(f"begin; {actor} delete from public.{source_table} where id='{ids[source_table]}'; commit;", scenario)
                 if query(f"select exists(select from public.generated_notes where id='{linked}' and source_note_id is null "
                          "and confirmed_json='{\"synthetic\":\"retained\"}'::jsonb);") != "t":
                     raise RuntimeError("Source deletion changed or lost the linked final note")
@@ -143,7 +144,9 @@ def verify_beta_lifecycle(command, env, run, require_success):
             print("Beta lifecycle FAILED: " + scenario + ": " + str(error), flush=True)
         finally:
             # Remove the explicitly owned child first, even on the broken baseline.
-            query(f"begin; delete from public.generated_notes where id='{linked}'; "
+            query("begin; " + " ".join(f"delete from public.{target} where case_id='{case}' and user_id='{owner}';"
+                  for target in ("counseling_drafts", "document_exports", "retrieval_logs")) +
+                  f"delete from public.generated_notes where id='{linked}'; "
                   f"delete from public.cases where id in ('{case}','{control}'); "
                   f"delete from beta_retention.enrollments where receipt='{receipt}'; "
                   f"delete from auth.users where id='{owner}'; commit;", "Beta fixture cleanup")
