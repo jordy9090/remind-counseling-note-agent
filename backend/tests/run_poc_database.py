@@ -18,6 +18,7 @@ import time
 from uuid import uuid4
 
 from poc_database.contracts import PRIVATE_TABLES, PUBLIC_TABLES, TABLES, build_sql
+from poc_database.session_deletion_concurrency import verify_session_deletion
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -168,6 +169,7 @@ def run_disposable():
                 if not re.search(r"(?im)^begin;", sql) or not sql.rstrip().lower().endswith("rollback;"):
                     raise RuntimeError("SQL contracts must use explicit rollback transactions")
                 require_success(run(command, env=env, sql=sql), "Synthetic SQL contract " + contract.name)
+            concurrency = verify_session_deletion(command, env, run, require_success)
             remaining = require_success(run(command, env=env, sql=cleanup_query()), "Synthetic row cleanup verification")
             cleanup_ok = remaining == "0"
             if not cleanup_ok:
@@ -175,6 +177,7 @@ def run_disposable():
             print(json.dumps({"status": "failed" if failures else "passed", "sql_tests": tests,
                 "failed_tests": failures, "retention_contract": "passed", "remaining_synthetic_rows": 0,
                 "sql_contracts": [contract.name for contract in contracts],
+                "concurrency_contracts": concurrency,
                 "migration_sha256": manifest}, indent=2))
         finally:
             if container_id and not owned:
