@@ -120,20 +120,21 @@ class SummaryGenerationRouteTests(unittest.TestCase):
                 generate.assert_called_once()
                 self.assertFalse(settings.use_stub)
 
-    def test_generation_logs_error_type_without_sensitive_provider_message(self):
+    def test_generation_logs_static_code_without_sensitive_provider_message(self):
         for app in (generate_app, main_app):
             with self.subTest(app=app.title), patch(
                 "app.api.routes.notes.run_note_pipeline",
                 side_effect=TimeoutError("PRIVATE_PROVIDER_DETAIL " + INPUT["transcript_text"]),
             ), patch("app.api.routes.notes.persist_generated_note") as persist, self.assertLogs(
-                "app.api.routes.notes", level="WARNING",
+                "remind.api_errors", level="WARNING",
             ) as logs:
                 response = TestClient(app).post("/api/notes/generate", json=INPUT)
             self.assertEqual(502, response.status_code)
             self.assertEqual(
-                ["WARNING:app.api.routes.notes:session_summary_failed exception_type=TimeoutError"],
+                ["WARNING:remind.api_errors:operation_failed code=session_summary"],
                 logs.output,
             )
+            self.assertNotIn("PRIVATE_PROVIDER_DETAIL", response.text + " ".join(logs.output))
             persist.assert_not_called()
 
     def test_missing_model_key_cannot_silently_generate_a_sample(self):
