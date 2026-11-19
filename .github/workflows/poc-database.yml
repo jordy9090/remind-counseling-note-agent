@@ -1,0 +1,29 @@
+name: Disposable PoC database contracts
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/tests/**'
+      - 'backend/tests/run_poc_database.py'
+      - 'backend/tests/poc_database/**'
+      - '.github/workflows/poc-database.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check runner and fixture inventory
+        run: |
+          python3 backend/tests/run_poc_database.py --static
+          python3 -m unittest discover -s backend/tests/poc_database -p test_runner.py -v
+      - name: Run source migrations and real RLS contracts in a new disposable PostgreSQL service
+        run: python3 backend/tests/run_poc_database.py --run-disposable
