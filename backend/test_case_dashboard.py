@@ -156,6 +156,7 @@ class DashboardRouteTests(unittest.TestCase):
     def test_unauthenticated_request_is_rejected_by_security_layer(self) -> None:
         app.dependency_overrides.clear()
         with patch("app.api.security.settings") as mock_settings:
+            mock_settings.poc_mode = False
             mock_settings.enable_real_user_auth = False
             mock_settings.local_preview_bypass_enabled = False
             mock_settings.allow_legacy_preview_token = False
