@@ -17,6 +17,12 @@ Baseline checked 2026-11-19 07:33 UTC: main `f942db4ecb6e696d75022d3f01a52b8bf2a
 
 ## Completed
 
+### Reopened evidence follow-up scope (2026-11-19)
+
+- Reuse PR #101 at `574289f2bb036f00484d77fba58a7605c4ffa269` and its successful [Product CI run 44483484588](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44483484588), including 13 synthetic projection/rendering regressions. Base: PR #100 `d85a9a6`; fetched main remains `f942db4`. Keep PR #105's atomic deletion changes separate.
+- Completion criteria: exercise the real note API routes with mocked storage/auth for edited claims, deleted input and synthetic A/B ownership; check saved-evidence rendering and empty restored inputs; fix only reproduced defects; obtain CI success and record remaining limits here.
+- Use only protected local tests and GitHub CI. No operational server access, actual accounts/data, main merge or deployment. Block this branch's automatic Preview before pushing; preserve main's deployment behavior.
+
 | Item | Evidence | Limits |
 | --- | --- | --- |
 | PR #100 baseline implementation and CI | [PR #100](https://github.com/jordy9090/remind-counseling-note-agent/pull/100); backend 25 and frontend 12 new mock regressions; [Product CI](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44468942429), [security CI](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44468942399) passed at `536d204` | Reused because unchanged; not proof of installed RLS or deployment settings |
@@ -24,13 +30,13 @@ Baseline checked 2026-11-19 07:33 UTC: main `f942db4ecb6e696d75022d3f01a52b8bf2a
 | Guest handoff removed | Legacy pending summary discarded without display/import; signed-in save remains covered | Does not establish browser/device backup erasure |
 | P0 follow-up: reviewed-history consumption | `398344b`: the graph now uses the same effective review predicate as receipt validation; a real graph-node/prompt regression proves counselor-masked history is not fetched again | Five synthetic history controls; no live model |
 | P0 follow-up: shared identity disabled throughout PoC APIs | `398344b`: common dependency requires a verified bearer in PoC, authentication has no service-key fallback, startup rejects missing real-auth/public configuration | Six synthetic checks and independent review; actual participant roster remains blocked |
+| PR #100 follow-up integration | Existing Product CI 44482299737 and security CI 44482299786 succeeded at `d85a9a6`; reused without rerunning | Complete on the PR branch; main merge remains unauthorized |
+| P1: reopened evidence projection | PR #101: 14 synthetic projection/render checks plus two real-route/mock-transport regressions covering edited final text, deleted-input canaries and A/B account switching across all four read aliases | No new runtime defect reproduced. Original draft excerpts remain historical evidence; changed claims never regain a valid badge. Mock owner filtering does not certify installed RLS |
 
 ## Remaining: prioritized engineering work
 
 | Priority / item | Evidence and action | Status / owner |
 | --- | --- | --- |
-| PR #100 follow-up integration | Verify CI for reviewed-history/identity corrections; both configuration templates now require real-user auth | Local green; CI pending |
-| P1: reopened evidence projection | Historical failure still appears in `noteFromRecord`; retain only owned, validated saved excerpts for unchanged claims | Isolated reproduction/fix in progress; stacked branch `codex/poc-evidence-reopen` |
 | P1: residual retention and cleanup | Inspect deletion response semantics, partial failures, scratch cleanup and detector jobs against existing retention tools | Source review in progress |
 | P1: tracing and diagnostics | Inspect graph/LLM callbacks in addition to application exception handlers; synthetic egress/log canaries | Source review in progress |
 | Release verification pack | Safe preflight and disposable-database RLS/ownership procedure; no remote targets by default | In progress |
@@ -66,3 +72,19 @@ For each new change record commit, environment, exact command/check, UTC time, r
 | `c37733e` + test correction | `python backend/tests/run_poc_review.py --legacy test_case_dashboard` | 19 passed; 2026-11-19 07:50 UTC checkpoint. Product CI now also covers PRs targeting stacked branches | Mock store only; scratch removed |
 
 Independent review of the follow-up inspected both outcomes of the shared guard, history consumer, public-key selection, configured audio startup and non-PoC compatibility. No additional P0/P1 was found within that scope. Stale preparation tokens still require cancel/restart after an expiry/history change; this is a fail-closed UX limitation, not an authorization bypass.
+
+### PR #101 reopened-evidence verification
+
+**Repository-code evidence:** the original `574289f` implementation is unchanged. The new API regressions exercise actual FastAPI/Vercel route handlers with mocked authentication/storage: warm B's record, reject A's request for B's ID without its excerpt, then return only A's excerpt with `private, no-store`. After the mocked input-deletion route, all read aliases preserve edited final text, return no stored input or deleted-input-only canary, and keep only the saved excerpt. Removing that snapshot source leaves it absent; reopening never reads an evidence index or regenerates evidence. The frontend checks preserve all seven cleared input fields and render changed claims as needing re-review, missing/foreign sources as unavailable, and unchanged supported excerpts as reviewable.
+
+**Operational-setting confirmation:** none performed or claimed. No operational server/DB access, accounts, merge or deployment. Existing CI and API mocks are not evidence of installed RLS, browser behavior against a deployed service, complete derivative erasure, or backup deletion. Session-input deletion intentionally retains summaries, evidence excerpts, case memory and temporary drafts. Atomic deletion/recreation races remain tracked separately in PR #105; the parent/beta work remains in PR #104.
+
+**Preview guard:** both Vercel config locations now set only `git.deploymentEnabled["codex/*"] = false`, using [documented minimatch support](https://vercel.com/docs/project-configuration/git-configuration); unspecified branches including main retain the documented default. This covers matching branches when they contain this configuration; it does not change other PR branch contents or project-wide settings.
+
+| Code version | Environment / exact check | Result and UTC time | Deployment / cleanup |
+| --- | --- | --- | --- |
+| `574289f` | Existing Product CI 44483484588 | Success reused; no unchanged build rerun locally | Historical CI only |
+| `574289f` + follow-up tests | Protected runner `python backend/tests/run_poc_review.py --legacy test_security_access_boundaries.AccessBoundaryTests.test_reopened_evidence_is_owner_scoped_across_account_switches_and_aliases` and `...test_reopen_after_input_deletion_preserves_edits_without_recreating_originals` | Both passed, 2026-11-19; initial deletion fixture omitted required `counselor_memo`, corrected before passing (test-fixture issue, no product defect) | In-memory mocks only; protected runner removed scratch; no accounts or persistent rows |
+| `574289f` + follow-up tests | `cd frontend && node scripts/verify-poc-reopen.mjs` | 14/14 passed, 2026-11-19 | Synthetic objects/static React rendering only; no network or stored data |
+
+Focused source review checked record ownership chaining, original snapshot authority, edited-claim staleness, source identity filtering, restored-input fallback and account-keyed workspace remount. No additional defect was found in this scope. The optional scanner's previously recorded worktree limitation remains; no scanner pass is claimed. Final follow-up CI is pending push.

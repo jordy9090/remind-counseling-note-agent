@@ -48,6 +48,24 @@ test('deleted input stays absent while the exact final note remains readable', (
   assert.equal(sessionInputFromRecord(afterDeletion).transcript_text, '')
 })
 
+test('reopening after deletion clears every input field without reusing a prior record or saved excerpt', () => {
+  const record = copy()
+  const original = 'SYNTHETIC-DELETED-INPUT-ONLY'
+  const input = { counselor_memo: original, transcript_text: original, previous_session_summary: original,
+    counseling_goal: original, psychological_test_summary: original, key_issue_tags: [original], nonverbal_notes: original }
+  const before = { ...record, session_input: input }
+  assert.equal(sessionInputFromRecord(before).transcript_text, original)
+  // Legacy payload copies must not become an alternative input restoration source.
+  record.draft_json.session_input = input
+  record.draft_json.sources = input
+  record.confirmed_json.session_input = input
+  const restored = sessionInputFromRecord(record)
+  for (const field of Object.keys(input)) assert.deepEqual(restored[field], field === 'key_issue_tags' ? [] : '')
+  assert.equal(JSON.stringify(restored).includes(original), false)
+  assert.equal(JSON.stringify(restored).includes(excerpt), false)
+  assert.equal(noteFromRecord(record).session_summary, summary)
+})
+
 test('unchanged owned final and draft records retain the exact saved excerpt before and after deletion', () => {
   assert.equal(buildGroundingReviewItems(grounding, 'session_content')[0].sources[0].source_text, excerpt)
   for (const record of [saved, afterDeletion, { ...afterDeletion, confirmation_status: 'draft' }]) {
