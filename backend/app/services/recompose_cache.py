@@ -26,7 +26,8 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
     visible_section_ids = _normalize_section_ids(request.visible_section_ids)
     source_revision = _case_source_revision(request.session_input.case_id, actor=actor)
     cache_key = build_recompose_cache_key(request, visible_section_ids, actor=actor_id, source_revision=source_revision)
-    cached = _read_cached_result(cache_key) if settings.retain_derived_cache else None
+    retain_cache = settings.retain_derived_cache and not settings.poc_mode
+    cached = _read_cached_result(cache_key) if retain_cache else None
     if cached is not None:
         _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
         return RecomposeNoteResponse(
@@ -43,7 +44,7 @@ def recompose_note_with_cache(request: RecomposeNoteRequest, *, actor: str = "")
         actor=actor,
     )
     _assert_source_revision(request.session_input.case_id, actor=actor, expected=source_revision)
-    if settings.retain_derived_cache:
+    if retain_cache:
         _write_cached_result(cache_key, result)
     return RecomposeNoteResponse(
         result=result,
@@ -135,6 +136,8 @@ def _normalize_section_ids(section_ids: list[str]) -> list[str]:
 
 
 def _read_cached_result(cache_key: str) -> GenerateNoteResponse | None:
+    if settings.poc_mode or not settings.retain_derived_cache:
+        return None
     path = _cache_path(cache_key)
     if not path.exists():
         return None
@@ -145,6 +148,8 @@ def _read_cached_result(cache_key: str) -> GenerateNoteResponse | None:
 
 
 def _write_cached_result(cache_key: str, result: GenerateNoteResponse) -> None:
+    if settings.poc_mode or not settings.retain_derived_cache:
+        return
     path = _cache_path(cache_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2)

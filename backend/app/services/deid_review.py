@@ -25,13 +25,13 @@ MODELS = {"quick": QuickSummaryRequest, "generate": SessionInput, "recompose": R
           "supervision": SupervisionReportRequest, "memory": ConfirmGeneratedNoteRequest}
 # These values control storage, evidence references, or rendering; they are not source material.
 INTERNAL = {"case_id", "note_id", "session_id", "draft_id", "target_document_type", "insight_lens",
-            "visible_section_ids", "evidence_type", "source_refs", "transcript_mode", "attendance_status",
+            "evidence_type", "source_refs", "transcript_mode", "attendance_status",
             "client_alias", "counselor_name", "session_date"}
 LABELS = {"text": "상담 자료", "transcript_text": "축어록", "counselor_memo": "상담사 메모",
           "previous_session_summary": "이전 회기 요약", "counseling_goal": "상담 목표",
           "psychological_test_summary": "심리검사 요약", "nonverbal_notes": "비언어 관찰",
           "key_issue_tags": "핵심 이슈", "client_alias": "내담자 별칭", "counselor_name": "상담사 이름",
-          "session_topic": "회기 주제", "session_date": "상담일"}
+          "session_topic": "회기 주제", "session_date": "상담일", "visible_section_ids": "출력 항목"}
 _approved: ContextVar[tuple[str, ...] | None] = ContextVar("reviewed_ai_material", default=None)
 _prior_approved: ContextVar[list | None] = ContextVar("reviewed_prior_sessions", default=None)
 INTERNAL.update({"source_ref", "prior_context_revision"})
@@ -81,6 +81,7 @@ class ReviewStart(BaseModel):
     purpose: Purpose
     payload: dict[str, Any]
     job_token: str = Field(default="", max_length=2000)
+    preparation_token: str = Field(default="", max_length=2000)
 
 
 class SpanEdit(BaseModel):
@@ -160,15 +161,47 @@ def _verify(token: str, stage: str, purpose: Purpose, payload: dict, actor: str)
         raise HTTPException(409, "입력이 변경되었거나 확인 시간이 지났어요. AI 전달 내용을 다시 확인해주세요.") from None
 
 
-def start_review(request: ReviewStart, actor: str) -> dict:
-    _key()  # Do not start expensive work when receipts cannot be issued.
-    payload = normalize(request.purpose, request.payload)
-    session = _history_session(request.purpose, payload)
+def review_required() -> bool:
+    return settings.poc_mode or settings.require_deid_review
+
+
+def _require_review_actor(actor: str) -> None:
+    from app.api.security import AuthenticatedActor
+    if settings.poc_mode and (not isinstance(actor, AuthenticatedActor) or not actor.access_token):
+        raise HTTPException(401, "실데이터 PoC는 로그인 후 이용해주세요.")
+
+
+def _with_current_history(purpose: Purpose, payload: dict, actor: str) -> dict:
+    session = _history_session(purpose, payload)
     if session is not None:
-        # Re-read on pending-job polls too; a changed source invalidates that job's receipt.
         context = _history_snapshot(session, actor)
         session["prior_session_context"] = context
         session["prior_context_revision"] = digest(context) if settings.enable_rag else ""
+    return payload
+
+
+def prepare_review(request: ReviewStart, actor: str) -> dict:
+    """Project the exact input for human approval without invoking any AI service."""
+    _require_review_actor(actor)
+    _key()
+    payload = _with_current_history(request.purpose, normalize(request.purpose, request.payload), actor)
+    return {"payload": payload, "sources": sources(payload), "items": [], "model_used": False,
+            "requires_detection_approval": True,
+            "preparation_token": _sign("prepared", request.purpose, payload, actor)}
+
+
+def start_review(request: ReviewStart, actor: str) -> dict:
+    _require_review_actor(actor)
+    _key()  # Do not start expensive work when receipts cannot be issued.
+    payload = normalize(request.purpose, request.payload)
+    if settings.poc_mode or request.preparation_token:
+        _verify(request.preparation_token, "prepared", request.purpose, payload, actor)
+        # Never silently replace a source after the counselor approved detection.
+        current = _with_current_history(request.purpose, copy.deepcopy(payload), actor)
+        if digest(current) != digest(payload):
+            raise HTTPException(409, "이전 회기 기록이 변경되었어요. 탐지할 내용을 다시 확인해주세요.")
+    else:
+        payload = _with_current_history(request.purpose, payload, actor)
     material = sources(payload)
     texts = [source["text"] for source in material]
     if len(material) > 500 or sum(map(len, texts)) > 200_000:
@@ -213,6 +246,7 @@ def start_review(request: ReviewStart, actor: str) -> dict:
 
 
 def confirm_review(request: ReviewConfirm, actor: str) -> dict:
+    _require_review_actor(actor)
     payload = normalize(request.purpose, request.payload)
     _verify(request.detection_token, "detected", request.purpose, payload, actor)
     material = {source["key"]: source["text"] for source in sources(payload)}
@@ -242,9 +276,10 @@ def confirm_review(request: ReviewConfirm, actor: str) -> dict:
 
 @contextmanager
 def reviewed_request(purpose: Purpose, payload: BaseModel, receipt: str, actor: str):
+    _require_review_actor(actor)
     normalized = payload.model_dump(mode="json")
     prior = None
-    if settings.require_deid_review:
+    if review_required():
         _verify(receipt, "reviewed", purpose, normalized, actor)
         session = _history_session(purpose, normalized)
         if settings.enable_rag and session is not None:
@@ -263,7 +298,7 @@ def reviewed_request(purpose: Purpose, payload: BaseModel, receipt: str, actor: 
 
 
 def require_reviewed_egress():
-    if settings.require_deid_review and _approved.get() is None:
+    if review_required() and _approved.get() is None:
         raise HTTPException(409, "AI에 전달할 내용을 먼저 확인해주세요.")
 
 
@@ -280,7 +315,7 @@ def prompt_material(value: Any) -> Any:
 
 
 def embedding_is_reviewed(text: str) -> bool:
-    if not settings.require_deid_review:
+    if not review_required():
         return True
     # Stored legacy windows and arbitrary jobs have no implicit review authority.
     from app.services.storage_deidentification import deidentify_texts

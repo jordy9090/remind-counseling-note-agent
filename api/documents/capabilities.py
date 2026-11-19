@@ -19,7 +19,10 @@ from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.document import DocumentCapabilitiesResponse  # noqa: E402
 from app.services.document_export import DocumentExportService  # noqa: E402
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Document Capabilities API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 document_export_service = DocumentExportService()
 

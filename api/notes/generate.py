@@ -24,6 +24,7 @@ from app.api.security import require_preview_access  # noqa: E402
 from app.api.routes.notes import (  # noqa: E402
     _run_pipeline_with_stub_fallback,
     deidentification_preview as review_preview,
+    deidentification_prepare as review_prepare,
     deidentification_confirm as review_confirm,
     run_quick_summary,
 )
@@ -34,6 +35,7 @@ from app.services.quick_summary import QuickSummaryRequest  # noqa: E402
 QUICK_SUMMARY_PATH = "/api/notes/quick-summary"
 DEID_PREVIEW_PATH = "/api/notes/deidentification-preview"
 SCOPE_PATHS = {"scope=quick": QUICK_SUMMARY_PATH, "scope=deid-preview": DEID_PREVIEW_PATH,
+               "scope=deid-prepare": "/api/notes/deidentification-prepare",
                "scope=deid-confirm": "/api/notes/deidentification-confirm"}
 
 
@@ -51,7 +53,10 @@ class QuickSummaryPathMiddleware:
                 scope = {**scope, "path": path, "raw_path": path.encode()}
         await self.app(scope, receive, send)
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Note API")
+install_private_validation_handler(app)
 app.add_middleware(QuickSummaryPathMiddleware)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
@@ -82,6 +87,11 @@ def deidentification_preview(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> dict:
     return review_preview(payload, request=request, authorization=authorization)
+
+
+@app.post("/api/notes/deidentification-prepare")
+def deidentification_prepare(payload: ReviewStart, actor: PreviewActor) -> dict:
+    return review_prepare(payload, actor)
 
 
 @app.post("/api/notes/deidentification-confirm")

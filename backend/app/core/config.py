@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     deid_timeout_seconds: float = Field(default=15, ge=1, le=30)
     deid_review_signing_key: str = ""
     require_deid_review: bool = True
+    # The real-data PoC cannot opt out of authenticated review or storage limits.
+    poc_mode: bool = True
 
     # API guard. Production uses Supabase Auth; the preview token is an
     # explicitly enabled legacy path for synthetic-data demos only.
@@ -54,9 +56,8 @@ class Settings(BaseSettings):
     enable_rag: bool = False
     enable_case_memory: bool = False
     save_raw_input: bool = False
-    # Store the counselor's session input as entered in sessions.raw_input_text so the owner can
-    # reopen the original text. On by default; SAVE_ORIGINAL_INPUT=0 turns it off.
-    save_original_input: bool = True
+    # Original input requires an explicit non-PoC opt-in; PoC omits this column entirely.
+    save_original_input: bool = False
     enable_dense_retrieval: bool = False
     # PR4 is opt-in. False preserves the existing production generation path.
     enable_raw_region_grounding: bool = False

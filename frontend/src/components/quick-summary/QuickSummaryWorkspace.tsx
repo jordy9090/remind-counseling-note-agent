@@ -12,7 +12,7 @@ import {
   quickSummaryFromDraft,
   quickSummaryRecordTitle,
   relativeTimeLabel,
-  takePendingQuickSummary,
+  clearPendingQuickSummary,
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse, TemporaryDraftRecord } from '../../types/session'
@@ -25,8 +25,7 @@ type SaveState = 'saving' | 'saved' | 'failed' | null
 /**
  * Signed-in "간편 요약하기" screen. Summaries and de-identified supporting excerpts are saved and
  * listed under the input as 이전 요약한 기록. 내담자에 저장하기 saves it as a client's next session
- * (a regular session record). A summary a guest sent here with 로그인 후 저장하기 is auto-saved the
- * same way right after login, and the client picker opens for it.
+ * (a regular session record).
  */
 export default function QuickSummaryWorkspace({
   result,
@@ -53,7 +52,6 @@ export default function QuickSummaryWorkspace({
   const [loaded, setLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const hasUnsavedResult = saveState === 'saving' || saveState === 'failed'
   useUnsavedWork(hasUnsavedResult)
 
@@ -122,15 +120,7 @@ export default function QuickSummaryWorkspace({
     void attemptSave(job)
   }
 
-  useEffect(() => {
-    // Taking the summary also removes it, so it is saved once even if this effect runs twice.
-    const pending = takePendingQuickSummary()
-    if (!pending) return
-    setNotice('로그인 전에 만든 요약이에요. 저장할 내담자를 선택하면 그 내담자의 다음 회기로 저장돼요.')
-    handleResult(pending)
-    onSaveToClient(pending)
-  // Runs once after login; handleResult only uses refs and state setters.
-  }, [])
+  useEffect(clearPendingQuickSummary, [])
 
   const openRecord = (draft: TemporaryDraftRecord) => {
     const summary = quickSummaryFromDraft(draft)
@@ -138,7 +128,6 @@ export default function QuickSummaryWorkspace({
     saveJob.current?.controller.abort()
     saveJob.current = null
     setSaveState('saved')
-    setNotice(null)
     onResult(summary)
   }
 
@@ -188,15 +177,12 @@ export default function QuickSummaryWorkspace({
       <QuickSummaryPanel
         result={result}
         toResult={toResult}
-        onResult={(next) => {
-          setNotice(null)
-          handleResult(next)
-        }}
+        onResult={handleResult}
         canExtractDocuments
         hasUnsavedResult={hasUnsavedResult}
         notice={saveError
           ? <p role="alert" className="rounded-lg bg-danger-50 px-4 py-3 text-center text-sm text-danger-500">{saveError}</p>
-          : notice ? <p role="status" className="rounded-lg bg-primary-50 px-4 py-3 text-center text-sm text-primary-900">{notice}</p> : undefined}
+          : undefined}
         saveAction={{ label: '내담자에 저장하기', onSave: onSaveToClient }}
         privacyNote="입력 전문은 저장하지 않고, 요약과 개인정보를 가린 연결 원문 일부를 이전 요약한 기록에 자동 저장해요. 이름·연락처 등 개인정보로 보이는 내용은 가린 뒤 AI에 보내요."
         resultStatus={resultStatus}

@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.api.security import require_preview_access
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.schemas.document import DocumentCapabilitiesResponse, DocumentExportRequest
 from app.services.document_export import (
     DocumentExportRuntimeError,
@@ -43,11 +44,15 @@ async def export_document(request: DocumentExportRequest, actor: AuthenticatedUs
     try:
         result = await run_in_threadpool(document_export_service.export, request)
     except (DocumentExportValidationError, UnsupportedExportFormat) as error:
-        _log_export("failed", str(error))
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        _log_export("failed", "document_export_failed")
+        raise HTTPException(status_code=422, detail=public_error_message(error, "문서 내보내기를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
     except DocumentExportRuntimeError as error:
-        _log_export("failed", str(error))
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        _log_export("failed", "document_export_failed")
+        raise HTTPException(status_code=500, detail=public_error_message(error, "문서 내보내기를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("document_export")
+        _log_export("failed", "document_export_failed")
+        raise HTTPException(status_code=500, detail="문서 내보내기를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
     _log_export("completed")
     return StreamingResponse(

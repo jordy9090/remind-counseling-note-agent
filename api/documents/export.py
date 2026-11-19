@@ -18,6 +18,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.api.security import require_preview_access  # noqa: E402
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.api.routes.vouchers import router as voucher_router  # noqa: E402
 from app.schemas.document import DocumentExportRequest  # noqa: E402
 from app.services.document_export import (  # noqa: E402
@@ -27,7 +28,10 @@ from app.services.document_export import (  # noqa: E402
     UnsupportedExportFormat,
 )
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Document Export API")
+install_private_validation_handler(app)
 app.include_router(voucher_router)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 document_export_service = DocumentExportService()
@@ -43,9 +47,12 @@ async def export_document(
     try:
         result = await run_in_threadpool(document_export_service.export, request)
     except (DocumentExportValidationError, UnsupportedExportFormat) as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        raise HTTPException(status_code=422, detail=public_error_message(error, "문서 내보내기를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
     except DocumentExportRuntimeError as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise HTTPException(status_code=500, detail=public_error_message(error, "문서 내보내기를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("document_export")
+        raise HTTPException(status_code=500, detail="문서 내보내기를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
     return StreamingResponse(
         BytesIO(result.content),

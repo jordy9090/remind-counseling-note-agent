@@ -22,7 +22,10 @@ def allowed_origins() -> list[str]:
     return origins
 
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind local audio API")
+install_private_validation_handler(app)
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins(), allow_credentials=True,
                    allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type", "X-Remind-Preview-Token"])
 app.include_router(router)

@@ -18,24 +18,22 @@ const supabase = read('src/lib/supabase.ts')
 assert(!/signInAnonymously/.test(authGate), 'AuthGate must not call signInAnonymously')
 assert(!/signInAnonymously/.test(landing), 'LandingPage must not call signInAnonymously')
 
-// 2. Landing = 비로그인 간편 요약: 서버 저장 없음. '로그인 후 저장하기' → 로그인 → 로그인한 상담사처럼 자동 저장
-assert(/onLogin/.test(landing) && !/onSaveRequiresLogin/.test(landing), 'LandingPage routes 로그인 후 저장하기 through onLogin')
+// 2. Guest summaries stay on the landing page. Signed-in work uses owner-scoped saves.
+assert(/onLogin/.test(landing) && !/onSaveRequiresLogin/.test(landing), 'LandingPage retains its login action')
 assert(!/onStart/.test(landing), 'LandingPage must not keep the old onStart prop')
 assert(/>\s*로그인 \/ 회원가입\s*</.test(landing), 'Landing header must render a 로그인 / 회원가입 button')
 assert(/QuickSummaryPanel/.test(landing), 'Landing must render the quick summary')
-assert(/label: '로그인 후 저장하기'/.test(landing), 'Landing must offer 로그인 후 저장하기')
-assert(/storePendingQuickSummary\(summary\)\s*onLogin\(\)/.test(landing), '로그인 후 저장하기 keeps the summary, then opens login')
-assert(/if \(!next\) clearPendingQuickSummary\(\)/.test(landing), '새로 요약하기 drops a summary waiting for login')
+assert(!/saveAction=/.test(landing), 'Landing must not offer persistent guest handoff')
+assert(/useEffect\(clearPendingQuickSummary, \[\]\)/.test(landing), 'Landing discards legacy guest state')
 const panel = read('src/components/quick-summary/QuickSummaryPanel.tsx')
 assert(!/'저장하기'/.test(panel) && /saveAction\?:/.test(panel), 'The panel has no fixed save button, only an optional save action')
 const quickWorkspace = read('src/components/quick-summary/QuickSummaryWorkspace.tsx')
 assert(/createSummarySaveJob\(temporaryDraftPayload\(quickSummaryDraftPayload\(next\)\), userId\)/.test(quickWorkspace)
   && /saveSummaryWithRetry\(job, saveTemporaryDraft, isRetryableRequestError\)/.test(quickWorkspace),
   'Signed-in quick summaries must use an owner-scoped stable-ID retry job')
-assert(/const pending = takePendingQuickSummary\(\)[\s\S]{0,200}handleResult\(pending\)/.test(quickWorkspace),
-  'A summary waiting for login must be saved through the same auto-save path')
+assert(/useEffect\(clearPendingQuickSummary, \[\]\)/.test(quickWorkspace), 'Signed-in entry discards legacy guest state')
 assert(/label: '내담자에 저장하기', onSave: onSaveToClient/.test(quickWorkspace), 'Signed-in users can save a summary to a client')
-assert(/handleResult\(pending\)\s*onSaveToClient\(pending\)/.test(quickWorkspace), 'A summary waiting for login opens the client picker')
+assert(!/takePendingQuickSummary/.test(quickWorkspace), 'Login must not restore or save an unowned summary')
 const page = read('src/pages/SessionDraftPage.tsx')
 assert(/const cancelQuickClientSave = \(\) => \{[^}]*setQuickClientSave\(null\)/.test(page) && /onClose=\{cancelQuickClientSave\}/.test(page),
   'Closing the client picker abandons the quick-summary save')
@@ -75,7 +73,7 @@ assert(!/client_phone|client_email/.test(read('src/components/clients/ClientForm
 
 console.log('verify-auth-flow: OK')
 console.log('  - anonymous entry removed')
-console.log('  - landing quick summary saves nothing until 로그인 후 저장하기; signed-in summaries save automatically')
+console.log('  - guest handoff disabled; signed-in summaries save automatically')
 console.log('  - signup/login/logout/verify-resend/password-reset present')
 console.log('  - workspace gated on session; token attached to API calls')
 
