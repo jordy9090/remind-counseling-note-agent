@@ -120,6 +120,7 @@ reset role;
 
 -- Give this synthetic bypass-RLS role table access to prove the trigger, not a missing grant, rejects it.
 grant select, insert, update on public.sessions, public.transcript_turns, public.transcript_windows to service_role;
+grant select on public.cases to service_role;
 set local role service_role;
 select pg_temp.expect_sqlstate('select public.delete_session_input(note_id) from pg_temp.poc_deletion_fixture', '42501');
 select pg_temp.expect_sqlstate('update public.sessions set input_deleted_at=null where id=(select session_id from pg_temp.poc_deletion_fixture)', '23514');
