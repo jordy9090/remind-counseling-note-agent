@@ -100,6 +100,43 @@ class SessionInputDeletionLifecycleTests(unittest.TestCase):
                 self.assertEqual(caught.exception.status_code, 503)
                 self.assertNotIn(PRIVATE, str(caught.exception.detail))
                 self.assertEqual(self.store.tables, initial)
+                self.fail_after = None
+                recovered = asyncio.run(notes.delete_note_session_input(NOTE, self.actor, Response()))
+                self.assertEqual(recovered.session_id, SESSION)
+                self.assertIsNone(self.store.tables["sessions"][0]["raw_input_text"])
+                self.assertIsNone(self.store.tables["sessions"][0]["sanitized_input_text"])
+                self.assertEqual(self.store.tables["transcript_turns"], [])
+                self.assertEqual(self.store.tables["transcript_windows"], [])
+                self.assertEqual(self.store.tables["generated_notes"], self.note_before)
+        self.assertFalse(any(method in {"PATCH", "DELETE"} for method, _ in self.calls))
+
+    def test_lost_response_after_commit_is_safe_to_retry_without_recreating_input(self):
+        lost = False
+
+        def lose_first_receipt(method, table, **kwargs):
+            nonlocal lost
+            result = self.request(method, table, **kwargs)
+            if table == "rpc/delete_session_input" and not lost:
+                lost = True
+                raise supabase_storage.SupabaseStorageError(PRIVATE)
+            return result
+
+        with patch.object(self.client, "_request", side_effect=lose_first_receipt):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(notes.delete_note_session_input(NOTE, self.actor, Response()))
+            self.assertEqual(caught.exception.status_code, 503)
+            self.assertNotIn(PRIVATE, str(caught.exception.detail))
+            committed = copy.deepcopy(self.store.tables)
+            self.assertIsNotNone(committed["sessions"][0]["input_deleted_at"])
+            self.assertIsNone(committed["sessions"][0]["raw_input_text"])
+            self.assertIsNone(committed["sessions"][0]["sanitized_input_text"])
+            self.assertEqual(committed["transcript_turns"], [])
+            self.assertEqual(committed["transcript_windows"], [])
+            recovered = asyncio.run(notes.delete_note_session_input(NOTE, self.actor, Response()))
+            self.assertEqual(recovered.session_id, SESSION)
+            self.assertEqual(self.store.tables, committed)
+            self.assertEqual(self.store.tables["generated_notes"], self.note_before)
+        self.assertEqual(self.calls.count(("POST", "rpc/delete_session_input")), 2)
         self.assertFalse(any(method in {"PATCH", "DELETE"} for method, _ in self.calls))
 
     def test_inflight_indexing_cannot_recreate_windows_after_successful_deletion(self):

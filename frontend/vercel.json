@@ -1,7 +1,7 @@
 {
   "git": {
     "deploymentEnabled": {
-      "codex/poc-parent-scope": false
+      "codex/*": false
     }
   },
   "installCommand": "npx --yes pnpm@10.28.2 install --frozen-lockfile",

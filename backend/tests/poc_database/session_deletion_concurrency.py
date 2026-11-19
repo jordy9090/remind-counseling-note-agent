@@ -47,6 +47,11 @@ def verify_session_deletion(command, env, run, require_success):
         "deletion_before_window_insert",
         "locked_turn_update_before_deletion",
         "locked_window_update_before_deletion",
+        "concurrent_deletion_retries",
+        "session_recreation_before_deletion",
+        "deletion_before_session_recreation",
+        "deletion_before_turn_upsert",
+        "deletion_before_window_upsert",
     )
     for scenario in scenarios:
         owner, session, note = (str(uuid4()) for _ in range(3))
@@ -75,11 +80,25 @@ def verify_session_deletion(command, env, run, require_success):
         """)
         try:
             final_sql = "select 1"
+            recreate = (f"update public.sessions set raw_input_text='Synthetic regenerated raw', "
+                        f"sanitized_input_text='Synthetic regenerated input' where id='{session}';")
             if scenario == "inserts_before_deletion":
                 first, second = turn + window, delete
+            elif scenario == "concurrent_deletion_retries":
+                first, second = delete, delete
+            elif scenario == "session_recreation_before_deletion":
+                first, second = recreate, delete
             elif scenario.startswith("deletion_before_"):
                 first = delete
-                insert = turn if scenario == "deletion_before_turn_insert" else window
+                if scenario == "deletion_before_session_recreation":
+                    insert = recreate
+                else:
+                    insert = turn if "turn" in scenario else window
+                    if scenario.endswith("_upsert"):
+                        query("begin; " + actor + turn + window + " commit;")
+                        conflict = "session_id,turn_index" if "turn" in scenario else "session_id,start_turn_index,end_turn_index"
+                        field = "sanitized_text" if "turn" in scenario else "window_text"
+                        insert = insert.rstrip(";") + f" on conflict ({conflict}) do update set {field}=excluded.{field};"
                 second = f"""do $$ begin
                     {insert}
                     raise exception 'A source row was recreated after deletion';

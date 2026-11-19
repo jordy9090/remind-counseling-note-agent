@@ -87,6 +87,22 @@ do $$ begin
     end if;
 end $$;
 
+-- Failure after both child deletes and the session UPDATE must also undo the marker.
+create trigger poc_fail_session_commit after update on public.sessions
+    for each row execute function poc_deletion_test.fail_synthetic_turn_delete();
+set local role authenticated;
+select poc_deletion_test.expect_sqlstate('select public.delete_session_input(note_id) from poc_deletion_test.fixture', 'P9001');
+reset role;
+drop trigger poc_fail_session_commit on public.sessions;
+do $$ begin
+    if not exists(select from public.transcript_windows where session_id=(select session_id from poc_deletion_test.fixture))
+       or not exists(select from public.transcript_turns where session_id=(select session_id from poc_deletion_test.fixture))
+       or not exists(select from public.sessions where id=(select session_id from poc_deletion_test.fixture)
+                     and raw_input_text='Synthetic raw input' and sanitized_input_text='Synthetic sanitized input' and input_deleted_at is null) then
+        raise exception 'Late deletion failure left partial mutations';
+    end if;
+end $$;
+
 set local role authenticated;
 do $$
 declare deleted_id uuid; marker timestamptz;

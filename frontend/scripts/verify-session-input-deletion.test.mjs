@@ -22,7 +22,7 @@ function callback(name, dependencies) {
   return new Function(...Object.keys(dependencies), `${compiled}; return handler`)(...Object.values(dependencies))
 }
 
-function harness({ failure = false, accepted = true, noteId = 'synthetic-note', originalPresent = true } = {}) {
+function harness({ failure = false, failuresBeforeSuccess = 0, accepted = true, noteId = 'synthetic-note', originalPresent = true } = {}) {
   const finalNote = { sections: { session_content: 'Synthetic confirmed note, preserved exactly.' } }
   const originals = { counselor_memo: 'Synthetic private memo', transcript_text: 'Synthetic private transcript',
     previous_session_summary: 'Synthetic previous input', counseling_goal: 'Synthetic goal',
@@ -51,7 +51,7 @@ function harness({ failure = false, accepted = true, noteId = 'synthetic-note', 
     runPersistence: operation => { pending = runPersistence(operation); return pending },
     deleteSessionInput: async id => {
       calls.push(id)
-      if (failure) throw new Error('Synthetic private backend failure')
+      if (failure || failuresBeforeSuccess-- > 0) throw new Error('Synthetic private backend failure')
       return { note_id: id, session_id: 'synthetic-session', deleted, kept }
     },
     setForm: setter('form'), materialsRef: { current: state.materials },
@@ -120,4 +120,23 @@ test('cancelled confirmation and missing notes do not issue a deletion', async (
     assert.deepEqual(h.calls, [])
     assert.deepEqual(h.state, before)
   }
+})
+
+test('retry after an uncertain deletion failure clears sources only on confirmation', async () => {
+  const h = harness({ failuresBeforeSuccess: 1 })
+  const before = structuredClone(h.state)
+  await h.remove()
+  assert.deepEqual(h.state.form, before.form)
+  assert.equal(h.state.message, null)
+  assert.equal(h.state.error, 'Synthetic deletion failure')
+  await h.remove()
+  assert.deepEqual(h.calls, ['synthetic-note', 'synthetic-note'])
+  assert.equal(h.state.error, null)
+  assert.equal(h.state.busy, false)
+  assert.equal(h.state.storedNote.session_input, null)
+  assert.equal(h.state.form.transcript_text, '')
+  assert.deepEqual(h.state.storedNote.confirmed_json, h.preserved.note)
+  assert.deepEqual(h.state.finalDocumentSections, h.preserved.sections)
+  assert.equal(h.cleared.length, 1)
+  assert.deepEqual(h.revoked, ['blob:synthetic'])
 })
