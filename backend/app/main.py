@@ -6,11 +6,14 @@ from app.api.routes import audio, cases, documents, health, materials, notes
 from app.api.routes.vouchers import router as voucher_router
 from app.core.config import settings, validate_runtime_security
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(
     title="Re:mind MVP API",
     description="Evidence-tracked counseling session summary API.",
     version="0.1.0",
 )
+install_private_validation_handler(app)
 
 app.add_middleware(
     CORSMiddleware,

@@ -278,12 +278,39 @@ export interface AIReviewPreview {
   model_used: boolean
 }
 
-export async function startAIReview(task: ReviewTask, signal: AbortSignal): Promise<AIReviewPreview> {
+export interface AIReviewPreparation {
+  payload: Record<string, unknown>
+  sources: DeidSource[]
+  preparation_token: string
+  requires_detection_approval: boolean
+}
+
+export interface NoteStoragePolicy {
+  persistence_enabled: boolean
+  save_original_input: boolean
+  save_raw_input: boolean
+  account_store_original_input: boolean
+  generated_note_raw_input_mode: 'disabled' | 'original' | 'masked' | 'omitted'
+}
+
+export async function getNoteStoragePolicy(scope?: RequestScope): Promise<NoteStoragePolicy> {
+  const response = await client.get<NoteStoragePolicy>('/api/notes/storage-policy', requestScope(scope))
+  return response.data
+}
+
+export async function prepareAIReview(task: ReviewTask, signal: AbortSignal): Promise<AIReviewPreparation> {
+  const response = await client.post<AIReviewPreparation>('/api/notes/deidentification-prepare',
+    { purpose: task.purpose, payload: task.payload }, { timeout: 30000, signal, expectedOwnerId: task.ownerId })
+  return response.data
+}
+
+export async function startAIReview(task: ReviewTask, signal: AbortSignal, preparationToken: string): Promise<AIReviewPreview> {
   let jobToken = ''
   const deadline = Date.now() + 20 * 60 * 1000
   while (Date.now() < deadline) {
     const response = await client.post<AIReviewPreview & { status?: string; job_token?: string }>('/api/notes/deidentification-preview',
-      { purpose: task.purpose, payload: task.payload, job_token: jobToken }, { timeout: 30000, signal, expectedOwnerId: task.ownerId })
+      { purpose: task.purpose, payload: task.payload, preparation_token: preparationToken, job_token: jobToken },
+      { timeout: 30000, signal, expectedOwnerId: task.ownerId })
     if (response.data.status !== 'pending') {
       if (!response.data.model_used) throw new Error('자체 서버 탐지를 완료하지 못했습니다.')
       return response.data

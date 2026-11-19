@@ -18,7 +18,10 @@ from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.note import ConfirmGeneratedNoteRequest, ConfirmGeneratedNoteResponse  # noqa: E402
 from app.api.routes.notes import confirm_note as reviewed_confirm
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Note Confirmation API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 

@@ -14,6 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.api.security import require_preview_access  # noqa: E402
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.api.routes.audio import router as audio_router  # noqa: E402
 from app.schemas.material import DocumentExtractionResponse  # noqa: E402
 from app.services.document_extraction import DocumentExtractionError, DocumentExtractionService  # noqa: E402
@@ -23,7 +24,10 @@ from app.services.upload_validation import (  # noqa: E402
     persist_upload_to_temp,
 )
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Material Extraction API")
+install_private_validation_handler(app)
 app.include_router(audio_router)
 
 
@@ -53,11 +57,12 @@ async def extract_document_material(
         validated = await persist_upload_to_temp(file, "document")
         return await run_in_threadpool(service.extract, validated)
     except UploadValidationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+        raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "업로드한 파일을 확인해주세요.")) from None
     except DocumentExtractionError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(status_code=500, detail="문서 처리 중 서버 오류가 발생했습니다.") from error
+        raise HTTPException(status_code=422, detail=public_error_message(error, "문서 파일을 읽을 수 없습니다. 파일 형식을 확인해주세요.")) from None
+    except Exception:
+        log_private_failure("document_extract")
+        raise HTTPException(status_code=500, detail="문서 처리 중 서버 오류가 발생했습니다.") from None
     finally:
         if validated is not None:
             cleanup_temp_file(validated.temp_path)

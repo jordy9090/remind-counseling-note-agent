@@ -234,6 +234,18 @@ class OfflineTransport:
         return self.response(result)
 
     def rpc(self, table, body, user):
+        if table == "rpc/delete_session_input":
+            # This fixture assumes the SQL contract; disposable database tests
+            # separately verify its grants, ownership checks and transaction locks.
+            note = next(row for row in self.tables["generated_notes"]
+                        if row["id"] == body["p_note_id"] and row["user_id"] == user)
+            session = next(row for row in self.tables["sessions"]
+                           if row["id"] == note["session_id"] and row["user_id"] == user)
+            for target in ("transcript_windows", "transcript_turns"):
+                self.tables[target] = [row for row in self.tables[target] if row["session_id"] != session["id"]]
+            session.update(raw_input_text=None, sanitized_input_text=None)
+            session.setdefault("input_deleted_at", "2026-11-19T00:00:00Z")
+            return session["id"]
         if table == "rpc/match_case_memory_chunks":
             assert body["filter_counselor_id"] == user
             return [{**row, "chunk_id": row["id"], "similarity_score": 1.0}

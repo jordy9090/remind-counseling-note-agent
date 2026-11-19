@@ -1,20 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import QuickSummaryPanel from '../components/quick-summary/QuickSummaryPanel'
 import { quickSummaryResultFromNote } from './SessionDraftPage'
-import { clearPendingQuickSummary, storePendingQuickSummary, type QuickSummaryResult } from '../lib/quickSummary'
+import { clearPendingQuickSummary, type QuickSummaryResult } from '../lib/quickSummary'
 
 interface LandingPageProps {
   onLogin: () => void
 }
 
 /**
- * Public landing = quick summary without login (랜딩 → 입력 → AI 요약 → 복사 / 로그인 후 저장하기).
- * Nothing is saved before login. 로그인 후 저장하기 keeps the AI output in this browser until the
- * login completes; the workspace then saves it like any signed-in summary.
+ * The public landing routes AI processing to login and keeps no cross-account handoff.
  */
 export default function LandingPage({ onLogin }: LandingPageProps) {
   const [result, setResult] = useState<QuickSummaryResult | null>(null)
+  useEffect(clearPendingQuickSummary, [])
 
   return (
     <main className="quick-summary-bg min-h-screen text-slate-950">
@@ -32,21 +31,11 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         <QuickSummaryPanel
           result={result}
           toResult={quickSummaryResultFromNote}
-          onResult={(next) => {
-            setResult(next)
-            // 새로 요약하기 also drops a summary waiting for login.
-            if (!next) clearPendingQuickSummary()
-          }}
+          onResult={setResult}
           canExtractDocuments={false}
           onAudioLogin={onLogin}
-          privacyNote="로그인 전에는 서버에 저장하지 않아요. '로그인 후 저장하기'를 누르면 요약과 개인정보를 가린 연결 원문 일부를 이 브라우저에 임시 보관하고, 로그인 후 저장해요. 30분이 지나면 이어서 저장할 수 없어요. 입력 전문은 저장하지 않아요."
-          saveAction={{
-            label: '로그인 후 저장하기',
-            onSave: (summary) => {
-              storePendingQuickSummary(summary)
-              onLogin()
-            },
-          }}
+          onGenerationRequiresLogin={onLogin}
+          privacyNote="상담자료를 AI로 처리하고 기록을 저장하려면 먼저 로그인해주세요. 로그인 전 이 화면에 입력한 내용은 계정으로 옮겨지지 않아요."
         />
       </div>
     </main>

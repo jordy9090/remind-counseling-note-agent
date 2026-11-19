@@ -42,7 +42,7 @@ try {
     const context = await browser.newContext()
     const page = await context.newPage()
     const errors = [], draftWrites = []
-    let releaseSettings, tokenRequests = 0
+    let releaseSettings, tokenRequests = 0, generationRequests = 0
     const settingsGate = new Promise(resolve => { releaseSettings = resolve })
     page.on('pageerror', error => errors.push(error.message))
     await page.route('**/*', async route => {
@@ -59,8 +59,19 @@ try {
       }
       if (pathname.endsWith('/auth/v1/user')) return reply(user)
       if (url.origin !== origin) return route.abort()
-      if (pathname === '/api/notes/quick-summary') return reply(response)
-      if (pathname === '/api/notes/deidentification-preview') return reply({ items: [] })
+      if (pathname === '/api/notes/quick-summary') { generationRequests += 1; return reply(response) }
+      if (pathname === '/api/notes/deidentification-prepare') {
+        const { payload } = req.postDataJSON()
+        return reply({ payload, sources: [{ key: 'text', label: '현재 입력', text: payload.text }],
+          items: [], model_used: false, preparation_token: 'synthetic-prepared', requires_detection_approval: true })
+      }
+      if (pathname === '/api/notes/deidentification-preview') {
+        const { payload, preparation_token } = req.postDataJSON()
+        assert.equal(preparation_token, 'synthetic-prepared')
+        return reply({ payload, sources: [{ key: 'text', label: '현재 입력', text: payload.text }],
+          items: [], model_used: true, detection_token: 'synthetic-detected' })
+      }
+      if (pathname === '/api/notes/deidentification-confirm') return reply({ payload: req.postDataJSON().payload, receipt: 'synthetic-approved' })
       if (pathname === '/api/notes/drafts') {
         if (req.method() === 'POST') {
           draftWrites.push(req.postDataJSON())
@@ -75,28 +86,27 @@ try {
       return route.continue()
     })
     try {
+      await context.addInitScript(({ sections }) => {
+        localStorage.setItem('remind.quickSummary.pending', JSON.stringify({ sections, savedAt: Date.now() }))
+      }, { sections: [{ id: 'session_content', title: '상담 내용', content: 'Synthetic previous browser user' }] })
       await page.goto(entryUrl)
+      assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending')), null)
+      assert.equal(await page.getByRole('button', { name: '로그인 후 저장하기', exact: true }).count(), 0)
       await page.getByLabel('요약할 상담 내용', { exact: true }).fill('상담사: 오늘은 어떠셨나요? 내담자: 합성사례이며 회의 뒤 긴장한 마음을 이야기했습니다.')
-      await page.getByRole('button', { name: '요약하기', exact: true }).click()
-      await page.getByRole('checkbox').check()
-      await page.getByRole('button', { name: 'AI 요약 생성하기', exact: true }).click()
-      await page.getByText('관련 원문 보기 (2)', { exact: true }).click()
-      assert.equal(await page.getByText('상담자: SYNTHETIC-QUESTION-CUE', { exact: true }).isVisible(), true)
-      assert.equal(await page.getByText('내담자: SYNTHETIC-RESPONSE-CUE', { exact: true }).isVisible(), true)
-      await page.getByRole('button', { name: '로그인 후 저장하기', exact: true }).click()
-      assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending').includes('SYNTHETIC-QUESTION-CUE')), true)
-      assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('remind.quickSummary.pending'))), true)
+      await page.getByRole('button', { name: '로그인하고 요약하기', exact: true }).click()
+      assert.equal(generationRequests, 0)
+      assert.equal(draftWrites.length, 0)
       const login = page.getByRole('dialog', { name: '로그인', exact: true })
       await login.getByRole('textbox', { name: '이메일' }).fill(user.email)
       await login.getByPlaceholder('8자 이상 입력').fill('synthetic-password')
       await login.getByRole('button', { name: '로그인', exact: true }).click()
       if (scenario.retryLogin) {
         await login.getByText('이메일 또는 비밀번호를 확인해주세요.', { exact: true }).waitFor()
-        assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('remind.quickSummary.pending'))), true)
+        assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending')), null)
         await login.getByRole('button', { name: '로그인', exact: true }).click()
       }
       const picker = page.getByRole('dialog', { name: '내담자 선택', exact: true })
-      await picker.waitFor()
+      await page.getByRole('button', { name: '요약하기', exact: true }).waitFor()
       if (scenario.slowSettings) {
         const settingsResponse = page.waitForResponse(r => r.url().endsWith('/auth/v1/settings'))
         releaseSettings()
@@ -104,17 +114,28 @@ try {
         // Wait for the provider state update to render, not only the HTTP response.
         await page.waitForTimeout(300)
       }
-      assert.equal(await picker.isVisible(), true, scenario.name + ': login must retain the client picker after provider discovery')
+      assert.equal(await picker.count(), 0, scenario.name + ': login must not claim a guest summary')
+      assert.equal(draftWrites.length, 0)
+      assert.equal(await page.getByRole('article', { name: 'AI 요약 결과' }).count(), 0)
+      assert.equal(await page.getByLabel('요약할 상담 내용', { exact: true }).inputValue(), '')
+      await page.getByLabel('요약할 상담 내용', { exact: true }).fill('상담사: 오늘은 어떠셨나요? 내담자: 합성사례이며 회의 뒤 긴장한 마음을 이야기했습니다.')
+      await page.getByRole('button', { name: '요약하기', exact: true }).click()
+      const detection = page.getByRole('dialog', { name: '식별정보 탐지 승인', exact: true })
+      await detection.getByRole('checkbox').check()
+      await detection.getByRole('button', { name: '원문 식별정보 탐지 승인', exact: true }).click()
+      await page.getByRole('checkbox').check()
+      await page.getByRole('button', { name: '확인한 내용으로 AI 처리하기', exact: true }).click()
       const result = page.getByRole('article', { name: 'AI 요약 결과' })
       assert.equal(await result.isVisible(), true)
       assert.ok((await result.innerText()).includes(marker))
-      assert.equal(draftWrites.length, 1, 'Handoff saves the summary exactly once')
+      await page.getByText('이전 요약한 기록에 저장됨', { exact: true }).waitFor()
+      assert.equal(draftWrites.length, 1, 'Signed-in generation saves the owned summary exactly once')
       assert.ok(draftWrites[0].draft_sections.some(item => item.content === marker))
       assert(JSON.stringify(draftWrites).includes('SYNTHETIC-QUESTION-CUE'))
       assert.deepEqual(draftWrites[0].form, {}, 'full input must not be persisted')
+      await page.getByText('관련 원문 보기 (2)', { exact: true }).click()
       assert.equal(await page.getByRole('complementary', { name: '내담자 원문 표현' }).isVisible(), true)
       assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending')), null)
-      await picker.getByRole('button', { name: '닫기', exact: true }).click()
       await page.getByRole('button', { name: '새로 요약하기', exact: true }).click()
       const history = page.getByRole('region', { name: '이전 요약한 기록' })
       await history.getByRole('button').click()
@@ -130,7 +151,7 @@ try {
       await picker.getByRole('button', { name: '내담자 새로 등록하기', exact: true }).click()
       await page.getByRole('dialog', { name: '새 내담자 생성', exact: true }).waitFor()
       assert.deepEqual(errors, [])
-      console.log('PASS: ' + scenario.name + ' -> preserved summary -> client picker -> registration; one synthetic draft write')
+      console.log('PASS: ' + scenario.name + ' -> guest isolation -> owned summary -> reopen -> client picker; one synthetic draft write')
     } finally {
       releaseSettings()
       await context.close()

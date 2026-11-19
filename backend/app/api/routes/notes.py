@@ -1,13 +1,13 @@
 """Routes for note generation."""
 from __future__ import annotations
 
-import logging
 from time import monotonic
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from app.api.security import _require_supabase_user, require_preview_access
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.graph.graph import run_note_pipeline
 from app.graph.supervision_report import run_supervision_report_pipeline
 from app.schemas.note import (
@@ -48,7 +48,7 @@ from app.services.deidentification_preview import (
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft
 from app.services.recompose_cache import recompose_note_with_cache
 from app.services.summary_quality import SummaryQualityError
-from app.services.deid_review import ReviewStart, ReviewConfirm, start_review, confirm_review, reviewed_request
+from app.services.deid_review import ReviewStart, ReviewConfirm, prepare_review, start_review, confirm_review, reviewed_request
 from app.schemas.storage_policy import NoteStoragePolicy
 from app.services.storage_policy import note_storage_policy
 from app.services.supabase_storage import (
@@ -61,7 +61,6 @@ from app.services.supabase_storage import (
 )
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
-logger = logging.getLogger(__name__)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 
@@ -87,6 +86,16 @@ async def quick_summary(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> GenerateNoteResponse:
     return run_quick_summary(payload, request=request, authorization=authorization)
+
+
+@router.post("/deidentification-prepare")
+def deidentification_prepare(payload: ReviewStart, actor: PreviewActor) -> dict:
+    try:
+        rate_limiter.check(f"prepare:{actor}", 200, 3600)
+    except QuickSummaryRateLimited as error:
+        raise HTTPException(429, "확인 요청이 많아요. 잠시 후 다시 시도해주세요.",
+            headers={"Retry-After": str(error.retry_after)}) from None
+    return prepare_review(payload, actor)
 
 
 @router.post("/deidentification-preview")
@@ -116,15 +125,15 @@ async def confirm_note(request: ConfirmGeneratedNoteRequest, actor: PreviewActor
     """Mark a generated note as counselor-confirmed and create case memory chunks."""
     try:
         if request.create_case_memory:
-            with reviewed_request("memory", request, review_receipt, str(actor)):
+            with reviewed_request("memory", request, review_receipt, actor):
                 return confirm_generated_note(request, actor=actor)
         return confirm_generated_note(request, actor=actor)
     except NoteConfirmationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.message)
+        raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "저장된 기록 요청을 처리하지 못했습니다.")) from None
     except HTTPException:
         raise
-    except Exception as error:
-        logger.warning("note_confirmation_failed exception_type=%s", type(error).__name__)
+    except Exception:
+        log_private_failure("note_confirmation")
         raise HTTPException(status_code=500, detail="기록을 확정하지 못했습니다. 현재 내용을 유지한 채 다시 시도해주세요.") from None
 
 
@@ -135,11 +144,11 @@ async def get_note_record(note_id: str, actor: PreviewActor, response: Response)
         response.headers["Cache-Control"] = "private, no-store"
         return fetch_generated_note(note_id, actor=actor)
     except NoteConfirmationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.message)
+        raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "저장된 기록 요청을 처리하지 못했습니다.")) from None
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(status_code=503, detail="저장된 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=503, detail="저장된 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.post("/records/{note_id}/input-deletion", response_model=SessionInputDeletionResponse)
@@ -149,11 +158,11 @@ async def delete_note_session_input(note_id: str, actor: PreviewActor, response:
         response.headers["Cache-Control"] = "private, no-store"
         return delete_session_input(note_id, actor=actor)
     except NoteConfirmationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.message)
+        raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "저장된 기록 요청을 처리하지 못했습니다.")) from None
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(status_code=503, detail="원문을 삭제하지 못했습니다. 잠시 후 다시 시도해주세요.")
+        raise HTTPException(status_code=503, detail="원문을 삭제하지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.post("/recompose", response_model=RecomposeNoteResponse)
@@ -166,7 +175,7 @@ async def recompose_note_draft(request: RecomposeNoteRequest, actor: PreviewActo
     except HTTPException:
         raise
     except SummaryQualityError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+        raise HTTPException(status_code=502, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -179,7 +188,7 @@ async def generate_supervision_report(request: SupervisionReportRequest, actor: 
                                      review_receipt: str = Header(default="", alias="X-Review-Receipt")) -> SupervisionReportDraft:
     """Generate a Korean personal counseling case supervision report draft."""
     try:
-        with reviewed_request("supervision", request, review_receipt, str(actor)):
+        with reviewed_request("supervision", request, review_receipt, actor):
             return _generate_supervision(request, actor)
     except HTTPException:
         raise
@@ -228,7 +237,7 @@ def _run_pipeline_with_stub_fallback(session_input: SessionInput, *, actor: str,
             # Generate a new candidate once; never approve a rejected correction or
             # persist a failed attempt. Leave room in the 300-second hosted request.
             if attempt or monotonic() - started >= 90:
-                raise HTTPException(status_code=502, detail=str(error)) from error
+                raise HTTPException(status_code=502, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
     raise AssertionError("Unreachable generation attempt")
 
 
@@ -241,22 +250,22 @@ def _generate_reviewed(session_input: SessionInput, *, actor: str) -> GenerateNo
     # Summaries are documents: the pipeline (and everything stored from it) only sees the
     # de-identified input. The client profile keeps the alias as entered.
     original_alias = session_input.client_alias
-    session_input, _ = deidentify_session_input(session_input)
     try:
+        session_input, _ = deidentify_session_input(session_input)
         result = run_note_pipeline(session_input, actor=actor)
+        result.persistence_report = persist_generated_note(
+            session_input.model_copy(update={"client_alias": original_alias}), result, actor=actor,
+        )
+        return result
     except SummaryQualityError:
         raise
-    except Exception as error:
+    except Exception:
         # Exception messages and tracebacks may contain model input or credentials.
-        logger.warning("session_summary_failed exception_type=%s", type(error).__name__)
+        log_private_failure("session_summary")
         raise HTTPException(
             status_code=502,
             detail="회기요약을 생성하지 못했습니다. 입력 내용을 유지한 채 잠시 후 다시 시도해 주세요.",
-        ) from error
-    result.persistence_report = persist_generated_note(
-        session_input.model_copy(update={"client_alias": original_alias}), result, actor=actor,
-    )
-    return result
+        ) from None
 
 
 def client_ip(request: Request) -> str:
@@ -281,7 +290,7 @@ def _optional_actor(authorization: str | None) -> str | None:
 
 
 def review_actor(request: Request, authorization: str | None) -> str:
-    if authorization:
+    if settings.poc_mode or authorization:
         return _require_supabase_user(authorization)
     if settings.local_preview_bypass_enabled:
         return settings.remind_preview_actor
@@ -305,11 +314,11 @@ def run_deidentification_preview(
             status_code=429,
             detail="확인 요청이 너무 많아요. 잠시 후 다시 시도해주세요.",
             headers={"Retry-After": str(error.retry_after)},
-        ) from error
+        ) from None
     try:
         return preview_items(payload.texts, client_name=payload.client_name, counselor_name=payload.counselor_name)
     except DeidentificationPreviewInputError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        raise HTTPException(status_code=422, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
     except Exception:
         raise HTTPException(status_code=502, detail="식별 정보를 찾지 못했어요. 직접 확인해주세요.") from None
 
@@ -330,14 +339,14 @@ def run_quick_summary(
             status_code=429,
             detail="요약 요청이 너무 많아요. 잠시 후 다시 시도하거나 로그인 후 이용해주세요.",
             headers={"Retry-After": str(error.retry_after)},
-        ) from error
+        ) from None
     try:
         with reviewed_request("quick", payload, request.headers.get("x-review-receipt", ""), review_actor(request, authorization)):
             return generate_quick_summary(payload.text, max_chars=AUTHENTICATED_MAX_CHARS if actor else QUICK_SUMMARY_MAX_CHARS)
     except HTTPException:
         raise
     except QuickSummaryInputError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        raise HTTPException(status_code=422, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
     except Exception:
         # Do not attach the input text or provider payload to the error.
         raise HTTPException(

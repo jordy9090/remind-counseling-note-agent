@@ -120,44 +120,13 @@ export function quickSummaryRecordTitle(savedAt: string, result: QuickSummaryRes
   return `${day}상담 내역_요약${lead ? ` · ${lead.slice(0, 40)}${lead.length > 40 ? '…' : ''}` : ''}`
 }
 
-// "로그인 후 저장하기": a guest's summary waits in this browser until the login (or the email
-// confirmation link, which can open in a new tab) completes. The summary and its de-identified
-// supporting excerpts expire after 30 minutes; the full input is never retained here.
+// Remove legacy guest handoff state without reading counseling content into a signed-in account.
 const PENDING_KEY = 'remind.quickSummary.pending'
-export const PENDING_TTL_MS = 30 * 60 * 1000
-
-export function storePendingQuickSummary(result: QuickSummaryResult, now = Date.now()): void {
-  try {
-    window.localStorage.setItem(PENDING_KEY, JSON.stringify({ sections: cleanQuickSummarySections(result.sections), savedAt: now }))
-  } catch {
-    // Storage can be unavailable (private mode); the summary then cannot carry over the login.
-  }
-}
 
 export function clearPendingQuickSummary(): void {
   try {
     window.localStorage.removeItem(PENDING_KEY)
   } catch {
     // Nothing to clean up when storage is unavailable.
-  }
-}
-
-/** Read and remove the waiting summary; null when there is none, it expired, or it is malformed. */
-export function takePendingQuickSummary(now = Date.now()): QuickSummaryResult | null {
-  let raw: string | null = null
-  try {
-    raw = window.localStorage.getItem(PENDING_KEY)
-  } catch {
-    return null
-  }
-  clearPendingQuickSummary()
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as { sections?: unknown; savedAt?: unknown }
-    if (typeof parsed.savedAt !== 'number' || now - parsed.savedAt > PENDING_TTL_MS || now < parsed.savedAt) return null
-    const sections = cleanQuickSummarySections(parsed.sections)
-    return sections.length ? { sections, deidentified: true } : null
-  } catch {
-    return null
   }
 }

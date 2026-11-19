@@ -22,7 +22,10 @@ from app.schemas.note import (  # noqa: E402
 )
 from app.services.draft_store import get_temporary_draft, list_temporary_drafts, save_temporary_draft  # noqa: E402
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Temporary Draft API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 

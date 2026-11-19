@@ -177,29 +177,17 @@ assert.equal(editedEvidence.workspace_sections[0].requiresReview, true)
   console.log('Quick summary auto-save draft round trip (summary items only, reserved case ID): passed')
 }
 {
-  // 로그인 후 저장하기: the summary items wait in local storage (no input), once, for at most 30 minutes.
+  // Legacy guest handoff state is discarded without loading it into any account.
   const quick = await loadModule('quickSummary')
   const store = new Map()
   globalThis.window = { localStorage: {
-    getItem: (key) => (store.has(key) ? store.get(key) : null), setItem: (key, value) => store.set(key, String(value)),
+    getItem: () => { throw new Error('Guest content must not be read') }, setItem: () => { throw new Error('Guest content must not be written') },
     removeItem: (key) => store.delete(key) } }
-  const sections = [{ id: 'session_content', title: '상담 내용', content: 'Synthetic content', input: 'SYNTHETIC-INPUT' }]
-  const summary = { sections, deidentified: true, text: 'SYNTHETIC-INPUT' }
-  quick.storePendingQuickSummary(summary, 1000)
-  assert(![...store.values()].some((value) => value.includes('SYNTHETIC-INPUT')), 'the input never waits for login')
-  assert.deepEqual(quick.takePendingQuickSummary(2000),
-    { sections: [{ id: 'session_content', title: '상담 내용', content: 'Synthetic content' }], deidentified: true })
-  assert.equal(quick.takePendingQuickSummary(2000), null, 'taken once')
-  quick.storePendingQuickSummary(summary, 1000)
-  assert.equal(quick.takePendingQuickSummary(1000 + quick.PENDING_TTL_MS + 1), null, 'expired')
-  assert.equal(store.size, 0, 'an expired summary is removed')
-  store.set('remind.quickSummary.pending', '{"sections":[{"id":1}],"savedAt":1000}')
-  assert.equal(quick.takePendingQuickSummary(2000), null, 'malformed')
-  quick.storePendingQuickSummary(summary, 1000)
+  store.set('remind.quickSummary.pending', JSON.stringify({ sections: [{ id: 'session_content', title: '상담 내용', content: 'Synthetic guest content' }] }))
   quick.clearPendingQuickSummary()
   assert.equal(store.size, 0)
   delete globalThis.window
-  console.log('Quick summary save-after-login hand-off (AI output only, once, 30-minute expiry): passed')
+  console.log('Legacy guest summary cleanup without reading or writing content: passed')
 }
 const fixture = JSON.parse(fs.readFileSync('scripts/fixtures/temporary-draft.json', 'utf8'))
 const originalFixture = structuredClone(fixture)

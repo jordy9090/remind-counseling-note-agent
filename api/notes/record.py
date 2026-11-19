@@ -16,7 +16,10 @@ from app.api.routes.notes import delete_note_session_input, get_note_record, get
 from app.schemas.note import GeneratedNoteRecord, SessionInputDeletionResponse
 from app.schemas.storage_policy import NoteStoragePolicy
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Note Record API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 

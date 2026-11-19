@@ -18,7 +18,10 @@ from app.api.security import require_preview_access  # noqa: E402
 from app.schemas.note import RecomposeNoteRequest, RecomposeNoteResponse  # noqa: E402
 from app.api.routes.notes import recompose_note_draft as reviewed_recompose
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Note Recompose API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 

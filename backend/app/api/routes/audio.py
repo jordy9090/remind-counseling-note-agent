@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.api.security import require_preview_access
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.schemas.audio import AudioCapabilitiesResponse, AudioTranscriptionResponse
 from app.services.audio_transcription import (
     AudioDurationLimitError,
@@ -63,7 +64,7 @@ async def transcribe_audio(
             try:
                 references = json.loads(speaker_references)
             except (ValueError, TypeError) as error:
-                raise HTTPException(status_code=422, detail="화자 참조 형식이 올바르지 않습니다.") from error
+                raise HTTPException(status_code=422, detail="화자 참조 형식이 올바르지 않습니다.") from None
             validate_references(references)
             kwargs["speaker_references"] = references
         validated = await persist_upload_to_temp(file, "audio")
@@ -78,15 +79,20 @@ async def transcribe_audio(
         )
         return await run_in_threadpool(transcribe)
     except UploadValidationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+        raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "업로드한 파일을 확인해주세요.")) from None
     except (AudioNoSpeechDetectedError, AudioDurationLimitError) as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        raise HTTPException(status_code=422, detail=public_error_message(error, "음성 축어록 생성 중 오류가 발생했습니다.")) from None
     except AudioTranscriptionBusyError as error:
-        raise HTTPException(status_code=429, detail=str(error)) from error
+        raise HTTPException(status_code=429, detail=public_error_message(error, "음성 축어록 생성 중 오류가 발생했습니다.")) from None
     except AudioTranscriptionUnavailable as error:
-        raise HTTPException(status_code=503, detail=error.reason) from error
+        raise HTTPException(status_code=503, detail=public_error_message(error, "음성 처리 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해주세요.")) from None
     except AudioTranscriptionRuntimeError as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise HTTPException(status_code=500, detail=public_error_message(error, "음성 축어록 생성 중 오류가 발생했습니다.")) from None
+    except HTTPException:
+        raise
+    except Exception:
+        log_private_failure("audio_transcribe")
+        raise HTTPException(status_code=500, detail="음성 축어록 생성 중 오류가 발생했습니다.") from None
     finally:
         if validated is not None:
             cleanup_temp_file(validated.temp_path)

@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
   backend-smoke:
@@ -13,6 +12,8 @@ jobs:
       USE_STUB: "1"
       # Legacy unit tests isolate subsystems; test_iwinv_review enables and tests the boundary.
       REQUIRE_DEID_REVIEW: "0"
+      POC_MODE: "0"
+      SAVE_ORIGINAL_INPUT: "1"
       # Mocked non-stub model tests need a configured key, never a live credential.
       OPENAI_API_KEY: "synthetic-offline-ci-key"
       ENABLE_RAG: "0"
@@ -43,7 +44,7 @@ jobs:
         run: uv run python -m unittest discover -p 'test_*.py' -v
 
   backend-pdf-export:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       USE_STUB: "1"
       ENABLE_RAG: "0"
@@ -51,14 +52,17 @@ jobs:
       SAVE_RAW_INPUT: "0"
       REQUIRE_PDF_EXPORT: "1"
       REQUIRE_DEID_REVIEW: "0"
+      POC_MODE: "0"
+      SAVE_ORIGINAL_INPUT: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install WeasyPrint system dependencies
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y \
             libcairo2 \
             libffi8 \
             libgdk-pixbuf-2.0-0 \
@@ -125,6 +129,8 @@ jobs:
           pnpm verify:case-list
           pnpm verify:deidentification-review
           pnpm verify:person-mapping
+          node --test scripts/verify-poc-guest-isolation.test.mjs scripts/verify-poc-detection-approval.test.mjs
+          node --test scripts/verify-session-input-deletion.test.mjs
 
       - name: Build frontend
         working-directory: frontend

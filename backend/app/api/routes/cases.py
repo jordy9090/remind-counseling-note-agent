@@ -1,12 +1,12 @@
 """Routes for per-case dashboard and scheduling metadata."""
 from __future__ import annotations
 
-import traceback
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.security import require_preview_access
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.core.config import settings
 from app.schemas.note import (
     CaseCreateRequest,
@@ -65,10 +65,10 @@ async def get_case_list(actor: PreviewActor) -> CaseListResponse:
     try:
         return list_cases(actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"케이스 목록 조회 중 오류가 발생했습니다: {str(error)}")
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("case_list")
+        raise HTTPException(status_code=500, detail="케이스 목록 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.post("", response_model=CaseDashboardResponse, status_code=201)
@@ -78,10 +78,10 @@ async def post_case(request: CaseCreateRequest, actor: PreviewActor) -> CaseDash
     try:
         return create_case(request, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"내담자 생성 중 오류가 발생했습니다: {str(error)}")
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("case_create")
+        raise HTTPException(status_code=500, detail="내담자 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.post("/{case_id}/quick-summary", response_model=QuickSummarySessionResponse, status_code=201)
@@ -93,7 +93,10 @@ async def post_quick_summary_session(
     try:
         return save_quick_summary_session(case_id, request, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error)) from error
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("quick_summary_save")
+        raise HTTPException(status_code=500, detail="사례 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.patch("/{case_id}/profile", response_model=CaseDashboardResponse)
@@ -105,10 +108,10 @@ async def patch_case_profile(
     try:
         return update_case_profile(case_id, request, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"프로필 수정 중 오류가 발생했습니다: {str(error)}")
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("case_profile")
+        raise HTTPException(status_code=500, detail="프로필 수정 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.get("/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)
@@ -118,7 +121,10 @@ async def get_case_person_dictionary(case_id: str, actor: PreviewActor) -> CaseP
     try:
         return fetch_case_person_dictionary(case_id, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error)) from error
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("person_dictionary_read")
+        raise HTTPException(status_code=500, detail="사례 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.put("/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)
@@ -130,7 +136,10 @@ async def put_case_person_dictionary(
     try:
         return update_case_person_dictionary(case_id, request, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error)) from error
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("person_dictionary_update")
+        raise HTTPException(status_code=500, detail="사례 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.get("/{case_id}/dashboard", response_model=CaseDashboardResponse)
@@ -141,10 +150,10 @@ async def get_case_dashboard(case_id: str, actor: PreviewActor) -> CaseDashboard
     try:
         return fetch_case_dashboard(case_id, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"사례 대시보드 조회 중 오류가 발생했습니다: {str(error)}")
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("case_dashboard")
+        raise HTTPException(status_code=500, detail="사례 대시보드 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.") from None
 
 
 @router.patch("/{case_id}/schedule", response_model=CaseDashboardResponse)
@@ -157,7 +166,7 @@ async def patch_case_schedule(
     try:
         return update_case_schedule(case_id, request, actor=actor)
     except SupabaseStorageError as error:
-        raise HTTPException(status_code=_storage_error_status(error), detail=str(error))
-    except Exception as error:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"사례 일정 수정 중 오류가 발생했습니다: {str(error)}")
+        raise HTTPException(status_code=_storage_error_status(error), detail=public_error_message(error, "저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")) from None
+    except Exception:
+        log_private_failure("case_schedule")
+        raise HTTPException(status_code=500, detail="사례 일정 수정 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.") from None

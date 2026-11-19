@@ -46,12 +46,15 @@ from app.schemas.note import (  # noqa: E402
     QuickSummarySessionResponse,
 )
 
+from app.api.error_privacy import PRIVATE_VALIDATION_MESSAGE, install_private_validation_handler
+
 app = FastAPI(title="Re:mind Case API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 
 def _validation_error(error: ValidationError) -> HTTPException:
-    return HTTPException(status_code=422, detail=error.errors(include_url=False))
+    return HTTPException(status_code=422, detail=PRIVATE_VALIDATION_MESSAGE)
 
 
 @app.get("/")
@@ -92,7 +95,7 @@ async def create(
             return await post_quick_summary_session(case_id, QuickSummarySessionRequest(**payload), actor)
         return await post_case(CaseCreateRequest(**payload), actor)
     except ValidationError as error:
-        raise _validation_error(error)
+        raise _validation_error(error) from None
 
 
 # vercel.json rewrites /api/cases/:case_id/quick-summary to /api/cases/dashboard?case_id=...&scope=quick-summary.
@@ -118,7 +121,7 @@ async def patch_by_scope(
             return await patch_case_profile(case_id, CaseProfileUpdateRequest(**payload), actor)
         return await patch_case_schedule(case_id, CaseScheduleUpdateRequest(**payload), actor)
     except ValidationError as error:
-        raise _validation_error(error)
+        raise _validation_error(error) from None
 
 
 @app.patch("/api/cases/{case_id}/schedule", response_model=CaseDashboardResponse)
@@ -145,7 +148,7 @@ async def put_by_scope(
     try:
         return await put_case_person_dictionary(case_id, CasePersonDictionaryUpdate(**payload), actor)
     except ValidationError as error:
-        raise _validation_error(error)
+        raise _validation_error(error) from None
 
 
 @app.get("/api/cases/{case_id}/person-dictionary", response_model=CasePersonDictionaryResponse)

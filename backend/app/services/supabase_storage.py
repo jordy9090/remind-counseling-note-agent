@@ -492,16 +492,11 @@ def delete_session_input(note_id: str, *, actor: str) -> SessionInputDeletionRes
     session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
-    scope = {"user_id": f"eq.{actor}", "case_id": f"eq.{context.case_id}", "session_id": f"eq.{context.session_id}"}
-    # Derived transcript rows go first, so a failure never leaves turns without the session input.
-    actor_storage.delete("transcript_windows", query=scope)
-    actor_storage.delete("transcript_turns", query=scope)
-    actor_storage.update(
-        "sessions",
-        {"raw_input_text": None, "sanitized_input_text": None},
-        query={"id": f"eq.{context.session_id}", "user_id": f"eq.{actor}"},
-        return_representation=False,
-    )
+    # One database transaction clears sources and marks the session permanently.
+    # The RPC rechecks JWT ownership and serializes with every transcript writer.
+    deleted_session_id = actor_storage.rpc("delete_session_input", {"p_note_id": context.note_id})
+    if deleted_session_id != context.session_id:
+        raise SupabaseStorageError("Session input deletion could not be verified.")
     return SessionInputDeletionResponse(
         note_id=context.note_id,
         session_id=context.session_id,
@@ -523,9 +518,8 @@ def _parse_json_object(raw: Any) -> dict[str, Any] | None:
 def _stored_session_input(session: dict[str, Any]) -> tuple[InputSources | None, bool]:
     """Return (sources, is_original) for a stored session; never raises for legacy/malformed rows.
 
-    raw_input_text holds the input as entered when its payload is marked "masked": false (the default
-    since SAVE_ORIGINAL_INPUT is on). Rows saved earlier have no such payload, so they fall back to
-    sanitized_input_text.
+    raw_input_text holds the input as entered when its payload is marked "masked": false.
+    Rows saved without that payload fall back to sanitized_input_text.
     """
     try:
         original = _parse_json_object(session.get("raw_input_text"))
@@ -675,7 +669,7 @@ def _raw_input_text(session_input: SessionInput) -> str:
 
 
 def _original_input_text(session_input: SessionInput) -> str:
-    """Session input as entered (the default). "masked": false marks it as the original."""
+    """Serialize explicitly enabled original input with its legacy format marker."""
     payload = {
         "masked": False,
         "counselor_memo": session_input.counselor_memo,
@@ -695,7 +689,7 @@ def actor_stores_original_input(actor: str) -> bool:
 
 
 def _session_raw_input(session_input: SessionInput, actor: str) -> str | None:
-    if not actor_stores_original_input(actor):
+    if settings.poc_mode or not actor_stores_original_input(actor):
         return None
     if settings.save_original_input:
         return _original_input_text(session_input)
@@ -742,6 +736,8 @@ def _build_session_row(session_input: SessionInput, result: GenerateNoteResponse
 
 
 def _stored_message(actor: str) -> str:
+    if settings.poc_mode:
+        return "Generated note was stored in Supabase without raw_input_text; PoC mode keeps sanitized input and metadata."
     if not actor_stores_original_input(actor):
         return (
             "Generated note was stored in Supabase without raw_input_text because the counselor turned off "

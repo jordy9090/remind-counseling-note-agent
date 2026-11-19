@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from starlette.concurrency import run_in_threadpool
 
 from app.api.security import require_preview_access
+from app.api.error_privacy import log_private_failure, public_error_message
 from app.schemas.material import DocumentExtractionResponse
 from app.services.document_extraction import DocumentExtractionError, DocumentExtractionService
 from app.services.upload_validation import UploadValidationError, cleanup_temp_file, persist_upload_to_temp
@@ -30,9 +31,12 @@ async def extract_document_material(
         validated = await persist_upload_to_temp(file, "document")
         return await run_in_threadpool(document_extraction_service.extract, validated)
     except UploadValidationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+        raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "업로드한 파일을 확인해주세요.")) from None
     except DocumentExtractionError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        raise HTTPException(status_code=422, detail=public_error_message(error, "문서 파일을 읽을 수 없습니다. 파일 형식을 확인해주세요.")) from None
+    except Exception:
+        log_private_failure("document_extract")
+        raise HTTPException(status_code=500, detail="문서 처리 중 서버 오류가 발생했습니다.") from None
     finally:
         if validated is not None:
             cleanup_temp_file(validated.temp_path)

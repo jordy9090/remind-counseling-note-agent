@@ -19,7 +19,10 @@ from app.graph.supervision_report import run_supervision_report_pipeline  # noqa
 from app.schemas.note import SupervisionReportDraft, SupervisionReportRequest  # noqa: E402
 from app.api.routes.notes import generate_supervision_report as reviewed_supervision
 
+from app.api.error_privacy import install_private_validation_handler
+
 app = FastAPI(title="Re:mind Supervision Report API")
+install_private_validation_handler(app)
 PreviewActor = Annotated[str, Depends(require_preview_access)]
 
 

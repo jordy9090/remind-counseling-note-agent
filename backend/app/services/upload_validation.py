@@ -16,6 +16,8 @@ from typing import Literal
 
 from fastapi import UploadFile
 
+from app.api.error_privacy import log_private_failure
+
 
 UploadKind = Literal["document", "audio"]
 
@@ -125,7 +127,7 @@ def cleanup_temp_file(path: Path | None) -> None:
     try:
         path.unlink(missing_ok=True)
     except OSError:
-        pass
+        log_private_failure("temporary_upload_cleanup")
 
 
 def upload_max_bytes(kind: UploadKind) -> int:

@@ -22,8 +22,7 @@ const QUICK_SOURCE_KEY = 'quick_summary_text'
 /**
  * "간편 요약하기" body shared by the public landing and the signed-in workspace:
  * input (typing or file) → the regular AI summary (same items as the summary screen) → copy.
- * Signed-in summaries are saved automatically by the workspace; the landing offers
- * 로그인 후 저장하기 through `saveAction`.
+ * Signed-in summaries are saved automatically by the workspace.
  */
 export default function QuickSummaryPanel({
   result,
@@ -36,6 +35,7 @@ export default function QuickSummaryPanel({
   notice,
   below,
   onAudioLogin,
+  onGenerationRequiresLogin,
   hasUnsavedResult = false,
 }: {
   result: QuickSummaryResult | null
@@ -48,11 +48,12 @@ export default function QuickSummaryPanel({
   privacyNote: ReactNode
   /** Save state shown in the result card (signed-in auto-save). */
   resultStatus?: ReactNode
-  /** Primary action next to 복사하기 (the landing's 로그인 후 저장하기). */
+  /** Primary action next to 복사하기 for an owned summary. */
   saveAction?: { label: string; onSave: (result: QuickSummaryResult) => void }
   notice?: ReactNode
   below?: ReactNode
   onAudioLogin?: () => void
+  onGenerationRequiresLogin?: () => void
   hasUnsavedResult?: boolean
 }) {
   const { userId } = useAuthSession()
@@ -93,6 +94,7 @@ export default function QuickSummaryPanel({
 
   /** Validates, then opens the review step; generation starts from the modal. */
   const summarize = () => {
+    if (onGenerationRequiresLogin) { onGenerationRequiresLogin(); return }
     if (loading || audioPending) return
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
     if (overLimit) return setError(`간편 요약은 ${maxChars.toLocaleString()}자까지 입력할 수 있어요.${canExtractDocuments ? '' : ' 로그인하면 2시간 상담 분량까지 이용할 수 있어요.'}`)
@@ -295,7 +297,7 @@ export default function QuickSummaryPanel({
               disabled={loading || extracting || audioPending}
               className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-6 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-60"
             >
-              {loading && <Loader2 className="h-4 w-4 animate-spin" />}{loading ? '요약하는 중' : '요약하기'}
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}{loading ? '요약하는 중' : onGenerationRequiresLogin ? '로그인하고 요약하기' : '요약하기'}
             </button>
           </div>
         </div>
