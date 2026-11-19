@@ -147,10 +147,10 @@ def build_sql() -> str:
             }[table]
             changed(f"update public.{table} set {update} where {key(table)}={ident}", 1, prefix + "own_update")
             denied(f"update public.{table} set user_id={quote(other[0])} where {key(table)}={ident}",
-                prefix + "owner_transfer", ("42501", "P0001"))
+                prefix + "owner_transfer", ("42501", "23514", "P0001"))
             row = probe_row(table, own[2][table])
             row["user_id"] = other[0]
-            denied(insert(table, row), prefix + "foreign_owner_insert", ("42501", "P0001"))
+            denied(insert(table, row), prefix + "foreign_owner_insert", ("42501", "23514", "P0001"))
 
             if table in PARENT_TABLES:
                 # These should be rejected even when an attacker owns the child row.
