@@ -54,6 +54,18 @@ Do not claim that no identifiable content is retained, that pseudonymization is 
 
 ## Validation ledger
 
+### Beta expiry/withdrawal and cascade follow-up (2026-11-19)
+
+Completion criteria: reproduce linked-note erasure and enrollment/child lock interactions under expiry and withdrawal; apply the narrowest demonstrated fix; preserve late-write rejection, owner/role boundaries, retries, unrelated final notes and synthetic cleanup; pass disposable SQL and existing PR CI; record results and unresolved limits. Continue on Draft PR #104 with branch deployments disabled. No main merge, deployment or existing database/real data access.
+
+Baseline: `fcb48cf480dbc2a65f5a8c06148d839a4e9635a0`; fetched main remains `f942db4ecb6e696d75022d3f01a52b8bf2a37cf0`. Existing ownership/parent concurrency evidence below remains valid. New tests add a case-level note referencing a session note so the session cascade must execute `ON DELETE SET NULL`; all identities are mock SQL Auth rows/claims in the runner's isolated PostgreSQL container.
+
+| Code version | Environment / exact check | Result and UTC time | Deployment / cleanup |
+| --- | --- | --- | --- |
+| `fcb48cf` + lifecycle regression tests | `python3 backend/tests/run_poc_database.py --run-disposable` in CI | Pending reproduction: 33 lifecycle scenarios, including all 12 guarded tables in both row-lock/retirement orders | No deployment; only owned synthetic fixtures |
+
+Remaining: linked-note cascades and enrollment lock ordering are under reproduction. Installed policies, scheduler execution, privileged operator controls, backups/restores and real-data release remain external gates.
+
 ### PR #104 parent/child contention follow-up (2026-11-19)
 
 Completion criteria: reproduce the remaining parent/child lock contention; make only the necessary correction; retain ownership, immutable scope, nullable-link and deletion behavior; pass the PR's disposable SQL, synthetic security and Product CI checks; record evidence and remaining issues here. No main merge, deployment, existing database access or real data is authorized.

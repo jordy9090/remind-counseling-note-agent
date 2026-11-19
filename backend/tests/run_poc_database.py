@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from poc_database.contracts import PRIVATE_TABLES, PUBLIC_TABLES, TABLES, build_sql
 from poc_database.parent_scope_concurrency import verify_parent_scope
+from poc_database.beta_lifecycle import verify_beta_lifecycle
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -170,14 +171,16 @@ def run_disposable():
                     raise RuntimeError("SQL contracts must use explicit rollback transactions")
                 require_success(run(command, env=env, sql=sql), "Synthetic SQL contract " + contract.name)
             parent_concurrency = verify_parent_scope(command, env, run, require_success)
+            beta_lifecycle = verify_beta_lifecycle(command, env, run, require_success)
             remaining = require_success(run(command, env=env, sql=cleanup_query()), "Synthetic row cleanup verification")
             cleanup_ok = remaining == "0"
             if not cleanup_ok:
                 raise RuntimeError("Synthetic rows remain after transaction rollback")
-            print(json.dumps({"status": "failed" if failures or parent_concurrency["failed"] else "passed", "sql_tests": tests,
+            print(json.dumps({"status": "failed" if failures or parent_concurrency["failed"] or beta_lifecycle["failed"] else "passed", "sql_tests": tests,
                 "failed_tests": failures, "retention_contract": "passed", "remaining_synthetic_rows": 0,
                 "sql_contracts": [contract.name for contract in contracts],
                 "parent_concurrency_contracts": parent_concurrency,
+                "beta_lifecycle_contracts": beta_lifecycle,
                 "migration_sha256": manifest}, indent=2))
         finally:
             if container_id and not owned:
@@ -194,7 +197,7 @@ def run_disposable():
                     raise RuntimeError("Could not remove the uniquely tagged fixture image")
             if container_id and not owned:
                 raise RuntimeError("Cleanup unverified; the fixture container/image may remain and require inspection")
-    return 1 if failures or parent_concurrency["failed"] or not cleanup_ok else 0
+    return 1 if failures or parent_concurrency["failed"] or beta_lifecycle["failed"] or not cleanup_ok else 0
 
 
 def main():
