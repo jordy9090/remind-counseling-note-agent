@@ -12,6 +12,8 @@ from langchain_core.globals import get_debug, get_verbose, set_debug, set_verbos
 from langchain_core.runnables import RunnableLambda
 from langchain_core.runnables.config import var_child_runnable_config
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.callbacks.manager import CallbackManager
+from langchain_core.tracers.run_collector import RunCollectorCallbackHandler
 from langchain_core.tracers.context import collect_runs, tracing_v2_enabled
 from langsmith import tracing_context
 from langsmith.utils import get_env_var
@@ -115,6 +117,23 @@ class PoCTracingTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "diagnostic"):
                 self.run_note()
             callback.on_chain_start.assert_not_called()
+        finally:
+            var_child_runnable_config.reset(token)
+
+    def test_inheritable_only_callback_manager_cannot_capture_child_state(self):
+        collector = RunCollectorCallbackHandler()
+        callbacks = CallbackManager(handlers=[], inheritable_handlers=[collector])
+        token = var_child_runnable_config.set({"callbacks": callbacks})
+        error = None
+        try:
+            with patch.object(graph, "note_graph", self.original_graph):
+                try:
+                    self.run_note()
+                except RuntimeError as caught:
+                    error = caught
+            self.assertFalse(collector.traced_runs, "An inheritable-only collector received graph state")
+            self.assertIsInstance(error, RuntimeError)
+            self.assertIn("diagnostic", str(error))
         finally:
             var_child_runnable_config.reset(token)
 

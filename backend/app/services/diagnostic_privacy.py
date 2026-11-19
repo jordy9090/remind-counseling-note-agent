@@ -16,7 +16,7 @@ def require_private_diagnostics(*, allow_ambient_tracing: bool = False) -> None:
         return
     config = var_child_runnable_config.get() or {}
     callbacks = config.get("callbacks")
-    handlers = getattr(callbacks, "handlers", callbacks)
+    handlers = getattr(callbacks, "handlers", callbacks) or getattr(callbacks, "inheritable_handlers", None)
     if (get_debug() or get_verbose() or handlers
             or tracing_v2_callback_var.get() is not None
             or run_collector_var.get() is not None
