@@ -10,6 +10,8 @@ declare
     note_a uuid := gen_random_uuid();
     note_b uuid := gen_random_uuid();
     note_linked uuid := gen_random_uuid();
+    earlier_session uuid := gen_random_uuid();
+    earlier_note uuid := gen_random_uuid();
 begin
     insert into auth.users(id) values(owner_a);
     perform set_config('request.jwt.claim.sub', owner_a::text, true);
@@ -21,6 +23,16 @@ begin
       (session_a,case_a,owner_a::text,1), (session_b,case_b,owner_a::text,1);
     insert into public.generated_notes(id,case_id,session_id,user_id) values
       (note_a,case_a,session_a,owner_a::text), (note_b,case_b,session_b,owner_a::text);
+    insert into public.sessions(id,case_id,user_id,session_number) values(earlier_session,case_a,owner_a::text,2);
+    insert into public.generated_notes(id,case_id,session_id,user_id) values(earlier_note,case_a,earlier_session,owner_a::text);
+    begin
+        insert into public.verification_reports(case_id,session_id,user_id,note_id)
+          values(case_a,session_a,owner_a::text,earlier_note);
+        raise exception using errcode='P9001', message='Report references another session';
+    exception when check_violation then null;
+    end;
+    -- A source note from another session of the same case remains legitimate.
+    update public.generated_notes set source_note_id=earlier_note where id=note_a;
     begin
         update public.sessions set case_id=case_b,session_number=991 where id=session_a;
         raise exception using errcode='P9001', message='Session parent moved across cases';

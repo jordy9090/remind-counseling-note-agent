@@ -45,7 +45,9 @@ begin
             -- Source notes can come from earlier sessions of the same owned case.
             perform 1 from public.generated_notes n
               where n.id = parent_note and n.case_id = new.case_id
-                and n.user_id = new.user_id for share;
+                and n.user_id = new.user_id
+                and (note_column <> 'note_id' or parent_session is null or n.session_id = parent_session)
+              for share;
             if not found then
                 raise exception using errcode = '23514', message = 'Counseling parent scope mismatch';
             end if;
