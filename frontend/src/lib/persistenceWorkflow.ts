@@ -2,6 +2,7 @@ import type { EvidenceConfidence, EvidenceSourceType, GeneratedNoteRecord, NoteD
 import type { RelationalInsights } from '../types/insight'
 import { formatRelationalSupervisionMemo } from './relationalInsights'
 import { savedSummaryEvidence } from './summaryEvidence'
+import type { ReviewableGrounding } from './groundingReview'
 
 export interface StoredSection {
   id: string
@@ -136,10 +137,80 @@ export function noteFromRecord(record: GeneratedNoteRecord): NoteDraftResponse {
     next_plan: text('next_plan'),
     evidence_check: [],
     missing_items: [],
-    warnings: ['저장된 기록을 불러왔습니다. 근거 검토 정보는 임시저장 작업에서 확인할 수 있습니다.'],
+    warnings: ['저장된 기록을 불러왔습니다. 보관된 근거 발췌문을 확인하고, 수정된 내용은 근거를 다시 검토해 주세요.'],
+    grounding: groundingFromRecord(record, payload),
     relational_insights: isObject(record.draft_json?.relational_insights)
       ? record.draft_json.relational_insights as unknown as RelationalInsights : undefined,
   }
+}
+
+function groundingFromRecord(record: GeneratedNoteRecord, payload: Record<string, unknown>): ReviewableGrounding | undefined {
+  // Only the owner-scoped record's original snapshot is authoritative, never counselor-submitted grounding.
+  const snapshot = record.draft_json.grounding
+  const sameRecord = (value: unknown) => !isObject(value) || (
+    (value.case_id == null || value.case_id === record.case_id)
+    && (value.session_id == null || value.session_id === record.session_id)
+    && (value.session_number == null || value.session_number === record.session_number)
+  )
+  if (!isObject(snapshot) || snapshot.enabled !== true || !isObject(snapshot.context)
+    || !Array.isArray(snapshot.context.sources) || !Array.isArray(snapshot.claims)
+    || !sameRecord(record.draft_json.session_info) || !sameRecord(snapshot) || !sameRecord(snapshot.context)) return undefined
+
+  const uniqueId = (items: unknown[], key: string, id: unknown) => items.filter(item => isObject(item) && item[key] === id).length === 1
+  const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string')
+  const savedSources = snapshot.context.sources
+  const sources = savedSources.filter(source => {
+    if (!isObject(source) || typeof source.evidence_id !== 'string' || !source.evidence_id
+      || !uniqueId(savedSources, 'evidence_id', source.evidence_id)
+      || typeof source.source_text !== 'string' || !source.source_text.trim()
+      || typeof source.source_ref !== 'string'
+      || source.case_id != null && source.case_id !== record.case_id) return false
+    // Earlier sessions are valid evidence; their own source identity must still be consistent.
+    const ref = /^(transcript|confirmed_note):([^:]+):(.+)$/.exec(source.source_ref)
+    return Boolean(ref && (source.source_type === 'raw_transcript' && ref[1] === 'transcript'
+      && (source.session_id == null || source.session_id === ref[2])
+      // Confirmed source refs contain a note ID, not the prior session's ID.
+      || source.source_type === 'counselor_confirmed' && ref[1] === 'confirmed_note'
+      && (source.note_id == null || source.note_id === ref[2])))
+  })
+  const claims = snapshot.claims.filter(claim => isObject(claim)
+    && typeof claim.claim_id === 'string' && Boolean(claim.claim_id)
+    && uniqueId(snapshot.claims as unknown[], 'claim_id', claim.claim_id)
+    && typeof claim.target_field === 'string' && summaryFields.includes(claim.target_field)
+    && typeof claim.text === 'string' && strings(claim.evidence_ids)
+    && ['direct_evidence', 'counselor_judgment', 'clinical_inference', 'unsupported'].includes(String(claim.support_type)))
+  const validations = isObject(snapshot.claim_support_validations)
+    ? Object.fromEntries(Object.entries(snapshot.claim_support_validations).filter(([, validation]) => isObject(validation)
+      && ['supported', 'partial', 'unsupported'].includes(String(validation.verdict)) && strings(validation.supported_evidence_ids)))
+    : {}
+  const workspace = readStoredSections(payload.workspace_sections)
+  const canonicalText = (value: Record<string, unknown>, field: string) => {
+    try { return readStoredText(value, field) } catch { return undefined }
+  }
+  const normalizedText = (value: string) => value.replace(/\s+/g, '')
+    .replace(/[.,!?·ㆍ:;"'“”‘’()\[\]{}]/g, '').toLocaleLowerCase('ko-KR')
+  const staleFields = [...new Set(claims.map(claim => (claim as Record<string, unknown>).target_field as string))]
+    .filter(field => {
+      // Grounding validated the canonical AI field, before any workspace edit overlay.
+      const original = canonicalText(record.draft_json, field)
+      const displayed = Object.prototype.hasOwnProperty.call(payload, 'workspace_sections')
+        ? workspace?.find(section => (fieldMap[section.id] || section.id) === field)?.content
+        : canonicalText(payload, field)
+      if (original === undefined || original !== displayed) return true
+      // Layout matching (including its single-claim fallback) cannot establish saved claim validity.
+      return claims.some(claim => {
+        if (claim.target_field !== field) return false
+        const text = normalizedText(claim.text)
+        return !text || !normalizedText(original).includes(text) || !normalizedText(displayed).includes(text)
+      })
+    })
+  return {
+    ...snapshot,
+    context: { ...snapshot.context, sources },
+    claims,
+    claim_support_validations: validations,
+    stale_target_fields: staleFields,
+  } as unknown as ReviewableGrounding
 }
 
 /**

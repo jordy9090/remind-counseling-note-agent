@@ -36,7 +36,7 @@ from app.main import app
 from app.schemas.evidence import TranscriptTurn
 from app.schemas.note import TemporaryDraftSaveRequest
 from app.services import draft_store, raw_evidence_retrieval, retrieval, supabase_store
-from app.services.supabase_storage import SupabaseStorage, _storage_for_actor
+from app.services.supabase_storage import SupabaseStorage, SupabaseStorageError, _storage_for_actor
 from app.services.transcript_storage import TranscriptStorageError, get_transcript_turns, store_transcript_turns
 from app.services.transcript_windows import index_transcript_windows
 
@@ -312,6 +312,137 @@ class AccessBoundaryTests(unittest.TestCase):
         for call in self.transport.calls:
             if call["method"] == "GET" and call["table"] in {"generated_notes", "sessions", "cases"}:
                 self.assertEqual(call["query"]["user_id"], f'eq.{call["user"]}')
+
+    def seed_reopen_evidence(self):
+        """Distinct input, final-note and retained-excerpt canaries for each owner."""
+        for key in USERS:
+            note = next(row for row in self.transport.tables["generated_notes"] if row["id"] == NOTES[key])
+            note["draft_json"]["grounding"] = {
+                "enabled": True,
+                "context": {"sources": [{
+                    "evidence_id": "R1", "source_type": "raw_transcript", "case_id": CASES[key],
+                    "session_id": SESSIONS[key], "source_ref": f"transcript:{SESSIONS[key]}:0-0",
+                    "source_text": f"SYNTHETIC-RETAINED-EXCERPT-{key.upper()}",
+                }]},
+                "claims": [{"claim_id": "C1", "target_field": "session_content",
+                            "text": note["draft_json"]["session_content"]["text"],
+                            "support_type": "direct_evidence", "evidence_ids": ["R1"]}],
+                "claim_support_validations": {"C1": {"verdict": "supported", "supported_evidence_ids": ["R1"]}},
+            }
+        self.before_b = self.transport.owner_bytes(USERS["b"])
+
+    def test_reopened_evidence_is_owner_scoped_across_account_switches_and_aliases(self):
+        self.seed_reopen_evidence()
+        for name, pattern in [("backend", "/api/notes/records/{}"), ("record", "/api/notes/records/{}"),
+                              ("record", "/api/notes/record?note_id={}"), ("record", "/?note_id={}")]:
+            with self.subTest(name=name, pattern=pattern):
+                # Warm the same route as B, request B's ID as A, then reopen A's own note.
+                owner = self.request(name, "GET", pattern.format(NOTES["b"]), user="b")
+                self.assertEqual(owner.status_code, 200)
+                self.assertIn("SYNTHETIC-RETAINED-EXCERPT-B", owner.text)
+                self.assertEqual(owner.headers["Cache-Control"], "private, no-store")
+                denied = self.request(name, "GET", pattern.format(NOTES["b"]))
+                self.assertEqual(denied.status_code, 404)
+                self.assertNotIn("SYNTHETIC-RETAINED-EXCERPT-B", denied.text)
+                self.assert_private(denied)
+                own = self.request(name, "GET", pattern.format(NOTES["a"]))
+                self.assertEqual(own.status_code, 200)
+                self.assertIn("SYNTHETIC-RETAINED-EXCERPT-A", own.text)
+                self.assertNotIn("SYNTHETIC-RETAINED-EXCERPT-B", own.text)
+                self.assertEqual(own.headers["Cache-Control"], "private, no-store")
+                self.assert_private(own)
+        self.assertTrue(all(call["method"] == "GET" for call in self.transport.calls))
+        self.assertTrue(all(call["table"] in {"auth/user", "generated_notes", "sessions", "cases"}
+                            for call in self.transport.calls))
+
+    def test_reopen_after_input_deletion_preserves_edits_without_recreating_originals(self):
+        self.seed_reopen_evidence()
+        original = "SYNTHETIC-DELETED-INPUT-ONLY-A"
+        edited = "Synthetic counselor changed the final assertion."
+        session = next(row for row in self.transport.tables["sessions"] if row["id"] == SESSIONS["a"])
+        source = {"counselor_memo": original, "transcript_text": original}
+        session["raw_input_text"] = json.dumps({**source, "masked": False})
+        session["sanitized_input_text"] = json.dumps({"sources": source})
+        note = next(row for row in self.transport.tables["generated_notes"] if row["id"] == NOTES["a"])
+        note["confirmed_json"]["sections"]["session_content"] = edited
+        snapshot = copied(note["draft_json"]["grounding"])
+        before = self.request("backend", "GET", f'/api/notes/records/{NOTES["a"]}')
+        self.assertEqual(before.status_code, 200)
+        self.assertEqual(before.json()["session_input"]["transcript_text"], original)
+        deleted = self.request("record", "POST", f'/api/notes/records/{NOTES["a"]}/input-deletion')
+        self.assertEqual(deleted.status_code, 200)
+        self.assertIsNone(session["raw_input_text"])
+        self.assertIsNone(session["sanitized_input_text"])
+        for sources_present in (True, False):
+            if not sources_present:
+                note["draft_json"]["grounding"]["context"]["sources"] = []
+            self.transport.calls.clear()
+            for name, path in [("backend", f'/api/notes/records/{NOTES["a"]}'),
+                               ("record", f'/api/notes/records/{NOTES["a"]}'),
+                               ("record", f'/api/notes/record?note_id={NOTES["a"]}'),
+                               ("record", f'/?note_id={NOTES["a"]}')]:
+                with self.subTest(sources_present=sources_present, name=name, path=path):
+                    reopened = self.request(name, "GET", path)
+                    self.assertEqual(reopened.status_code, 200)
+                    body = reopened.json()
+                    self.assertEqual(body["confirmed_json"]["sections"]["session_content"], edited)
+                    self.assertIsNone(body["session_input"])
+                    self.assertFalse(body["session_input_is_original"])
+                    self.assertNotIn(original, reopened.text)
+                    self.assertNotIn("SYNTHETIC-RETAINED-EXCERPT-B", reopened.text)
+                    self.assert_private(reopened)
+                    if sources_present:
+                        self.assertEqual(body["draft_json"]["grounding"], snapshot)
+                    else:
+                        self.assertEqual(body["draft_json"]["grounding"]["context"]["sources"], [])
+                        self.assertNotIn("SYNTHETIC-RETAINED-EXCERPT-A", reopened.text)
+            # Reopening must not regenerate evidence from a retained index or model call.
+            self.assertTrue(all(call["method"] == "GET" for call in self.transport.calls))
+            self.assertTrue(all(call["table"] in {"auth/user", "generated_notes", "sessions", "cases"}
+                                for call in self.transport.calls))
+
+    def test_reopen_after_lost_deletion_response_and_retry_keeps_only_owned_snapshot(self):
+        self.seed_reopen_evidence()
+        note = next(row for row in self.transport.tables["generated_notes"] if row["id"] == NOTES["a"])
+        note["confirmed_json"]["sections"]["session_content"] = "Synthetic edited final assertion."
+        snapshot = copied(note)
+        rpc = self.transport.rpc
+
+        def committed_without_response(table, body, user):
+            rpc(table, body, user)
+            raise SupabaseStorageError("SYNTHETIC-LOST-DELETION-RESPONSE")
+
+        path = f'/api/notes/records/{NOTES["a"]}'
+        with patch.object(self.transport, "rpc", side_effect=committed_without_response):
+            failed = self.request("backend", "POST", path + "/input-deletion")
+        self.assertEqual(failed.status_code, 503)
+        self.assertNotIn("SYNTHETIC-LOST-DELETION-RESPONSE", failed.text)
+        session = next(row for row in self.transport.tables["sessions"] if row["id"] == SESSIONS["a"])
+        marker = session["input_deleted_at"]
+        for retried in (False, True):
+            if retried:
+                retry = self.request("record", "POST", path + "/input-deletion")
+                self.assertEqual(retry.status_code, 200)
+            reopened = self.request("backend", "GET", path)
+            self.assertEqual(reopened.status_code, 200)
+            self.assertIsNone(reopened.json()["session_input"])
+            self.assertFalse(reopened.json()["session_input_is_original"])
+            self.assertEqual(reopened.json()["draft_json"], snapshot["draft_json"])
+            self.assertEqual(reopened.json()["confirmed_json"], snapshot["confirmed_json"])
+            self.assert_private(reopened)
+            self.assertEqual(note, snapshot)
+            self.assertEqual(session["input_deleted_at"], marker)
+            owner_before = self.transport.owner_bytes(USERS["a"])
+            for method, suffix in (("GET", ""), ("POST", "/input-deletion")):
+                denied = self.request("record", method, path + suffix, user="b")
+                self.assertEqual(denied.status_code, 404)
+                self.assertNotIn("SYNTHETIC-RETAINED-EXCERPT-A", denied.text)
+            self.assertEqual(self.transport.owner_bytes(USERS["a"]), owner_before)
+        mutations = [call for call in self.transport.calls if call["method"] != "GET"]
+        self.assertEqual([(call["table"], call["body"], call["user"]) for call in mutations],
+                         [("rpc/delete_session_input", {"p_note_id": NOTES["a"]}, USERS["a"])] * 2)
+        for table in ("transcript_turns", "transcript_windows"):
+            self.assertFalse(any(row["session_id"] == SESSIONS["a"] for row in self.transport.tables[table]))
 
     def test_confirmation_all_aliases_cannot_mutate_known_foreign_note(self):
         for name, path in [("backend", "/api/notes/confirm"), ("confirm", "/api/notes/confirm"), ("confirm", "/")]:

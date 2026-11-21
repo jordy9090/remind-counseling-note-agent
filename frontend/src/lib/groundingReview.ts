@@ -12,6 +12,9 @@ export interface GroundingReviewItem {
   stale: boolean
 }
 
+/** Reopen-only review state; the saved validation result remains unchanged. */
+export type ReviewableGrounding = GroundedGenerationResult & { stale_target_fields?: string[] }
+
 export interface TranscriptEvidenceLine {
   role: '상담자' | '내담자' | '원문'
   text: string
@@ -34,12 +37,18 @@ export const supportStateLabel: Record<GroundingSupportType, string> = {
   unsupported: '근거 부족 · 검토 필요',
 }
 
+export function groundingReviewStatus(item: GroundingReviewItem): { supportType: GroundingSupportType; label: string } {
+  if (item.stale) return { supportType: 'unsupported', label: '수정 후 근거 재확인 필요' }
+  if (item.missingSource) return { supportType: 'unsupported', label: '근거 정보를 불러올 수 없습니다.' }
+  return { supportType: item.claim.support_type, label: supportStateLabel[item.claim.support_type] }
+}
+
 export function targetFieldForSection(sectionId: string): string | null {
   return sectionTargetField[sectionId] || null
 }
 
 export function buildGroundingReviewItems(
-  grounding: GroundedGenerationResult | null | undefined,
+  grounding: ReviewableGrounding | null | undefined,
   sectionId: string,
 ): GroundingReviewItem[] {
   if (!grounding?.enabled) return []
@@ -59,7 +68,7 @@ export function buildGroundingReviewItems(
         claim,
         sources,
         missingSource: permittedIds.length > sources.length || expectsEvidence(claim) && !permittedIds.length,
-        stale: false,
+        stale: grounding.stale_target_fields?.includes(targetField) ?? false,
       }
     })
 }
@@ -121,7 +130,9 @@ function validatedEvidenceIds(
 }
 
 function expectsEvidence(claim: GroundedClaim): boolean {
-  return claim.support_type !== 'unsupported' && claim.evidence_ids.length > 0
+  return claim.support_type !== 'unsupported' && (claim.claim_kind === 'factual'
+    || claim.support_type === 'direct_evidence' || claim.support_type === 'counselor_judgment'
+    || claim.evidence_ids.length > 0)
 }
 
 function normalizeForMatch(value: string): string {
