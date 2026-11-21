@@ -2,9 +2,56 @@
 
 Decision: **HOLD expansion to real-data PoC use** until the remaining environment and policy gates are signed off. The separately authorized security maintenance release below is deployed. This is an engineering evidence ledger, not a security certification or legal opinion.
 
-## Current completion criteria and authorization
+## Current authorization, status and completion criteria
 
-On 2026-11-19 the user explicitly authorized operational access, main integration and deployment after verification, superseding the historical no-release boundaries below. Preserve real user data and secret values. Completion criteria: reuse PR #105 baseline CI; integrate the verified #104 parent/beta fixes; reproduce deletion/recreation ordering, rollback/retry and lost responses using synthetic fixtures/mocks; fix only reproduced defects; pass CI; verify operational prerequisites, deploy and preserve rollback targets. The dirty development checkout is untouched. The initial and pre-merge fetches both confirmed main `f942db4` before this release.
+Current task checkpoint: **2026-11-19, after the 21:38-21:43 KST signed-JWT run (12:38-12:43 UTC)**. Initial fetch confirmed main `67488196ab5d0a4f9360acba19cb319f2e72773b`; [main Product CI 44514681336](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44514681336) passed. The user has authorized operational access and the prior main integration/deployment, and now explicitly authorizes real signed-JWT isolation tests with newly created synthetic users A/B and cleanup of those users and their data. Existing real-user records must not be queried, changed or deleted; secret values must not be printed or committed. Real-data PoC expansion, legal decisions and unrelated PR integration remain separate gates.
+
+Current result: **signed-JWT isolation passed; synthetic cleanup verified in all 20 scopes; no application or database-policy correction required**. The installed production release is unchanged.
+
+Completion criteria for this follow-up: (1) reconcile this header and PR inventory with Git ancestry and installed releases; (2) reuse unchanged CI, SQL-role and mock results; (3) use actual Supabase password-login JWTs for A/B positive controls and cross-owner read/update/delete attempts through PostgREST and the deployed API; (4) fix only a reproduced defect and pass affected CI; (5) revoke synthetic sessions, remove owned synthetic rows/accounts and verify zero remaining records; (6) record results, limitations and cleanup here. Every live data operation must target exact IDs created by this run. No live model/provider generation is needed. The dirty development checkout remains untouched; work is isolated on `codex/poc-jwt-isolation`.
+
+Confirmed deployed baseline: Vercel `dpl_5pJNWZw5F9T1amg638M3oDEM1DDF` is READY for main `6748819` and owns `remind.ai.kr`; the API's current release and `SOURCE_COMMIT` are `0e9ccf1f67921c22cccbf6eee9dd2ad585ac5669`. Application/SQL/deployment configuration is identical between those commits; later changes are CI and ledger updates. The three #104/#105 production migrations remain installed under provider-generated versions listed below. No new deployment is needed for an unchanged-code verification run.
+
+### PR integration inventory
+
+Snapshot at the checkpoint above covers every open PR returned by repository-wide GitHub search, plus the recent security release PRs. "Included" means the exact PR head is an ancestor of main; GitHub's open/closed label alone does not establish code inclusion. This inventory does not close, retarget or merge unrelated PRs.
+
+| PR / head | GitHub state | Main / operational status |
+| --- | --- | --- |
+| [#100](https://github.com/jordy9090/remind-counseling-note-agent/pull/100) / `d85a9a6` | Merged | Included in main and API `0e9ccf1`; privacy/review/auth baseline deployed |
+| [#102](https://github.com/jordy9090/remind-counseling-note-agent/pull/102) / `e684f74` | Open Draft | Already included through #105; disposable verification harness is in main; it is not a production job |
+| [#104](https://github.com/jordy9090/remind-counseling-note-agent/pull/104) / `dca5ad0` | Open Draft | Already included through #105; parent/beta guards installed in production |
+| [#105](https://github.com/jordy9090/remind-counseling-note-agent/pull/105) / `0e9ccf1` | Merged | Main merge `aa70328f`; atomic deletion, tombstone and retry behavior deployed |
+| [#106](https://github.com/jordy9090/remind-counseling-note-agent/pull/106) / `e84a0be` | Merged | Main merge `6748819`; CI mirror correction and ledger only, no API runtime difference |
+| [#49](https://github.com/jordy9090/remind-counseling-note-agent/pull/49) / `ef0459a` | Open Draft | Exact source head is not in main; production history already contains `20261014082955` and `20261014084933` (grants/tenant-parent policies). Do not replay them blindly |
+| [#101](https://github.com/jordy9090/remind-counseling-note-agent/pull/101) / `bee0440` | Open Draft | Exact reopened-evidence follow-up is not in main or the deployed API/frontend |
+| [#103](https://github.com/jordy9090/remind-counseling-note-agent/pull/103) / `2a89f14` | Open Draft | Tracing suppression follow-up is not in main or the deployed API |
+| [#98](https://github.com/jordy9090/remind-counseling-note-agent/pull/98) / `a91bc16` | Open, ready | Neutral person-mapping colors are not in the deployed frontend |
+| [#58](https://github.com/jordy9090/remind-counseling-note-agent/pull/58) / `ec05191` | Open Draft | Exact Quick-summary review/edit head is not in main |
+| [#57](https://github.com/jordy9090/remind-counseling-note-agent/pull/57) / `9e588d6` | Open Draft | Exact Quick-summary quality head is not in main |
+| [#56](https://github.com/jordy9090/remind-counseling-note-agent/pull/56) / `f08b56a` | Open Draft | Exact shared AI-core head is not in main |
+
+The older #56/#57/#58 branches may overlap independently delivered features; no claim is made that every individual feature is absent. Their complete PR heads are unintegrated, and unrelated feature reconciliation is outside this isolation check.
+
+## Actual signed-JWT A/B isolation (completed 2026-11-19)
+
+**Outcome:** 292 distinct final assertion labels passed against the installed Supabase project and public API; no application defect was reproduced. This follow-up changes documentation only. Runtime, RLS, grants, Auth settings and deployment configuration were not changed. Existing Product/security/disposable-DB results above remain applicable; no accounts were recreated and no complete browser/model E2E was repeated.
+
+Run `jwtiso-20261119-ace0943b6a2e` used two newly administrator-created, confirmed `@example.invalid` accounts, actual password-login JWTs and `/auth/v1/user` identity confirmation. Account creation sends no invitation/confirmation email. Supabase CLI 3.2.0 used its existing authenticated management connection; keys were captured in process memory without output. Policy probes used only the publishable API key and each user's bearer, never the administrator key. Every data request selected exact generated row/case IDs; no real-user rows or unfiltered user/table listings were read. No model generation, paid provider call or schema migration was needed.
+
+| Surface / exact check | Result | Evidence boundary |
+| --- | --- | --- |
+| Direct PostgREST, both A-to-B and B-to-A: `cases`, `sessions`, `generated_notes`, `counseling_drafts`, `case_memory_chunks`, `evidence_items`, `verification_reports`, `retrieval_logs`, `document_exports`, `transcript_turns`, `transcript_windows`, `voucher_documents` | Own inserts/reads/updates succeeded; all 72 cross-owner read/update/delete attempts affected or returned zero rows; 24 owner-transfer attempts were rejected; the other owner's before/after snapshots remained equal | All 12 tables have installed RLS enabled; positive controls prevent mistaking an unavailable endpoint or missing fixture for isolation |
+| Public API: owned/foreign case dashboard, person dictionary, saved note and temporary draft reads; foreign profile/schedule/dictionary edits, note confirmation and input deletion | Own reads/edits succeeded; foreign operations returned 404/403 and target snapshots remained unchanged | Input records belong only to the two generated accounts; no browser session or real counseling material used |
+| Deletion RPC and JWT validation | Foreign `delete_session_input` returned 403/`42501`; payload-tampered JWTs returned 401 from both API and PostgREST | Real issued tokens with modified `sub` kept the original signature; no signing secret or fabricated valid JWT used |
+| Owned input deletion and retry, both users | Both API calls returned 200; permanent marker present, raw/sanitized inputs null and transcript rows absent; confirmed notes retained; the other user's session unchanged; recreation rejected with `23514` | Complements existing disposable concurrency evidence; no new claim about universal lock order or complete derivative erasure |
+| Cleanup | Owner-scoped row deletion; global logout returned 204 for both users; Auth hard-delete succeeded and exact-user GET returned 404; temporary password/token file removed | Independent owner-filtered SQL counts returned zero in all 20 scopes: 12 public tables, Auth users/identities/sessions/refresh tokens, both voucher-recovery tables, beta enrollments and Storage objects |
+
+One harness mismatch was corrected: the first API draft positive control returned 404 because the disposable SQL fixture used a raw UUID, while the real API uses `draft_` plus SHA-256 of `user_id:logical_draft_id` and a structured workspace payload. The existing frontend request and backend transformation were inspected; the two synthetic drafts were saved through the real API, and only affected draft controls were repeated. Passing checks for the other 11 tables and earlier API reads were reused. The historical 404 remains in the local evidence log; all 292 final labels pass (315 total recorded events including the correction).
+
+Validation ledger: main `6748819`, API `0e9ccf1`, frontend `dpl_5pJNWZw5F9T1amg638M3oDEM1DDF`, production Supabase PostgreSQL 17.6 / `https://49.247.174.195:8443`; execution 2026-11-19 21:38:12-21:43:15 KST. The one-off artifact runner was invoked as `verify.py --confirm-live-synthetic --phase create|probe|cleanup` with the fixture correction described above; runner SHA-256 `a19fa209bee9e294c4f670ea53087fc90eb04e9ed4c7358bff2e5d5d34538b84`. Redacted per-check/cleanup reports are retained locally under `C:/Users/USER/.codex/artifacts/jwt-isolation-20261119/`; credential state was removed. No new deployment was performed.
+
+Remaining limits: Storage bucket policies, shared KB/search RPCs, arbitrary multi-row reparenting/isolation levels, actual scheduler execution, participant/MFA/operator controls, external tracing and provider backup/audit-log retention are not established by this matrix. Session revocation/deletion and zero live records are confirmed; this is not a claim that provider logs/backups or every previously issued JWT byte cease to exist immediately. The baseline CI-vs-production PostgreSQL version difference and the unintegrated PRs above remain explicit.
 
 ## Current release evidence (2026-11-19)
 
@@ -33,7 +80,7 @@ Post-release CI follow-up: main run `44512853835` reached the five-minute depend
 [PR #106](https://github.com/jordy9090/remind-counseling-note-agent/pull/106), code `1f008c1bdfc7020b48f83ddb5c42cd8a8190e8ff`, changes only the ephemeral PDF runner's mirror list to the official Ubuntu HTTPS archive. [Product CI 44513917201](https://github.com/jordy9090/remind-counseling-note-agent/actions/runs/44513917201) passed all jobs on 2026-11-19 11:22 UTC: signed packages downloaded 61.7 MB in five seconds and both PDF smoke/supervision checks passed. Packages, signature verification, five-minute limit, retries and assertions are unchanged. No application deployment or new data fixture is required to validate that CI-only correction. Documentation-only commits reuse this result; subsequent unchanged-runtime Git deployments retain the release evidence above, with current merge/deployment status linked from PR #106.
 
 Repository/operational differences and remaining limits:
-- CI uses PostgreSQL 15; production uses 17.6. SQL claim mocks and unauthenticated smoke checks do not prove live signed-JWT A/B isolation or an authenticated production deletion workflow. No full live browser/model E2E is claimed.
+- CI uses PostgreSQL 15; production uses 17.6. The actual signed-JWT matrix above now verifies scoped A/B isolation and authenticated input deletion on production 17.6, supplementing the earlier mock/SQL-role evidence. No full live browser/model E2E is claimed.
 - Production migration versions are provider-generated as mapped above. Older production history also includes legacy grants/parent guards and a different person-dictionary version; existing profile columns have no matching repository version in history. Do not replay historical migrations blindly.
 - The backend source is `0e9ccf1`; the frontend/main merge `aa70328f` has an identical Git tree. Detector/model services were not redeployed or revalidated beyond active status. The final ledger update changes documentation only.
 - Post-DDL security advisories at 11:11 UTC report four pre-existing search functions with [mutable search paths](https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable) (`match_kb_chunks`, `match_case_memory_chunks`, `hybrid_search_kb`, `match_transcript_windows`), disabled [leaked-password protection](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection), and three private-schema tables with [RLS but no policies](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy). No new parent/deletion function appears in the warnings. These advisories are recorded for scoped follow-up; no unrelated grants or policies were changed.
@@ -50,7 +97,7 @@ The following dated sections preserve the authorization and observations at thos
 5. Inspect application errors and tracing for sensitive content and close locally reproducible exposure paths.
 6. Keep small commits, independent review, relevant CI and this checklist current; use stacked Draft PRs for separate P1 changes.
 
-Authorized: source/templates/tests, synthetic data, mocks, local isolated worktrees, commits and Draft PRs. Not authorized: production access/deployment, main merge, real data or keys, production DB changes, real-data deletion, legal/contract decisions or major architecture replacement. Operational checks below remain BLOCKED while local work continues.
+Historical authorization at the original local-only checkpoint (superseded by the current authorization above): source/templates/tests, synthetic mocks, isolated worktrees, commits and Draft PRs only. Operational access and deployment had not yet been authorized at that time. This paragraph is not a current prohibition or release status.
 
 Baseline checked 2026-11-19 07:33 UTC: main `f942db4ecb6e696d75022d3f01a52b8bf2a37cf0`; PR #100 `536d2047305257fd8b12268a2503e606ad98a2a9`, open Draft, no submitted human reviews. Existing dirty development checkout is untouched. Historical `SECURITY_POC_REVIEW.md` describes the November 17 local snapshot; `SECURITY_POC_REMEDIATION.md` describes the newer PR baseline. Historical findings must be revalidated, not assumed current.
 
@@ -77,17 +124,17 @@ Follow-up scope, 2026-11-19: inspect the latest PR #105 CI, repair the deletion/
 | P1: residual retention and cleanup | Atomic input deletion, rollback/retry and tested cascades pass; inventory retained drafts, summaries, excerpts, scratch and detector jobs separately | Broader retention work remains |
 | P1: tracing and diagnostics | Exercise graph/LLM callbacks and external collectors with synthetic egress/log canaries | External collector behavior remains unverified |
 | P1: lock-matrix limits | Tested deletion, ordinary parent updates and beta lifecycle orderings pass | Arbitrary multi-row reparenting and non-default isolation are not covered |
-| Operational authentication and policy parity | Installed guards/RPC/grants and unauthenticated boundaries verified; production PostgreSQL differs from the disposable fixture | Signed-JWT A/B tests need a designated synthetic environment; do not use actual user rows |
+| Additional authorization surfaces | Actual signed-JWT A/B isolation now passes for the 12-table/API matrix above | Storage/shared search RPCs and broader operator controls remain outside that proof |
 | Existing provider advisories | Four older search-function search paths, Auth leaked-password protection and private-schema RLS policy notices listed above | Separate scoped remediation; no unrelated changes in this release |
 
 ## Blocked: evidence or decisions still required
 
 | Item | Required evidence / safe verification | Why blocked |
 | --- | --- | --- |
-| Identity and participant controls | Frontend/API versions, TLS/origin and unauthenticated enforcement are confirmed above; invitation roster, signed-JWT A/B behavior and complete audio/detector revision attestation remain | Required evidence not collected in this synthetic deletion release |
-| Live policy, storage and scheduler behavior | Installed RLS and deletion grants confirmed; signed-JWT A/B operations, storage-bucket coverage and actual scheduler execution remain | Disposable PostgreSQL SQL roles and read-only metadata cannot prove these operational behaviors |
+| Identity and participant controls | Frontend/API versions, TLS/origin and unauthenticated enforcement are confirmed above; the scoped signed-JWT A/B matrix now passes; invitation roster, MFA controls and complete audio/detector revision attestation remain | Required evidence not collected in this synthetic deletion release |
+| Storage, shared RPCs and scheduler behavior | Installed counseling RLS/deletion grants and the signed-JWT matrix are verified; Storage bucket policies, shared search RPCs and actual scheduler execution remain | No corresponding live synthetic flow was run in this scoped task |
 | Existing retained data and backups | Approved inventory, retention periods, deletion authority, backup/PITR expiry and restore reconciliation; provider deletion evidence | Real-data cleanup and retention/legal decisions require owner approval |
-| Key/operator access | Redacted access matrix for data, signing/encryption keys, privileged accounts, support access and backups | Requires actual infrastructure/secret-manager permission review; no keys may be supplied to these tests |
+| Key/operator access | Redacted access matrix for data, signing/encryption keys, privileged accounts, support access and backups | Scoped use of an existing management credential does not establish a complete permission review; no secret values may be printed or committed |
 | Vendors and legal basis | Actual processors, locations, training/retention terms, subprocessors, consent/legal review | Contract and legal review are separate external decisions |
 | Monitoring outside the app | Proxy/APM/crash-dump configuration and synthetic canary observation in an authorized environment | Local mocks cannot establish external collector behavior |
 
