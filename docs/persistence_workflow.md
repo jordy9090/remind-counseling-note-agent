@@ -22,7 +22,23 @@ Authentication implementation and other upstream changes are taken unchanged fro
 The detail endpoint reuses note → session → case ownership checks and the authenticated
 Supabase Bearer token. Responses use `Cache-Control: private, no-store`.
 The Vercel wrapper `/api/notes/record?note_id=...` and rewrite must ship with the frontend.
-No database columns, migration, RLS policy, auth behavior, or AI prompt/model changes are introduced.
+
+Session-input deletion requires migration `20261119080140_session_input_deletion.sql` before the
+updated API is deployed. Its authenticated `delete_session_input(p_note_id uuid)` RPC locks the
+owned session, clears both input columns and transcript tables in one transaction, and sets
+`sessions.input_deleted_at`. Transcript write triggers share that lock and reject later writes,
+including service-role writes. The marker cannot be cleared or replaced. Repeated deletion keeps
+the original marker and returns the same session ID. Missing RPC support fails closed; the API
+does not fall back to separate REST deletions.
+
+After deletion, re-saving input into that session is intentionally rejected; use a new session
+for newly supplied input. Existing summaries, confirmed notes, evidence excerpts, case memory
+and temporary drafts remain readable and editable under their existing ownership rules. A
+saved draft can still contain input text; the deletion confirmation and result identify it as
+retained. The database operation does not certify provider, backup or exported-copy erasure.
+
+The SQL contract in `supabase/tests/session_input_deletion.sql` uses synthetic fixtures and rolls
+back. It belongs in the disposable database verification environment, never a live data project.
 
 ## Confirmed records
 

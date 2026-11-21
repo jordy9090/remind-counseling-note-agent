@@ -492,16 +492,11 @@ def delete_session_input(note_id: str, *, actor: str) -> SessionInputDeletionRes
     session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
-    scope = {"user_id": f"eq.{actor}", "case_id": f"eq.{context.case_id}", "session_id": f"eq.{context.session_id}"}
-    # Derived transcript rows go first, so a failure never leaves turns without the session input.
-    actor_storage.delete("transcript_windows", query=scope)
-    actor_storage.delete("transcript_turns", query=scope)
-    actor_storage.update(
-        "sessions",
-        {"raw_input_text": None, "sanitized_input_text": None},
-        query={"id": f"eq.{context.session_id}", "user_id": f"eq.{actor}"},
-        return_representation=False,
-    )
+    # One database transaction clears sources and marks the session permanently.
+    # The RPC rechecks JWT ownership and serializes with every transcript writer.
+    deleted_session_id = actor_storage.rpc("delete_session_input", {"p_note_id": context.note_id})
+    if deleted_session_id != context.session_id:
+        raise SupabaseStorageError("Session input deletion could not be verified.")
     return SessionInputDeletionResponse(
         note_id=context.note_id,
         session_id=context.session_id,

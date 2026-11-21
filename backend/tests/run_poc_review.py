@@ -17,6 +17,8 @@ SUITES = (
     "test_poc_reviewed_history",
     "test_poc_auth_boundary",
     "test_poc_tracing",
+    "test_poc_deletion_lifecycle",
+    "test_poc_upload_cleanup_signal",
 )
 
 

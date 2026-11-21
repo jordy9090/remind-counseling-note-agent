@@ -2,14 +2,17 @@
 import io
 import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from threading import Event
 from unittest.mock import Mock, patch
 
 if os.environ.get("REMIND_POC_OFFLINE") != "1":
     raise unittest.SkipTest("Use the protected PoC offline runner.")
 
 from langchain_core.globals import get_debug, get_verbose, set_debug, set_verbose
-from langchain_core.runnables import RunnableLambda
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.runnables import RunnableLambda, RunnableParallel
 from langchain_core.runnables.config import var_child_runnable_config
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.callbacks.manager import CallbackManager
@@ -158,3 +161,71 @@ class PoCTracingTests(unittest.TestCase):
         self.assertIsNotNone(result.session_summary_draft)
         client.create_run.assert_not_called()
         client.update_run.assert_not_called()
+
+    def test_nested_model_callbacks_suppress_prompt_history_and_response(self):
+        history = "SYNTHETIC-PRIVATE-HISTORY-CANARY"
+        response = "SYNTHETIC-PRIVATE-MODEL-RESPONSE"
+        self.session.previous_session_summary = history
+
+        def model_node(state):
+            session = state["session_input"]
+            result = llm.get_llm().invoke(session.counselor_memo + session.previous_session_summary)
+            self.assertEqual(result.content, response)
+            return result
+
+        def nested_graph(state):
+            RunnableParallel(first=RunnableLambda(model_node), second=RunnableLambda(model_node)).invoke(state)
+            return self.state
+
+        for poc_mode in (True, False):
+            client = Mock()
+            with self.subTest(poc_mode=poc_mode), patch.object(settings, "poc_mode", poc_mode), \
+                    patch.object(llm, "ChatOpenAI", return_value=FakeListChatModel(responses=[response])) as factory, \
+                    patch("app.services.deid_review.require_reviewed_egress"), \
+                    patch.object(graph, "note_graph", RunnableLambda(nested_graph)), \
+                    tracing_context(enabled=True, client=client):
+                self.assertIsNotNone(self.run_note().session_summary_draft)
+                self.assertEqual(factory.call_count, 2)
+                self.assertIs(get_tracing_context()["enabled"], True)
+            if poc_mode:
+                client.create_run.assert_not_called()
+                client.update_run.assert_not_called()
+            else:
+                # The same real chat-model callback path must detect each synthetic canary.
+                self.assertIn(PRIVATE, str(client.create_run.call_args_list))
+                self.assertIn(history, str(client.create_run.call_args_list))
+                self.assertIn(response, str(client.update_run.call_args_list))
+
+    def test_overlapping_execution_does_not_disable_another_contexts_tracing(self):
+        entered, release = Event(), Event()
+        private_client, control_client = Mock(), Mock()
+
+        def blocked_graph(_):
+            self.assertIs(get_tracing_context()["enabled"], False)
+            entered.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("Synthetic tracing control did not release the graph")
+            FakeListChatModel(responses=["synthetic answer"]).invoke(PRIVATE)
+            return self.state
+
+        def protected_request():
+            with tracing_context(enabled=True, client=private_client):
+                result = self.run_note()
+                self.assertIs(get_tracing_context()["enabled"], True)
+                return result
+
+        with patch.object(graph, "note_graph", RunnableLambda(blocked_graph)), \
+                tracing_context(enabled=True, client=control_client), \
+                ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(protected_request)
+            try:
+                self.assertTrue(entered.wait(timeout=5))
+                self.assertIs(get_tracing_context()["enabled"], True)
+                FakeListChatModel(responses=["synthetic control answer"]).invoke("synthetic public control")
+                self.assertIn("synthetic public control", str(control_client.create_run.call_args_list))
+            finally:
+                release.set()
+            self.assertIsNotNone(future.result(timeout=5).session_summary_draft)
+        private_client.create_run.assert_not_called()
+        private_client.update_run.assert_not_called()
+        self.assertNotIn(PRIVATE, str(control_client.mock_calls))
