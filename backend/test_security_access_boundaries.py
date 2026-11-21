@@ -36,7 +36,7 @@ from app.main import app
 from app.schemas.evidence import TranscriptTurn
 from app.schemas.note import TemporaryDraftSaveRequest
 from app.services import draft_store, raw_evidence_retrieval, retrieval, supabase_store
-from app.services.supabase_storage import SupabaseStorage, _storage_for_actor
+from app.services.supabase_storage import SupabaseStorage, SupabaseStorageError, _storage_for_actor
 from app.services.transcript_storage import TranscriptStorageError, get_transcript_turns, store_transcript_turns
 from app.services.transcript_windows import index_transcript_windows
 
@@ -234,6 +234,18 @@ class OfflineTransport:
         return self.response(result)
 
     def rpc(self, table, body, user):
+        if table == "rpc/delete_session_input":
+            # This fixture assumes the SQL contract; disposable database tests
+            # separately verify its grants, ownership checks and transaction locks.
+            note = next(row for row in self.tables["generated_notes"]
+                        if row["id"] == body["p_note_id"] and row["user_id"] == user)
+            session = next(row for row in self.tables["sessions"]
+                           if row["id"] == note["session_id"] and row["user_id"] == user)
+            for target in ("transcript_windows", "transcript_turns"):
+                self.tables[target] = [row for row in self.tables[target] if row["session_id"] != session["id"]]
+            session.update(raw_input_text=None, sanitized_input_text=None)
+            session.setdefault("input_deleted_at", "2026-11-19T00:00:00Z")
+            return session["id"]
         if table == "rpc/match_case_memory_chunks":
             assert body["filter_counselor_id"] == user
             return [{**row, "chunk_id": row["id"], "similarity_score": 1.0}
@@ -388,6 +400,49 @@ class AccessBoundaryTests(unittest.TestCase):
             self.assertTrue(all(call["method"] == "GET" for call in self.transport.calls))
             self.assertTrue(all(call["table"] in {"auth/user", "generated_notes", "sessions", "cases"}
                                 for call in self.transport.calls))
+
+    def test_reopen_after_lost_deletion_response_and_retry_keeps_only_owned_snapshot(self):
+        self.seed_reopen_evidence()
+        note = next(row for row in self.transport.tables["generated_notes"] if row["id"] == NOTES["a"])
+        note["confirmed_json"]["sections"]["session_content"] = "Synthetic edited final assertion."
+        snapshot = copied(note)
+        rpc = self.transport.rpc
+
+        def committed_without_response(table, body, user):
+            rpc(table, body, user)
+            raise SupabaseStorageError("SYNTHETIC-LOST-DELETION-RESPONSE")
+
+        path = f'/api/notes/records/{NOTES["a"]}'
+        with patch.object(self.transport, "rpc", side_effect=committed_without_response):
+            failed = self.request("backend", "POST", path + "/input-deletion")
+        self.assertEqual(failed.status_code, 503)
+        self.assertNotIn("SYNTHETIC-LOST-DELETION-RESPONSE", failed.text)
+        session = next(row for row in self.transport.tables["sessions"] if row["id"] == SESSIONS["a"])
+        marker = session["input_deleted_at"]
+        for retried in (False, True):
+            if retried:
+                retry = self.request("record", "POST", path + "/input-deletion")
+                self.assertEqual(retry.status_code, 200)
+            reopened = self.request("backend", "GET", path)
+            self.assertEqual(reopened.status_code, 200)
+            self.assertIsNone(reopened.json()["session_input"])
+            self.assertFalse(reopened.json()["session_input_is_original"])
+            self.assertEqual(reopened.json()["draft_json"], snapshot["draft_json"])
+            self.assertEqual(reopened.json()["confirmed_json"], snapshot["confirmed_json"])
+            self.assert_private(reopened)
+            self.assertEqual(note, snapshot)
+            self.assertEqual(session["input_deleted_at"], marker)
+            owner_before = self.transport.owner_bytes(USERS["a"])
+            for method, suffix in (("GET", ""), ("POST", "/input-deletion")):
+                denied = self.request("record", method, path + suffix, user="b")
+                self.assertEqual(denied.status_code, 404)
+                self.assertNotIn("SYNTHETIC-RETAINED-EXCERPT-A", denied.text)
+            self.assertEqual(self.transport.owner_bytes(USERS["a"]), owner_before)
+        mutations = [call for call in self.transport.calls if call["method"] != "GET"]
+        self.assertEqual([(call["table"], call["body"], call["user"]) for call in mutations],
+                         [("rpc/delete_session_input", {"p_note_id": NOTES["a"]}, USERS["a"])] * 2)
+        for table in ("transcript_turns", "transcript_windows"):
+            self.assertFalse(any(row["session_id"] == SESSIONS["a"] for row in self.transport.tables[table]))
 
     def test_confirmation_all_aliases_cannot_mutate_known_foreign_note(self):
         for name, path in [("backend", "/api/notes/confirm"), ("confirm", "/api/notes/confirm"), ("confirm", "/")]:

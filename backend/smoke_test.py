@@ -1055,6 +1055,20 @@ end $$;"""
                 assert body.count(statement) == 1
                 body = body.replace(statement, "")
             sql = prefix + signature + body + suffix
+        elif migration_path.name == "20261119080140_session_input_deletion.sql":
+            # Only the guarded session tombstone transition may remove its transcript derivatives.
+            prefix, found, tail = sql.partition(
+                "create function session_input_lifecycle.guard_session_input_deletion() returns trigger"
+            )
+            signature, start, tail = tail.partition("as $$")
+            body, end, suffix = tail.partition("$$;")
+            assert found and start and end and ";" not in signature
+            assert "if tg_op = 'update' and old.input_deleted_at is null then" in body
+            for table in ("transcript_windows", "transcript_turns"):
+                statement = f"delete from public.{table} where session_id = old.id;"
+                assert body.count(statement) == 1
+                body = body.replace(statement, "")
+            sql = prefix + signature + body + suffix
         assert "drop table" not in sql
         assert "drop schema" not in sql
         assert "truncate " not in sql

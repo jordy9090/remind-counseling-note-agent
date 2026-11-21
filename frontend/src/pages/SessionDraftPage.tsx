@@ -1083,9 +1083,9 @@ export default function SessionDraftPage({
   const deleteStoredInput = () => {
     const noteId = storedNoteId
     if (!noteId) return
-    if (!window.confirm('이 회기에 저장된 입력 원문(메모·축어록 등), 개인정보를 가린 사본, 축어록 검색 데이터를 삭제합니다.\nAI 요약과 확정본, 요약 근거로 연결된 문장 일부는 남습니다. 삭제한 원문은 되돌릴 수 없습니다. 삭제할까요?')) return
+    if (!window.confirm('이 회기에 저장된 입력 원문(메모·축어록 등), 개인정보를 가린 사본, 축어록 검색 데이터를 삭제합니다.\nAI 요약과 확정본, 요약 근거 문장, 확정본에서 만든 회기 기억, 상담사가 임시저장한 작업(입력 내용 포함)은 남습니다. 삭제한 저장 항목은 되돌릴 수 없습니다.\n삭제한 회기에는 입력을 다시 저장할 수 없습니다. 새 입력은 새 회기에 저장해주세요. 삭제할까요?')) return
     void runPersistence(async () => {
-      await deleteSessionInput(noteId)
+      const deletion = await deleteSessionInput(noteId)
       setForm((current) => ({
         ...current, counselor_memo: '', transcript_text: '', previous_session_summary: '', counseling_goal: '',
         psychological_test_summary: '', nonverbal_notes: '', key_issue_tags: [],
@@ -1095,7 +1095,8 @@ export default function SessionDraftPage({
       objectUrlsRef.current.clear()
       setMaterials([])
       setStoredNote((current) => (current ? { ...current, session_input: null, session_input_is_original: false } : current))
-      setDraftSaveMessage('이 회기의 입력 원문을 삭제했습니다. AI 요약과 확정본은 그대로 남습니다.')
+      const describe = (items: string[]) => items.map(item => item.match(/\(([^)]+)\)$/)?.[1] || item).join(', ')
+      setDraftSaveMessage(`삭제한 저장 항목: ${describe(deletion.deleted)}. 남아 있는 자료: ${describe(deletion.kept)}. 임시저장 작업에 포함된 입력 내용은 삭제되지 않습니다. 삭제한 회기에는 입력을 다시 저장할 수 없습니다. 새 입력은 새 회기에 저장해주세요.`)
     })
   }
 

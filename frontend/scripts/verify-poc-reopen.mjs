@@ -16,7 +16,8 @@ function moduleUrl(name) {
   return 'data:text/javascript;base64,' + Buffer.from(js).toString('base64')
 }
 
-const { noteFromRecord, sessionInputFromRecord, confirmedPayload } = await import(moduleUrl('persistenceWorkflow'))
+const workflow = await import(moduleUrl('persistenceWorkflow'))
+const { noteFromRecord, sessionInputFromRecord, confirmedPayload } = workflow
 const { buildGroundingReviewItems } = await import(moduleUrl('groundingReview'))
 const summary = 'Synthetic unchanged confirmed observation.'
 const excerpt = '[client] Synthetic retained excerpt.'
@@ -209,6 +210,67 @@ test('malformed or absent grounding does not prevent reading the saved final not
     record.draft_json.grounding = value
     assert.equal(noteFromRecord(record).session_summary, summary)
     assert.doesNotThrow(() => items(record))
+  }
+})
+
+test('the real restore callback replaces stale input and carries reopened evidence through current main', async () => {
+  const source = readFileSync('src/pages/SessionDraftPage.tsx', 'utf8')
+  const ast = ts.createSourceFile('SessionDraftPage.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let declaration
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'restoreNote') declaration = node
+    ts.forEachChild(node, visit)
+  }
+  visit(ast)
+  assert.ok(declaration?.initializer, 'exercise the actual saved-note restore callback')
+  const compiled = ts.transpileModule(`const restore = ${declaration.initializer.getText(ast)}`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText
+  for (const scenario of ['unchanged', 'edited', 'missing', 'foreign']) {
+    const record = copy()
+    const oldInput = 'SYNTHETIC-PREVIOUS-SCREEN-INPUT'
+    if (scenario === 'edited') record.confirmed_json.session_content.text = 'Synthetic edited final assertion.'
+    if (scenario === 'missing') record.draft_json.grounding.context.sources = []
+    if (scenario === 'foreign') record.draft_json.grounding.context.sources[0].case_id = 'SYNTHETIC-FOREIGN'
+    const state = { form: { transcript_text: oldInput }, result: { old: true }, sections: [], materials: ['synthetic.wav'] }
+    const set = key => value => { state[key] = value }
+    const noop = () => {}
+    let pending
+    let cleared = 0
+    const dependencies = {
+      ...workflow, storedNoteId: null, confirmedFingerprint: null, draftSections: [], allowRestore: () => true,
+      runPersistence: operation => { pending = operation() },
+      loadGeneratedNote: async id => { assert.equal(id, record.note_id); return record },
+      initialForm: { transcript_text: oldInput, counselor_memo: oldInput, key_issue_tags: [oldInput] },
+      registeredClientName: () => '', defaultVisibleSectionIds: new Set(['session_content']),
+      // Layout/rendering has separate coverage; this boundary checks the callback's real projection and state writes.
+      buildDocumentSections: data => [{ id: 'session_content', title: '상담 내용', content: data.session_summary,
+        visible: true, groundingItems: buildGroundingReviewItems(data.grounding, 'session_content') }],
+      emptyRestoredSection: id => { throw new Error(`Unexpected synthetic section ${id}`) },
+      buildSourceBadges: () => [], setForm: set('form'), setResult: set('result'), setDraftSections: set('sections'),
+      setStoredNote: set('record'), setMaterials: set('materials'),
+      setSessionTopic: noop, setVisibleSectionIds: noop, setStoredNoteId: noop, setConfirmedFingerprint: noop,
+      setSavedDraft: noop, setSelectedPreviousSessionIds: noop, setFinalDocumentSections: noop,
+      setSupervisionReportDraft: noop, setCurrentScreen: noop, resetRestoredUi: noop, setDraftSaveMessage: noop,
+      materialsRef: { current: [{ file: 'synthetic.wav' }] }, clearHostedAudioCheckpoint: () => { cleared++ },
+      objectUrlsRef: { current: new Set(['blob:synthetic']) }, URL: { revokeObjectURL: noop }, window: { scrollTo: noop },
+    }
+    const restore = new Function(...Object.keys(dependencies), `${compiled}; return restore`)(...Object.values(dependencies))
+    restore(record.note_id)
+    await pending
+    assert.equal(state.record, record)
+    assert.equal(state.form.transcript_text, '')
+    assert.equal(state.form.counselor_memo, '')
+    assert.deepEqual(state.form.key_issue_tags, [])
+    assert.equal(JSON.stringify(state.form).includes(oldInput), false)
+    assert.equal(JSON.stringify(state.form).includes(excerpt), false)
+    assert.deepEqual(state.materials, [])
+    assert.equal(cleared, 1)
+    assert.equal(state.sections[0].content, record.confirmed_json.session_content.text)
+    const item = state.sections[0].groundingItems[0]
+    assert.equal(item.stale, scenario === 'edited')
+    assert.equal(item.missingSource, ['missing', 'foreign'].includes(scenario))
+    assert.equal(item.sources.length, ['missing', 'foreign'].includes(scenario) ? 0 : 1)
   }
 })
 
