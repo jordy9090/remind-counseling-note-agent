@@ -7,7 +7,9 @@ from app.core.config import settings
 def get_llm(*, timeout: float | None = None, max_retries: int = 0) -> ChatOpenAI:
     """Use bounded provider calls and the evaluated reasoning setting by default."""
     from app.services.deid_review import require_reviewed_egress
+    from app.services.diagnostic_privacy import require_private_diagnostics
     require_reviewed_egress()
+    require_private_diagnostics()
     options = {
         "model": settings.openai_model,
         "api_key": settings.openai_api_key,

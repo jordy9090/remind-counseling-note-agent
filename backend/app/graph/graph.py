@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
+from app.services.diagnostic_privacy import private_ai_execution
 from app.services.relational_insights import generate_relational_insights
 from app.graph.nodes import (
     assemble_generation_grounding,
@@ -163,6 +164,7 @@ def create_note_graph():
 note_graph = create_note_graph()
 
 
+@private_ai_execution()
 def run_note_pipeline(
     session_input: SessionInput,
     requested_section_ids: list[str] | None = None,

@@ -14,6 +14,7 @@ from app.schemas.note import (
     SupervisionSpeakerTurn, SupervisionUnsupportedClaim,
 )
 from app.services.deidentification import render_counselor_value
+from app.services.diagnostic_privacy import private_ai_execution
 
 PLACEHOLDER = "[상담사 확인 필요]"
 
@@ -80,6 +81,7 @@ def create_supervision_report_graph():
 supervision_report_graph = None
 
 
+@private_ai_execution()
 def run_supervision_report_pipeline(request: SupervisionReportRequest) -> SupervisionReportDraft:
     global supervision_report_graph
     if supervision_report_graph is None:
