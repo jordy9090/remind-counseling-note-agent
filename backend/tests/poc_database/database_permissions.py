@@ -150,7 +150,7 @@ def verify_permission_concurrency(command, env, run, require_success):
         query("begin; " + " ".join(f"delete from public.{t} where case_id='{case}';" for t in ('document_exports','counseling_drafts','retrieval_logs')) +
               f"delete from public.cases where id='{case}'; delete from beta_retention.enrollments where owner_id='{owner}'; "
               f"delete from auth.users where id='{owner}'; delete from processing_authorization.policy; commit;", "Read-only fixture cleanup")
-    for authority in ("metadata", "policy", "beta"):
+    for authority in ("metadata", "policy", "beta", "combined"):
         for first in ("write", "revoke"):
             owner, ids, rows = fixture()
             case = ids["cases"]
@@ -161,17 +161,24 @@ def verify_permission_concurrency(command, env, run, require_success):
             write = actor + "with d as (" + insert("document_exports", rows["document_exports"]) + " returning 1) select count(*) from d;"
             revoke = {"metadata": f"update auth.users set raw_app_meta_data='{{}}' where id='{owner}';",
                       "policy": "update processing_authorization.policy set version='revoked';",
-                      "beta": f"update beta_retention.enrollments set withdrawn_at=clock_timestamp() where case_id='{case}';"}[authority]
+                      "beta": f"update beta_retention.enrollments set withdrawn_at=clock_timestamp() where case_id='{case}';",
+                      "combined": f"update auth.users set raw_app_meta_data='{{}}' where id='{owner}'; "
+                                  f"update beta_retention.enrollments set withdrawn_at=clock_timestamp() where case_id='{case}';"}[authority]
             try:
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    with held_transaction(command, env, holding, write if first == "write" else revoke) as holder:
+                    # Expose the former INSERT-trigger inversion: hold Auth only,
+                    # observe INSERT waiting on Auth, then acquire enrollment.
+                    split_revoke = authority == "combined" and first == "revoke"
+                    held_sql = write if first == "write" else (revoke.split(';')[0] + ';' if split_revoke else revoke)
+                    with held_transaction(command, env, holding, held_sql) as holder:
                         wait_until(f"select exists(select from pg_stat_activity where application_name='{holding}' and state='idle in transaction');")
                         future = pool.submit(run, command, env=env,
                             sql=f"set application_name='{waiting}'; set statement_timeout='20s'; begin; " +
                                 (revoke if first == "write" else write) + " commit;", timeout=30)
                         wait_until(f"select exists(select from pg_stat_activity w where application_name='{waiting}' and wait_event_type='Lock' "
                                    f"and exists(select from pg_stat_activity h where h.application_name='{holding}' and h.pid=any(pg_blocking_pids(w.pid))));")
-                        out, err = holder.communicate("commit;\n", timeout=25)
+                        finish_sql = revoke.split(';', 1)[1] if split_revoke else ""
+                        out, err = holder.communicate(finish_sql + " commit;\n", timeout=25)
                         require_success(subprocess.CompletedProcess([], holder.returncode, out, err), "Finish permission holder")
                         result = future.result()
                         if first == "write":

@@ -130,6 +130,12 @@ take row locks and instead evaluate the current read snapshot. Neither mode
 recalls a completed result. Clock expiry is checked at each operation, not a
 promise to undo writes authorized before time elapsed.
 
+An INSERT trigger acquires permission locks before the existing enrollment/parent
+triggers. Operator transactions combining changes must use the same order: policy,
+Auth metadata, enrollment, then counseling rows. The concurrency fixture holds an
+Auth update, observes an INSERT waiting, then updates enrollment before commit.
+Read-only behavior follows the [PostgREST transaction contract](https://docs.postgrest.org/en/stable/references/transactions.html).
+
 The DB grant covers storage/access, not the downstream purpose of exported text.
 Per-provider AI egress still uses the API checks. Independent HTTP persistence
 requests remain independent transactions; denial of a later step does not undo a

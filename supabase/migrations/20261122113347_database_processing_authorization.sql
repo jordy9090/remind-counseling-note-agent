@@ -57,6 +57,22 @@ revoke all on function processing_authorization.database_allowed(text)
     from public, anon, authenticated, service_role;
 grant execute on function processing_authorization.database_allowed(text) to authenticated;
 
+-- INSERT triggers precede RLS WITH CHECK. Acquire authority before the existing
+-- beta/parent triggers take enrollment or payload locks, including upserts.
+create function processing_authorization.guard_insert() returns trigger
+language plpgsql security invoker set search_path = '' as $$
+declare case_key text;
+begin
+    if current_user = 'authenticated' then
+        case_key := to_jsonb(new)->>(case when tg_table_name = 'cases' then 'id' else 'case_id' end);
+        if not processing_authorization.database_allowed(case_key) then
+            raise exception 'Processing permission is unavailable' using errcode = '42501';
+        end if;
+    end if;
+    return new;
+end $$;
+revoke all on function processing_authorization.guard_insert() from public, anon, authenticated, service_role;
+
 do $$
 declare t text; case_column text;
 begin
@@ -67,6 +83,8 @@ begin
         -- No TRUNCATE/trigger privileges and no service-role Data API bypass.
         execute format('revoke all on public.%I from public, anon, authenticated, service_role', t);
         execute format('grant select, insert, update, delete on public.%I to authenticated', t);
+        execute format('create trigger a_processing_permission before insert on public.%I
+          for each row execute function processing_authorization.guard_insert()', t);
         execute format('create policy current_processing_permission on public.%I
           as restrictive for all to authenticated
           using (processing_authorization.database_allowed(%I))
