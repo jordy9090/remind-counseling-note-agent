@@ -23,7 +23,7 @@ BETA_EDITS = {
 def verify_beta_lifecycle(command, env, run, require_success):
     def check(result, phase, denied=False):
         if denied:
-            if not result.returncode or not re.search(r"\bERROR:\s+P0001:.*Beta case is unavailable", result.stderr):
+            if not result.returncode or not re.search(r"\bERROR:\s+(P0001|42501|23514):", result.stderr):
                 require_success(result, phase)
                 raise RuntimeError("Expected unavailable beta rejection: " + phase)
             return
@@ -50,7 +50,7 @@ def verify_beta_lifecycle(command, env, run, require_success):
         scenario = ":".join(filter(None, (mode, operation, table)))
         owner, ids, rows = fixture()
         receipt, linked, control_note = (str(uuid4()) for _ in range(3))
-        case, control = "beta_rm_" + receipt, "poc_beta_control_" + receipt
+        case, control = "beta_rm_" + receipt, "beta_rm_" + str(uuid4())
         for row in rows.values():
             if "case_id" in row:
                 row["case_id"] = case
@@ -67,6 +67,8 @@ def verify_beta_lifecycle(command, env, run, require_success):
         query(f"""begin;
             insert into auth.users(id) values ('{owner}');
             select beta_retention.enroll('{receipt}','{owner}',clock_timestamp()-interval '10 minutes');
+            select poc_permissions.authorize('{owner}','{case}');
+            select poc_permissions.authorize('{owner}','{control}');
             {actor} {setup}
             -- A case-level child survives a session-only delete and requires SET NULL.
             insert into public.generated_notes(id,case_id,user_id,source_note_id,confirmed_json)
@@ -76,13 +78,19 @@ def verify_beta_lifecycle(command, env, run, require_success):
               values ('{control_note}','{control}','{owner}','{{"synthetic":"retained"}}');
             commit;""", "Create synthetic beta fixture")
         try:
-            if mode == "expiry" and operation != "insert_before_retire":
+            if mode == "expiry" and operation not in ("insert_before_retire", "row_before_retire"):
                 query(expiry)
             if mode == "withdrawal" and operation in ("source_delete", "session_delete", "late_writes"):
                 query(withdrawn)
             if operation in ("source_delete", "session_delete"):
                 source_table = "sessions" if operation == "session_delete" else "generated_notes"
-                query(f"begin; {actor} delete from public.{source_table} where id='{ids[source_table]}'; commit;", scenario)
+                if mode != "active":
+                    affected = query(f"begin; {actor} with d as (delete from public.{source_table} where id='{ids[source_table]}' returning 1) select count(*) from d; commit;", scenario)
+                    if affected != "0":
+                        raise RuntimeError("Retired permission allowed a caller deletion")
+                # Operator cleanup must still preserve linked final notes after expiry.
+                query(f"delete from public.{source_table} where id='{ids[source_table]}';" if mode != "active" else
+                      f"begin; {actor} delete from public.{source_table} where id='{ids[source_table]}'; commit;", scenario)
                 if query(f"select exists(select from public.generated_notes where id='{linked}' and source_note_id is null "
                          "and confirmed_json='{\"synthetic\":\"retained\"}'::jsonb);") != "t":
                     raise RuntimeError("Source deletion changed or lost the linked final note")
@@ -90,26 +98,35 @@ def verify_beta_lifecycle(command, env, run, require_success):
             elif operation == "late_writes":
                 for target in TABLES:
                     candidate = rows[target] if target == "cases" else probe_row(target, rows[target])
-                    for statement in (insert(target, candidate),
-                                      f"update public.{target} set {BETA_EDITS[target]} where {key(target)}='{ids[target] if target != 'cases' else case}'"):
-                        query(f"begin; {actor} {statement}; commit;", scenario + ":" + target, denied=True)
+                    query(f"begin; {actor} {insert(target, candidate)}; commit;", scenario + ":" + target, denied=True)
+                    statement = f"update public.{target} set {BETA_EDITS[target]} where {key(target)}='{ids[target] if target != 'cases' else case}'"
+                    if query(f"begin; {actor} with d as ({statement} returning 1) select count(*) from d; commit;", scenario) != "0":
+                        raise RuntimeError("Retired permission allowed a caller update")
                 for change in ("source_note_id=null", "source_note_id=null,draft_json='{\"synthetic\":\"late\"}'"):
-                    query(f"begin; {actor} update public.generated_notes set {change} where id='{linked}'; commit;", scenario, denied=True)
+                    if query(f"begin; {actor} with d as (update public.generated_notes set {change} where id='{linked}' returning 1) select count(*) from d; commit;", scenario) != "0":
+                        raise RuntimeError("Retired permission allowed source detachment")
                 query(retire, scenario)
             elif operation in ("row_before_retire", "insert_before_retire"):
                 holding, waiting = "poc_beta_hold_" + uuid4().hex, "poc_beta_wait_" + uuid4().hex
                 if operation == "insert_before_retire":
                     first, final = late_insert, "select 1;"
-                    if mode == "expiry":
-                        query(f"update beta_retention.enrollments set ends_at=clock_timestamp()+interval '3 seconds' where receipt='{receipt}';")
                 else:
                     ident = case if table == "cases" else ids[table]
                     first = f"select 1 from public.{table} where {key(table)}='{ident}' for update;"
                     final = f"update public.{table} set {BETA_EDITS[table]} where {key(table)}='{ident}';"
+                if mode == "expiry":
+                    query(f"""begin;
+                        update beta_retention.enrollments set ends_at=clock_timestamp()+interval '3 seconds' where receipt='{receipt}';
+                        update auth.users set raw_app_meta_data=jsonb_set(raw_app_meta_data,
+                          array['remind_processing_authorizations','{case}','expires_at'],
+                          to_jsonb((select extract(epoch from ends_at) from beta_retention.enrollments where receipt='{receipt}')))
+                          where id='{owner}'; commit;""")
+                    if operation == "row_before_retire":
+                        final = f"with d as ({final.rstrip(';')} returning 1) select count(*) from d;"
                 with ThreadPoolExecutor(max_workers=1) as pool:
                     with held_transaction(command, env, holding, actor + first) as holder:
                         wait_until(f"exists(select from pg_stat_activity where application_name='{holding}' and state='idle in transaction')", scenario)
-                        if operation == "insert_before_retire" and mode == "expiry":
+                        if mode == "expiry":
                             wait_until(f"exists(select from beta_retention.enrollments where receipt='{receipt}' and ends_at<=clock_timestamp())", scenario)
                             query(retire, scenario)
                             if query(f"select exists(select from beta_retention.enrollments where receipt='{receipt}' and erased_at is null);") != "t":
@@ -120,8 +137,9 @@ def verify_beta_lifecycle(command, env, run, require_success):
                             wait_until(f"exists(select from pg_stat_activity w where application_name='{waiting}' and wait_event_type='Lock' "
                                        f"and exists(select from pg_stat_activity h where h.application_name='{holding}' and h.pid=any(pg_blocking_pids(w.pid))))", scenario)
                         out, err = holder.communicate(final + " commit;\n", timeout=25)
-                        check(subprocess.CompletedProcess([], holder.returncode, out, err), scenario,
-                              denied=mode == "expiry" and operation == "row_before_retire")
+                        check(subprocess.CompletedProcess([], holder.returncode, out, err), scenario)
+                        if mode == "expiry" and operation == "row_before_retire" and out.strip().splitlines()[-1] != "0":
+                            raise RuntimeError("Permission expiry did not suppress the held-row update")
                         if future:
                             future.result()
                 # Retries must finish SKIP LOCKED work and remain idempotent.
@@ -148,6 +166,6 @@ def verify_beta_lifecycle(command, env, run, require_success):
                   for target in ("counseling_drafts", "document_exports", "retrieval_logs")) +
                   f"delete from public.generated_notes where id='{linked}'; "
                   f"delete from public.cases where id in ('{case}','{control}'); "
-                  f"delete from beta_retention.enrollments where receipt='{receipt}'; "
+                  f"delete from beta_retention.enrollments where owner_id='{owner}'; "
                   f"delete from auth.users where id='{owner}'; commit;", "Beta fixture cleanup")
     return {"passed": passed, "failed": failed}

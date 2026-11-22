@@ -1,5 +1,6 @@
 -- Disposable database only: fresh permissions and beta lifecycle must both allow.
 begin;
+insert into processing_authorization.policy values(true, 'synthetic-v1');
 create function pg_temp.check_permission(wanted boolean, label text) returns void
 language plpgsql as $$
 declare actual boolean;

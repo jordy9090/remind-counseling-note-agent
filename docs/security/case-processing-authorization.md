@@ -1,4 +1,4 @@
-# Case processing authorization: restricted pilot increment
+# Case processing authorization: API and database boundaries
 
 Status: implementation for review, not deployed. Real-data launch remains HOLD.
 
@@ -39,6 +39,13 @@ Changelog reviewed on 2026-11-22; no Auth/RLS dependency upgrade is required.
 until an approved policy version is configured. This is intentional: deploying
 the API alone does not enable real-data processing. Non-PoC synthetic compatibility
 is unchanged; never use POC_MODE=0 to bypass a real-data launch gate.
+
+The database additionally requires the same version in the private singleton
+`processing_authorization.policy` table. The migration leaves it empty. Only an
+authorized database operator may set it after approval; browser parameters, JWT
+metadata and request settings cannot enable it. DB enforcement applies regardless
+of API POC_MODE. Deploying this migration alone therefore denies application
+access to counseling rows, including existing unregistered cases.
 
 After institutional/legal and vendor review, an authorized operator may register
 only the documented scope under `raw_app_meta_data.remind_processing_authorizations`.
@@ -104,13 +111,33 @@ RPC and a later external request/write are separate transactions: withdrawal can
 recall an already transmitted request, and there is a narrow check-to-use interval.
 It blocks subsequent observed checks, retries and result return, not physical undo.
 
-Direct Data API writes, other case/profile/voucher/export/read surfaces, metadata
-revocation concurrent with a multi-write persistence operation, and privileged
-operator writes still need a coherent database-level permission policy before
-real-data launch. Existing beta expiry/withdrawal write guards continue to apply,
-but they do not enforce every new purpose/provider permission. The new tests do
-not certify these excluded paths. Do not change unrelated existing access or
-delete semantics to make this increment appear complete.
+All 12 counseling tables now have an additional restrictive policy requiring the
+current `storage/supabase` grant for SELECT/INSERT/UPDATE/DELETE. This includes
+profiles inside cases, drafts, exports, transcripts, notes/evidence, memories,
+retrieval records and vouchers. Existing owner and parent checks still apply.
+Direct Data API access and invoker retrieval RPCs cannot bypass the gate. The
+definer-backed history, restore and source-deletion RPCs check it too, including
+their private entry points; former internal bodies have no application EXECUTE
+grant. Anonymous/service-role table access, TRUNCATE and case retrieval RPC access
+are revoked. Shared reference KB reads contain no counseling rows and retain their
+existing read-only access.
+
+Writable transactions hold shared locks on policy, caller Auth metadata and the
+case enrollment until transaction end. A revocation that commits first makes a
+waiting write fail; a write that acquired authorization first finishes before the
+revocation commits. Read-only Data API GET/HEAD and STABLE RPC transactions cannot
+take row locks and instead evaluate the current read snapshot. Neither mode
+recalls a completed result. Clock expiry is checked at each operation, not a
+promise to undo writes authorized before time elapsed.
+
+The DB grant covers storage/access, not the downstream purpose of exported text.
+Per-provider AI egress still uses the API checks. Independent HTTP persistence
+requests remain independent transactions; denial of a later step does not undo a
+prior authorized write. Superusers, owners and administrators who can change
+grants or Auth metadata remain trusted operators. Operator-only beta erasure and
+retention jobs intentionally work after application permission expires or is
+withdrawn. Users with withdrawn permissions must request erasure through that
+operator path; they cannot restore or manipulate protected rows themselves.
 
 Remaining launch gates also include lawful basis and agreements, exact provider
 countries/retention and commercial hosting terms, protected statutory access logs,
@@ -143,3 +170,9 @@ To roll back, revert the API/frontend to that release first, then drop the publi
 wrapper, private helper and new schema if authorized. Never drop beta_retention
 or remove enrollment evidence as rollback. No operational rollback is needed for
 this unmerged, undeployed PR.
+
+The DB extension requires an explicit reviewed rollback migration before eventual
+deployment: remove its restrictive policies/gated wrappers, restore prior function
+names and exact grants, then remove the private policy registry. Doing so reopens
+the direct-DB permission gap, so keep real-data processing disabled during rollback.
+Do not drop counseling or enrollment data to roll back authorization.

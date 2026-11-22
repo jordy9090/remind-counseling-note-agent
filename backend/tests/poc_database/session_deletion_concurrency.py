@@ -55,7 +55,7 @@ def verify_session_deletion(command, env, run, require_success):
     )
     for scenario in scenarios:
         owner, session, note = (str(uuid4()) for _ in range(3))
-        case = "poc_concurrency_" + session
+        case = "beta_rm_" + session
         holding = "poc_hold_" + uuid4().hex
         waiting = "poc_wait_" + uuid4().hex
         actor = (f"set local role authenticated; set local request.jwt.claim.sub='{owner}'; "
@@ -71,6 +71,7 @@ def verify_session_deletion(command, env, run, require_success):
         delete = f"select public.delete_session_input('{note}');"
         query(f"""begin;
             insert into auth.users(id) values ('{owner}');
+            select poc_permissions.authorize('{owner}','{case}');
             insert into public.cases(id,user_id,counselor_id) values ('{case}','{owner}','{owner}');
             insert into public.sessions(id,case_id,user_id,session_number,raw_input_text,sanitized_input_text)
               values ('{session}','{case}','{owner}',1,'Synthetic raw input','Synthetic reviewed input');
@@ -140,5 +141,6 @@ def verify_session_deletion(command, env, run, require_success):
             print("Concurrency contract passed: " + scenario, flush=True)
         finally:
             query(f"begin; delete from public.cases where id='{case}'; "
+                  f"delete from beta_retention.enrollments where owner_id='{owner}'; "
                   f"delete from auth.users where id='{owner}'; commit;", "Concurrency fixture cleanup")
     return scenarios

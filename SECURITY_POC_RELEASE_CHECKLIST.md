@@ -2,7 +2,17 @@
 
 Decision: **HOLD expansion to real-data PoC use** until the remaining environment and policy gates are signed off. The separately authorized security maintenance release below is deployed. This is an engineering evidence ledger, not a security certification or legal opinion.
 
-## Current task: case processing authorization (2026-11-22)
+## Current task: database processing authorization (2026-11-22)
+
+The user authorized extending PR #113 to the database boundary, with synthetic/mock verification and CI only. Starting head is `c608b71c621b4ba0a01209c88e9ef6f3128a87e5`; fetched main remains `747d06564615f19a74d5127fd278ceeab688ef20`. Completion requires restrictive permissions on all 12 counseling tables, gated definer-backed application RPCs, no anonymous/service-role or unregistered-case bypass, expiry/withdrawal/retry and concurrency tests, preserved authorized CRUD and operator erasure, passing CI and cleanup evidence. No actual data, operational access, merge, migration application or deployment is authorized.
+
+**Repository changes:** all 12 tables require current `storage/supabase` authorization in addition to their existing owner/parent policies. A private, initially empty DB policy registry pins the accepted version; caller parameters, GUCs and user metadata cannot select a different version. Read-only Data API requests evaluate current authorization without prohibited row locks; writable transactions lock policy, Auth metadata and enrollment authority rows before covered operations. Renamed recovery/deletion bodies are revoked; both public and private application entry points enforce the gate. Anonymous/service-role table access, TRUNCATE and retrieval RPC bypass are revoked. Unregistered/unsaved case IDs are denied. Privileged operator erasure and scheduler cleanup remain available after denial.
+
+**Validation checkpoint:** local runner safety/coverage tests pass (5); generated matrices contain 467 baseline assertions and 620 permission assertions. Actual PostgreSQL contracts, read-only request compatibility, concurrent revocation orderings and CI are pending. Earlier API/frontend mock results at `30578c6` remain reusable for their unchanged source; no full browser or Production E2E is repeated.
+
+**Operational confirmation:** none. Both the new DB policy and the API policy must be explicitly configured to the same approved version before eventual use; this task configures neither. Superuser/owner/administrator changes to grants or Auth metadata remain a privileged trust boundary. Read snapshots and already transmitted provider requests cannot be recalled. Separate API persistence requests are not one atomic transaction; an earlier authorized write may remain when later steps are denied. Provider contracts, legal review, statutory access records, privileged-key controls and backup reconciliation remain release gates. Real-data launch remains **HOLD**.
+
+## Previous increment: case processing authorization (2026-11-22)
 
 The user delegated the next launch-readiness step. Scope is one reviewable, synthetic-only increment for case/purpose/provider permissions at the API processing boundary, plus CI and this ledger. Base/main is `747d06564615f19a74d5127fd278ceeab688ef20`; existing Production and its prior validation are unchanged. No operational access, real data, permission grants, database deployment, main merge or application deployment is performed. `codex/*` Preview suppression remains unchanged. Open #111 (client check-ins) is outside this increment; #102/#104 already included in main are not repeated as new fixes.
 

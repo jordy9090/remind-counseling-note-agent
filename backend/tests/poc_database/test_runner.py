@@ -55,6 +55,18 @@ class RunnerSafetyTests(unittest.TestCase):
         self.assertIn("errcode = 'P9001'", helper, "Successful attacks must roll back before recording failure")
         self.assertNotIn("security definer", helper.lower())
 
+    def test_permission_matrix_covers_each_table_and_privileged_entry(self):
+        sql = runner.build_permission_sql()
+        self.assertTrue(sql.startswith("begin;"))
+        self.assertTrue(sql.endswith("rollback;\n"))
+        for table in runner.TABLES:
+            for status in ("missing", "withdrawn", "expired", "wrong_policy", "wrong_provider", "generation_only", "policy_missing", "policy_replaced", "beta_withdrawn"):
+                for action in ("select", "update", "delete", "insert"):
+                    self.assertIn(f"{status}:{table}:{action}", sql)
+            for role in ("anon", "service_role"):
+                self.assertIn(f"{role}:{table}:select", sql)
+        self.assertIn("private_body:processing_authorization.check_permission_unlocked", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

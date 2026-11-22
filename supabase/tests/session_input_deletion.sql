@@ -4,11 +4,12 @@ create schema poc_deletion_test;
 grant usage on schema poc_deletion_test to authenticated, service_role, anon;
 create table poc_deletion_test.fixture as select
     gen_random_uuid() as owner_id, gen_random_uuid() as other_id,
-    'poc_delete_' || gen_random_uuid()::text as case_id,
+    'beta_rm_' || gen_random_uuid()::text as case_id,
     gen_random_uuid() as session_id, gen_random_uuid() as active_session_id,
     gen_random_uuid() as note_id;
 grant select on poc_deletion_test.fixture to authenticated, service_role, anon;
 insert into auth.users(id) select owner_id from poc_deletion_test.fixture union all select other_id from poc_deletion_test.fixture;
+select poc_permissions.authorize(owner_id,case_id) from poc_deletion_test.fixture;
 insert into public.cases(id, user_id, counselor_id)
     select case_id, owner_id::text, owner_id::text from poc_deletion_test.fixture;
 insert into public.sessions(id, case_id, user_id, session_number, raw_input_text, sanitized_input_text)

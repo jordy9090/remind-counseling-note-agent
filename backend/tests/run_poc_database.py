@@ -21,6 +21,7 @@ from poc_database.contracts import PRIVATE_TABLES, PUBLIC_TABLES, TABLES, build_
 from poc_database.session_deletion_concurrency import verify_session_deletion
 from poc_database.parent_scope_concurrency import verify_parent_scope
 from poc_database.beta_lifecycle import verify_beta_lifecycle
+from poc_database.database_permissions import build_permission_sql, verify_permission_concurrency
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +104,7 @@ def check_static():
     print(json.dumps({"status": "static_only", "source_migrations": len(migrations),
                       "counseling_tables": len(TABLES), "private_tables": len(PRIVATE_TABLES),
                       "sql_assertions": sql.count("select poc_test."),
+                      "permission_assertions": build_permission_sql().count("select poc_test."),
                       "database_execution": "not_run"}))
 
 
@@ -158,12 +160,17 @@ def run_disposable():
                 # Apply the exact checked-in bytes, including real extension/scheduler declarations.
                 require_success(run(command, env=env, sql=migration.read_text(encoding="utf-8-sig")), "Source migration " + migration.name)
             print("Source migrations applied; executing real role/RLS/function contracts", flush=True)
+            require_success(run(command, env=env, sql=(PACK / "permissions.sql").read_text(encoding="utf-8")), "Synthetic permission setup helper")
             output = require_success(run(command, env=env, sql=build_sql(), timeout=120), "SQL policy contracts")
             results = [json.loads(line) for line in output.splitlines() if line.strip()]
             tests = len(results)
             if tests == 0:
                 raise RuntimeError("The SQL contract returned no test evidence")
             failures = [item for item in results if item.get("passed") is not True]
+            permission_output = require_success(run(command, env=env, sql=build_permission_sql(), timeout=120), "DB permission contracts")
+            permission_results = [json.loads(line) for line in permission_output.splitlines() if line.strip()]
+            tests += len(permission_results)
+            failures.extend(item for item in permission_results if item.get("passed") is not True)
             # Every checked-in SQL contract owns a rollback transaction in this empty fixture.
             contracts = sorted((ROOT / "supabase" / "tests").glob("*.sql"))
             for contract in contracts:
@@ -174,6 +181,8 @@ def run_disposable():
             concurrency = verify_session_deletion(command, env, run, require_success)
             parent_concurrency = verify_parent_scope(command, env, run, require_success)
             beta_lifecycle = verify_beta_lifecycle(command, env, run, require_success)
+            permission_concurrency = verify_permission_concurrency(command, env, run, require_success)
+            require_success(run(command, env=env, sql="delete from processing_authorization.policy;"), "Synthetic policy cleanup")
             remaining = require_success(run(command, env=env, sql=cleanup_query()), "Synthetic row cleanup verification")
             cleanup_ok = remaining == "0"
             if not cleanup_ok:
@@ -184,6 +193,7 @@ def run_disposable():
                 "concurrency_contracts": concurrency,
                 "parent_concurrency_contracts": parent_concurrency,
                 "beta_lifecycle_contracts": beta_lifecycle,
+                "permission_concurrency_contracts": permission_concurrency,
                 "migration_sha256": manifest}, indent=2))
         finally:
             if container_id and not owned:
