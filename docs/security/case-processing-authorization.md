@@ -170,15 +170,20 @@ rows and removed its owned container/tmpfs. The release checklist links the exac
 runs and records the independent-review fallback when the managed scanner could
 not start. Documentation-only follow-up commits reuse this tested code.
 
+The DB extension at `27ce94a744f8fefddd8739a46365c8b30a11566a` subsequently
+passed all three CI workflows, 1,087 SQL assertions, 10 source-deletion, 60
+parent-lock, 35 beta-lifecycle and 10 permission/read-only contracts. All 22 source
+migrations ran in a new isolated PostgreSQL 15 container. Zero fixture rows
+remained and the container/tmpfs was removed. The five runner checks and existing
+160 security/68 offline PoC tests also passed. No hosted Auth, operational DB or
+provider endpoint was used; database-role fixtures model the SQL identity boundary.
+
 Before eventual deployment, validate the institution-approved configuration on a
 non-production synthetic environment. Preserve the existing healthy release.
-To roll back, revert the API/frontend to that release first, then drop the public
-wrapper, private helper and new schema if authorized. Never drop beta_retention
-or remove enrollment evidence as rollback. No operational rollback is needed for
-this unmerged, undeployed PR.
-
-The DB extension requires an explicit reviewed rollback migration before eventual
-deployment: remove its restrictive policies/gated wrappers, restore prior function
-names and exact grants, then remove the private policy registry. Doing so reopens
-the direct-DB permission gap, so keep real-data processing disabled during rollback.
-Do not drop counseling or enrollment data to roll back authorization.
+No operational rollback is needed for this unmerged, undeployed PR. Before
+eventual deployment, prepare and validate an explicit reverse migration: remove
+the extension's policies and insert triggers, remove gated wrappers, restore prior
+function names and exact grants, then remove the private policy registry and any
+obsolete permission helpers only after their callers are reverted. Reverting
+these gates reopens the direct-DB permission gap, so keep real-data processing
+disabled. Never drop counseling or enrollment data to roll back authorization.
