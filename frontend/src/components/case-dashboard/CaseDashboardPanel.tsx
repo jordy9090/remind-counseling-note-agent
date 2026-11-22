@@ -36,6 +36,7 @@ import {
 import type { CaseDashboardExport, CaseDashboardResponse, TemporaryDraftRecord } from '../../types/session'
 import { ClientAvatar, EmptyState, GhostButton, Pagination, PrimaryButton, SelectField, StatusChip } from '../app-shell/ui'
 import { DocumentIcon } from '../../pages/HomeDashboardPage'
+import ClientCheckInsPanel from './ClientCheckInsPanel'
 
 export interface StartSessionInput {
   caseId: string
@@ -99,7 +100,7 @@ export default function CaseDashboardPanel({ caseId, refreshKey = 0, onBack, onO
   const [draftsError, setDraftsError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<'sessions' | 'documents'>('sessions')
+  const [tab, setTab] = useState<'sessions' | 'documents' | 'check-ins'>('sessions')
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest')
   const [page, setPage] = useState(1)
   const [checked, setChecked] = useState<Set<number>>(new Set())
@@ -313,7 +314,7 @@ export default function CaseDashboardPanel({ caseId, refreshKey = 0, onBack, onO
 
           <section className="rm-card flex min-h-[560px] flex-col" aria-label="회기와 문서">
             <div className="flex items-center gap-2 border-b border-grey-200 px-3">
-              {([['sessions', `상담 회기 (${groups.length})`], ['documents', `생성된 문서 (${dashboard.documents.length})`]] as const).map(([id, label]) => (
+              {([['sessions', `상담 회기 (${groups.length})`], ['documents', `생성된 문서 (${dashboard.documents.length})`], ['check-ins', '회기 사이 기록']] as const).map(([id, label]) => (
                 <button
                   key={id}
                   type="button"
@@ -327,7 +328,9 @@ export default function CaseDashboardPanel({ caseId, refreshKey = 0, onBack, onO
               ))}
             </div>
             <div className="flex flex-1 flex-col p-4 md:p-5">
-              {tab === 'sessions' ? (
+              {tab === 'check-ins' ? (
+                <ClientCheckInsPanel key={caseId} caseId={caseId} lastSessionDate={dashboard.latest_consultation_date} />
+              ) : tab === 'sessions' ? (
                 groups.length === 0 ? (
                   <EmptyState title="아직 기록된 회기가 없어요." description="새 회기를 시작해 첫 상담 기록을 남겨보세요." action={<PrimaryButton onClick={startSession}><Plus className="h-4 w-4" />새 회기 기록</PrimaryButton>} />
                 ) : (

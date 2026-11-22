@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import audio, cases, documents, health, materials, notes
 from app.api.routes.vouchers import router as voucher_router
+from app.api.routes.client_check_ins import client_router, counselor_router as client_check_in_router
 from app.core.config import settings, validate_runtime_security
 
 from app.api.error_privacy import install_private_validation_handler
@@ -44,6 +45,8 @@ app.include_router(documents.router)
 app.include_router(materials.router)
 app.include_router(audio.router)
 app.include_router(voucher_router)
+app.include_router(client_check_in_router)
+app.include_router(client_router)
 
 
 @app.on_event("startup")

@@ -24,6 +24,7 @@
     "verify:case-list": "node scripts/verify-case-list.mjs",
     "verify:deidentification-review": "node scripts/verify-deidentification-review.mjs",
     "verify:person-mapping": "node scripts/verify-person-mapping.mjs",
+    "verify:client-check-ins": "node scripts/verify-client-check-ins.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
