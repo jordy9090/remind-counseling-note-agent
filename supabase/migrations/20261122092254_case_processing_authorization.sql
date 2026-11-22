@@ -8,22 +8,22 @@ create function processing_authorization.check_permission(
 ) returns boolean
 language plpgsql security definer set search_path = '' as $$
 declare
-    owner_id uuid := auth.uid();
+    requester_id uuid := auth.uid();
     enrollment beta_retention.enrollments;
     permission jsonb;
     now_epoch numeric := extract(epoch from clock_timestamp());
 begin
-    if owner_id is null or p_policy_version is null or p_policy_version = ''
+    if requester_id is null or p_policy_version is null or p_policy_version = ''
        or length(p_policy_version) > 80 or p_purpose is null or p_provider is null then
         return false;
     end if;
     select * into enrollment from beta_retention.enrollments e
-      where e.case_id = p_case_id and e.owner_id = owner_id
+      where e.case_id = p_case_id and e.owner_id = requester_id
         and e.withdrawn_at is null and e.erased_at is null
         and e.signed_at <= clock_timestamp() and e.ends_at > clock_timestamp();
     if not found then return false; end if;
     select u.raw_app_meta_data -> 'remind_processing_authorizations' -> p_case_id
-      into permission from auth.users u where u.id = owner_id;
+      into permission from auth.users u where u.id = requester_id;
     if jsonb_typeof(permission) is distinct from 'object'
        or permission ->> 'status' is distinct from 'active'
        or permission ->> 'policy_version' is distinct from p_policy_version

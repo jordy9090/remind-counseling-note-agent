@@ -351,6 +351,7 @@ export const transcribeAudio = async (
   caseId = '',
 ): Promise<AudioTranscriptionResponse> => {
   const capabilities = await getAudioCapabilities()
+  if (stillActive && !stillActive()) throw new AudioChunkRequestError('음성 처리가 취소되었습니다.', false)
   if (!capabilities.transcription.available) throw new Error(capabilities.transcription.reason || '음성 인식 연결 설정이 필요합니다.')
   // The current UI consent names CLOVA. A stale provider configuration must never
   // silently send the recording to a different company.
@@ -363,6 +364,7 @@ export const transcribeAudio = async (
       if ((await supabase?.auth.getSession())?.data.session?.user.id !== owner) {
         throw new AudioChunkRequestError('로그인 계정이 변경되었습니다. 음성을 다시 선택해주세요.', false)
       }
+      if (stillActive && !stillActive()) throw new AudioChunkRequestError('음성 처리가 취소되었습니다.', false)
       return sendAudioChunk(chunk, language, task, expectedSpeakers, references, caseId)
     }, onProgress, stillActive, `${owner}:${caseId}:${language}:${task}:${AUDIO_API_BASE_URL}`)
   }
