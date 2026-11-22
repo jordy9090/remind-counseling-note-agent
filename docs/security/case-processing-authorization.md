@@ -89,6 +89,9 @@ the metadata record does not replace the signed institutional evidence.
   before transcription, and before result return; cleanup runs on rejection.
 - Audio chunks include case_id and their resumable checkpoint key includes the
   case. A checkbox only supplies the additional immediate provider acknowledgement.
+  Case/session changes revoke the upload URLs and remove pending/completed audio
+  materials. Async state updates check URL liveness when applied; returning to an
+  earlier case cannot restore a stale transcript or checkpoint for retry.
 - PoC Quick input has no case binding and is therefore denied. The initial cohort
   must use the case-bound session flow; do not advertise unscoped Quick as enabled.
 - Permission failures return fixed Korean 401/403/503 messages. No policy object,
@@ -126,6 +129,13 @@ the new suite and real SQL separately verify that decision boundary.
 migrations and tests actual PostgreSQL role/grant/lifecycle behavior in its own
 network-isolated database. It rolls back fixtures and verifies zero remaining rows.
 Local Windows has no Docker, so actual SQL execution is a required CI gate.
+
+Candidate `30578c67bde9c59c8e7174e21bbd429bb7b0ae21` passed Product CI,
+160 synthetic security tests, 68 offline PoC tests, and the disposable PostgreSQL
+contracts on 2026-11-22. The database runner reported zero remaining synthetic
+rows and removed its owned container/tmpfs. The release checklist links the exact
+runs and records the independent-review fallback when the managed scanner could
+not start. Documentation-only follow-up commits reuse this tested code.
 
 Before eventual deployment, validate the institution-approved configuration on a
 non-production synthetic environment. Preserve the existing healthy release.
