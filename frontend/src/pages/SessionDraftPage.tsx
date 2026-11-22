@@ -730,7 +730,7 @@ export default function SessionDraftPage({
       const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers,
         (message) => setMaterials(prev => prev.map(material => material.id === materialId
           ? { ...material, transcriptionProgress: message } : material)),
-        () => objectUrlsRef.current.has(objectUrl))
+        () => objectUrlsRef.current.has(objectUrl), form.case_id)
       // Removed files and replaced workspaces revoke ownership of this URL.
       if (!objectUrlsRef.current.has(objectUrl)) return
       setMaterials((prev) =>

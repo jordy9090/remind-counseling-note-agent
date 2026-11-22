@@ -4,7 +4,7 @@ create role anon nologin nosuperuser nobypassrls;
 create role authenticated nologin nosuperuser nobypassrls;
 create role service_role nologin nosuperuser bypassrls;
 create schema auth;
-create table auth.users (id uuid primary key);
+create table auth.users (id uuid primary key, raw_app_meta_data jsonb, raw_user_meta_data jsonb);
 create function auth.uid() returns uuid language sql stable as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
 $$;

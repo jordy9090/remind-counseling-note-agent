@@ -2,7 +2,19 @@
 
 Decision: **HOLD expansion to real-data PoC use** until the remaining environment and policy gates are signed off. The separately authorized security maintenance release below is deployed. This is an engineering evidence ledger, not a security certification or legal opinion.
 
-## Current authorization, status and completion criteria
+## Current task: case processing authorization (2026-11-22)
+
+The user delegated the next launch-readiness step. Scope is one reviewable, synthetic-only increment for case/purpose/provider permissions at the API processing boundary, plus CI and this ledger. Base/main is `747d06564615f19a74d5127fd278ceeab688ef20`; existing Production and its prior validation are unchanged. No operational access, real data, permission grants, database deployment, main merge or application deployment is performed. `codex/*` Preview suppression remains unchanged. Open #111 (client check-ins) is outside this increment; #102/#104 already included in main are not repeated as new fixes.
+
+**Repository changes:** a caller-JWT Boolean RPC joins current operator-managed Auth app metadata to the existing beta enrollment; policy, case owner, receipt, purpose/provider, not-before/expiry, withdrawal and erasure must all agree. PoC detection, reviewed generation and the affected saves/audio paths enforce it; stale receipts and browser audio checkboxes cannot grant permission. An empty server policy disables these PoC paths. No existing enrollment is automatically authorized. Audio checkpoints now include the case ID. See [the permission contract and rollout limits](docs/security/case-processing-authorization.md).
+
+**Operational confirmation:** none added. Reuse the completed JWT/RLS/deletion/tracing and host-policy evidence below only for their unchanged deployed versions. This candidate is not deployed and does not establish legal approval or installed-policy parity.
+
+**Validation checkpoint:** 67 offline PoC tests passed across the full run and two focused fixture corrections; no network, dotenv, credential or real-data access. Static disposable inventory has 21 migrations and 469 existing policy assertions, plus the new rollback-only permission contract; actual PostgreSQL execution and required CI are pending the candidate PR. No synthetic remote accounts or rows were created locally.
+
+**Remaining / HOLD:** full Data API and other case/profile/voucher/export/read enforcement; atomic permission revocation versus multi-write persistence; vendor/country/retention and hosting contract reconciliation; statutory metadata-only access records; privileged access/key evidence; backup restore reconciliation. In-flight provider transmissions cannot be recalled. These are explicit launch blockers, not claims closed by this increment. The existing consent draft still requires institution/privacy/legal review. No extra full Production E2E is justified before deployment.
+
+## Previous completed authorization: host retention and incident closure
 
 Current task checkpoint: **2026-11-22, final closure of the authorized host crash/retention changes and incident ledger**. The user authorizes completing the remaining documentation integration in PR #112, using temporary deployment protections and restoring their original values. The host scope remains configuration backups, stopping automatic local Apport collection, and seven-day journald/mail-error policies; no broader operational hardening or application release is included. Do not query real-user data, log/trace/dump bodies or secret values; do not delete existing crash files.
 

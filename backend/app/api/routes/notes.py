@@ -259,6 +259,8 @@ def _generate_reviewed(session_input: SessionInput, *, actor: str) -> GenerateNo
         return result
     except SummaryQualityError:
         raise
+    except HTTPException:
+        raise
     except Exception:
         # Exception messages and tracebacks may contain model input or credentials.
         log_private_failure("session_summary")

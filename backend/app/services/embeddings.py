@@ -52,6 +52,8 @@ class OpenAIEmbeddingProvider:
         from app.services.deid_review import embedding_is_reviewed
         if any(not embedding_is_reviewed(text) for text in texts):
             raise EmbeddingError("Embedding input has not been reviewed.")
+        from app.services.processing_authorization import require_processing_egress
+        require_processing_egress("openai")
         body = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
         request = Request(
             "https://api.openai.com/v1/embeddings",
@@ -73,6 +75,7 @@ class OpenAIEmbeddingProvider:
         except (URLError, TimeoutError):
             raise EmbeddingError("OpenAI embeddings network request failed.") from None
 
+        require_processing_egress("openai")
         rows = sorted(payload.get("data", []), key=lambda row: row.get("index", 0))
         embeddings = [row.get("embedding", []) for row in rows]
         for embedding in embeddings:

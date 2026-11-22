@@ -23,6 +23,7 @@ from app.services.audio_transcription import (
     current_audio_engine,
 )
 from app.services.upload_validation import UploadValidationError, cleanup_temp_file, persist_upload_to_temp
+from app.services.processing_authorization import require_case_processing
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 AuthenticatedUser = Annotated[str, Depends(require_preview_access)]
@@ -46,6 +47,7 @@ async def transcribe_audio(
     cloud_audio_consent: bool = Form(default=False),
     cloud_audio_provider: str = Form(default="", max_length=20),
     speaker_references: str = Form(default="[]", max_length=700000),
+    case_id: str = Form(default="", max_length=200),
 ) -> AudioTranscriptionResponse:
     """Transcribe a temporary audio upload when the opt-in runtime is available."""
     validated = None
@@ -58,6 +60,7 @@ async def transcribe_audio(
         if hosted and (not cloud_audio_consent or cloud_audio_provider != engine):
             provider_name = "CLOVA Speech" if engine == "clova" else "OpenAI"
             raise HTTPException(status_code=422, detail=f"원본 음성의 {provider_name} 전송 동의를 다시 확인해주세요.")
+        require_case_processing(actor, case_id, "audio", engine)
         kwargs = {}
         if hosted:
             from app.services.hosted_audio import validate_references
@@ -77,7 +80,10 @@ async def transcribe_audio(
             expected_speakers=expected_speakers,
             **kwargs,
         )
-        return await run_in_threadpool(transcribe)
+        require_case_processing(actor, case_id, "audio", engine)
+        result = await run_in_threadpool(transcribe)
+        require_case_processing(actor, case_id, "audio", engine)
+        return result
     except UploadValidationError as error:
         raise HTTPException(status_code=error.status_code, detail=public_error_message(error, "업로드한 파일을 확인해주세요.")) from None
     except (AudioNoSpeechDetectedError, AudioDurationLimitError) as error:

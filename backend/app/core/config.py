@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     require_deid_review: bool = True
     # The real-data PoC cannot opt out of authenticated review or storage limits.
     poc_mode: bool = True
+    # Empty until the institution's policy/provider scope is approved. Fail closed.
+    processing_authorization_policy: str = Field(default="", max_length=80)
 
     # API guard. Production uses Supabase Auth; the preview token is an
     # explicitly enabled legacy path for synthetic-data demos only.

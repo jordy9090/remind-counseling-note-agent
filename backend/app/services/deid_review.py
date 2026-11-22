@@ -19,6 +19,9 @@ from app.schemas.note import ConfirmGeneratedNoteRequest, RecomposeNoteRequest, 
 from app.services.quick_summary import QuickSummaryRequest
 from app.services.deidentification_preview import preview_items
 from app.services.qwen_deidentification import DetectionUnavailable, PendingDetection, detect_entities
+from app.services.processing_authorization import (
+    authorized_processing, processing_case, require_case_processing, require_processing_egress,
+)
 
 Purpose = Literal["quick", "generate", "recompose", "supervision", "memory"]
 MODELS = {"quick": QuickSummaryRequest, "generate": SessionInput, "recompose": RecomposeNoteRequest,
@@ -184,7 +187,9 @@ def prepare_review(request: ReviewStart, actor: str) -> dict:
     """Project the exact input for human approval without invoking any AI service."""
     _require_review_actor(actor)
     _key()
-    payload = _with_current_history(request.purpose, normalize(request.purpose, request.payload), actor)
+    payload = normalize(request.purpose, request.payload)
+    require_case_processing(actor, processing_case(request.purpose, payload, actor), "detection", "iwinv")
+    payload = _with_current_history(request.purpose, payload, actor)
     return {"payload": payload, "sources": sources(payload), "items": [], "model_used": False,
             "requires_detection_approval": True,
             "preparation_token": _sign("prepared", request.purpose, payload, actor)}
@@ -196,6 +201,7 @@ def start_review(request: ReviewStart, actor: str) -> dict:
     payload = normalize(request.purpose, request.payload)
     if settings.poc_mode or request.preparation_token:
         _verify(request.preparation_token, "prepared", request.purpose, payload, actor)
+        require_case_processing(actor, processing_case(request.purpose, payload, actor), "detection", "iwinv")
         # Never silently replace a source after the counselor approved detection.
         current = _with_current_history(request.purpose, copy.deepcopy(payload), actor)
         if digest(current) != digest(payload):
@@ -211,7 +217,8 @@ def start_review(request: ReviewStart, actor: str) -> dict:
     if request.job_token:
         job_id = _verify(request.job_token, "pending", request.purpose, payload, actor)["job_id"]
     try:
-        model = detect_entities(texts, job_id=job_id)
+        with authorized_processing(actor, processing_case(request.purpose, payload, actor), "detection", "iwinv"):
+            model = detect_entities(texts, job_id=job_id)
     except DetectionUnavailable:
         raise HTTPException(503, "자체 서버에서 식별정보를 확인하지 못했어요. 입력은 유지됩니다. 잠시 후 다시 시도해주세요.") from None
     if isinstance(model, PendingDetection):
@@ -249,6 +256,7 @@ def confirm_review(request: ReviewConfirm, actor: str) -> dict:
     _require_review_actor(actor)
     payload = normalize(request.purpose, request.payload)
     _verify(request.detection_token, "detected", request.purpose, payload, actor)
+    require_case_processing(actor, processing_case(request.purpose, payload, actor), "detection", "iwinv")
     material = {source["key"]: source["text"] for source in sources(payload)}
     grouped: dict[str, list[SpanEdit]] = {}
     for edit in request.edits:
@@ -291,7 +299,8 @@ def reviewed_request(purpose: Purpose, payload: BaseModel, receipt: str, actor: 
     token = _approved.set(tuple(source["text"] for source in sources(normalized)))
     prior_token = _prior_approved.set(prior)
     try:
-        yield
+        with authorized_processing(actor, processing_case(purpose, normalized, actor), purpose, "openai"):
+            yield
     finally:
         _prior_approved.reset(prior_token)
         _approved.reset(token)
@@ -300,6 +309,7 @@ def reviewed_request(purpose: Purpose, payload: BaseModel, receipt: str, actor: 
 def require_reviewed_egress():
     if review_required() and _approved.get() is None:
         raise HTTPException(409, "AI에 전달할 내용을 먼저 확인해주세요.")
+    require_processing_egress("openai")
 
 
 def prompt_material(value: Any) -> Any:

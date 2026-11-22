@@ -240,6 +240,8 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
     if not settings.enable_persistence:
         report.message = "ENABLE_PERSISTENCE is false; generation returned without storage."
         return report
+    from app.services.processing_authorization import require_case_processing
+    require_case_processing(actor, session_input.case_id, "storage", "supabase")
     actor_storage = _storage_for_actor(actor)
     if not getattr(actor_storage, "configured", settings.supabase_configured):
         report.message = "Supabase credentials are missing; generation returned without storage."
@@ -382,6 +384,8 @@ def confirm_generated_note(request: ConfirmGeneratedNoteRequest, *, actor: str =
     session = _fetch_session_for_note(note, actor=actor, actor_storage=actor_storage)
     case = _fetch_case_for_session(session, actor=actor, actor_storage=actor_storage)
     context = _confirmation_context(note=note, session=session, case_row=case, actor=actor)
+    from app.services.processing_authorization import require_case_processing
+    require_case_processing(actor, context.case_id, "storage", "supabase")
     if "relational_insights" in request.confirmed_note or "insight_lens" in request.confirmed_note:
         request = request.model_copy(update={"confirmed_note": {
             key: value for key, value in request.confirmed_note.items() if key not in {"relational_insights", "insight_lens"}
@@ -1591,6 +1595,8 @@ def persist_supervision_report(
     if not settings.enable_persistence:
         persistence.message = "ENABLE_PERSISTENCE is false; report returned without storage."
         return persistence
+    from app.services.processing_authorization import require_case_processing
+    require_case_processing(actor, session_input.case_id, "storage", "supabase")
     actor_storage = _storage_for_actor(actor)
     if not getattr(actor_storage, "configured", settings.supabase_configured):
         persistence.message = "Supabase credentials are missing; report returned without storage."
