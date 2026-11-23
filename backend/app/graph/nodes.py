@@ -905,21 +905,41 @@ def _first_source_sentence(text: str, fallback: str) -> str:
     return next(iter(_sentences(text)), fallback)
 
 
+RISK_PATTERN = re.compile(
+    r"(자살|자해|타해|위험도|급성\s*위험|(?:자신|타인)에게\s*위해|위해를\s*가|"
+    r"죽고\s*싶|죽어\s*버리|사라지고\s*싶|없어지고\s*싶|살고\s*싶지\s*않|살기\s*싫|끝내고\s*싶|"
+    r"(?:스스로|자신)를\s*해치|해치고\s*싶|목숨을|극단적\s*선택)"
+)
+RISK_TRANSCRIPT_LINES = 8
+
+
 def _extract_risk_information(sanitized: SanitizedInput) -> tuple[str, list[str]]:
-    patterns = re.compile(r"(자살|자해|타해|위험도|급성\s*위험|(?:자신|타인)에게\s*위해|위해를\s*가)")
+    """Risk-related statements as written, with their sources. It lists what was said; the counselor judges.
+
+    Transcript lines are quoted with their speaker so a client's statement, the counselor's question and a
+    safety plan stay distinguishable. Nothing is inferred when no such statement exists.
+    """
     found: list[str] = []
     refs: list[str] = []
     for ref, text in (
         ("counselor_memo", sanitized.sources.counselor_memo),
         ("psychological_test_summary", sanitized.sources.psychological_test_summary),
     ):
-        matched = [sentence for sentence in _sentences(text) if patterns.search(sentence)]
+        matched = [sentence for sentence in _sentences(text) if RISK_PATTERN.search(sentence)]
         if matched:
             found.extend(matched)
             refs.append(ref)
-    if not found:
+    transcript_lines: list[str] = []
+    for index, line in enumerate(sanitized.sources.transcript_text.splitlines(), 1):
+        if line.strip() and RISK_PATTERN.search(line) and len(transcript_lines) < RISK_TRANSCRIPT_LINES:
+            transcript_lines.append(line.strip())
+            refs.append(f"transcript.turn_{index}")
+    if not found and not transcript_lines:
         return "[상담사 확인 필요]", []
-    return " ".join(_unique_strings(found)), refs
+    parts = [" ".join(_unique_strings(found))] if found else []
+    if transcript_lines:
+        parts.append("축어록의 관련 발화(위험도는 상담사가 판단):\n" + "\n".join(transcript_lines))
+    return "\n".join(parts), refs
 
 
 def _first_previous_session_text(text: str) -> str:

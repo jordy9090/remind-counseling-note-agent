@@ -190,6 +190,22 @@ def prepare_review(request: ReviewStart, actor: str) -> dict:
             "preparation_token": _sign("prepared", request.purpose, payload, actor)}
 
 
+# Public crisis and emergency lines are part of a safety plan, not anyone's contact details.
+PUBLIC_HELP_NUMBERS = {"109", "1393", "15770199", "15889191", "1388", "1366", "129", "112", "119"}
+PUBLIC_HELP_NAMES = ("자살예방 상담전화", "자살예방상담전화", "정신건강 위기상담", "정신건강위기상담", "생명의전화",
+                     "청소년상담전화", "여성긴급전화")
+
+
+def is_public_help_line(text: str) -> bool:
+    """True for a public help line number or name (109, 1577-0199, 자살예방 상담전화)."""
+    value = (text or "").strip()
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if digits and digits in PUBLIC_HELP_NUMBERS and len(value) <= 20 and not any("가" <= ch <= "힣" for ch in value):
+        return True
+    compact = value.replace(" ", "")
+    return any(compact == name.replace(" ", "") for name in PUBLIC_HELP_NAMES)
+
+
 def start_review(request: ReviewStart, actor: str) -> dict:
     _require_review_actor(actor)
     _key()  # Do not start expensive work when receipts cannot be issued.
@@ -217,14 +233,14 @@ def start_review(request: ReviewStart, actor: str) -> dict:
     if isinstance(model, PendingDetection):
         return {"status": "pending", "job_token": _sign("pending", request.purpose, payload, actor, job_id=model.job_id)}
     local = preview_items(texts, client_name=session.get("client_alias", ""), counselor_name=session.get("counselor_name", ""))
-    items = {item.original: item.model_dump() for item in local.items}
+    items = {item.original: item.model_dump() for item in local.items if not is_public_help_line(item.original)}
     labels = {"organization": "기관 정보 비공개", "location": "지역 정보 비공개", "birth_date": "생년월일 비공개",
               "contact": "연락처 비공개", "identifier": "식별번호 비공개"}
     person_index = 1
     used_labels = {item["replacement"] for item in items.values()}
-    from app.services.korean_person_names import given_name
+    from app.services.korean_person_names import AMBIGUOUS_GIVEN_NAMES, given_name, name_pattern
     for entity in sorted(model.entities, key=lambda value: len(value.original), reverse=True):
-        if entity.original in items:
+        if entity.original in items or is_public_help_line(entity.original):
             continue
         if entity.category == "name":
             owners = {item["replacement"] for original, item in items.items()
@@ -241,6 +257,19 @@ def start_review(request: ReviewStart, actor: str) -> dict:
         else:
             replacement = labels[entity.category]
         items[entity.original] = {"original": entity.original, "replacement": replacement, "category": entity.category}
+    # A full name also covers how the client calls that person: "김민준" → "민준", "민준이", "민준 씨".
+    # Ambiguous given names ("지원") are left to the counselor; they are often ordinary words.
+    joined = "\n".join(texts)
+    owners: dict[str, set[str]] = {}
+    for original, item in items.items():
+        given = given_name(original) if item["category"] == "name" else ""
+        if given and item["replacement"].startswith("인물 ") and item["replacement"] != "인물 확인 필요":
+            owners.setdefault(given, set()).add(item["replacement"])
+    for given, labels_for_name in owners.items():
+        if given in items or given in AMBIGUOUS_GIVEN_NAMES or not name_pattern(given).search(joined):
+            continue
+        replacement = next(iter(labels_for_name)) if len(labels_for_name) == 1 else "인물 확인 필요"
+        items[given] = {"original": given, "replacement": replacement, "category": "name"}
     return {"payload": payload, "sources": material, "items": list(items.values()), "model_used": True,
             "detection_token": _sign("detected", request.purpose, payload, actor)}
 
