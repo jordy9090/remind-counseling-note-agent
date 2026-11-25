@@ -198,7 +198,29 @@ const item = (overrides) => ({
   // A new session must start in 'new' mode with the number passed by the profile (next session), and
   // re-summarizing must be labeled as overwriting an existing session.
   assert.match(page, /setInputMode\('new'\)\s+setForm\(\{ \.\.\.initialForm, case_id: caseId, client_alias: caseAlias \|\| '', session_number: sessionNumber \}\)/, 'new session must reset the form to the next session number')
-  assert.match(page, /const goBackToInput = \(\) => \{\s+setInputMode\('existing'\)/, '요약 다시하기 must open the input page in existing mode')
+  const pageAst = ts.createSourceFile('SessionDraftPage.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let goBackInitializer
+  const findGoBack = node => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(pageAst) === 'goBackToInput') goBackInitializer = node.initializer
+    ts.forEachChild(node, findGoBack)
+  }
+  findGoBack(pageAst)
+  assert.ok(goBackInitializer, 'the existing-session input callback must exist')
+  const goBackJs = ts.transpileModule(`const handler = ${goBackInitializer.getText(pageAst)}`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText
+  const inputState = { mode: 'new', screen: 'summary_draft', restoreOpen: true }
+  const goBackDependencies = {
+    setInputMode: value => { inputState.mode = value },
+    setCurrentScreen: value => { inputState.screen = value },
+    setRestoreOpen: value => { inputState.restoreOpen = value },
+    setInputReturnScreen: () => {}, setExpandedEvidenceId: () => {},
+    setSelectedGroundingClaimId: () => {}, setEditingSectionId: () => {},
+  }
+  new Function(...Object.keys(goBackDependencies), `${goBackJs}; return handler`)(...Object.values(goBackDependencies))()
+  assert.equal(inputState.mode, 'existing', '요약 다시하기 must open the input page in existing mode')
+  assert.equal(inputState.screen, 'session_input', 're-summarizing must navigate to session input')
+  assert.equal(inputState.restoreOpen, false, 'returning to input must close the saved-record restore panel')
   const inputPage = fs.readFileSync('src/components/session-input/SessionInputPage.tsx', 'utf8')
   assert.match(inputPage, /mode === 'existing' \? `\$\{form\.session_number\}회기 다시 요약하기` : '상담 자료를 먼저 올려주세요'/, 'input page title must distinguish new uploads from existing sessions')
   assert.match(page, /onOpenNote=\{restoreNote\}/, 'dashboard must open stored notes through the existing restore flow')
