@@ -134,10 +134,12 @@ export async function transcribeHostedAudio(
           const samples = mono(await context.decodeAudioData(await wav!.read(frame, frames)))
           const boundary = planAudioChunks(samples)[0]
           if (!boundary) throw new Error('음성 구간을 읽지 못했습니다.')
-          const usedFrames = Math.min(frames, Math.round(boundary.end * wav!.sampleRate))
+          // A fully consumed decoded window includes every source frame, even when resampling rounded down.
+          const decodedFrames = Math.round(boundary.end * RATE)
+          const usedFrames = decodedFrames === samples.length ? frames : Math.min(frames, Math.round(boundary.end * wav!.sampleRate))
           if (usedFrames < 1) throw new Error('음성 구간을 읽지 못했습니다.')
           yield { start: frame / wav!.sampleRate, end: (frame + usedFrames) / wav!.sampleRate,
-            samples: samples.subarray(0, Math.round(boundary.end * RATE)) }
+            samples: samples.subarray(0, decodedFrames) }
           frame += usedFrames
         }
       }
