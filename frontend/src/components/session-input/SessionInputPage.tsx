@@ -5,6 +5,8 @@ import { PrimaryButton } from '../app-shell/ui'
 import type { AudioCapabilitiesResponse, SessionInput } from '../../types/session'
 import type { UploadedMaterial } from '../../types/materials'
 import { AUDIO_CONSENT_MESSAGE, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
+import LiveSessionRecorder from '../audio/LiveSessionRecorder'
+import type { LiveRecordingResult } from '../../lib/liveAudio'
 
 export interface SessionTime {
   start: string
@@ -39,7 +41,7 @@ function toFileList(files: File[]): FileList {
 /**
  * Upload and review materials first, then optionally add session metadata before summarizing.
  * Session time is display-only (no backend field). Uploaded files are extracted/transcribed and applied
- * to the review editor before explicit application. In-browser recording is not implemented yet.
+ * to the review editor before explicit application. Live capture uses the same review handoff.
  */
 export default function SessionInputPage({
   mode,
@@ -56,6 +58,9 @@ export default function SessionInputPage({
   onOpenMaterial,
   onRemoveMaterial,
   onSubmit,
+  liveActive,
+  onLiveActiveChange,
+  onLiveComplete,
 }: {
   /** 'existing' re-summarizes a stored session and overwrites its record. */
   mode: 'new' | 'existing'
@@ -72,6 +77,9 @@ export default function SessionInputPage({
   onOpenMaterial: (materialId: string, mode: 'document_preview' | 'audio_review' | 'material_apply') => void
   onRemoveMaterial: (materialId: string) => void
   onSubmit: () => void
+  liveActive: boolean
+  onLiveActiveChange: (active: boolean) => void
+  onLiveComplete: (result: LiveRecordingResult) => void
 }) {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [pendingAudioFiles, setPendingAudioFiles] = useState<File[] | null>(null)
@@ -100,7 +108,7 @@ export default function SessionInputPage({
 
   /** Audio needs explicit consent; when declined, the remaining (non-audio) files are still uploaded. */
   const upload = (files: FileList | null) => {
-    if (!files?.length) return
+    if (!files?.length || liveActive) return
     const list = Array.from(files)
     const hasAudio = list.some((file) => AUDIO_EXTENSION.test(file.name))
     if (!hasAudio) return onUploadFiles(files, false)
@@ -145,13 +153,15 @@ export default function SessionInputPage({
 
   const hasInput = Boolean(form.counselor_memo.trim() || form.transcript_text.trim() || form.previous_session_summary.trim() || form.psychological_test_summary?.trim())
   const processing = materials.some((material) => material.status === 'uploading' || material.status === 'transcribing')
-  const canSubmit = hasInput && !processing && !isLoading && !pendingAudioFiles
-  const blockedReason = !hasInput
+  const canSubmit = hasInput && !processing && !isLoading && !pendingAudioFiles && !liveActive
+  const blockedReason = liveActive ? '녹음을 종료하고 축어록을 검토한 뒤 AI 요약을 생성해주세요.' : !hasInput
       ? '자료를 업로드하거나 메모를 입력하면 AI 요약을 생성할 수 있습니다.'
       : processing ? '자료 처리가 끝나면 AI 요약을 생성할 수 있습니다.' : null
 
   return (
     <section aria-label="새 회기 입력" className="mx-auto w-full max-w-[658px] px-4 pb-10 pt-2">
+      <LiveSessionRecorder key={`${form.case_id}:${form.session_number}`} onComplete={onLiveComplete}
+        onActiveChange={onLiveActiveChange} disabled={isLoading || processing || Boolean(pendingAudioFiles)} />
       <dialog ref={consentDialog} aria-labelledby="audio-consent-title" aria-describedby="audio-consent-description"
         onCancel={(event) => { event.preventDefault(); resolveAudioConsent(false) }}
         className="m-auto w-[min(92vw,480px)] rounded-xl border border-grey-200 bg-white p-6 shadow-xl backdrop:bg-black/40">
@@ -180,7 +190,7 @@ export default function SessionInputPage({
               <span className="text-sm font-semibold text-grey-900">{isDraggingFiles ? '여기에 놓으면 업로드됩니다.' : '파일을 끌어다 놓거나 클릭하여 파일을 선택해주세요.'}</span>
               <span className="text-xs text-grey-500">MP3 · M4A · WAV · PDF · DOCX · TXT</span>
               <span className="text-xs text-grey-500">2시간 상담 지원 · 음성 최대 {AUDIO_UPLOAD_LIMIT_LABEL} · 문서 최대 {uploadLimitLabel}</span>
-              <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
+              <input type="file" multiple accept={ACCEPT} disabled={liveActive} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
             </label>
           ) : (
             <div className={`rounded-[12px] border p-3 ${isDraggingFiles ? 'border-dashed border-primary-400 bg-primary-50' : 'border-grey-200'}`}>
@@ -189,7 +199,7 @@ export default function SessionInputPage({
               </ul>
               <label className="mt-3 flex h-11 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-primary-400 text-sm font-bold text-primary-400 hover:bg-primary-50">
                 <Plus className="h-4 w-4" />{isDraggingFiles ? '여기에 놓으면 추가됩니다' : '자료 추가하기'}
-                <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
+                <input type="file" multiple accept={ACCEPT} disabled={liveActive} className="sr-only" onChange={(event) => { upload(event.target.files); event.target.value = '' }} />
               </label>
             </div>
           )}
