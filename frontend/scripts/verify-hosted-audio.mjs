@@ -140,6 +140,19 @@ assert.ok(maxRead <= 61 * 48000 * 6)
 assert.ok(readBytes >= sourceBytes && readBytes < sourceBytes * 1.04)
 assert.ok(streamed.segments.every((s, i, all) => !i || s.start > all[i - 1].end))
 
+// Downsampling can round the final decoded window down by one source frame.
+const tailBytes = (6 * 48000 + 1) * 6
+const tailHeader = Buffer.from(header)
+tailHeader.writeUInt32LE(36 + tailBytes, 4)
+tailHeader.writeUInt32LE(tailBytes, 40)
+const tailFile = new File([tailHeader, new Uint8Array(tailBytes)], 'fractional-tail.wav')
+const beforeTail = decodeCalls
+const tail = await transcribeHostedAudio(tailFile, 2, async () => result('A'))
+assert.equal(tail.status, 'completed')
+assert.deepEqual(tail.failed_ranges, [])
+assert.equal(decodeCalls - beforeTail, 1)
+assert.equal(tail.duration_seconds, (6 * 48000 + 1) / 48000)
+
 decodeCalls = 0; streamedCalls = 0; streamClosed = false
 globalThis.AudioContext = class {
   async decodeAudioData() {

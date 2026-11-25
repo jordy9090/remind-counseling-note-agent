@@ -191,7 +191,7 @@ def prepare_review(request: ReviewStart, actor: str) -> dict:
 
 
 # Public crisis and emergency lines are part of a safety plan, not anyone's contact details.
-PUBLIC_HELP_NUMBERS = {"109", "1393", "15770199", "15889191", "1388", "1366", "129", "112", "119"}
+PUBLIC_HELP_NUMBERS = {"109", "1393", "15770199", "1577-0199", "15889191", "1588-9191", "1388", "1366", "129", "112", "119"}
 PUBLIC_HELP_NAMES = ("자살예방 상담전화", "자살예방상담전화", "정신건강 위기상담", "정신건강위기상담", "생명의전화",
                      "청소년상담전화", "여성긴급전화")
 
@@ -199,8 +199,7 @@ PUBLIC_HELP_NAMES = ("자살예방 상담전화", "자살예방상담전화", "�
 def is_public_help_line(text: str) -> bool:
     """True for a public help line number or name (109, 1577-0199, 자살예방 상담전화)."""
     value = (text or "").strip()
-    digits = "".join(ch for ch in value if ch.isdigit())
-    if digits and digits in PUBLIC_HELP_NUMBERS and len(value) <= 20 and not any("가" <= ch <= "힣" for ch in value):
+    if value in PUBLIC_HELP_NUMBERS:
         return True
     compact = value.replace(" ", "")
     return any(compact == name.replace(" ", "") for name in PUBLIC_HELP_NAMES)

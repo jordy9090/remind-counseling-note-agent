@@ -28,6 +28,11 @@ TRANSCRIPT = "\n".join([
 
 
 class PublicHelpLineTests(unittest.TestCase):
+    def test_private_identifiers_with_public_line_digits_still_require_masking(self):
+        for value in ("staff-119", "tester109@example.kr"):
+            with self.subTest(value=value):
+                self.assertFalse(review.is_public_help_line(value))
+
     def test_public_lines_are_recognised_and_personal_numbers_are_not(self):
         for value in ("109", "1393", "1577-0199", "1588-9191", "112", "119", "자살예방 상담전화", "생명의전화"):
             self.assertTrue(review.is_public_help_line(value), value)
