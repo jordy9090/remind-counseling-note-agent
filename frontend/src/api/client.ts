@@ -336,9 +336,34 @@ export async function confirmAIReview(task: ReviewTask, preview: AIReviewPreview
   return response.data
 }
 
-export const getAudioCapabilities = async (): Promise<AudioCapabilitiesResponse> => {
-  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities', { baseURL: AUDIO_API_BASE_URL })
+export const getAudioCapabilities = async (scope?: RequestScope): Promise<AudioCapabilitiesResponse> => {
+  const response = await client.get<AudioCapabilitiesResponse>('/api/audio/capabilities', { baseURL: AUDIO_API_BASE_URL, ...requestScope(scope) })
   return response.data
+}
+
+/** Live capture uses the same named provider consent and authentication as uploaded audio. */
+export const transcribeLiveAudioChunk = async (
+  file: File, ownerId: string, signal: AbortSignal,
+): Promise<AudioTranscriptionResponse> => {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('language', 'ko')
+  body.append('task', 'transcribe')
+  body.append('expected_speakers', '2')
+  body.append('cloud_audio_consent', 'true')
+  body.append('cloud_audio_provider', 'clova')
+  body.append('speaker_references', '[]')
+  try {
+    const response = await client.post<AudioTranscriptionResponse>('/api/audio/transcribe', body, {
+      baseURL: AUDIO_API_BASE_URL, expectedOwnerId: ownerId, signal, timeout: 120000,
+    })
+    if (response.data.runtime_mode !== 'real' || response.data.transcription_engine !== 'clova') {
+      throw new Error('CLOVA Speech의 실제 전사 결과를 확인하지 못했습니다. 녹음은 이 화면에 보관됩니다.')
+    }
+    return response.data
+  } catch (error) {
+    throw normalizeApiError(error, '음성 전사에 연결하지 못했습니다. 녹음은 이 화면에 보관됩니다.')
+  }
 }
 
 export const transcribeAudio = async (

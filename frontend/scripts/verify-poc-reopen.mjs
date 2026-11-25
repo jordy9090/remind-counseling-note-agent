@@ -226,7 +226,7 @@ test('the real restore callback replaces stale input and carries reopened eviden
   const compiled = ts.transpileModule(`const restore = ${declaration.initializer.getText(ast)}`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText
-  for (const scenario of ['unchanged', 'edited', 'missing', 'foreign']) {
+  for (const scenario of ['unchanged', 'edited', 'missing', 'foreign', 'live']) {
     const record = copy()
     const oldInput = 'SYNTHETIC-PREVIOUS-SCREEN-INPUT'
     if (scenario === 'edited') record.confirmed_json.session_content.text = 'Synthetic edited final assertion.'
@@ -239,6 +239,7 @@ test('the real restore callback replaces stale input and carries reopened eviden
     let cleared = 0
     const dependencies = {
       ...workflow, storedNoteId: null, confirmedFingerprint: null, draftSections: [], allowRestore: () => true,
+      liveAudioActive: scenario === 'live', setError: set('error'),
       runPersistence: operation => { pending = operation() },
       loadGeneratedNote: async id => { assert.equal(id, record.note_id); return record },
       initialForm: { transcript_text: oldInput, counselor_memo: oldInput, key_issue_tags: [oldInput] },
@@ -257,6 +258,14 @@ test('the real restore callback replaces stale input and carries reopened eviden
     }
     const restore = new Function(...Object.keys(dependencies), `${compiled}; return restore`)(...Object.values(dependencies))
     restore(record.note_id)
+    if (scenario === 'live') {
+      assert.equal(pending, undefined, 'an active recording must block fetching a replacement note')
+      assert.equal(state.form.transcript_text, oldInput, 'blocked restoration must preserve the current input')
+      assert.deepEqual(state.materials, ['synthetic.wav'], 'blocked restoration must preserve captured audio')
+      assert.equal(cleared, 0, 'blocked restoration must not clear audio checkpoints')
+      assert.match(state.error, /녹음을 종료/, 'blocked restoration must explain how to preserve the recording')
+      continue
+    }
     await pending
     assert.equal(state.record, record)
     assert.equal(state.form.transcript_text, '')
