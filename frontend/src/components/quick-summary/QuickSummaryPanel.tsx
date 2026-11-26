@@ -229,7 +229,6 @@ export default function QuickSummaryPanel({
                         </div>
                       ))}
                     </div>
-                    <p className="mt-2">요약을 저장하면 개인정보를 가린 연결 원문 일부도 함께 보관되어 다시 볼 수 있습니다.</p>
                   </details>
                 )}
               </section>
