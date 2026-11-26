@@ -6,6 +6,7 @@ import copy
 import hashlib
 import hmac
 import json
+import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -205,6 +206,36 @@ def is_public_help_line(text: str) -> bool:
     return any(compact == name.replace(" ", "") for name in PUBLIC_HELP_NAMES)
 
 
+def _link_addressed_names(items: dict, text: str) -> None:
+    """Use an observed honorific as evidence that detector variants share a name."""
+    from app.services.korean_person_names import AMBIGUOUS_GIVEN_NAMES, name_pattern
+    person = {key for key, item in items.items() if item["category"] == "name"}
+    titles = {m[1] for m in re.finditer(r"(?<![가-힣A-Za-z0-9_])([가-힣]{2,4})\s+(?:씨|님)(?![가-힣])", text)}
+    suffixes = (" 씨", " 님", "이가", "이는", "이를", "이랑", "이", "아", "야")
+    for name in sorted(titles, key=lambda value: (-len(value), value)):
+        if name in AMBIGUOUS_GIVEN_NAMES:
+            continue
+        variants = [name + suffix for suffix in suffixes if name + suffix in person and name + suffix not in titles]
+        if not variants or (name not in person and not any(key in person for key in (name + " 씨", name + " 님"))):
+            continue
+        anchor = items.get(name) or items[variants[0]]
+        if anchor["category"] != "name":
+            continue
+        record = {"replacement": anchor["replacement"], "category": "name"}
+        items[name] = {"original": name, **record}
+        pattern = name_pattern(name, exact_identity=True)
+        for variant in variants:
+            # Keep an explicit match if the base form cannot mask every inflection.
+            if all(pattern.match(text, m.start()) for m in re.finditer(re.escape(variant), text)):
+                items.pop(variant, None)
+            else:
+                items[variant] = {"original": variant, **record}
+        polite = rf"(?<![가-힣A-Za-z0-9_]){re.escape(name)}(?:이(?:가|는|도|랑|를|와)|에게|한테|가|는|도|만)요(?![가-힣A-Za-z0-9_])"
+        for match in re.finditer(polite, text):
+            surface = match.group()
+            items[surface] = {"original": surface, **record}
+
+
 def start_review(request: ReviewStart, actor: str) -> dict:
     _require_review_actor(actor)
     _key()  # Do not start expensive work when receipts cannot be issued.
@@ -269,6 +300,7 @@ def start_review(request: ReviewStart, actor: str) -> dict:
             continue
         replacement = next(iter(labels_for_name)) if len(labels_for_name) == 1 else "인물 확인 필요"
         items[given] = {"original": given, "replacement": replacement, "category": "name"}
+    _link_addressed_names(items, joined)
     return {"payload": payload, "sources": material, "items": list(items.values()), "model_used": True,
             "detection_token": _sign("detected", request.purpose, payload, actor)}
 

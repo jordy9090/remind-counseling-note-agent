@@ -113,7 +113,9 @@ def detect_entities(texts: list[str], *, job_id: str | None = None) -> Entities 
         raise DetectionUnavailable("Self-hosted detection is not configured")
     context = ssl.create_default_context(cadata=settings.deid_service_ca_pem or None)
     from urllib.parse import quote
-    request = Request(settings.deid_service_url.rstrip("/") + (f"/jobs/{quote(job_id, safe='')}" if job_id else "/jobs"),
+    wait_seconds = max(0, min(12, int(settings.deid_timeout_seconds) - 3))
+    path = f"/jobs/{quote(job_id, safe='')}" if job_id else "/jobs"
+    request = Request(f"{settings.deid_service_url.rstrip('/')}{path}?wait_seconds={wait_seconds}",
                       data=None if job_id else json.dumps({"texts": texts}).encode(),
                       headers={"Content-Type": "application/json", "Authorization": f"Bearer {settings.deid_service_token}"})
     try:

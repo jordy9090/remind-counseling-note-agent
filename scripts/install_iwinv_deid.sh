@@ -36,6 +36,7 @@ Group=remind-deid
 WorkingDirectory=/opt/remind-deid
 EnvironmentFile=/etc/remind-deid/worker.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DEID_PRELOAD_MODEL=1
 ExecStart=/opt/remind-deid/venv/bin/uvicorn app.deid_worker:app --host 0.0.0.0 --port 443 --workers 1 --no-access-log --limit-concurrency 8 --timeout-keep-alive 5 --ssl-keyfile /etc/remind-deid/server.key --ssl-certfile /etc/remind-deid/server.crt
 Restart=on-failure
 RestartSec=5

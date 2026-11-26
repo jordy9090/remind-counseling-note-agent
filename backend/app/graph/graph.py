@@ -1,13 +1,17 @@
 """LangGraph wiring for the Re:mind V1 retrieval-aware workflow."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from time import perf_counter
 from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
 from app.services.diagnostic_privacy import private_ai_execution
-from app.services.relational_insights import generate_relational_insights
+from app.services.relational_insights import generate_relational_insights, reconcile_verified_insights
+from app.schemas.insight import RelationalInsights
 from app.graph.nodes import (
     assemble_generation_grounding,
     conditional_revision,
@@ -75,6 +79,7 @@ class NoteGraphState(TypedDict, total=False):
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
     session_summary_draft: SessionSummaryDraft
+    relational_insights: RelationalInsights
     verification_report: VerificationReport
     initial_verification_report: VerificationReport
     revision_attempted: bool
@@ -110,6 +115,35 @@ def generate_skill_summary(state: NoteGraphState) -> dict[str, Any]:
     }
 
 
+def verify_with_requested_insights(state: NoteGraphState) -> dict[str, Any]:
+    if not (state.get("use_summary_skill") and not settings.stub_mode
+            and state["session_input"].insight_lens == "psychodynamic_relational"):
+        return verify_output(state)
+    source = state["sanitized_input"]
+    draft = state["session_summary_draft"].model_copy(deep=True)
+    report = state["retrieval_report"].model_copy(deep=True)
+
+    def insights_for_draft():
+        started = perf_counter()
+        result = generate_relational_insights(source, draft)
+        return result, round((perf_counter() - started) * 1000)
+
+    # The request-local approval and tracing boundaries must follow both calls.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(copy_context().run, insights_for_draft)
+        started = perf_counter()
+        verified = verify_output(state)
+        report.verification_latency_ms = round((perf_counter() - started) * 1000)
+        insights, report.insight_latency_ms = future.result()
+    started = perf_counter()
+    verified["relational_insights"] = reconcile_verified_insights(
+        source, draft, verified.get("session_summary_draft", draft), insights,
+    )
+    report.insight_latency_ms += round((perf_counter() - started) * 1000)
+    verified["retrieval_report"] = report
+    return verified
+
+
 def create_note_graph():
     workflow = StateGraph(NoteGraphState)
     workflow.add_node("sanitize_input", sanitize_input)
@@ -126,7 +160,7 @@ def create_note_graph():
     workflow.add_node("generate_skill_summary", generate_skill_summary)
     workflow.add_node("generate_grounded_document", generate_grounded_document)
     workflow.add_node("validate_claim_sources", validate_claim_sources)
-    workflow.add_node("verify_output", verify_output)
+    workflow.add_node("verify_output", verify_with_requested_insights)
     workflow.add_node("conditional_revision", conditional_revision)
     workflow.add_node("transform_document_preview", transform_document_preview)
 
@@ -202,8 +236,8 @@ def run_note_pipeline(
     if session_topic:
         initial_state["session_topic"] = session_topic
     state = note_graph.invoke(initial_state)
-    insights = None
-    if session_input.insight_lens == "psychodynamic_relational":
+    insights = state.get("relational_insights")
+    if insights is None and session_input.insight_lens == "psychodynamic_relational":
         insights = generate_relational_insights(state["sanitized_input"], state["session_summary_draft"])
     confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
     return GenerateNoteResponse(

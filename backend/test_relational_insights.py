@@ -61,6 +61,20 @@ def _card(**updates) -> InsightCard:
 
 
 class RelationalInsightsTests(unittest.TestCase):
+    def test_changed_theory_after_verification_discards_parallel_cards(self):
+        from app.schemas.insight import RelationalInsights
+        from app.services.relational_insights import reconcile_verified_insights
+        source, draft = _input(), _summary()
+        final = draft.model_copy(deep=True)
+        final.session_theme.text += " 새로 검증한 내용"
+        theories = retrieve_theory_sources(source, draft, corpus=_corpus())
+        initial = RelationalInsights(status="generated")
+        with patch("app.services.relational_insights.retrieve_theory_sources",
+                   side_effect=[theories, list(reversed(theories))]), patch(
+                       "app.services.relational_insights.generate_relational_insights") as regenerate:
+            self.assertIs(regenerate.return_value, reconcile_verified_insights(source, draft, final, initial))
+            regenerate.assert_called_once_with(source, final)
+
     def setUp(self) -> None:
         self.flags = patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key")
         self.flags.start()
