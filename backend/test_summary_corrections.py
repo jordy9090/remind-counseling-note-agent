@@ -9,7 +9,7 @@ from app.graph.nodes import _source_catalog, verify_output
 from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_corrections import SourceRefRestoration, SourceRefReview, TextCorrection, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.summary_quality import SummaryQualityError
-from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification, summary_verification_schema
+from app.services.summary_verification import PlanAssessment, PlanEvidence, SummaryCorrectionValidation, SummaryVerification, quick_verification_schema, summary_verification_schema
 from test_summary_quality import _state, _summary
 
 
@@ -162,6 +162,29 @@ class SummaryCorrectionTests(unittest.TestCase):
         self.assertEqual("두 결정은 별개로 나눔.", result["session_summary_draft"].session_content.text)
         self.assertTrue(result["session_summary_draft"].session_theme.requires_review)
         self.assertEqual(1, len(result["verification_report"].unsupported_or_risky_claims))
+
+    def test_quick_verifier_requires_every_choice_and_keeps_single_references(self):
+        self.summary.session_theme.source_refs = ["transcript.turn_1", "transcript.turn_4"]
+        self.summary.session_content.source_refs = ["transcript.turn_1"]
+        schema = quick_verification_schema(self.summary)
+        for decisions in ({}, {"session_theme": []}, {"session_theme": ["unknown"]},
+                          {"session_theme": ["transcript.turn_1"], "session_content": []}):
+            with self.subTest(decisions=decisions), self.assertRaises(ValidationError):
+                schema.model_validate({"source_ref_reviews": decisions})
+        choices = {field: list(dict.fromkeys(section.source_refs)) for field, section in self.summary
+                   if field != "session_info" and len(set(section.source_refs)) > 1}
+        assessment = schema.model_validate({"source_ref_reviews": choices})
+        self.assertIsInstance(assessment, SummaryVerification)
+        candidate, changed = correct_summary(self.summary, [], assessment.source_ref_reviews, self.catalog)
+        self.assertEqual([], changed)
+        self.assertEqual(self.summary, candidate)
+
+        for field in self.summary.__class__.model_fields:
+            if field != "session_info":
+                getattr(self.summary, field).source_refs = ["counselor_memo"]
+        compact = quick_verification_schema(self.summary).model_validate({"source_ref_reviews": {}})
+        self.assertEqual(7, len(compact.source_ref_reviews))
+        self.assertTrue(all(item.keep_source_refs == ["counselor_memo"] for item in compact.source_ref_reviews))
 
     def test_model_schema_restricts_references_to_their_original_field(self):
         self.summary.session_theme.source_refs = ["transcript.turn_1"]

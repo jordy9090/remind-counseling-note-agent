@@ -37,6 +37,8 @@ from app.services.quick_summary import (
     rate_limiter,
 )
 from app.services.storage_deidentification import deidentify_session_input
+from app.services.summary_quality import SummaryQualityError
+from app.services.summary_skill import SummarySkillError
 from app.services.deidentification_preview import (
     ANONYMOUS_PREVIEW_LIMIT,
     AUTHENTICATED_PREVIEW_LIMIT,
@@ -80,7 +82,7 @@ async def generate_note(session_input: SessionInput, actor: PreviewActor,
 
 
 @router.post("/quick-summary", response_model=GenerateNoteResponse)
-async def quick_summary(
+def quick_summary(
     payload: QuickSummaryRequest,
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
@@ -347,8 +349,14 @@ def run_quick_summary(
         raise
     except QuickSummaryInputError as error:
         raise HTTPException(status_code=422, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
-    except Exception:
-        # Do not attach the input text or provider payload to the error.
+    except Exception as error:
+        # Static codes allow operators to distinguish failures without logging source text.
+        if isinstance(error, SummaryQualityError):
+            log_private_failure("quick_summary_quality")
+        elif isinstance(error, SummarySkillError):
+            log_private_failure("quick_summary_generation")
+        else:
+            log_private_failure("quick_summary_pipeline")
         raise HTTPException(
             status_code=502,
             detail="요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.",
