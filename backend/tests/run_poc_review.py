@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 BACKEND = Path(__file__).resolve().parents[1]
 SUITES = (
+    "test_poc_processing_authorization",
     "test_poc_approval",
     "test_poc_diagnostics",
     "test_poc_storage",

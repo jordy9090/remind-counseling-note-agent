@@ -28,6 +28,9 @@ class PoCReviewedHistoryTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
+        # History contracts assume an independently authorized synthetic case.
+        self.stack.enter_context(patch.object(settings, "processing_authorization_policy", "synthetic-v1"))
+        self.stack.enter_context(patch("app.services.processing_authorization._authorization_rpc", return_value=True))
         self.stack.enter_context(patch.multiple(settings, poc_mode=True,
             require_deid_review=False, enable_rag=True, enable_dense_retrieval=False,
             enable_raw_region_grounding=False, use_stub=False,

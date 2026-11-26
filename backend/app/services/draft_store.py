@@ -27,6 +27,8 @@ _DRAFT_REPLACE_LOCK = Lock()
 
 def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> TemporaryDraftSaveResponse:
     """Create or update a temporary draft record."""
+    from app.services.processing_authorization import require_case_processing
+    require_case_processing(actor, request.case_id, "storage", "supabase")
     draft_id = request.draft_id if _is_safe_draft_id(request.draft_id) else _new_draft_id()
     saved_at = datetime.now(UTC).isoformat()
     data = temporary_draft_payload(request.model_dump())
@@ -36,6 +38,7 @@ def save_temporary_draft(request: TemporaryDraftSaveRequest, *, actor: str) -> T
     data["draft_id"] = draft_id
     data["saved_at"] = saved_at
     record = TemporaryDraftRecord(**data)
+    require_case_processing(actor, request.case_id, "storage", "supabase")
 
     if supabase_store.configured_for(actor):
         supabase_store.upsert_draft_row(record, actor=actor)

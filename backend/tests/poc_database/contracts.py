@@ -11,7 +11,7 @@ TABLES = (
     "evidence_items", "verification_reports", "retrieval_logs", "document_exports",
     "transcript_turns", "transcript_windows", "voucher_documents",
 )
-PRIVATE_TABLES = ("voucher_recovery.deletions", "voucher_recovery.source_context", "beta_retention.enrollments")
+PRIVATE_TABLES = ("voucher_recovery.deletions", "voucher_recovery.source_context", "beta_retention.enrollments", "processing_authorization.policy")
 PUBLIC_TABLES = (*TABLES, "kb_documents", "kb_chunks")
 PARENT_TABLES = tuple(table for table in TABLES if table not in {
     "cases", "counseling_drafts", "document_exports", "retrieval_logs",
@@ -40,7 +40,7 @@ def quote(value):
 def fixture():
     owner = str(uuid4())
     ids = {name: str(uuid4()) for name in TABLES}
-    ids["cases"] = "poc_synthetic_" + str(uuid4())
+    ids["cases"] = "beta_rm_" + str(uuid4())
     common = {"user_id": owner, "case_id": ids["cases"]}
     linked = {**common, "session_id": ids["sessions"]}
     rows = {
@@ -119,6 +119,8 @@ def build_sql() -> str:
         lines.append(f"select poc_test.truth({quote(statement)}, {quote(label)});")
 
     lines.append(f"insert into auth.users(id) values ({quote(a[0])}),({quote(b[0])});")
+    for owner, ids, _ in (a, b):
+        lines.append(f"select poc_permissions.authorize({quote(owner)},{quote(ids['cases'])});")
     # All counseling inserts execute as the owning role; setup cannot mask broken positive policies.
     for label, (owner, ids, rows) in (("A", a), ("B", b)):
         actor(owner)
@@ -171,13 +173,11 @@ def build_sql() -> str:
                 denied(f"update public.{table} set {column}={quote(other[1][parent])} where {key(table)}={ident}",
                     prefix + "forged_" + column + "_update", ("42501", "23503", "23514", "P0001"))
 
-        # These tables deliberately support unsaved case IDs; do not invent a parent requirement.
+        # Unsaved/unregistered case IDs now fail the shared processing boundary.
         for table in ("counseling_drafts", "document_exports", "retrieval_logs"):
             row = probe_row(table, own[2][table])
             row["case_id"] = "poc_unsaved_" + str(uuid4())
-            changed(insert(table, row), 1, label + ":" + table + ":unsaved_case_insert")
-            changed(f"delete from public.{table} where {key(table)}={quote(row[key(table)])}", 1,
-                    label + ":" + table + ":unsaved_case_cleanup")
+            denied(insert(table, row), label + ":" + table + ":unsaved_case_insert")
 
         voucher = probe_row("voucher_documents", own[2]["voucher_documents"])
         voucher["snapshot"] = {"form": {"edition": "ari-2026"}, "sources": {other[1]["generated_notes"]: "synthetic-forgery"}}

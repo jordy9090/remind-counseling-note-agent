@@ -72,7 +72,7 @@ def verify_parent_scope(command, env, run, require_success):
                          "insert_before_delete", "delete_before_insert"):
             scenario = f"{parent}:{child}:{ordering}"
             owner, session, note, child_id, control_note = (str(uuid4()) for _ in range(5))
-            case, control = "poc_parent_" + session, "poc_control_" + session
+            case, control = "beta_rm_" + session, "beta_rm_" + str(uuid4())
             holding, waiting = "poc_hold_" + uuid4().hex, "poc_wait_" + uuid4().hex
             actor = (f"set local role authenticated; set local request.jwt.claim.sub='{owner}'; "
                      "set local request.jwt.claim.role='authenticated'; ")
@@ -96,6 +96,8 @@ def verify_parent_scope(command, env, run, require_success):
             insert_child = f"insert into public.{child} {child_rows[child]};"
             query(f"""begin;
                 insert into auth.users(id) values ('{owner}');
+                select poc_permissions.authorize('{owner}','{case}');
+                select poc_permissions.authorize('{owner}','{control}');
                 {actor}
                 insert into public.cases(id,user_id,counselor_id) values
                   ('{case}','{owner}','{owner}'), ('{control}','{owner}','{owner}');
@@ -162,5 +164,6 @@ def verify_parent_scope(command, env, run, require_success):
                 print("Parent concurrency FAILED: " + scenario + ": " + str(error), flush=True)
             finally:
                 query(f"begin; delete from public.cases where id in ('{case}','{control}'); "
+                      f"delete from beta_retention.enrollments where owner_id='{owner}'; "
                       f"delete from auth.users where id='{owner}'; commit;", "Parent fixture cleanup")
     return {"passed": passed, "failed": failed}

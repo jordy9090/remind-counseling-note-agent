@@ -150,13 +150,18 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.fail("Parser failure must produce an API error")
                 cleanup.assert_called_once_with(upload.temp_path)
-        with patch.object(audio, "current_audio_engine", return_value="faster-whisper"), \
+        from app.api.security import AuthenticatedActor
+        from app.core.config import settings
+        with patch.object(settings, "processing_authorization_policy", "synthetic-v1"), \
+             patch("app.services.processing_authorization._authorization_rpc", return_value=True), \
+             patch.object(audio, "current_audio_engine", return_value="faster-whisper"), \
              patch.object(audio, "persist_upload_to_temp", AsyncMock(return_value=upload)), \
              patch.object(audio, "get_transcription_service", return_value=Mock()), \
              patch.object(audio, "run_in_threadpool", AsyncMock(side_effect=AudioTranscriptionRuntimeError(PRIVATE))), \
              patch.object(audio, "cleanup_temp_file") as cleanup, diagnostics() as output:
             with self.assertRaises(HTTPException) as caught:
-                await audio.transcribe_audio(Response(), "synthetic-owner", object(), "ko", "transcribe", 2)
+                await audio.transcribe_audio(Response(), AuthenticatedActor("synthetic-owner", "synthetic-jwt"),
+                    object(), "ko", "transcribe", 2, case_id="synthetic-case")
             self.assert_private(caught.exception, output, 500)
             cleanup.assert_called_once_with(upload.temp_path)
 

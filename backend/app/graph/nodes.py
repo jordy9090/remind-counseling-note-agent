@@ -401,6 +401,9 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
     summary = llm.invoke(prompt)
     quality_issues = summary_quality_issues(summary)
     if quality_issues:
+        # The same model instance is reused; refresh permission before this retry.
+        from app.services.processing_authorization import require_processing_egress
+        require_processing_egress("openai")
         repair_outline = summary.model_dump(mode="json")
         for field_name in quality_issues:
             # Repeating the rejected dialogue dump anchors the model to copying it again.

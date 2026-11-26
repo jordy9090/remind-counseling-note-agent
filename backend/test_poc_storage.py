@@ -52,6 +52,9 @@ class PoCStorageTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
+        # Storage minimization contracts start after case permission is granted.
+        self.stack.enter_context(patch.object(settings, "processing_authorization_policy", "synthetic-v1"))
+        self.stack.enter_context(patch("app.services.processing_authorization._authorization_rpc", return_value=True))
         # Dict patching supports a meaningful red baseline before poc_mode exists.
         self.stack.enter_context(patch.dict(settings.__dict__, {
             "poc_mode": True, "enable_persistence": True, "enable_rag": False,

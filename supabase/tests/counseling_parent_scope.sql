@@ -3,8 +3,8 @@ begin;
 do $$
 declare
     owner_a uuid := gen_random_uuid();
-    case_a text := 'poc_parent_' || gen_random_uuid();
-    case_b text := 'poc_parent_' || gen_random_uuid();
+    case_a text := 'beta_rm_' || gen_random_uuid();
+    case_b text := 'beta_rm_' || gen_random_uuid();
     session_a uuid := gen_random_uuid();
     session_b uuid := gen_random_uuid();
     note_a uuid := gen_random_uuid();
@@ -14,6 +14,8 @@ declare
     earlier_note uuid := gen_random_uuid();
 begin
     insert into auth.users(id) values(owner_a);
+    perform poc_permissions.authorize(owner_a,case_a);
+    perform poc_permissions.authorize(owner_a,case_b);
     perform set_config('request.jwt.claim.sub', owner_a::text, true);
     perform set_config('request.jwt.claim.role', 'authenticated', true);
     set local role authenticated;
@@ -36,12 +38,12 @@ begin
     begin
         update public.sessions set case_id=case_b,session_number=991 where id=session_a;
         raise exception using errcode='P9001', message='Session parent moved across cases';
-    exception when check_violation then null;
+    exception when check_violation or raise_exception then null;
     end;
     begin
         update public.generated_notes set case_id=case_b,session_id=session_b where id=note_a;
         raise exception using errcode='P9001', message='Note parent moved across cases';
-    exception when check_violation then null;
+    exception when check_violation or raise_exception then null;
     end;
     -- Owning both parents must not authorize mixing their case scopes.
     begin
@@ -59,8 +61,10 @@ begin
     -- the guard; authenticated content-only updates must still validate parents.
     reset role;
     alter table public.sessions disable trigger counseling_parent_scope;
+    alter table public.sessions disable trigger beta_case_write;
     update public.sessions set case_id=case_b,session_number=991 where id=session_a;
     alter table public.sessions enable trigger counseling_parent_scope;
+    alter table public.sessions enable trigger beta_case_write;
     set local role authenticated;
     begin
         update public.generated_notes set draft_json='{"synthetic":"edited"}' where id=note_a;
@@ -69,8 +73,10 @@ begin
     end;
     reset role;
     alter table public.sessions disable trigger counseling_parent_scope;
+    alter table public.sessions disable trigger beta_case_write;
     update public.sessions set case_id=case_a,session_number=1 where id=session_a;
     alter table public.sessions enable trigger counseling_parent_scope;
+    alter table public.sessions enable trigger beta_case_write;
     alter table public.generated_notes disable trigger counseling_parent_scope;
     update public.generated_notes set source_note_id=note_b where id=note_a;
     alter table public.generated_notes enable trigger counseling_parent_scope;
@@ -83,6 +89,7 @@ begin
     update public.generated_notes set source_note_id=earlier_note where id=note_a;
     -- An invisible legacy parent must also fail without acquiring its row lock.
     reset role;
+    alter table public.cases disable trigger beta_case_write;
     update public.cases set user_id=gen_random_uuid()::text where id=case_b;
     set local role authenticated;
     begin
@@ -92,6 +99,7 @@ begin
     end;
     reset role;
     update public.cases set user_id=owner_a::text where id=case_b;
+    alter table public.cases enable trigger beta_case_write;
     set local role authenticated;
     -- Nullable parent links and legitimate same-case source links remain supported.
     insert into public.generated_notes(id,case_id,session_id,user_id,source_note_id)

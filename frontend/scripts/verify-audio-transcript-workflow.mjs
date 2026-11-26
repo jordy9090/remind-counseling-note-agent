@@ -115,7 +115,8 @@ assert(callbackParts.length === 4, 'transcription callback and its current proje
 const callbackJs = ts.transpileModule(callbackParts.join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText
-const makeTranscribe = new Function('materials', 'setMaterials', 'setForm', 'setDraftSaveMessage', 'transcribeAudio', 'buildTranscriptText', 'buildNonverbalNotes', 'getSegmentSpeakerKey', 'AUDIO_APPLY_TARGETS', 'objectUrlsRef', 'materialsRef', `${callbackJs}; return transcribeAudioMaterial`)
+const transcribeFactory = new Function('materials', 'setMaterials', 'setForm', 'setDraftSaveMessage', 'transcribeAudio', 'buildTranscriptText', 'buildNonverbalNotes', 'getSegmentSpeakerKey', 'AUDIO_APPLY_TARGETS', 'objectUrlsRef', 'materialsRef', 'form', `${callbackJs}; return transcribeAudioMaterial`)
+const makeTranscribe = (...args) => transcribeFactory(...args.slice(0, 11), args[11] || { case_id: 'synthetic-case', session_number: 1 })
 for (const deferred of [false, true]) {
   for (const initialUpload of [false, true]) {
     const syntheticFile = { name: 'synthetic.wav' }
@@ -184,6 +185,49 @@ for (const transition of ['delete', 'new-workspace', 'restored-workspace', 'rest
   } else {
     assert(JSON.stringify(form) === before, `pending audio must not enter replacement input after ${transition}`)
     assert(JSON.stringify(materialsRef.current) === beforeMaterials, `pending response must not change replacement material after ${transition}`)
+  }
+}
+// Execute the actual field-change callback while transcription is pending/completed.
+let updateFieldSource
+function findUpdateField(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(pageAst) === 'updateField') updateFieldSource = node.initializer.getText(pageAst)
+  ts.forEachChild(node, findUpdateField)
+}
+findUpdateField(pageAst)
+const fieldJs = ts.transpileModule(`const updateField = ${updateFieldSource}`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2020 },
+}).outputText
+const resetNames = ['setStoredNoteId', 'setStoredNote', 'setConfirmedFingerprint', 'setResult', 'setDraftSections', 'setFinalDocumentSections', 'setDraftSaveMessage']
+const updateFactory = new Function('form', 'result', 'objectUrlsRef', 'revokeObjectUrl', 'setMaterials', 'setForm', ...resetNames,
+  `${fieldJs}; return updateField`)
+for (const field of ['case_id', 'session_number']) {
+  for (const completed of [false, true]) {
+    const material = { id: 'bound-audio', kind: 'audio', status: 'selected', file: {}, objectUrl: 'blob:bound', appliedTargets: [], speakerRoleMap: {} }
+    const materialsRef = { current: [material] }
+    const objectUrlsRef = { current: new Set([material.objectUrl]) }
+    let form = { case_id: 'synthetic-A', session_number: 1, transcript_text: '', nonverbal_notes: '' }
+    const setForm = update => { form = update(form) }
+    const setMaterials = update => { materialsRef.current = update(materialsRef.current) }
+    let finish, active, progress, sentCase, sends = 0
+    const response = new Promise(resolve => { finish = resolve })
+    const invoke = makeTranscribe([material], setMaterials, setForm, () => {}, async (...args) => {
+      sends++; progress = args[4]; active = args[5]; sentCase = args[6]; return response
+    }, buildTranscriptText, buildNonverbalNotes, getSegmentSpeakerKey, ['transcript_text', 'nonverbal_notes'], objectUrlsRef, materialsRef, form)
+    const pending = invoke(material.id)
+    const result = { segments: [{ id: 1, start: 0, end: 2, speaker: 'SPEAKER_00', text: 'SYNTHETIC-OLD-CASE' }], transcript_text: '', nonverbal_notes: '', warnings: [] }
+    if (completed) { finish(result); await pending }
+    const change = value => updateFactory(form, null, objectUrlsRef,
+      url => objectUrlsRef.current.delete(url), setMaterials, setForm, ...resetNames.map(() => () => {}))(field, value)
+    change(field === 'case_id' ? 'synthetic-B' : 2)
+    change(field === 'case_id' ? 'synthetic-A' : 1)
+    assert(sentCase === 'synthetic-A', 'audio request must carry the initial case')
+    assert(active() === false, 'case/session change and return must revoke pending chunks')
+    progress('Synthetic late progress')
+    if (!completed) { finish(result); await pending }
+    await invoke(material.id)
+    assert(sends === 1, 'old audio cannot be retried under a replacement workspace')
+    assert(materialsRef.current.length === 0, 'pending/completed audio must leave the changed workspace')
+    assert(form.transcript_text === '', 'old case result must not enter replacement form')
   }
 }
 assert(pageSource.includes('applyAudioTranscriptToForm'), 'audio must use a dedicated atomic apply function')

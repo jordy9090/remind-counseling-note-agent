@@ -531,6 +531,9 @@ export default function SessionDraftPage({
   const updateField = (field: keyof SessionInput, value: string | number) => {
     if ((field === 'case_id' || field === 'session_number') && form[field] !== value) {
       if (result && !window.confirm('케이스 또는 회기 번호를 변경하면 현재 화면의 요약이 초기화됩니다. 변경할까요?')) return
+      // Revoke pending work and cached/completed audio before changing its case scope.
+      objectUrlsRef.current.forEach(url => revokeObjectUrl(url))
+      setMaterials(prev => prev.filter(material => material.kind !== 'audio'))
       setStoredNoteId(null)
       setStoredNote(null)
       setConfirmedFingerprint(null)
@@ -728,13 +731,13 @@ export default function SessionDraftPage({
     )
     try {
       const transcription = await transcribeAudio(file, 'ko', 'transcribe', expectedSpeakers,
-        (message) => setMaterials(prev => prev.map(material => material.id === materialId
+        (message) => setMaterials(prev => !objectUrlsRef.current.has(objectUrl) ? prev : prev.map(material => material.id === materialId
           ? { ...material, transcriptionProgress: message } : material)),
-        () => objectUrlsRef.current.has(objectUrl))
+        () => objectUrlsRef.current.has(objectUrl), form.case_id)
       // Removed files and replaced workspaces revoke ownership of this URL.
       if (!objectUrlsRef.current.has(objectUrl)) return
       setMaterials((prev) =>
-        prev.map((material) => {
+        !objectUrlsRef.current.has(objectUrl) ? prev : prev.map((material) => {
           if (material.id !== materialId) return material
           return buildTranscribedAudioMaterial(material, transcription)
         }),
@@ -743,7 +746,7 @@ export default function SessionDraftPage({
       if (!objectUrlsRef.current.has(objectUrl)) return
       const message = err instanceof Error ? err.message : '음성 축어록을 생성하지 못했습니다.'
       setMaterials((prev) =>
-        prev.map((material) =>
+        !objectUrlsRef.current.has(objectUrl) ? prev : prev.map((material) =>
           material.id === materialId ? { ...material, status: 'failed', error: message } : material,
         ),
       )

@@ -25,6 +25,9 @@ class PoCApprovalTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
+        # This suite isolates masking approval after a valid case permission decision.
+        self.stack.enter_context(patch.object(settings, "processing_authorization_policy", "synthetic-v1"))
+        self.stack.enter_context(patch("app.services.processing_authorization._authorization_rpc", return_value=True))
         self.stack.enter_context(patch.dict(settings.__dict__, {
             "poc_mode": True, "require_deid_review": False, "enable_rag": False,
             "deid_review_signing_key": "synthetic-review-secret-" * 3,
