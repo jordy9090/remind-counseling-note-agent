@@ -121,7 +121,6 @@ def verify_with_requested_insights(state: NoteGraphState) -> dict[str, Any]:
         return verify_output(state)
     source = state["sanitized_input"]
     draft = state["session_summary_draft"].model_copy(deep=True)
-    report = state["retrieval_report"].model_copy(deep=True)
 
     def insights_for_draft():
         started = perf_counter()
@@ -133,6 +132,7 @@ def verify_with_requested_insights(state: NoteGraphState) -> dict[str, Any]:
         future = pool.submit(copy_context().run, insights_for_draft)
         started = perf_counter()
         verified = verify_output(state)
+        report = state["retrieval_report"].model_copy(deep=True)
         report.verification_latency_ms = round((perf_counter() - started) * 1000)
         insights, report.insight_latency_ms = future.result()
     started = perf_counter()

@@ -11,6 +11,18 @@ from test_summary_quality import _state, _summary
 
 
 class SummaryVerificationTests(unittest.TestCase):
+    def test_plan_sentence_ids_preserve_exact_text_and_reject_another_turn(self):
+        from app.services.summary_verification import quick_plan_anchors, resolve_plan_anchors
+        catalog = {"transcript.turn_2": "상담사: 오늘인가요?", "transcript.turn_3": "내담자: 내일요. 보낼지는 그때 정할게요."}
+        anchors = quick_plan_anchors(["transcript.turn_2"], catalog)
+        assessment = PlanAssessment(status="supported_future", evidence=[
+            PlanEvidence(source_ref="transcript.turn_3", quote="@3.2"),
+            PlanEvidence(source_ref="transcript.turn_2", quote="@3.2"),
+            PlanEvidence(source_ref="transcript.turn_3", quote="@3.99"),
+        ])
+        resolve_plan_anchors(assessment, anchors)
+        self.assertEqual(["보낼지는 그때 정할게요.", "", ""], [item.quote for item in assessment.evidence])
+
     def setUp(self):
         self.state = _state()
         self.summary = _summary()
