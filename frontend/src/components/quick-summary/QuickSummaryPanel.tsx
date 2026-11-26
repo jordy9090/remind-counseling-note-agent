@@ -10,7 +10,7 @@ import {
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse } from '../../types/session'
-import PersonMappingModal, { hasPersonMentions } from '../deidentification/PersonMappingModal'
+import PersonMappingModal from '../deidentification/PersonMappingModal'
 import SourceMemoryCues from './SourceMemoryCues'
 import QuickAudioInput from './QuickAudioInput'
 import { AUDIO_FILE_ACCEPT } from '../../lib/audioConsent'
@@ -93,14 +93,13 @@ export default function QuickSummaryPanel({
   const hasInputWork = Boolean(inputText.trim() || audioPending || loading || extracting || reviewing || personText !== null)
   useUnsavedWork(!result && hasInputWork)
 
-  /** Validates, then opens the review step; generation starts from the modal. */
-  const summarize = () => {
+  const summarize = (editNames = false) => {
     if (onGenerationRequiresLogin) { onGenerationRequiresLogin(); return }
     if (loading || audioPending) return
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
     if (overLimit) return setError(`간편 요약은 ${maxChars.toLocaleString()}자까지 입력할 수 있어요.${canExtractDocuments ? '' : ' 로그인하면 2시간 상담 분량까지 이용할 수 있어요.'}`)
     setError(null)
-    if (hasPersonMentions([inputText])) setPersonText(inputText)
+    if (editNames) setPersonText(inputText)
     else void summarizeReviewed(inputText)
   }
 
@@ -272,7 +271,7 @@ export default function QuickSummaryPanel({
             rows={text ? 8 : 3}
             className="block w-full resize-none bg-transparent text-sm leading-6 text-grey-900 outline-none placeholder:text-grey-400"
           />
-          <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -288,6 +287,10 @@ export default function QuickSummaryPanel({
                 if (file && /\.(mp3|m4a|wav)$/i.test(file.name)) onAudioLogin?.()
                 else void addFile(file)
               }} />}
+              {!onGenerationRequiresLogin && length >= QUICK_SUMMARY_MIN_CHARS && (
+                <button type="button" disabled={loading || extracting || audioPending} onClick={() => summarize(true)}
+                  className="text-sm text-grey-600 underline underline-offset-4 hover:text-grey-900">이름 사전</button>
+              )}
               {overLimit && (
                 <span className="text-xs font-bold text-danger-500">
                   {length.toLocaleString()} / {maxChars.toLocaleString()}자
@@ -296,7 +299,7 @@ export default function QuickSummaryPanel({
             </div>
             <button
               type="button"
-              onClick={summarize}
+              onClick={() => summarize()}
               disabled={loading || extracting || audioPending}
               className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-6 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-60"
             >

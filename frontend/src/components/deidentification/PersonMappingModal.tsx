@@ -9,7 +9,6 @@ import {
   detectPersonMapping,
   manualMention,
   personDictionary,
-  unresolvedNameMentions,
   type PersonMapping,
   type PersonMention,
   type PersonMentionKind,
@@ -19,29 +18,20 @@ import {
 export interface PersonMappingSource {
   key: string
   label: string
-  /** Text after the de-identification review. */
+  /** Input text before the mandatory privacy review. */
   text: string
 }
 
 const NEW_PERSON = '__new__'
 
 const KIND_BADGE: Record<PersonMentionKind, { label: string; className: string }> = {
-  label: { label: '비식별 라벨', className: 'bg-primary-50 text-primary-400' },
-  name: { label: '남은 이름 · 연결하면 가려짐', className: 'bg-danger-50 text-danger-500' },
+  label: { label: '가명', className: 'bg-primary-50 text-primary-400' },
+  name: { label: '이름', className: 'bg-grey-100 text-grey-600' },
   relation: { label: '관계 표현', className: 'bg-grey-100 text-grey-600' },
   manual: { label: '직접 추가', className: 'bg-grey-100 text-grey-600' },
 }
 
-/** True when the reviewed text mentions anyone the counselor could match. */
-export function hasPersonMentions(texts: string[], stored: StoredPerson[] = []): boolean {
-  return detectPersonMapping(texts, stored).mentions.length > 0
-}
-
-/**
- * "등장 인물을 정리해주세요": after the de-identification review and before summary generation,
- * the counselor links names, misheard names, nicknames and relation words to one person each,
- * so the AI does not split one person into several.
- */
+/** Optional name and alias matching before the mandatory privacy review. */
 export default function PersonMappingModal({
   sources,
   stored = [],
@@ -66,8 +56,6 @@ export default function PersonMappingModal({
   const [preview, setPreview] = useState(false)
 
   const dictionary = personDictionary(mapping)
-  const unresolved = unresolvedNameMentions(mapping)
-  const linkedCount = mapping.mentions.filter((mention) => mention.personId).length
 
   const link = (mentionId: string, value: string) => {
     setMapping((current) => {
@@ -100,10 +88,10 @@ export default function PersonMappingModal({
 
   const removeMention = (mentionId: string) => setMapping((current) => ({ ...current, mentions: current.mentions.filter((mention) => mention.id !== mentionId) }))
 
-  const submit = (useMapping: boolean) => {
+  const submit = () => {
     onConfirm(
-      Object.fromEntries(sources.map((source) => [source.key, useMapping ? applyPersonMapping(source.text, mapping) : source.text])),
-      useMapping ? mapping : { persons: mapping.persons, mentions: [] },
+      Object.fromEntries(sources.map((source) => [source.key, applyPersonMapping(source.text, mapping)])),
+      mapping,
     )
   }
 
@@ -111,46 +99,59 @@ export default function PersonMappingModal({
 
   return (
     <ModalShell
-      ariaLabel="등장 인물 정리"
-      title="등장 인물을 정리해주세요"
-      description="같은 사람을 가리키는 이름·잘못 받아 적힌 이름·별명·관계 표현을 한 인물로 묶어주세요. AI가 같은 사람으로 이해하고 요약해요."
+      ariaLabel="이름 사전"
+      title="이름 사전"
+      description={savesToClient ? '같은 사람의 이름과 별명을 연결하세요. 요약 후 내담자의 이름 사전에 저장됩니다.' : '같은 사람의 이름과 별명을 연결하세요. 이번 요약에만 적용됩니다.'}
       onClose={onBack}
-      width={1080}
+      width={660}
       footer={(
         <div className="flex w-full flex-col gap-3 sm:flex-row">
           <OutlineButton className="h-[52px] rounded-[12px] text-[15px] sm:w-[160px]" onClick={onBack}>
             <ArrowLeft className="h-5 w-5" />뒤로가기
           </OutlineButton>
-          <OutlineButton className="h-[52px] rounded-[12px] text-[15px] sm:w-[200px]" onClick={() => submit(false)}>
-            정리 없이 다음으로
-          </OutlineButton>
-          <PrimaryButton className="h-[52px] flex-1 rounded-[12px] text-[15px]" onClick={() => submit(true)}>
-            <Sparkles className="h-5 w-5" />정리한 내용 확인하기
+          <PrimaryButton className="h-[52px] flex-1 rounded-[12px] text-[15px]" onClick={submit}>
+            <Sparkles className="h-5 w-5" />적용하고 개인정보 확인
           </PrimaryButton>
         </div>
       )}
     >
       <div className="flex flex-col gap-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-flex h-9 items-center rounded-[10px] bg-primary-50 px-3 text-sm font-bold text-primary-400">
-            찾은 표현 {mapping.mentions.length}개 · 연결 {linkedCount}개
-          </span>
-          {unresolved.length > 0 && (
-            <span role="status" className="inline-flex h-9 items-center rounded-[10px] bg-danger-50 px-3 text-sm font-bold text-danger-500">
-              연결하지 않은 이름 {unresolved.length}개는 그대로 AI에 전달돼요
-            </span>
-          )}
-          <p className="text-xs text-grey-500">
-            {savesToClient
-              ? '요약을 만들면 이 정리가 내담자의 인물 사전에 저장되어, 다음 회기에도 같은 라벨로 쓰여요.'
-              : '이 정리는 이 브라우저에서만 이루어지고 저장되지 않아요.'}
-          </p>
-        </div>
+        <div className="flex flex-col gap-3">
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-          <section aria-label="인물 사전" className="flex min-h-0 flex-col rounded-card border border-grey-200 lg:h-[min(520px,54vh)]">
-            <div className="flex h-[62px] shrink-0 items-center justify-between gap-3 border-b border-grey-200 px-6">
-              <h3 className="text-base font-bold text-grey-900">인물 사전</h3>
+          <section aria-label="등장 표현">
+            <ul className="rm-scroll max-h-[32vh] space-y-2 overflow-y-auto">
+              {mapping.mentions.length === 0 && (
+                <li className="rounded-[12px] border border-dashed border-grey-200 px-4 py-8 text-center text-sm leading-6 text-grey-500">
+                  자동으로 찾은 인물 표현이 없어요.<br />아래에서 별명이나 잘못 받아 적힌 이름을 직접 추가할 수 있어요.
+                </li>
+              )}
+              {mapping.mentions.map((mention) => (
+                <MentionRow key={mention.id} mention={mention} mapping={mapping} onLink={link} onRemove={removeMention} />
+              ))}
+            </ul>
+            <form onSubmit={addMention} className="pt-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  aria-label="추가할 표현"
+                  className="h-10 min-w-0 flex-1 rounded-[10px] border border-grey-200 bg-white px-3 text-sm text-grey-900 outline-none placeholder:text-grey-400 focus:border-primary-400"
+                  placeholder="예: 서연, 그 애, 짝꿍"
+                  value={draftText}
+                  onChange={(event) => { setDraftText(event.target.value); setFormError(null) }}
+                />
+                <label className="flex shrink-0 items-center gap-2 text-xs text-grey-600" title="이름이면 켜두세요. 끄면 표현은 그대로 두고 인물 라벨만 붙여요.">
+                  <input type="checkbox" className="h-4 w-4 accent-primary-400" checked={draftHides} onChange={(event) => setDraftHides(event.target.checked)} />
+                  이름이라 가리기
+                </label>
+                <button type="submit" className="inline-flex h-10 shrink-0 items-center justify-center gap-1 rounded-full bg-primary-400 px-4 text-sm font-bold text-white hover:bg-primary-500">
+                  <Plus className="h-4 w-4" />표현 추가
+                </button>
+              </div>
+              {formError && <p role="alert" className="mt-2 text-xs text-danger-500">{formError}</p>}
+            </form>
+          </section>
+          <details className="rounded-xl border border-grey-200 px-4 py-2">
+            <summary className="cursor-pointer text-sm font-semibold text-grey-700">인물 목록</summary>
+            <div className="flex justify-end pt-2">
               <button
                 type="button"
                 onClick={addPerson}
@@ -159,7 +160,7 @@ export default function PersonMappingModal({
                 <UserPlus className="h-4 w-4" />새 인물
               </button>
             </div>
-            <ul className="rm-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
+            <ul className="rm-scroll max-h-48 space-y-2 overflow-y-auto py-2">
               {mapping.persons.map((person) => {
                 const expressions = dictionary.find((entry) => entry.person.id === person.id)?.expressions ?? []
                 return (
@@ -182,48 +183,13 @@ export default function PersonMappingModal({
                 )
               })}
             </ul>
-          </section>
-
-          <section aria-label="등장 표현" className="flex min-h-0 flex-col rounded-card border border-grey-200 lg:h-[min(520px,54vh)]">
-            <div className="flex h-[62px] shrink-0 items-center border-b border-grey-200 px-6">
-              <h3 className="text-base font-bold text-grey-900">등장 표현</h3>
-            </div>
-            <ul className="rm-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
-              {mapping.mentions.length === 0 && (
-                <li className="rounded-[12px] border border-dashed border-grey-200 px-4 py-8 text-center text-sm leading-6 text-grey-500">
-                  자동으로 찾은 인물 표현이 없어요.<br />아래에서 별명이나 잘못 받아 적힌 이름을 직접 추가할 수 있어요.
-                </li>
-              )}
-              {mapping.mentions.map((mention) => (
-                <MentionRow key={mention.id} mention={mention} mapping={mapping} onLink={link} onRemove={removeMention} />
-              ))}
-            </ul>
-            <form onSubmit={addMention} className="shrink-0 border-t border-grey-200 px-6 pb-5 pt-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <input
-                  aria-label="추가할 표현"
-                  className="h-10 min-w-0 flex-1 rounded-[10px] border border-grey-200 bg-white px-3 text-sm text-grey-900 outline-none placeholder:text-grey-400 focus:border-primary-400"
-                  placeholder="예: 서연, 그 애, 짝꿍"
-                  value={draftText}
-                  onChange={(event) => { setDraftText(event.target.value); setFormError(null) }}
-                />
-                <label className="flex shrink-0 items-center gap-2 text-xs text-grey-600" title="이름이면 켜두세요. 끄면 표현은 그대로 두고 인물 라벨만 붙여요.">
-                  <input type="checkbox" className="h-4 w-4 accent-primary-400" checked={draftHides} onChange={(event) => setDraftHides(event.target.checked)} />
-                  이름이라 가리기
-                </label>
-                <button type="submit" className="inline-flex h-10 shrink-0 items-center justify-center gap-1 rounded-full bg-primary-400 px-4 text-sm font-bold text-white hover:bg-primary-500">
-                  <Plus className="h-4 w-4" />표현 추가
-                </button>
-              </div>
-              {formError && <p role="alert" className="mt-2 text-xs text-danger-500">{formError}</p>}
-            </form>
-          </section>
+          </details>
         </div>
 
         {previewSource && (
           <div className="rounded-card border border-grey-200">
             <button type="button" onClick={() => setPreview((value) => !value)} aria-expanded={preview} className="flex h-12 w-full items-center px-6 text-sm font-bold text-grey-700">
-              {preview ? '▾' : '▸'} AI 전달용 미리보기 ({previewSource.label})
+              {preview ? '▾' : '▸'} 이름 적용 미리보기
             </button>
             {preview && (
               <div className="rm-scroll mx-6 mb-5 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words rounded-[10px] border border-grey-200 bg-[#F8FAFC] px-3.5 py-3 text-sm leading-7 text-grey-800">

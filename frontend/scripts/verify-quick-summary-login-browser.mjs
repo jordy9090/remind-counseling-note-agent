@@ -39,7 +39,7 @@ try {
     { name: 'late provider settings', slowSettings: true, retryLogin: false },
     { name: 'failed password then retry', slowSettings: true, retryLogin: true },
   ]) {
-    const context = await browser.newContext()
+    const context = await browser.newContext(scenario.retryLogin ? { viewport: { width: 390, height: 844 } } : {})
     const page = await context.newPage()
     const errors = [], draftWrites = []
     let releaseSettings, tokenRequests = 0, generationRequests = 0
@@ -58,7 +58,7 @@ try {
         return reply(session)
       }
       if (pathname.endsWith('/auth/v1/user')) return reply(user)
-      if (url.origin !== origin) return route.abort()
+      if (url.origin !== origin && !(url.origin === 'https://49.247.174.195:8443' && pathname.startsWith('/api/'))) return route.abort()
       if (pathname === '/api/notes/quick-summary') { generationRequests += 1; return reply(response) }
       if (pathname === '/api/notes/deidentification-prepare') {
         const { payload } = req.postDataJSON()
@@ -90,6 +90,7 @@ try {
         localStorage.setItem('remind.quickSummary.pending', JSON.stringify({ sections, savedAt: Date.now() }))
       }, { sections: [{ id: 'session_content', title: '상담 내용', content: 'Synthetic previous browser user' }] })
       await page.goto(entryUrl)
+      await page.getByRole('button', { name: '로그인하고 요약하기', exact: true }).waitFor()
       assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending')), null)
       assert.equal(await page.getByRole('button', { name: '로그인 후 저장하기', exact: true }).count(), 0)
       await page.getByLabel('요약할 상담 내용', { exact: true }).fill('상담사: 오늘은 어떠셨나요? 내담자: 합성사례이며 회의 뒤 긴장한 마음을 이야기했습니다.')
@@ -118,15 +119,39 @@ try {
       assert.equal(draftWrites.length, 0)
       assert.equal(await page.getByRole('article', { name: 'AI 요약 결과' }).count(), 0)
       assert.equal(await page.getByLabel('요약할 상담 내용', { exact: true }).inputValue(), '')
-      await page.getByLabel('요약할 상담 내용', { exact: true }).fill('상담사: 오늘은 어떠셨나요? 내담자: 합성사례이며 회의 뒤 긴장한 마음을 이야기했습니다.')
-      await page.getByRole('button', { name: '요약하기', exact: true }).click()
+      await page.getByLabel('요약할 상담 내용', { exact: true }).fill('가상 회기입니다. 친구와 만난 뒤 긴장이 조금 풀렸다고 이야기했습니다. 연락처는 010-0000-3141입니다.')
+      if (scenario.retryLogin) {
+        await page.getByRole('button', { name: '이름 사전', exact: true }).click()
+        const dictionary = page.getByRole('dialog', { name: '이름 사전' })
+        await dictionary.getByLabel('친구 연결할 인물').selectOption({ label: '+ 새 인물로' })
+        await dictionary.getByRole('button', { name: '적용하고 개인정보 확인' }).click()
+      } else {
+        await page.getByRole('button', { name: '요약하기', exact: true }).click()
+      }
       const detection = page.getByRole('dialog', { name: '식별정보 탐지 승인', exact: true })
+      await detection.waitFor()
+      if (scenario.retryLogin) assert.ok((await detection.innerText()).includes('친구[인물 B]'))
+      assert.equal(await detection.getByRole('button', { name: '개인정보 찾기' }).isEnabled(), false)
       await detection.getByRole('checkbox').check()
-      await detection.getByRole('button', { name: '원문 식별정보 탐지 승인', exact: true }).click()
-      await page.getByRole('checkbox').check()
-      await page.getByRole('button', { name: '확인한 내용으로 AI 처리하기', exact: true }).click()
+      await detection.getByRole('button', { name: '개인정보 찾기', exact: true }).click()
+      const review = page.getByRole('dialog', { name: 'AI로 보내기 전 내용 확인' })
+      await review.waitFor()
+      assert.equal(await review.getByRole('tab', { name: '가린 내용' }).getAttribute('aria-selected'), 'true')
+      assert.ok(!(await review.getByLabel('AI에 전달할 내용').innerText()).includes('010-0000-3141'))
+      assert.equal(await review.getByRole('button', { name: /가린 항목/ }).getAttribute('aria-expanded'), 'false')
+      assert.equal(await review.getByRole('button', { name: '요약하기' }).isEnabled(), false)
+      if (scenario.retryLogin) {
+        await review.getByRole('button', { name: /가린 항목/ }).click()
+        await review.getByRole('button', { name: '항목 추가하기' }).click()
+        await review.getByLabel('원문 표현').fill('긴장')
+        await review.getByLabel('대체 표현').fill('가상표현')
+        await review.getByRole('button', { name: '추가하기', exact: true }).click()
+        assert.ok((await review.getByLabel('AI에 전달할 내용').innerText()).includes('[가상표현]'))
+      }
+      await review.getByRole('checkbox').check()
+      await review.getByRole('button', { name: '요약하기', exact: true }).click()
       const result = page.getByRole('article', { name: 'AI 요약 결과' })
-      assert.equal(await result.isVisible(), true)
+      await result.waitFor()
       assert.ok((await result.innerText()).includes(marker))
       await page.getByText('이전 요약한 기록에 저장됨', { exact: true }).waitFor()
       assert.equal(draftWrites.length, 1, 'Signed-in generation saves the owned summary exactly once')

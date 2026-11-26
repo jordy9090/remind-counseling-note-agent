@@ -136,28 +136,25 @@ export default function AIReviewHost() {
   }
 
   if (!task) return null
-  if (!preparation) return <div className="relative z-[70]"><ModalShell ariaLabel="탐지할 자료 준비" title="검토할 자료를 준비하고 있어요" onClose={cancel}>
-    <p role={error ? 'alert' : 'status'}>{error || '현재 입력과 함께 처리할 이전 회기 자료를 준비합니다.'}</p>
+  if (!preparation) return <div className="relative z-[70]"><ModalShell ariaLabel="탐지할 자료 준비" title="개인정보 확인" onClose={cancel}>
+    <p role={error ? 'alert' : 'status'}>{error || '원문을 불러오는 중…'}</p>
     {error && <button type="button" className="mt-4 text-primary-500" onClick={() => setAttempt(value => value + 1)}>다시 시도</button>}
-    <button type="button" className="ml-4 mt-4" onClick={cancel}>취소하고 입력으로 돌아가기</button>
   </ModalShell></div>
-  if (!preview) return <div className="relative z-[70]"><ModalShell ariaLabel="식별정보 탐지 승인" title="탐지 서버에 전달할 원문을 확인해주세요" onClose={cancel}>
-    <p className="mb-4 text-sm text-grey-700">아래 자료를 설정된 서버의 AI 식별정보 탐지 모델에 전달합니다. 탐지가 끝나면 가명 처리할 내용과 요약에 사용할 자료를 다시 확인합니다.</p>
-    <div className="space-y-4">{preparation.sources.map(source => <section key={source.key}>
-      <h3 className="mb-1 text-sm font-bold">{source.label}</h3>
-      <p className="whitespace-pre-wrap break-words rounded border border-grey-200 bg-grey-50 p-3 text-sm">{source.text}</p>
+  if (!preview) return <div className="relative z-[70]"><ModalShell ariaLabel="식별정보 탐지 승인" title="개인정보 확인" onClose={cancel}
+    footer={detecting ? <p role="status" className="text-sm text-grey-600">개인정보를 찾고 있어요…</p> : <div className="w-full space-y-4">
+      <label className="flex cursor-pointer items-start gap-2 text-sm text-grey-800"><input type="checkbox" checked={detectionApproved}
+        className="mt-0.5 h-4 w-4 shrink-0 accent-primary-400"
+        onChange={event => setDetectionApproved(event.target.checked)} />이 원문을 Re:mind 자체 서버에서 분석하는 데 동의합니다.</label>
+      <button type="button" disabled={!detectionApproved || detecting} onClick={() => void approveDetection()}
+        className="h-11 w-full rounded-xl bg-primary-400 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-40">개인정보 찾기</button>
+    </div>}>
+    <div className="space-y-3">{preparation.sources.map(source => <section key={source.key}>
+      {preparation.sources.length > 1 && <h3 className="mb-1.5 text-sm font-semibold">{source.label}</h3>}
+      <p className="rm-scroll max-h-[35vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-grey-50 px-4 py-3 text-sm leading-7 text-grey-800">{source.text}</p>
     </section>)}</div>
     {error && <p role="alert" className="mt-4 text-sm text-danger-500">{error}</p>}
-    {detecting ? <p role="status" className="mt-4 text-sm">자체 서버에서 식별정보를 찾고 있어요. 분량에 따라 시간이 걸릴 수 있습니다.</p>
-      : <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" checked={detectionApproved}
-        onChange={event => setDetectionApproved(event.target.checked)} />표시된 원문을 확인했으며 설정된 서버의 식별정보 탐지에 사용하도록 승인합니다.</label>}
-    <div className="mt-4 flex flex-wrap gap-3">
-      <button type="button" disabled={!detectionApproved || detecting} onClick={() => void approveDetection()}
-        className="rounded bg-primary-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">원문 식별정보 탐지 승인</button>
-      <button type="button" onClick={cancel}>취소하고 입력으로 돌아가기</button>
-    </div>
   </ModalShell></div>
   return <div className="relative z-[70]"><DeidentificationReviewModal sources={preview.sources} context={{}} initialItems={items}
     requireConfirmation onBack={cancel} onConfirm={value => void confirm(value)}
-    submitting={submitting} error={error} submitLabel={task.purpose === 'memory' ? '확인한 내용으로 저장하기' : '확인한 내용으로 AI 처리하기'} /></div>
+    submitting={submitting} error={error} submitLabel={task.purpose === 'memory' ? '저장하기' : task.purpose === 'quick' || task.purpose === 'generate' ? '요약하기' : 'AI로 보내기'} /></div>
 }

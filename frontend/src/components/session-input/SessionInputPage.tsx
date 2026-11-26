@@ -56,6 +56,7 @@ export default function SessionInputPage({
   onOpenMaterial,
   onRemoveMaterial,
   onSubmit,
+  onEditNames,
 }: {
   /** 'existing' re-summarizes a stored session and overwrites its record. */
   mode: 'new' | 'existing'
@@ -72,6 +73,7 @@ export default function SessionInputPage({
   onOpenMaterial: (materialId: string, mode: 'document_preview' | 'audio_review' | 'material_apply') => void
   onRemoveMaterial: (materialId: string) => void
   onSubmit: () => void
+  onEditNames: () => void
 }) {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [pendingAudioFiles, setPendingAudioFiles] = useState<File[] | null>(null)
@@ -230,6 +232,7 @@ export default function SessionInputPage({
         </div>
       )}
 
+      {canSubmit && <button type="button" onClick={onEditNames} className="mt-4 text-sm text-grey-600 underline underline-offset-4 hover:text-grey-900">이름 사전</button>}
       <PrimaryButton className="mt-4 h-[52px] w-full rounded-[12px] text-[15px]" disabled={!canSubmit} loading={isLoading} onClick={onSubmit}>
         <PenLine className="h-5 w-5" />{mode === 'existing' ? `${form.session_number}회기 요약 다시 생성하기` : 'AI 요약 생성하기'}
       </PrimaryButton>
