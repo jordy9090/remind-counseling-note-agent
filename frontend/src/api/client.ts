@@ -98,6 +98,12 @@ client.interceptors.request.use(async (config) => {
 client.interceptors.response.use(async response => {
   if (response.config.expectedOwnerId !== undefined) await scopedSession(response.config.expectedOwnerId)
   return response
+}, (error: unknown) => {
+  if (axios.isAxiosError(error) && error.code === 'ERR_NETWORK' && !error.response
+    && (error.config?.url === '/api/audio/capabilities' || error.config?.url === '/api/audio/transcribe')) {
+    error.message = '서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.'
+  }
+  return Promise.reject(error)
 })
 
 export const generateNoteDraft = async (
