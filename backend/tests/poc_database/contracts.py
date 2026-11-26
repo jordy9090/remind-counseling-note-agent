@@ -12,7 +12,10 @@ TABLES = (
     "transcript_turns", "transcript_windows", "voucher_documents",
 )
 PRIVATE_TABLES = ("voucher_recovery.deletions", "voucher_recovery.source_context", "beta_retention.enrollments")
-PUBLIC_TABLES = (*TABLES, "kb_documents", "kb_chunks")
+PUBLIC_TABLES = (*TABLES, "kb_documents", "kb_chunks", "client_links", "client_check_ins")
+# Client check-ins are written by the client account, not by the counselor who owns the case, so
+# they cannot use the A/B counselor fixture above. They are covered by their own probes.
+CLIENT_TABLES = ("client_links", "client_check_ins")
 PARENT_TABLES = tuple(table for table in TABLES if table not in {
     "cases", "counseling_drafts", "document_exports", "retrieval_logs",
 })
@@ -118,6 +121,9 @@ def build_sql() -> str:
     def truth(statement, label):
         lines.append(f"select poc_test.truth({quote(statement)}, {quote(label)});")
 
+    def succeeds(statement, label):
+        lines.append(f"select poc_test.succeeds({quote(statement)}, {quote(label)});")
+
     lines.append(f"insert into auth.users(id) values ({quote(a[0])}),({quote(b[0])});")
     # All counseling inserts execute as the owning role; setup cannot mask broken positive policies.
     for label, (owner, ids, rows) in (("A", a), ("B", b)):
@@ -126,6 +132,74 @@ def build_sql() -> str:
         for table in TABLES:
             truth(f"select row_security_active('public.{table}')", label + ":" + table + ":rls_active")
             changed(insert(table, rows[table]), 1, label + ":" + table + ":own_insert")
+
+    # Client check-ins: a client account writes, reads and deletes only its own entries, and the
+    # counselor who owns the case reads them with no write policy of its own. Neither party may
+    # update or delete a link row directly; the cross-party transitions run in SECURITY DEFINER
+    # functions. Accepting an invite writes platform app metadata that the synthetic identity
+    # table does not model, so the post-acceptance link state is prepared as an administrator
+    # here; the definer path itself is exercised by backend/test_client_check_ins.py.
+    client, other_client = str(uuid4()), str(uuid4())
+    admin()
+    lines.append(f"insert into auth.users(id) values ({quote(client)}),({quote(other_client)});")
+    link_id = str(uuid4())
+    invite = {"id": link_id, "case_id": a[1]["cases"], "user_id": a[0], "status": "invited",
+              "invite_token_hash": SQL(quote("1" * 64)), "invite_expires_at": SQL("now() + interval '7 days'")}
+    actor(a[0])
+    changed(insert("client_links", invite), 1, "A:client_links:own_invite")
+    count("select count(*) from public.client_links", 1, "A:client_links:only_own_visible")
+    denied("update public.client_links set status='ended' where id=" + quote(link_id),
+           "A:client_links:no_direct_update")
+    denied("delete from public.client_links where id=" + quote(link_id),
+           "A:client_links:no_direct_delete")
+    denied(insert("client_links", {**invite, "id": str(uuid4()), "case_id": b[1]["cases"]}),
+           "A:client_links:foreign_case_invite")
+    actor(b[0])
+    count(f"select count(*) from public.client_links where id={quote(link_id)}", 0, "B:client_links:foreign_select")
+    actor(client)
+    count("select count(*) from public.client_links", 0, "client:client_links:hidden_before_accept")
+    denied(insert("client_links", {**invite, "id": str(uuid4()), "user_id": client}),
+           "client:client_links:no_counselor_invite")
+    admin()
+    lines.append(f"update public.client_links set status='active', client_user_id={quote(client)}, "
+                 "invite_token_hash=null, consent_version='synthetic-v1', consented_at=now(), accepted_at=now() "
+                 f"where id={quote(link_id)};")
+    actor(client)
+    count("select count(*) from public.client_links", 1, "client:client_links:own_after_accept")
+    check_in = {"id": str(uuid4()), "link_id": link_id, "mood": 7, "note": "Synthetic check-in"}
+    changed(insert("client_check_ins", check_in), 1, "client:client_check_ins:own_insert")
+    count("select count(*) from public.client_check_ins", 1, "client:client_check_ins:only_own_visible")
+    denied("update public.client_check_ins set note='edited' where id=" + quote(check_in["id"]),
+           "client:client_check_ins:no_direct_update")
+    denied(insert("client_check_ins", {**check_in, "id": str(uuid4()), "client_user_id": other_client}),
+           "client:client_check_ins:spoofed_client")
+    denied(insert("client_check_ins", {**check_in, "id": str(uuid4()), "mood": 11}),
+           "client:client_check_ins:mood_range", ("23514",))
+    actor()
+    for table in CLIENT_TABLES:
+        count(f"select count(*) from public.{table}", 0, "missing_subject:" + table)
+    actor(a[0])
+    count("select count(*) from public.client_check_ins", 1, "A:client_check_ins:read_own_case")
+    denied(insert("client_check_ins", {**check_in, "id": str(uuid4())}), "A:client_check_ins:no_insert")
+    denied("update public.client_check_ins set note='edited' where id=" + quote(check_in["id"]),
+           "A:client_check_ins:no_update")
+    actor(b[0])
+    count("select count(*) from public.client_check_ins", 0, "B:client_check_ins:foreign_select")
+    denied(f"select public.end_client_link({quote(link_id)})", "B:client_links:foreign_end", ("P0002",))
+    actor(other_client)
+    count("select count(*) from public.client_check_ins", 0, "foreign_client:client_check_ins:hidden")
+    denied(insert("client_check_ins", {**check_in, "id": str(uuid4())}),
+           "foreign_client:client_check_ins:foreign_link")
+    actor(client)
+    succeeds(f"select public.end_client_link({quote(link_id)})", "client:client_links:client_end")
+    denied(insert("client_check_ins", {**check_in, "id": str(uuid4())}),
+           "client:client_check_ins:ended_link_blocks")
+    count("select count(*) from public.client_check_ins", 1, "client:client_check_ins:history_kept")
+    actor(a[0])
+    count("select count(*) from public.client_check_ins", 1, "A:client_check_ins:history_kept_after_end")
+    actor(client)
+    changed("delete from public.client_check_ins where id=" + quote(check_in["id"]), 1,
+            "client:client_check_ins:own_delete")
 
     for label, own, other in (("A", a, b), ("B", b, a)):
         actor(own[0])
