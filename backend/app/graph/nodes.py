@@ -39,7 +39,7 @@ from app.schemas.note import (
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
 from app.services.summary_rules import labeled_summary_input, session_summary_writing_rules
-from app.services.summary_verification import SummaryCorrectionValidation, SummaryVerification, apply_summary_verification, summary_verification_schema
+from app.services.summary_verification import SummaryCorrectionValidation, SummaryVerification, apply_summary_verification, quick_verification_schema, summary_verification_schema
 from app.services.summary_corrections import SourceRefReview, correct_summary, introduced_script_fields, retain_required_refs
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.deidentification import deidentify_sources, render_counselor_text
@@ -462,9 +462,11 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
         return {"verification_report": fallback}
 
     case_context = state.get("retrieved_case_context") or []
+    quick = bool(state.get("use_summary_skill"))
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context,
-                                        case_context=case_context)
-    assessment = get_structured_llm(summary_verification_schema(summary)).invoke(prompt)
+                                        case_context=case_context, quick_citations=quick)
+    schema = quick_verification_schema(summary) if quick else summary_verification_schema(summary)
+    assessment = get_structured_llm(schema).invoke(prompt)
     catalog = _source_catalog(sanitized, state.get("retrieved_case_context") or [])
     candidate, changed_fields = correct_summary(summary, assessment.text_corrections, assessment.source_ref_reviews, catalog)
     if changed_fields:
@@ -1299,21 +1301,27 @@ def _build_verification_prompt(
     evidence_mapped: EvidenceMappedData,
     summary: SessionSummaryDraft,
     privacy_context: list[RetrievedPrivacyRule] | None = None,
-    *, final_correction_check: bool = False,
+    *, final_correction_check: bool = False, quick_citations: bool = False,
     case_context: list[RetrievedCaseContextItem] | None = None,
 ) -> str:
     privacy_context = privacy_context or []
     case_context = case_context or []
     catalog = _source_catalog(sanitized, case_context)
+    citation_format = (
+        "Return source_ref_reviews as an object keyed by each field with multiple existing reference IDs. "
+        "Return a nonempty list of retained IDs for each key, or {} if there are no keys. "
+        "Single references are retained automatically. Flag unsupported claims even when there is only one reference."
+        if quick_citations else
+        "Provide source_ref_reviews for EVERY section with source_refs (one entry per field)."
+    )
     correction_rules = """
 This is a final assessment of supplied corrections. Approve or reject them; you may cancel a
 proposed reference removal using source_ref_restorations, but cannot propose new references,
 further removals or rewrites. Assess the retained references against the ENTIRE
 section: a reference needed for another clause, speaker or temporal context must remain even
 when it does not contain the direct quotation. Distinguish unnecessary evidence from necessary context.
-""" if final_correction_check else """
-Provide source_ref_reviews for EVERY section with source_refs (one entry per field). keep_source_refs
-must be a subset of that section's existing IDs: retain every reference needed to support its factual
+""" if final_correction_check else f"""
+{citation_format} Retained IDs must be a subset of that section's existing IDs: retain every reference needed to support its factual
 claims, quotations, speaker/context and conditions, and REMOVE irrelevant or redundant references.
 Judge references against the ENTIRE section, not just its quotation. A reference that supports another
 clause or temporal context in the section is necessary even when it does not contain the quotation.

@@ -1,9 +1,9 @@
 """Apply independent summary checks without changing the public response schema."""
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model
 
 from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
 from app.services.summary_quality import QUOTED_TEXT, SECTION_LIMITS
@@ -66,6 +66,31 @@ def summary_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVer
         "DraftBoundSummaryVerification", __base__=SummaryVerification,
         source_ref_reviews=(list[review_type], Field(default_factory=list, max_length=len(reviews))),
     )
+
+
+def quick_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVerification]:
+    """Require exactly the citation choices available to the independent verifier."""
+    refs_by_field = {
+        field: tuple(dict.fromkeys(getattr(summary, field).source_refs))
+        for field in SECTION_LIMITS if getattr(summary, field).source_refs
+    }
+    # A section's last reference cannot be removed. Only multi-reference sections
+    # need model output; the verifier still checks every factual claim for support.
+    choice_fields = {
+        field: (list[Literal[refs]], Field(min_length=1))
+        for field, refs in refs_by_field.items() if len(refs) > 1
+    }
+    choices = create_model("CitationChoices", __config__=ConfigDict(extra="forbid"), **choice_fields)
+
+    def to_reviews(value: object) -> list[SourceRefReview]:
+        selected = choices.model_validate(value).model_dump()
+        return [
+            SourceRefReview(field=field, keep_source_refs=list(dict.fromkeys(selected.get(field, refs))))
+            for field, refs in refs_by_field.items()
+        ]
+
+    review_list = Annotated[list[SourceRefReview], BeforeValidator(to_reviews, json_schema_input_type=choices)]
+    return create_model("QuickSummaryVerification", __base__=SummaryVerification, source_ref_reviews=(review_list, ...))
 
 
 def _literal(value: str) -> str:
