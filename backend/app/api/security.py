@@ -17,6 +17,9 @@ AuthorizationHeader = Annotated[str | None, Header(alias="Authorization")]
 # Supabase user_metadata key for the counselor's 원문 저장 setting. Only an explicit false opts out;
 # a missing value keeps the default of storing the session input.
 ORIGINAL_INPUT_PREFERENCE_KEY = "remind_store_original_input"
+# Supabase app_metadata key set by accept_client_invite (database-only; users cannot write it).
+ROLE_KEY = "remind_role"
+CLIENT_ROLE = "client"
 
 
 class AuthenticatedActor(str):
@@ -24,21 +27,33 @@ class AuthenticatedActor(str):
 
     access_token: str
     store_original_input: bool
+    role: str
 
-    def __new__(cls, user_id: str, access_token: str, *, store_original_input: bool = True):
+    def __new__(cls, user_id: str, access_token: str, *, store_original_input: bool = True, role: str = ""):
         actor = super().__new__(cls, user_id)
         actor.access_token = access_token
         actor.store_original_input = store_original_input
+        actor.role = role
         return actor
+
+    @property
+    def is_client(self) -> bool:
+        return self.role == CLIENT_ROLE
 
 
 def require_preview_access(
     x_remind_preview_token: PreviewTokenHeader = None,
     authorization: AuthorizationHeader = None,
 ) -> str:
-    """Return the authenticated user id, or use the explicitly enabled legacy guard."""
+    """Return the authenticated counselor, or use the explicitly enabled legacy guard.
+
+    Client accounts (내담자 수시 기록) are refused here, so every counselor route stays closed to them.
+    """
     if settings.enable_real_user_auth or settings.poc_mode:
-        return _require_supabase_user(authorization)
+        actor = _require_supabase_user(authorization)
+        if actor.is_client:
+            raise HTTPException(status_code=403, detail="내담자 계정으로는 상담사 기능을 이용할 수 없습니다.")
+        return actor
     if settings.local_preview_bypass_enabled:
         return settings.remind_preview_actor
 
@@ -89,4 +104,20 @@ def _require_supabase_user(authorization: str | None) -> str:
         raise HTTPException(status_code=401, detail="익명 세션으로는 이용할 수 없습니다. 이메일로 로그인해주세요.")
     metadata = payload.get("user_metadata")
     opted_out = isinstance(metadata, dict) and metadata.get(ORIGINAL_INPUT_PREFERENCE_KEY) is False
-    return AuthenticatedActor(user_id, token, store_original_input=not opted_out)
+    # Only app_metadata counts: user_metadata is writable by the user and must never grant a role.
+    app_metadata = payload.get("app_metadata")
+    role = app_metadata.get(ROLE_KEY) if isinstance(app_metadata, dict) else None
+    return AuthenticatedActor(user_id, token, store_original_input=not opted_out, role=role if isinstance(role, str) else "")
+
+
+def require_signed_in_user(authorization: AuthorizationHeader = None) -> AuthenticatedActor:
+    """Any verified email account, counselor or client (used to accept a client invite)."""
+    return _require_supabase_user(authorization)
+
+
+def require_client_user(authorization: AuthorizationHeader = None) -> AuthenticatedActor:
+    """A client account that joined through a counselor's invite."""
+    actor = _require_supabase_user(authorization)
+    if not actor.is_client:
+        raise HTTPException(status_code=403, detail="내담자 계정으로 로그인해주세요.")
+    return actor

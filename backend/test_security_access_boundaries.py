@@ -30,7 +30,10 @@ from uuid import uuid4
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from app.api.security import AuthenticatedActor, require_preview_access
+from app.api.security import AuthenticatedActor, require_client_user, require_preview_access, require_signed_in_user
+
+# Counselor routes use require_preview_access; client check-in routes use the client guards.
+AUTH_GUARDS = (require_preview_access, require_signed_in_user, require_client_user)
 from app.core.config import settings
 from app.main import app
 from app.schemas.evidence import TranscriptTurn
@@ -600,7 +603,7 @@ class AccessBoundaryTests(unittest.TestCase):
                 if (name, route.path) in PUBLIC_ROUTES:
                     public.add((name, route.path))
                     continue
-                self.assertTrue(any(dep.call is require_preview_access for dep in route.dependant.dependencies),
+                self.assertTrue(any(dep.call in AUTH_GUARDS for dep in route.dependant.dependencies),
                                 f"Missing authentication dependency: {name} {route.path}")
                 path = route.path.replace("{note_id}", NOTES["b"]).replace("{case_id}", CASES["b"]).replace("{draft_id}", DRAFT_ID)
                 for method in route.methods:

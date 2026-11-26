@@ -232,6 +232,16 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
 
   // 로그인 후: 워크스페이스가 사이드바에서 계정·로그아웃을 직접 그리므로 상단 바 없이 컨텍스트만 제공한다.
+  // Client accounts (내담자 수시 기록) use /client; the API refuses them on counselor routes anyway.
+  if (session.user.app_metadata?.remind_role === 'client') {
+    return <AuthShell><Brand /><AuthHeading title="내담자 계정으로 로그인했어요" description="이 계정은 상담사 기능을 이용할 수 없어요. 내 마음 기록 화면에서 이어서 기록해주세요." />
+      <div className="mt-8 space-y-3">
+        <a href="/client" className="flex w-full items-center justify-center rounded-xl bg-blue-700 px-4 py-3.5 font-bold text-white">내 마음 기록으로 가기</a>
+        <button className="w-full rounded-xl px-4 py-3 text-sm font-bold text-slate-600" type="button" onClick={() => void signOut()}>로그아웃</button>
+      </div>
+    </AuthShell>
+  }
+
   return <AuthSessionProvider key={session.user.id} value={{ userId: session.user.id, email: session.user.email || null, signOut, signingOut: submitting }}>
     <div className="min-h-screen bg-slate-50">
       {message && <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6 lg:px-8"><Feedback message={message} /></div>}

@@ -134,6 +134,7 @@ jobs:
           pnpm verify:case-list
           pnpm verify:deidentification-review
           pnpm verify:person-mapping
+          pnpm verify:client-check-ins
           node --test scripts/verify-poc-guest-isolation.test.mjs scripts/verify-poc-detection-approval.test.mjs
           node --test scripts/verify-session-input-deletion.test.mjs
           node scripts/verify-poc-reopen.mjs

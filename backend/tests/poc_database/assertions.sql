@@ -45,3 +45,15 @@ begin
     insert into poc_test.results values (label, false, 'SQLSTATE ' || sqlstate);
   end;
 end $$;
+
+-- Positive probe for a statement that returns no row, such as a function returning void.
+create function poc_test.succeeds(statement text, label text) returns void
+language plpgsql security invoker as $$
+begin
+  begin
+    execute statement;
+    insert into poc_test.results values (label, true, 'ok');
+  exception when others then
+    insert into poc_test.results values (label, false, 'SQLSTATE ' || sqlstate);
+  end;
+end $$;

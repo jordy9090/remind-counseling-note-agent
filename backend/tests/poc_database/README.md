@@ -31,6 +31,7 @@ The sole image-build network activity retrieves the official PostgreSQL image, D
 | Parent integrity | Foreign existing case references on children with case foreign keys; foreign session/note/source-note references on applicable children, on INSERT and UPDATE; unrelated unique conflicts are not accepted as proof of denial |
 | Unsaved cases | Drafts, exports and retrieval logs retain their existing ability to store an owned row for an unsaved case ID; no new parent requirement is assumed |
 | Vouchers | Own review acknowledgment, foreign snapshot source, forged recovery metadata, real delete/archive, owner-only history/restore and idempotent restore |
+| Client check-ins | A counselor invites only for a case they own; a client cannot see a link before it is active; neither party may update or delete a link row directly; the linked client writes, reads and deletes only its own entries, while the counselor reads its own case's entries with no write policy; an ended link blocks new entries and keeps history |
 | Retrieval RPCs | Own result, spoofed owner filter, foreign case, anonymous execution for case memory and transcript windows |
 | Shared KB | Authenticated read, denied writes, dense/hybrid RPC positives, anonymous denial |
 | Private schemas/functions | Recovery and beta tables inaccessible to app roles; internal trigger/purge/retention functions not executable |
@@ -39,6 +40,8 @@ The sole image-build network activity retrieves the official PostgreSQL image, D
 | Inventory/cleanup | New public tables fail the coverage inventory; both cron jobs registered; all counseling/KB/auth/private fixture rows zero after rollback |
 
 Fixtures create database-only `auth.users(id)` rows with random IDs, then use the documented `SET LOCAL ROLE` and request-claim pattern. The bootstrap supplies only platform identity helpers and schema access; it does not supply application table grants, RLS policies, or parent-integrity constraints. The test helpers use `SECURITY INVOKER`. Failed attack probes roll back in a subtransaction, and the entire fixture rolls back even when policy expectations fail. Only test labels, Boolean results, SQLSTATE codes, migration hashes and counts are reported.
+
+The synthetic identity table has no `raw_app_meta_data` column, so `accept_client_invite` cannot run here; the client check-in fixtures therefore prepare the post-acceptance link state as an administrator, and invite acceptance, expiry and role assignment are covered by `backend/test_client_check_ins.py`.
 
 ## Version provenance
 

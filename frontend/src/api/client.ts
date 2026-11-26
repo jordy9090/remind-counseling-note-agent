@@ -36,6 +36,7 @@ import { getAccessToken, supabase } from '../lib/supabase'
 import { cleanQuickSummarySections } from '../lib/quickSummary'
 import type { QuickSummaryResult } from '../lib/quickSummary'
 import type { StoredPerson } from '../lib/personMapping'
+import type { CheckIn, CheckInEmotion, ClientInvite, ClientLinkStatus, ClientMe } from '../lib/clientCheckIns'
 import { reviewForAI, type ReviewPurpose, type ReviewTask, type ReviewedPayload } from '../lib/aiReview'
 import type { DeidSource } from '../lib/deidentificationReview'
 
@@ -648,4 +649,48 @@ export const updateCaseSchedule = async (
     payload,
   )
   return response.data
+}
+
+
+// --- Client check-ins between sessions (내담자 수시 기록) ---
+
+export const getCaseClientLink = async (caseId: string): Promise<ClientLinkStatus | null> =>
+  (await client.get<ClientLinkStatus | null>(`/api/cases/${encodeURIComponent(caseId)}/client-link`)).data
+
+export const createClientInvite = async (caseId: string): Promise<ClientInvite> =>
+  (await client.post<ClientInvite>(`/api/cases/${encodeURIComponent(caseId)}/client-invites`)).data
+
+export const endCaseClientLink = async (caseId: string): Promise<void> => {
+  await client.post(`/api/cases/${encodeURIComponent(caseId)}/client-link/end`)
+}
+
+export const listCaseCheckIns = async (caseId: string): Promise<CheckIn[]> =>
+  (await client.get<CheckIn[]>(`/api/cases/${encodeURIComponent(caseId)}/check-ins`)).data
+
+export const acceptClientInvite = async (token: string, consentVersion: string): Promise<ClientMe> =>
+  (await client.post<ClientMe>('/api/client/invites/accept', { token, consent_version: consentVersion })).data
+
+export const getClientMe = async (): Promise<ClientMe> => (await client.get<ClientMe>('/api/client/me')).data
+
+export const listMyCheckIns = async (): Promise<CheckIn[]> => (await client.get<CheckIn[]>('/api/client/check-ins')).data
+
+export const createCheckIn = async (payload: { mood: number; emotions: CheckInEmotion[]; note: string }): Promise<CheckIn> =>
+  (await client.post<CheckIn>('/api/client/check-ins', payload)).data
+
+export const deleteCheckIn = async (id: string): Promise<void> => {
+  await client.delete(`/api/client/check-ins/${encodeURIComponent(id)}`)
+}
+
+export const endMyClientLink = async (): Promise<void> => {
+  await client.post('/api/client/link/end')
+}
+
+/** The server's Korean message for a failed check-in request, or a fallback. */
+export function checkInErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string' && detail) return detail
+    if (error.response?.status === 401) return '로그인이 필요하거나 세션이 만료되었습니다. 다시 로그인해주세요.'
+  }
+  return fallback
 }
