@@ -81,7 +81,7 @@ function harness() {
 function find(tree, predicate) {
   if (!tree || typeof tree !== 'object') return undefined
   if (predicate(tree)) return tree
-  for (const child of [tree.props?.children].flat(Infinity)) {
+  for (const child of [tree.props?.children, tree.props?.footer].flat(Infinity)) {
     const found = find(child, predicate)
     if (found) return found
   }
@@ -97,7 +97,7 @@ test('preparation displays current and owned prior text without calling the dete
   for (const source of h.prepared.sources) assert.ok(JSON.stringify(tree).includes(source.text))
   const approval = find(tree, node => node.type === 'input' && node.props.type === 'checkbox')
   assert.equal(approval.props.checked, false)
-  const submit = find(tree, node => node.type === 'button' && node.props.children === '원문 식별정보 탐지 승인')
+  const submit = find(tree, node => node.type === 'button' && node.props.children === '개인정보 찾기')
   assert.equal(submit.props.disabled, true)
   h.close()
 })
@@ -110,7 +110,7 @@ test('detection and final approval use the exact prepared payload and token', as
   assert.equal(h.detectCalls.length, 0)
   find(tree, node => node.type === 'input').props.onChange({ target: { checked: true } })
   tree = h.render()
-  const button = find(tree, node => node.type === 'button' && node.props.children === '원문 식별정보 탐지 승인')
+  const button = find(tree, node => node.type === 'button' && node.props.children === '개인정보 찾기')
   assert.equal(button.props.disabled, false)
   await button.props.onClick()
   await flush()

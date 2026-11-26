@@ -69,7 +69,8 @@ async function setup(options = {}) {
     if (pathname.endsWith('/auth/v1/token')) return reply(state.session)
     if (pathname.endsWith('/auth/v1/user')) return reply(state.session.user)
     if (pathname.endsWith('/auth/v1/logout')) { state.logoutCalls++; return reply({}) }
-    if (url.origin !== new URL(origin).origin) return route.abort()
+    const sameOrigin = url.origin === new URL(origin).origin
+    if (!sameOrigin && (url.origin !== 'https://49.247.174.195:8443' || !pathname.startsWith('/api/'))) return route.abort()
     if (pathname === '/api/notes/deidentification-preview') return reply({ items: [] })
     if (pathname === '/api/notes/quick-summary') {
       const index = ++state.generationCalls
@@ -115,11 +116,11 @@ async function setup(options = {}) {
     }
     if (pathname.startsWith('/api/')) return reply({})
     // No real auth, model, provider or database request can leave this context.
-    if (req.method() !== 'GET') return route.abort()
+    if (!sameOrigin || req.method() !== 'GET') return route.abort()
     return route.continue()
   })
   await page.goto(origin)
-  await page.getByRole('button', { name: '음성 추가', exact: true }).waitFor()
+  await page.getByRole('button', { name: '녹음·문서 추가', exact: true }).waitFor()
   return { context, page, state }
 }
 async function menu(page, name) { await page.getByRole('navigation', { name: '주 메뉴', exact: true }).getByRole('button', { name, exact: true }).click() }
@@ -146,7 +147,7 @@ async function loginSecond(page, state) {
   await login.getByRole('textbox', { name: '이메일' }).fill(state.session.user.email)
   await login.getByPlaceholder('8자 이상 입력').fill('synthetic-password')
   await login.getByRole('button', { name: '로그인', exact: true }).click()
-  await page.getByRole('button', { name: '음성 추가', exact: true }).waitFor()
+  await page.getByRole('button', { name: '녹음·문서 추가', exact: true }).waitFor()
 }
 
 const scenarios = {
@@ -168,12 +169,13 @@ const scenarios = {
       await page.getByRole('button', { name: '로그아웃', exact: true }).click()
       assert.equal(logoutConfirm, true)
       assert.equal(state.logoutCalls, 0)
-      await page.getByLabel('간편요약 음성 파일 선택').setInputFiles({ name: 'synthetic.wav', mimeType: 'audio/wav', buffer: wav() })
+      await page.getByLabel('상담 내용 파일 선택').setInputFiles({ name: 'synthetic.wav', mimeType: 'audio/wav', buffer: wav() })
       await page.getByRole('button', { name: '동의를 확인하고 업로드', exact: true }).click()
       await waitUntil(page, () => state.audioCalls === 1, 'audio request never started')
       await menu(page, '대시보드'); await menu(page, '간편 요약하기')
       assert.equal(state.audioCalls, 1, 'menu navigation must not restart an upload')
       gate.resolve()
+      await page.getByText('발화별 듣기·수정', { exact: true }).click()
       const segment = page.getByRole('textbox', { name: '0번 발화 텍스트', exact: true })
       await segment.waitFor(); await segment.fill('상담사가 직접 수정한 합성 발화')
       await menu(page, '대시보드'); await menu(page, '간편 요약하기')

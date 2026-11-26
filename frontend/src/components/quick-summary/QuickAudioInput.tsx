@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
-import { Mic, Loader2, X } from 'lucide-react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { Loader2, X } from 'lucide-react'
 import { transcribeAudio } from '../../api/client'
-import { AUDIO_CONSENT_MESSAGE, AUDIO_FILE_ACCEPT, AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
+import { AUDIO_CONSENT_MESSAGE, AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../../lib/audioConsent'
 import { buildTranscriptText } from '../../lib/audioTranscriptWorkflow'
 import { clearHostedAudioCheckpoint } from '../../lib/hostedAudio'
 import { useUnsavedWork } from '../../lib/unsavedWork'
 import { AudioTranscriptEditor, type AudioTranscriptEditorMaterial } from '../audio/AudioTranscriptEditor'
 
 /** Keeps raw audio/ASR in memory; only explicitly reviewed text reaches quick summary. */
-export default function QuickAudioInput({ onApply, onPendingChange, disabled = false }: {
+export default function QuickAudioInput({ fileInput, accept, onDocument, onApply, onPendingChange, disabled = false }: {
+  fileInput: RefObject<HTMLInputElement>
+  accept: string
+  onDocument: (file: File) => void
   onApply: (text: string) => void
   onPendingChange: (pending: boolean) => void
   disabled?: boolean
@@ -18,7 +21,6 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
   const [error, setError] = useState('')
   const [applied, setApplied] = useState(false)
   const [editing, setEditing] = useState(true)
-  const fileInput = useRef<HTMLInputElement>(null)
   const dialog = useRef<HTMLDialogElement>(null)
   const fileRef = useRef<File | null>(null)
   const objectUrl = useRef<string | null>(null)
@@ -73,7 +75,6 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
     } catch (cause) {
       if (run.current !== currentRun) return
       const message = cause instanceof Error ? cause.message : '축어록을 만들지 못했어요.'
-      setError(message)
       setMaterial(current => current ? { ...current, status: 'failed', error: message } : current)
     }
   }
@@ -95,7 +96,8 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
   const selectFile = (file?: File) => {
     if (!file) return
     setError('')
-    if (!/\.(mp3|m4a|wav)$/i.test(file.name)) return setError('MP3, M4A, WAV 음성을 선택해주세요.')
+    if (!/\.(mp3|m4a|wav)$/i.test(file.name)) { onDocument(file); return }
+    if (material?.status === 'transcribing') return setError('현재 음성 처리가 끝난 뒤 다른 녹음을 추가해 주세요.')
     if (file.size > AUDIO_UPLOAD_MAX_BYTES) return setError(`음성 파일은 ${AUDIO_UPLOAD_LIMIT_LABEL}까지 올릴 수 있어요.`)
     if (!file.size) return setError('빈 음성 파일은 올릴 수 없어요.')
     if (material && !window.confirm('다른 음성으로 바꿀까요? 현재 음성과 작성 중인 축어록은 사라집니다.')) return
@@ -103,28 +105,19 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
   }
 
   return (
-    <section aria-label="간편요약 음성 자료" className="mt-4 w-full rounded-2xl border border-primary-100 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <button type="button" disabled={disabled || material?.status === 'transcribing'} onClick={() => fileInput.current?.click()}
-          className="inline-flex h-10 items-center gap-2 rounded-full border border-primary-400 px-4 text-sm font-bold text-primary-400 disabled:opacity-50">
-          <Mic className="h-4 w-4" />{material ? '음성 바꾸기' : '음성 추가'}
-        </button>
-        <span className="text-xs text-grey-500">MP3 · M4A · WAV · 2시간 상담 지원 · 최대 {AUDIO_UPLOAD_LIMIT_LABEL}</span>
-      </div>
-      <p className="mt-2 text-xs leading-5 text-grey-500">처리 중에는 이 탭을 열어두세요. 서비스 안에서 메뉴 이동은 가능합니다.</p>
-      <input ref={fileInput} type="file" accept={AUDIO_FILE_ACCEPT} disabled={disabled || material?.status === 'transcribing'} aria-label="간편요약 음성 파일 선택" className="sr-only"
+    <>
+      <input ref={fileInput} type="file" accept={accept} disabled={disabled} aria-label="상담 내용 파일 선택" className="hidden"
         onChange={event => { selectFile(event.target.files?.[0]); event.target.value = '' }} />
-      {!material && <p className="mt-2 text-xs leading-5 text-grey-500">음성을 올린 뒤 화자와 축어록을 수정하고, 개인정보를 확인해 요약에 반영하세요.</p>}
       {material && (
-        <div className="mt-3">
+        <section aria-label="간편요약 음성 자료" className="mt-4 w-full rounded-2xl border border-primary-100 bg-white p-4">
           <div className="flex items-center justify-between gap-2">
             <p className="truncate text-sm font-semibold">{material.filename}</p>
             <button type="button" disabled={disabled} onClick={remove} aria-label="간편요약 음성 제거" className="p-2 text-grey-500"><X className="h-4 w-4" /></button>
           </div>
           {material.status === 'transcribing' ? (
-            <p role="status" className="mt-3 flex items-center gap-2 text-sm text-primary-400"><Loader2 className="h-4 w-4 animate-spin" />{material.transcriptionProgress || '음성을 준비하는 중…'}</p>
+            <p role="status" className="mt-3 flex items-center gap-2 text-sm text-primary-400"><Loader2 className="h-4 w-4 animate-spin" />{material.transcriptionProgress || '음성을 준비하는 중…'} · 탭을 열어 두세요.</p>
           ) : editing ? (
-            <fieldset disabled={disabled} className="mt-3 max-h-[65vh] overflow-y-auto rounded-lg border border-grey-200 p-3">
+            <fieldset disabled={disabled} className="mt-3 min-w-0">
               <AudioTranscriptEditor material={material} applyMode="replace" onApplyModeChange={() => undefined}
                 showApplyMode={false} applyLabel="검토한 축어록을 간편요약에 반영"
                 transcriptionAvailable={!disabled} transcriptionReason={null}
@@ -149,7 +142,7 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
               <button type="button" disabled={disabled} onClick={() => { invalidate(); setEditing(true) }} className="text-sm font-bold text-primary-400">축어록 다시 확인</button>
             </div>
           )}
-        </div>
+        </section>
       )}
       {error && <p role="alert" className="mt-2 text-sm text-danger-500">{error}</p>}
       <dialog ref={dialog} aria-labelledby="quick-audio-consent-title" onCancel={event => { event.preventDefault(); setPendingFile(null) }}
@@ -162,6 +155,6 @@ export default function QuickAudioInput({ onApply, onPendingChange, disabled = f
             className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white">동의를 확인하고 업로드</button>
         </div>
       </dialog>
-    </section>
+    </>
   )
 }

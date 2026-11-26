@@ -10,12 +10,13 @@ const roleLabels: Record<SpeakerRole, string> = {
 }
 
 export function buildTranscriptText(segments: AudioSegment[], speakerRoleMap: SpeakerRoleMap = {}): string {
+  const speakerLabels = getSpeakerLabels(segments)
   return segments
     .filter((segment) => segment.text.trim())
     .map((segment) => {
       const speakerKey = getSegmentSpeakerKey(segment)
       const role = speakerRoleMap[speakerKey] || 'unassigned'
-      return `[${formatTimestamp(segment.start)}] ${role === 'unassigned' ? `화자 ${speakerKey}` : roleLabels[role]}: ${segment.text.trim()}`
+      return `[${formatTimestamp(segment.start)}] ${role === 'unassigned' ? speakerLabels.get(speakerKey) : roleLabels[role]}: ${segment.text.trim()}`
     })
     .join('\n')
 }
@@ -70,6 +71,28 @@ export function getNotableAcousticObservations(segment: AudioSegment): string[] 
 
 export function getSegmentSpeakerKey(segment: AudioSegment): string {
   return segment.speaker || 'unknown'
+}
+
+export function getSpeakerLabels(segments: AudioSegment[]): Map<string, string> {
+  const keys = new Set([...segments.map(getSegmentSpeakerKey), 'speaker_0', 'speaker_1'])
+  const labels = new Map([['unknown', '화자 미확인']])
+  const used = new Set<number>()
+  for (const key of keys) {
+    const match = /^speaker_(\d+)$/i.exec(key)
+    if (!match) continue
+    const number = Number(match[1]) + 1
+    if (Number.isSafeInteger(number) && !used.has(number)) {
+      labels.set(key, `화자 ${number}`)
+      used.add(number)
+    }
+  }
+  let next = 1
+  for (const key of keys) {
+    if (labels.has(key)) continue
+    while (used.has(next)) next++
+    labels.set(key, `화자 ${next++}`)
+  }
+  return labels
 }
 
 export function getSpeakerRoleLabel(role: SpeakerRole): string {

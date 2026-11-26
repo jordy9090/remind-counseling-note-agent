@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -87,8 +87,8 @@ import RichTextField from '../components/final-document/RichTextField'
 import { hasRichFormatting, plainTextToRichHtml, sanitizeRichHtml } from '../lib/richText'
 import GeneratingOverlay from '../components/session-input/GeneratingOverlay'
 import SessionInputPage, { type SessionTime } from '../components/session-input/SessionInputPage'
-import PersonMappingModal, { hasPersonMentions } from '../components/deidentification/PersonMappingModal'
-import { samePersonDictionary, updatedPersonDictionary, type AppliedDeidItem, type PersonMapping, type StoredPerson } from '../lib/personMapping'
+import PersonMappingModal from '../components/deidentification/PersonMappingModal'
+import { applyPersonMapping, detectPersonMapping, samePersonDictionary, updatedPersonDictionary, type AppliedDeidItem, type PersonMapping, type StoredPerson } from '../lib/personMapping'
 import { SESSION_REVIEW_FIELDS, sessionReviewSources, type DeidSource } from '../lib/deidentificationReview'
 import HomeDashboardPage, { DocumentIcon } from './HomeDashboardPage'
 import ClientListPage from './ClientListPage'
@@ -933,8 +933,7 @@ export default function SessionDraftPage({
     if (!isLocalGroundingDemo) void loadCaseList()
   }
 
-  const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault()
+  const handleSubmit = async (editNames = false) => {
     if (persistenceLock.current || isLoading) return
     if (!form.case_id.trim()) {
       setHasSubmitted(true)
@@ -970,8 +969,15 @@ export default function SessionDraftPage({
         // Review still works without saved labels; the dictionary is then left unchanged.
       }
     }
-    if (hasPersonMentions(sources.map(source => source.text), personDictionary.current?.people)) setPersonSources(sources)
-    else void generateReviewed(Object.fromEntries(sources.map(source => [source.key, source.text])), null)
+    if (editNames) {
+      setPersonSources(sources)
+      return
+    }
+    const people = personDictionary.current.people
+    const mapping = people.length ? detectPersonMapping(sources.map(source => source.text), people) : null
+    void generateReviewed(Object.fromEntries(sources.map(source => [
+      source.key, mapping ? applyPersonMapping(source.text, mapping) : source.text,
+    ])), null)
   }
 
   /** The client's name as registered in the client list (stored records only keep the masked form). */
@@ -1900,6 +1906,7 @@ export default function SessionDraftPage({
             onOpenMaterial={openMaterialPreview}
             onRemoveMaterial={removeMaterial}
             onSubmit={() => void handleSubmit()}
+            onEditNames={() => void handleSubmit(true)}
           />
         )}
 
