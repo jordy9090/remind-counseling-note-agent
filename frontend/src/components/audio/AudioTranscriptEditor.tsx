@@ -8,6 +8,7 @@ import {
   getAudioSeekTarget,
   getNotableAcousticObservations,
   getSegmentSpeakerKey,
+  getSpeakerLabels,
   getSpeakerRoleLabel,
   mergeAudioSegments,
   splitAudioSegment,
@@ -96,6 +97,7 @@ export function AudioTranscriptEditor({
   const speakerKeys = useMemo(() => {
     return Array.from(new Set(segments.map(getSegmentSpeakerKey)))
   }, [segments])
+  const speakerLabels = useMemo(() => getSpeakerLabels(segments), [segments])
   const canApply = canEditTranscript && Boolean(privacy?.text.trim())
     && privacy?.key === reviewKey && confirmedReviewKey === reviewKey
 
@@ -136,14 +138,8 @@ export function AudioTranscriptEditor({
       <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-[minmax(0,1fr)_140px]">
         <div>
           <p className="text-sm font-bold text-slate-900">{material.filename}</p>
-          <p className="mt-1 text-xs text-slate-500">
-            실행 모드: {material.runtimeMode === 'stub' ? '시연용 stub' : material.runtimeMode === 'real' ? '실제 STT' : '대기'}
-            {material.diarizationStatus ? ` · 화자 분리: ${material.diarizationStatus}` : ''}
-          </p>
-          {material.languageProbability != null && (
-            <p className="mt-1 text-xs text-slate-500">
-              언어 감지 신뢰도 {(material.languageProbability * 100).toFixed(1)}%
-            </p>
+          {material.status === 'transcribed' && (material.diarizationStatus === 'fallback' || material.diarizationStatus === 'disabled') && (
+            <p className="mt-1 text-xs text-amber-800">원음을 듣고 각 발화의 화자를 확인해 주세요.</p>
           )}
         </div>
         <label className="text-xs font-semibold text-slate-600">
@@ -206,7 +202,7 @@ export function AudioTranscriptEditor({
         <div className="grid gap-2 sm:grid-cols-2">
           {speakerKeys.map((speakerKey) => (
             <label key={speakerKey} className="rounded-md border border-slate-200 bg-white p-3 text-xs font-semibold text-slate-600">
-              {speakerKey}
+              {speakerLabels.get(speakerKey)}
               <select
                 value={speakerRoleMap[speakerKey] || 'unassigned'}
                 disabled={!canEditTranscript}
@@ -256,7 +252,7 @@ export function AudioTranscriptEditor({
                     <select aria-label={`${segment.id}번 발화 화자`} value={segment.speaker || 'unknown'} disabled={!canEditTranscript}
                       onChange={event => onUpdateSegments(segments.map(s => s.id === segment.id ? { ...s, speaker: event.target.value } : s))}
                       className="ml-2 rounded border p-1">
-                      {[...new Set([...speakerKeys, 'speaker_0', 'speaker_1', 'unknown'])].map(key => <option key={key} value={key}>{key}</option>)}
+                      {[...new Set([...speakerKeys, 'speaker_0', 'speaker_1', 'unknown'])].map(key => <option key={key} value={key}>{speakerLabels.get(key)}</option>)}
                     </select>
                   </label>
                   <button type="button" disabled={!canEditTranscript || !segments[index + 1] || segment.speaker !== segments[index + 1].speaker}
@@ -311,7 +307,7 @@ export function AudioTranscriptEditor({
       </label>
 
       {!!material.rawSegments?.length && <details className="text-xs text-slate-600">
-        <summary>수정 전 ASR 원본 보기</summary>
+        <summary>수정 전 축어록 보기</summary>
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap">{material.rawSegments.map(s =>
           `[${formatTimestamp(s.start)}] ${s.text}`).join('\n')}</pre>
       </details>}

@@ -222,7 +222,7 @@ export default function QuickSummaryPanel({
                     <div className="mt-2 max-h-64 space-y-3 overflow-y-auto">
                       {section.evidence.map((item, index) => (
                         <div key={index}>
-                          <p className="font-semibold">{item.label} 원문 {index + 1}</p>
+                          {item.sourceType !== 'transcript' && <p className="font-semibold">{item.label} 원문 {index + 1}</p>}
                           <p className="mt-1 whitespace-pre-wrap leading-5">{item.excerpt}</p>
                           {item.truncated && <p>긴 원문의 앞부분만 표시합니다.</p>}
                           {item.needsReview && <p className="text-amber-800">상담사 확인 필요</p>}
