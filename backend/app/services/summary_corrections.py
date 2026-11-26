@@ -65,6 +65,8 @@ def correct_summary(
     text_corrections: list[TextCorrection],
     source_ref_reviews: list[SourceRefReview],
     catalog: dict[str, str],
+    *,
+    preserve_quoted_refs: bool = False,
 ) -> tuple[SessionSummaryDraft, list[str]]:
     """Apply an atomic candidate edit; callers must reverify every changed draft."""
     candidate = summary.model_copy(deep=True)
@@ -105,8 +107,12 @@ def correct_summary(
     if introduced_script_fields(candidate, catalog) or summary_quality_issues(candidate):
         raise SummaryQualityError()
     # A reference deletion must not break a previously supported direct quote.
-    if set(summary_quote_issues(candidate, catalog)) - set(summary_quote_issues(summary, catalog)):
-        raise SummaryQualityError()
+    broken_quotes = set(summary_quote_issues(candidate, catalog)) - set(summary_quote_issues(summary, catalog))
+    if broken_quotes:
+        if not preserve_quoted_refs or text_corrections:
+            raise SummaryQualityError()
+        for field in broken_quotes:
+            getattr(candidate, field).source_refs = list(getattr(summary, field).source_refs)
     changed = [field for field in SECTION_LIMITS
                if getattr(candidate, field).model_dump() != getattr(summary, field).model_dump()]
     return candidate, changed

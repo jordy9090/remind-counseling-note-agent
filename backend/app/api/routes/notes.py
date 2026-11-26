@@ -352,7 +352,18 @@ def run_quick_summary(
     except Exception as error:
         # Static codes allow operators to distinguish failures without logging source text.
         if isinstance(error, SummaryQualityError):
-            log_private_failure("quick_summary_quality")
+            quality_stages = {
+                "run_summary_skill": "quick_summary_quality_draft",
+                "correct_summary": "quick_summary_quality_proposal",
+                "retain_required_refs": "quick_summary_quality_citations",
+                "verify_output": "quick_summary_quality_correction",
+            }
+            stage = "quick_summary_quality"
+            frame = error.__traceback__
+            while frame:
+                stage = quality_stages.get(frame.tb_frame.f_code.co_name, stage)
+                frame = frame.tb_next
+            log_private_failure(stage)
         elif isinstance(error, SummarySkillError):
             log_private_failure("quick_summary_generation")
         else:

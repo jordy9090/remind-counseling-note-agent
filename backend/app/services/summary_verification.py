@@ -98,6 +98,16 @@ def _literal(value: str) -> str:
     return " ".join(value.split())
 
 
+def citation_audit_schema(removed: dict[str, list[str]]) -> type[BaseModel]:
+    """Require one independent keep/remove decision for every proposed deletion."""
+    by_field = {
+        field: (create_model(f"{field.title()}Decisions", __config__=ConfigDict(extra="forbid"),
+                             **{ref: (bool, ...) for ref in refs}), ...)
+        for field, refs in removed.items()
+    }
+    return create_model("CitationDeletionAudit", __config__=ConfigDict(extra="forbid"), **by_field)
+
+
 def quick_plan_anchors(refs: list[str], catalog: dict[str, str]) -> dict[str, PlanEvidence]:
     """Index exact sentences near proposed plan citations; the full transcript remains evidence."""
     turns = set()

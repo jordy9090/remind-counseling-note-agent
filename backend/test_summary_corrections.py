@@ -19,6 +19,26 @@ def reviews(summary):
 
 
 class SummaryCorrectionTests(unittest.TestCase):
+    def test_quick_citation_audit_retains_an_uncertain_removal_and_semantic_warning(self):
+        from app.services.summary_verification import citation_audit_schema
+        self.state["use_summary_skill"] = True
+        self.state["session_summary_draft"] = self.summary
+        section = self.summary.session_theme
+        section.source_refs = ["transcript.turn_1", "transcript.turn_2"]
+        initial = SummaryVerification(source_ref_reviews=reviews(self.summary),
+                                      requires_counselor_review=[CounselorReviewField(field="reflection", reason="검토 필요")])
+        next(r for r in initial.source_ref_reviews if r.field == "session_theme").keep_source_refs = ["transcript.turn_1"]
+        schema = citation_audit_schema({"session_theme": ["transcript.turn_2"]})
+        with self.assertRaises(ValidationError):
+            schema.model_validate({"session_theme": {"transcript.turn_99": False}})
+        final = schema.model_validate({"session_theme": {"transcript.turn_2": True}})
+        invoke = Mock(side_effect=[initial, final])
+        with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)):
+            result = verify_output(self.state)
+        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(section.source_refs, result["session_summary_draft"].session_theme.source_refs)
+        self.assertTrue(any(x.field == "reflection" for x in result["verification_report"].requires_counselor_review))
+
     def setUp(self):
         self.state = _state()
         self.summary = _summary()
