@@ -208,9 +208,9 @@ def is_public_help_line(text: str) -> bool:
 
 def _link_addressed_names(items: dict, text: str) -> None:
     """Use an observed honorific as evidence that detector variants share a name."""
-    from app.services.korean_person_names import AMBIGUOUS_GIVEN_NAMES, name_pattern
+    from app.services.korean_person_names import AMBIGUOUS_GIVEN_NAMES, ENDING, name_pattern
     person = {key for key, item in items.items() if item["category"] == "name"}
-    titles = {m[1] for m in re.finditer(r"(?<![가-힣A-Za-z0-9_])([가-힣]{2,4})\s+(?:씨|님)(?![가-힣])", text)}
+    titles = {m[1] for m in re.finditer(rf"(?<![가-힣A-Za-z0-9_])([가-힣]{{2,4}})\s+(?:씨|님){ENDING}", text)}
     suffixes = (" 씨", " 님", "이가", "이는", "이를", "이랑", "이", "아", "야")
     for name in sorted(titles, key=lambda value: (-len(value), value)):
         if name in AMBIGUOUS_GIVEN_NAMES:

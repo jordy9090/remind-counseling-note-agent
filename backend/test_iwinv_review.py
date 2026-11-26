@@ -30,7 +30,7 @@ class ReviewTests(unittest.TestCase):
         forms = ["다온 씨", "다온", "다온이", "다온이가", "루하", "루하 씨"]
         items = {word: {"original": word, "replacement": f"인물 {i}", "category": "name"}
                  for i, word in enumerate(forms)}
-        text = "다온 씨, 루하 씨. 다온이가요. 다온이가 왔고 다온이도 웃었대요. 다온지구는 지역입니다."
+        text = "다온 씨한테, 루하 씨가. 다온이가요. 다온이가 왔고 다온이도 웃었대요. 다온지구는 지역입니다."
         review._link_addressed_names(items, text)
         self.assertEqual(items["다온"]["replacement"], items["다온이가요"]["replacement"])
         self.assertNotEqual(items["다온"]["replacement"], items["루하"]["replacement"])
