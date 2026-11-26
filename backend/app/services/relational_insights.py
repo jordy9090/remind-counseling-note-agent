@@ -290,6 +290,25 @@ def _quote_in_client_speech(quote: str, memo: str) -> bool:
     return False
 
 
+def reconcile_verified_insights(
+    sanitized: SanitizedInput, draft: SessionSummaryDraft, verified: SessionSummaryDraft, insights: RelationalInsights,
+) -> RelationalInsights:
+    """Reuse parallel work only if the final model prompt would be identical."""
+    if draft == verified or insights.status not in {"generated", "insufficient_evidence"}:
+        return insights
+    sources = _session_sources(sanitized)
+    try:
+        before = build_relational_insight_prompt(sources, draft, retrieve_theory_sources(sanitized, draft))
+        after = build_relational_insight_prompt(sources, verified, retrieve_theory_sources(sanitized, verified))
+        if before != after:
+            return generate_relational_insights(sanitized, verified)
+        if draft.reflection.text != verified.reflection.text:
+            return insights.model_copy(update={"supervision_memo": _compose_supervision_memo(insights.cards, verified, sources)})
+    except Exception:
+        return generate_relational_insights(sanitized, verified)
+    return insights
+
+
 def generate_relational_insights(sanitized: SanitizedInput, summary: SessionSummaryDraft) -> RelationalInsights:
     """Fail independently so unavailable hypotheses never erase the base session summary."""
     if settings.use_stub:

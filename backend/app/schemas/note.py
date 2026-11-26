@@ -236,6 +236,9 @@ class RetrievalReport(BaseModel):
     rpc_latency_ms: int = 0
     retrieval_latency_ms: int = 0
     generation_latency_ms: int = 0
+    verification_latency_ms: int = 0
+    correction_validation_latency_ms: int = 0
+    insight_latency_ms: int = 0
     failures: list[str] = Field(default_factory=list)
     notices: list[str] = Field(default_factory=list)
 

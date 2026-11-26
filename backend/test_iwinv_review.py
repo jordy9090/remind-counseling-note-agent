@@ -26,6 +26,22 @@ RAW = "😀 이름은 윤가온입니다. 연락처는 010-0000-3141입니다. �
 
 
 class ReviewTests(unittest.TestCase):
+    def test_addressed_names_share_one_label_through_a_polite_particle(self):
+        forms = ["다온 씨", "다온", "다온이", "다온이가", "루하", "루하 씨"]
+        items = {word: {"original": word, "replacement": f"인물 {i}", "category": "name"}
+                 for i, word in enumerate(forms)}
+        text = "다온 씨한테, 루하 씨가. 다온이가요. 다온이가 왔고 다온이도 웃었대요. 다온지구는 지역입니다."
+        review._link_addressed_names(items, text)
+        self.assertEqual(items["다온"]["replacement"], items["다온이가요"]["replacement"])
+        self.assertNotEqual(items["다온"]["replacement"], items["루하"]["replacement"])
+        self.assertNotIn("다온지구", items)
+
+    def test_bounded_wait_finishes_without_a_browser_poll(self):
+        from app import deid_worker as worker
+        with patch.object(worker, "detect_on_ollama", return_value=qwen.Entities(entities=[])):
+            result = worker.begin_job(worker.DetectionRequest(texts=["synthetic input"]), wait_seconds=2)
+        self.assertEqual({"entities": []}, result)
+
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)

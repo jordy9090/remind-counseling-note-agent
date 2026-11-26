@@ -6,7 +6,9 @@ import secrets
 import threading
 import time
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -77,9 +79,32 @@ def cleanup_jobs():
 
 async def expire_jobs():
     while True:
-        await asyncio.sleep(30)
         with job_lock:
             cleanup_jobs()
+        if os.environ.get("DEID_PRELOAD_MODEL") == "1":
+            await asyncio.to_thread(preload_idle_detector)
+        await asyncio.sleep(30)
+
+
+def preload_idle_detector():
+    """Load weights without case text. Never refresh a real prompt's keep-alive."""
+    if not slot.acquire(blocking=False):
+        return
+    try:
+        with urlopen("http://127.0.0.1:11434/api/ps", timeout=2) as response:
+            if json.load(response)["models"]:
+                return
+        body = {"model": "qwen3.5:27b", "messages": [], "stream": False,
+                "options": {"num_ctx": 16384}, "keep_alive": -1}
+        request = Request("http://127.0.0.1:11434/api/chat", data=json.dumps(body).encode(),
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=60):
+            pass
+    except (OSError, ValueError, KeyError):
+        # Normal detection remains available if optional warming fails.
+        return
+    finally:
+        slot.release()
 
 
 @app.on_event("startup")
@@ -104,23 +129,30 @@ def run_job(job_id: str, texts: list[str]):
         texts.clear()
     with job_lock:
         if job_id in jobs:
-            jobs[job_id] = {"result": result, "finished": True, "expires": time.monotonic() + 600}
+            job = jobs[job_id]
+            job.update(result=result, finished=True, expires=time.monotonic() + 600)
+            job["ready"].set()
 
 
 @app.post("/jobs")
-def begin_job(payload: DetectionRequest):
+def begin_job(payload: DetectionRequest, wait_seconds: int = 0):
     with job_lock:
         cleanup_jobs()
         if len(jobs) >= 4 or any(not job["finished"] for job in jobs.values()):
             raise HTTPException(429, "Detector is busy; retry shortly", headers={"Retry-After": "10"})
         job_id = secrets.token_urlsafe(24)
-        jobs[job_id] = {"finished": False, "expires": time.monotonic() + 3600}
+        jobs[job_id] = {"finished": False, "expires": time.monotonic() + 3600, "ready": threading.Event()}
         executor.submit(run_job, job_id, payload.texts)
-    return {"status": "pending", "job_id": job_id}
+    return get_job(job_id, wait_seconds)
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str):
+def get_job(job_id: str, wait_seconds: int = 0):
+    if wait_seconds > 0:
+        with job_lock:
+            job = jobs.get(job_id)
+        if job:
+            job["ready"].wait(min(wait_seconds, 12))
     with job_lock:
         cleanup_jobs()
         job = jobs.get(job_id)

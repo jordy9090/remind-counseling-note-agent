@@ -1,6 +1,7 @@
 """Apply independent summary checks without changing the public response schema."""
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model
@@ -95,6 +96,45 @@ def quick_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVerif
 
 def _literal(value: str) -> str:
     return " ".join(value.split())
+
+
+def citation_audit_schema(removed: dict[str, list[str]]) -> type[BaseModel]:
+    """Require one independent keep/remove decision for every proposed deletion."""
+    by_field = {
+        field: (create_model(f"{field.title()}Decisions", __config__=ConfigDict(extra="forbid"),
+                             **{ref: (bool, ...) for ref in refs}), ...)
+        for field, refs in removed.items()
+    }
+    return create_model("CitationDeletionAudit", __config__=ConfigDict(extra="forbid"), **by_field)
+
+
+def quick_plan_anchors(refs: list[str], catalog: dict[str, str]) -> dict[str, PlanEvidence]:
+    """Index exact sentences near proposed plan citations; the full transcript remains evidence."""
+    turns = set()
+    for ref in refs:
+        match = re.fullmatch(r"transcript\.turn_(\d+)", ref)
+        if match and ref in catalog:
+            turn = int(match[1])
+            turns.update((turn - 1, turn, turn + 1))
+    anchors = {}
+    budget = 10000
+    for turn in sorted(turns):
+        ref = f"transcript.turn_{turn}"
+        for index, sentence in enumerate(re.split(r"(?<=[.!?。！？])\s+", catalog.get(ref, "")), 1):
+            if not sentence:
+                continue
+            budget -= len(sentence)
+            if budget < 0:
+                return anchors
+            anchors[f"@{turn}.{index}"] = PlanEvidence(source_ref=ref, quote=sentence)
+    return anchors
+
+
+def resolve_plan_anchors(assessment: PlanAssessment, anchors: dict[str, PlanEvidence]) -> None:
+    for item in assessment.evidence:
+        if re.fullmatch(r"@\d+\.\d+", item.quote):
+            anchor = anchors.get(item.quote)
+            item.quote = anchor.quote if anchor and anchor.source_ref == item.source_ref else ""
 
 
 def cited_lines(refs: list[str], catalog: dict[str, str]) -> list[str]:
