@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, History, Loader2 } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 
 import { isRetryableRequestError, listTemporaryDrafts, persistenceErrorMessage, saveTemporaryDraft } from '../../api/client'
 import { useAuthSession } from '../../lib/authSession'
@@ -144,31 +144,33 @@ export default function QuickSummaryWorkspace({
         : null
 
   const history = loaded && (historyError || records.length > 0) && !result ? (
-    <section aria-label="이전 요약한 기록" className="rounded-2xl bg-[#dfe6f6] p-4">
-      <h2 className="flex items-center gap-1.5 text-sm font-bold text-grey-800"><History className="h-4 w-4" />이전 요약한 기록</h2>
-      {historyError && <div className="mt-2 space-y-2">
-        <p role="alert" className="text-sm text-danger-500">{historyError}</p>
-        <button type="button" onClick={() => setRefreshKey(value => value + 1)}
-          className="rounded border border-primary-400 px-3 py-2 text-sm font-bold text-primary-400">기록 다시 불러오기</button>
-      </div>}
-      <ul className="mt-2 divide-y divide-[#c7d2ea]">
-        {records.map((draft) => {
-          const summary = quickSummaryFromDraft(draft)
-          return (
-            <li key={draft.draft_id}>
-              <button
-                type="button"
-                onClick={() => openRecord(draft)}
-                disabled={!summary}
-                className="flex w-full items-center gap-4 rounded-md px-1 py-2.5 text-left text-sm hover:bg-white/50 disabled:cursor-default disabled:hover:bg-transparent"
-              >
-                <span className="w-14 shrink-0 text-xs text-grey-500">{relativeTimeLabel(draft.saved_at)}</span>
-                <span className="min-w-0 flex-1 truncate text-grey-800">{quickSummaryRecordTitle(draft.saved_at, summary)}</span>
-              </button>
-            </li>
-          )
-        })}
-      </ul>
+    <section aria-label="이전 요약한 기록" className="border-t border-primary-100 pt-3 text-sm text-grey-700">
+      <details open={historyError ? true : undefined}>
+        <summary className="cursor-pointer font-semibold">이전 요약한 기록</summary>
+        {historyError && <div className="mt-2 space-y-2">
+          <p role="alert" className="text-sm text-danger-500">{historyError}</p>
+          <button type="button" onClick={() => setRefreshKey(value => value + 1)}
+            className="rounded border border-primary-400 px-3 py-2 text-sm font-bold text-primary-400">기록 다시 불러오기</button>
+        </div>}
+        <ul className="mt-2 divide-y divide-[#c7d2ea]">
+          {records.map((draft) => {
+            const summary = quickSummaryFromDraft(draft)
+            return (
+              <li key={draft.draft_id}>
+                <button
+                  type="button"
+                  onClick={() => openRecord(draft)}
+                  disabled={!summary}
+                  className="flex w-full items-center gap-4 rounded-md px-1 py-2.5 text-left text-sm hover:bg-white/50 disabled:cursor-default disabled:hover:bg-transparent"
+                >
+                  <span className="w-14 shrink-0 text-xs text-grey-500">{relativeTimeLabel(draft.saved_at)}</span>
+                  <span className="min-w-0 flex-1 truncate text-grey-800">{quickSummaryRecordTitle(draft.saved_at, summary)}</span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </details>
     </section>
   ) : null
 

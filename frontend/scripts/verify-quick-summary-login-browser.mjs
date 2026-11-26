@@ -138,6 +138,7 @@ try {
       assert.equal(await page.evaluate(() => localStorage.getItem('remind.quickSummary.pending')), null)
       await page.getByRole('button', { name: '새로 요약하기', exact: true }).click()
       const history = page.getByRole('region', { name: '이전 요약한 기록' })
+      await history.getByText('이전 요약한 기록', { exact: true }).click()
       await history.getByRole('button').click()
       await page.getByText('관련 원문 보기 (2)', { exact: true }).click()
       assert.equal(await page.getByText('상담자: SYNTHETIC-QUESTION-CUE', { exact: true }).isVisible(), true)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, Loader2, Mic, Plus, RotateCcw } from 'lucide-react'
+import { Check, Copy, Loader2, Paperclip, RotateCcw } from 'lucide-react'
 
 import { extractDocumentMaterial, requestQuickSummary } from '../../api/client'
 import {
@@ -13,10 +13,11 @@ import type { NoteDraftResponse } from '../../types/session'
 import PersonMappingModal, { hasPersonMentions } from '../deidentification/PersonMappingModal'
 import SourceMemoryCues from './SourceMemoryCues'
 import QuickAudioInput from './QuickAudioInput'
+import { AUDIO_FILE_ACCEPT } from '../../lib/audioConsent'
 import { useAuthSession } from '../../lib/authSession'
 import { useUnsavedWork } from '../../lib/unsavedWork'
 
-const ACCEPTED_FILES = '.txt,.pdf,.docx'
+const ACCEPTED_FILES = `.txt,.pdf,.docx,${AUDIO_FILE_ACCEPT}`
 const QUICK_SOURCE_KEY = 'quick_summary_text'
 
 /**
@@ -151,7 +152,7 @@ export default function QuickSummaryPanel({
         }
         content = (await extractDocumentMaterial(file, { ownerId: requestOwner, signal: controller.signal })).extracted_text
       } else {
-        setError('TXT, PDF, DOCX 파일만 올릴 수 있어요.')
+        setError('녹음은 MP3·M4A·WAV, 문서는 TXT·PDF·DOCX 파일을 선택해 주세요.')
         return
       }
       if (!current()) return
@@ -198,11 +199,9 @@ export default function QuickSummaryPanel({
   return (
     <section className="mx-auto flex w-full min-w-0 max-w-[656px] flex-col items-center px-4 py-12 sm:py-16">
       <h1 className="text-center text-[26px] font-extrabold tracking-[-0.02em] text-[#0b1f5c] sm:text-[34px]">
-        {result ? 'AI 요약이 완성됐어요' : '상담 내용을 빠르게 정리해보세요'}
+        {result ? 'AI 요약이 완성됐어요' : '간편 요약'}
       </h1>
-      <p className="mt-2 text-center text-base text-[#1f2a4d] sm:text-lg">
-        {result ? '입력 내용을 바탕으로 회기 요약과 같은 항목으로 정리했어요.' : '내담자를 등록하지 않아도 AI 요약을 할 수 있어요.'}
-      </p>
+      {result && <p className="mt-2 text-center text-base text-[#1f2a4d] sm:text-lg">입력 내용을 바탕으로 회기 요약과 같은 항목으로 정리했어요.</p>}
 
       {notice && <div className="mt-6 w-full">{notice}</div>}
 
@@ -269,23 +268,28 @@ export default function QuickSummaryPanel({
             disabled={loading || reviewing}
             value={text}
             onChange={(event) => { setText(event.target.value); setError(null) }}
-            placeholder="요약할 내용을 입력해주세요"
-            rows={text ? 8 : 2}
+            placeholder="상담 메모를 입력하세요"
+            rows={text ? 8 : 3}
             className="block w-full resize-none bg-transparent text-sm leading-6 text-grey-900 outline-none placeholder:text-grey-400"
           />
           <div className="mt-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => { setError(null); fileInputRef.current?.click() }}
                 disabled={extracting || loading || reviewing}
                 className="inline-flex h-9 items-center gap-1.5 rounded-full border border-grey-200 bg-white px-4 text-sm text-grey-600 hover:bg-grey-100 disabled:opacity-60"
               >
-                {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}파일 올리기
+                {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}녹음·문서 추가
               </button>
-              <input ref={fileInputRef} type="file" accept={ACCEPTED_FILES} disabled={loading || reviewing} className="hidden" aria-label="상담 내용 파일 선택" onChange={(event) => void addFile(event.target.files?.[0])} />
-              {length > 0 && (
-                <span className={`text-xs ${overLimit ? 'font-bold text-danger-500' : 'text-grey-400'}`}>
+              {!canExtractDocuments && <input ref={fileInputRef} type="file" accept={ACCEPTED_FILES} className="hidden" aria-label="상담 내용 파일 선택" onChange={event => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                if (file && /\.(mp3|m4a|wav)$/i.test(file.name)) onAudioLogin?.()
+                else void addFile(file)
+              }} />}
+              {overLimit && (
+                <span className="text-xs font-bold text-danger-500">
                   {length.toLocaleString()} / {maxChars.toLocaleString()}자
                 </span>
               )}
@@ -302,18 +306,17 @@ export default function QuickSummaryPanel({
         </div>
       )}
 
-      {!result && (canExtractDocuments ? (
-        <QuickAudioInput key={audioRevision} onApply={setAudioText} onPendingChange={setAudioPending} disabled={loading || reviewing} />
-      ) : (
-        <button type="button" onClick={onAudioLogin} className="mt-4 inline-flex items-center gap-2 rounded-full border border-primary-400 bg-white px-5 py-3 text-sm font-bold text-primary-400">
-          <Mic className="h-4 w-4" />로그인하고 음성 추가
-        </button>
-      ))}
-      {!result && audioPending && <p role="status" className="mt-2 text-xs text-grey-500">축어록의 화자와 개인정보를 확인한 뒤 요약 입력에 반영해주세요.</p>}
+      {!result && canExtractDocuments && (
+        <QuickAudioInput key={audioRevision} fileInput={fileInputRef} accept={ACCEPTED_FILES} onDocument={addFile}
+          onApply={setAudioText} onPendingChange={setAudioPending} disabled={loading || reviewing || extracting} />
+      )}
       {!result && hasInputWork && <button type="button" onClick={startOver} className="mt-3 text-sm text-grey-500 underline">입력 비우기</button>}
 
       {error && <p role="alert" className="mt-4 w-full rounded-lg bg-danger-50 px-4 py-3 text-sm text-danger-500">{error}</p>}
-      {!result && <p className="mt-4 w-full text-center text-xs leading-5 text-grey-500">{privacyNote}</p>}
+      {!result && <details className="mt-4 w-full text-xs leading-5 text-grey-600">
+        <summary className="cursor-pointer">개인정보 처리 안내</summary>
+        <p className="mt-2">{privacyNote}</p>
+      </details>}
 
       {below && <div className="mt-6 w-full">{below}</div>}
 

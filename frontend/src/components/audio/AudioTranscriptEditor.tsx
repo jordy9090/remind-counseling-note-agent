@@ -129,7 +129,7 @@ export function AudioTranscriptEditor({
         <audio ref={audioRef} controls src={material.objectUrl} className="w-full" />
       )}
 
-      {material.dirtySinceApply && (
+      {showApplyMode && material.dirtySinceApply && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
           축어록 수정사항이 회기 입력에 아직 다시 반영되지 않았습니다.
         </p>
@@ -137,7 +137,7 @@ export function AudioTranscriptEditor({
 
       <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-[minmax(0,1fr)_140px]">
         <div>
-          <p className="text-sm font-bold text-slate-900">{material.filename}</p>
+          <p className="text-sm font-bold text-slate-900">{showApplyMode ? material.filename : '축어록 검토'}</p>
           {material.status === 'transcribed' && (material.diarizationStatus === 'fallback' || material.diarizationStatus === 'disabled') && (
             <p className="mt-1 text-xs text-amber-800">원음을 듣고 각 발화의 화자를 확인해 주세요.</p>
           )}
@@ -194,10 +194,6 @@ export function AudioTranscriptEditor({
             {formatTimestamp(range.start)}–{formatTimestamp(range.end)} 듣기
           </button>)}</div>
       </div>}
-      <p className="text-xs text-slate-600">화자 번호는 역할을 뜻하지 않습니다. 원음을 확인해 상담자·내담자를 지정해주세요.</p>
-      <p className="text-xs text-slate-600">발화를 나누려면 본문에 커서를 놓고 원음에서 확인한 분리 시각을 입력하세요. 병합은 같은 화자의 인접 발화에 사용할 수 있습니다.</p>
-      {editError && <p role="alert" className="text-xs text-rose-700">{editError}</p>}
-
       {speakerKeys.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
           {speakerKeys.map((speakerKey) => (
@@ -219,7 +215,10 @@ export function AudioTranscriptEditor({
       )}
 
       {segments.length > 0 && (
-        <div className="space-y-2">
+        <details className="space-y-2 text-slate-700">
+          <summary className="cursor-pointer text-sm font-semibold">발화별 듣기·수정</summary>
+          <p className="text-xs">발화를 나누려면 본문에서 나눌 위치를 누르고 원음의 시각을 입력하세요.</p>
+          {editError && <p role="alert" className="text-xs text-rose-700">{editError}</p>}
           {segments.map((segment, index) => {
             const observations = getNotableAcousticObservations(segment)
             const seekTarget = getAudioSeekTarget(segment)
@@ -294,17 +293,17 @@ export function AudioTranscriptEditor({
               </div>
             )
           })}
-        </div>
+        </details>
       )}
 
-      <label className="block text-sm font-semibold text-slate-700">
+      {(segments.length > 0 || material.transcriptText) && <label className="block text-sm font-semibold text-slate-700">
         전체 축어록 미리보기
         <textarea
           value={transcriptPreview || material.transcriptText || ''}
           readOnly
           className="mt-1 min-h-[180px] w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none"
         />
-      </label>
+      </label>}
 
       {!!material.rawSegments?.length && <details className="text-xs text-slate-600">
         <summary>수정 전 축어록 보기</summary>
@@ -312,14 +311,15 @@ export function AudioTranscriptEditor({
           `[${formatTimestamp(s.start)}] ${s.text}`).join('\n')}</pre>
       </details>}
 
-      <label className="block text-sm font-semibold text-slate-700">
-        비언어/음향 관찰 메모 미리보기
+      {(nonverbalPreview || material.nonverbalNotes) && <details className="text-xs text-slate-600">
+        <summary className="cursor-pointer">음향 관찰 메모 보기</summary>
         <textarea
+          aria-label="음향 관찰 메모"
           value={nonverbalPreview || material.nonverbalNotes || ''}
           readOnly
           className="mt-1 min-h-[120px] w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none"
         />
-      </label>
+      </details>}
 
       {material.status === 'transcribed' && (
         <div className="space-y-3">
