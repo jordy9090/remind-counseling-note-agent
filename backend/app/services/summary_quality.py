@@ -1,6 +1,8 @@
 """Bounded prose checks and literal quotation checks for session summaries."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 
 from app.schemas.note import SessionSummaryDraft
@@ -11,6 +13,35 @@ class SummaryQualityError(ValueError):
 
     def __init__(self) -> None:
         super().__init__("회기요약을 충분히 정리하지 못했습니다. 잠시 후 다시 생성해주세요. 입력 자료는 유지됩니다.")
+
+
+def _draft_digest(draft: SessionSummaryDraft) -> str:
+    # Identity metadata, review flags and citation order do not make a new draft.
+    content = [
+        (field, " ".join(section.text.split()), sorted(set(section.source_refs)))
+        for field, section in draft if field != "session_info"
+    ]
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+class QuickCorrectionRejected(SummaryQualityError):
+    """Final semantic rejection. Only request-local fingerprints survive the failed run."""
+
+    def __init__(self, original: SessionSummaryDraft, candidate: SessionSummaryDraft) -> None:
+        super().__init__()
+        self.rejected_digests = (_draft_digest(original), _draft_digest(candidate))
+
+
+def check_fresh_quick_draft(draft: SessionSummaryDraft, rejected: tuple[str, ...]) -> None:
+    if not rejected:
+        return
+    clinical_fields = (draft.presenting_problem, draft.session_theme, draft.session_content,
+                       draft.counselor_intervention, draft.client_response)
+    if _draft_digest(draft) in rejected or not any(
+        section.source_refs and re.search(r"\w", re.sub(r"\[[^\]]*\]", "", section.text))
+        for section in clinical_fields
+    ):
+        raise SummaryQualityError()
 
 
 # These are rejection ceilings, not required lengths. Sparse evidence stays short.

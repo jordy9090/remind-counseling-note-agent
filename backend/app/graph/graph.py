@@ -10,6 +10,7 @@ from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
 from app.services.diagnostic_privacy import private_ai_execution
+from app.services.summary_quality import check_fresh_quick_draft
 from app.services.relational_insights import generate_relational_insights, reconcile_verified_insights
 from app.schemas.insight import RelationalInsights
 from app.graph.nodes import (
@@ -59,6 +60,7 @@ class NoteGraphState(TypedDict, total=False):
     # False for the public quick summary: no case memory, raw evidence or KB lookups (no storage access).
     allow_retrieval: bool
     use_summary_skill: bool
+    rejected_quick_drafts: tuple[str, ...]
     session_input: SessionInput
     requested_section_ids: list[str]
     session_topic: str
@@ -105,6 +107,7 @@ def generate_skill_summary(state: NoteGraphState) -> dict[str, Any]:
     from app.services.summary_skill import run_summary_skill
 
     result = run_summary_skill(state["sanitized_input"])
+    check_fresh_quick_draft(result.summary, state.get("rejected_quick_drafts", ()))
     report = state.get("retrieval_report") or RetrievalReport()
     report.generation_latency_ms += result.latency_ms
     return {
@@ -207,6 +210,7 @@ def run_note_pipeline(
     actor: str = "",
     allow_retrieval: bool = True,
     use_summary_skill: bool = False,
+    rejected_quick_drafts: tuple[str, ...] = (),
 ) -> GenerateNoteResponse:
     # Demo output must be explicitly requested; a missing key is a configuration
     # failure, not permission to generate and store a sample counseling record.
@@ -230,6 +234,7 @@ def run_note_pipeline(
         "allow_retrieval": allow_retrieval,
         "reviewed_case_context": reviewed_context,
         "use_summary_skill": use_summary_skill,
+        "rejected_quick_drafts": rejected_quick_drafts,
     }
     if requested_section_ids is not None:
         initial_state["requested_section_ids"] = requested_section_ids

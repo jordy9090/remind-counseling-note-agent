@@ -37,7 +37,7 @@ from app.schemas.note import (
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
-from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
+from app.services.summary_quality import QuickCorrectionRejected, SummaryQualityError, check_fresh_quick_draft, summary_quality_issues, summary_quote_issues
 from app.services.summary_rules import labeled_summary_input, session_summary_writing_rules
 from app.services.summary_verification import (
     SummaryCorrectionValidation, SummaryVerification, apply_summary_verification,
@@ -487,13 +487,16 @@ Exact sentence lookup (key and original sentence):
     schema = quick_verification_schema(summary) if quick else summary_verification_schema(summary)
     verification_prompt = prompt + quick_guidance
     assessment = get_structured_llm(schema).invoke(verification_prompt)
+    blocked_drafts = state.get("rejected_quick_drafts", ())
+    proposal_retried = False
     try:
         candidate, changed_fields = correct_summary(
             summary, assessment.text_corrections, assessment.source_ref_reviews, catalog, preserve_quoted_refs=quick,
         )
     except SummaryQualityError:
-        if not quick:
+        if not quick or blocked_drafts:
             raise
+        proposal_retried = True
         # The rejected proposal was never applied. Retain the original independent
         # findings and temporal evidence. Only request the failed edit decisions again.
         proposal = get_structured_llm(quick_verification_schema(summary, edits_only=True)).invoke(verification_prompt + """
@@ -508,6 +511,7 @@ Keep references that support any claim. Never invent a replacement or remove req
         candidate, changed_fields = correct_summary(
             summary, assessment.text_corrections, assessment.source_ref_reviews, catalog, preserve_quoted_refs=True,
         )
+    check_fresh_quick_draft(candidate, blocked_drafts)
     if quick and changed_fields and not assessment.text_corrections:
         # The complete original wording has already been independently verified.
         # Check the only proposed changes using another model call, without
@@ -571,6 +575,8 @@ Correction audit:
         if quick and state.get("retrieval_report") is not None:
             state["retrieval_report"].correction_validation_latency_ms = _elapsed_ms(recheck_start)
         if not final.correction_validated:
+            if quick and not proposal_retried and not blocked_drafts:
+                raise QuickCorrectionRejected(summary, candidate)
             raise SummaryQualityError()
         candidate = retain_required_refs(summary, candidate, final.source_ref_restorations, catalog)
         assessment = SummaryVerification(**final.model_dump(exclude={"source_ref_restorations"}), source_ref_reviews=[
@@ -581,6 +587,7 @@ Correction audit:
     if anchors:
         resolve_plan_anchors(assessment.next_plan_assessment, anchors)
     verification = apply_summary_verification(summary, assessment, catalog)
+    check_fresh_quick_draft(summary, blocked_drafts)
     initial: VerificationReport | None = state.get("initial_verification_report")
     if initial:
         verification.unsupported_or_risky_claims = _unique_review_claims(
