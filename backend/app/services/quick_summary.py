@@ -123,5 +123,7 @@ def generate_quick_summary(text: str, *, max_chars: int = QUICK_SUMMARY_MAX_CHAR
     from app.graph.graph import run_note_pipeline
 
     session_input, _ = deidentify_session_input(quick_summary_session_input(text, max_chars=max_chars))
-    return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True,
-                             rejected_quick_drafts=rejected_quick_drafts)
+    if rejected_quick_drafts:
+        return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True,
+                                 rejected_quick_drafts=rejected_quick_drafts)
+    return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True)
