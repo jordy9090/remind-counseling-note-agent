@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { API_BASE_URL, AUDIO_API_BASE_URL } from '../lib/apiOrigin'
 import { AudioChunkRequestError, transcribeHostedAudio, type SpeakerReference } from '../lib/hostedAudio'
 import type {
@@ -63,6 +63,38 @@ const client = axios.create({
   timeout: 90000,
 })
 
+function isLegacySummaryFailure(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || axios.isCancel(error) || error.response?.status !== 502) return false
+  if (!/^application\/json(?:\s*;|$)/i.test(String(error.response.headers['content-type']))) return false
+  // An Axios adapter can reject before the JSON response transformer runs.
+  try {
+    const raw = error.response.data
+    const body = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return body?.detail === '요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.' && Object.keys(body).length === 1
+  } catch {
+    return false
+  }
+}
+
+function enableReviewedSummaryRetry(config: InternalAxiosRequestConfig, ownerId: string | null) {
+  const dispatch = axios.getAdapter(config.adapter)
+  config.expectedOwnerId = ownerId
+  config.adapter = async approved => {
+    const started = performance.now()
+    try {
+      return await dispatch(approved)
+    } catch (error) {
+      if (!isLegacySummaryFailure(error) || approved.signal?.aborted || performance.now() - started > 90000) throw error
+      const session = await scopedSession(ownerId)
+      const elapsed = Math.ceil(performance.now() - started)
+      const remaining = (approved.timeout ?? 310000) - elapsed
+      if (approved.signal?.aborted || elapsed > 90000 || remaining <= 0) throw error
+      if (session) approved.headers.set('Authorization', `Bearer ${session.access_token}`)
+      return dispatch({ ...approved, timeout: remaining })
+    }
+  }
+}
+
 client.interceptors.request.use(async (config) => {
   const accessToken = config.expectedOwnerId !== undefined
     ? (await scopedSession(config.expectedOwnerId))?.access_token || null
@@ -91,6 +123,7 @@ client.interceptors.request.use(async (config) => {
     if (currentSession?.access_token) config.headers.Authorization = `Bearer ${currentSession.access_token}`
     config.data = reviewed.payload
     config.headers['X-Review-Receipt'] = reviewed.receipt
+    if (purpose === 'quick') enableReviewedSummaryRetry(config, ownerId)
   }
   return config
 })
