@@ -485,10 +485,29 @@ Exact sentence lookup (key and original sentence):
     prompt = _build_verification_prompt(sanitized, structured, evidence_mapped, summary, privacy_context,
                                         case_context=case_context, quick_citations=quick)
     schema = quick_verification_schema(summary) if quick else summary_verification_schema(summary)
-    assessment = get_structured_llm(schema).invoke(prompt + quick_guidance)
-    candidate, changed_fields = correct_summary(
-        summary, assessment.text_corrections, assessment.source_ref_reviews, catalog, preserve_quoted_refs=quick,
-    )
+    verification_prompt = prompt + quick_guidance
+    assessment = get_structured_llm(schema).invoke(verification_prompt)
+    try:
+        candidate, changed_fields = correct_summary(
+            summary, assessment.text_corrections, assessment.source_ref_reviews, catalog, preserve_quoted_refs=quick,
+        )
+    except SummaryQualityError:
+        if not quick:
+            raise
+        # The rejected proposal was never applied. Retain the original independent
+        # findings and temporal evidence. Only request the failed edit decisions again.
+        proposal = get_structured_llm(quick_verification_schema(summary, edits_only=True)).invoke(verification_prompt + """
+The last edit proposal failed local validation and was discarded. Return only correction
+decisions for the unchanged draft and reviewed sources. Propose only exact unique
+alphabetic lexical spans outside quotations. Leave numbers, negation, facts and quoted text intact.
+Keep references that support any claim. Never invent a replacement or remove required evidence.
+""")
+        assessment = assessment.model_copy(update={
+            "text_corrections": proposal.text_corrections, "source_ref_reviews": proposal.source_ref_reviews,
+        })
+        candidate, changed_fields = correct_summary(
+            summary, assessment.text_corrections, assessment.source_ref_reviews, catalog, preserve_quoted_refs=True,
+        )
     if quick and changed_fields and not assessment.text_corrections:
         # The complete original wording has already been independently verified.
         # Check the only proposed changes using another model call, without

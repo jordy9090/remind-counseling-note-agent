@@ -351,6 +351,7 @@ def run_quick_summary(
         raise HTTPException(status_code=422, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
     except Exception as error:
         # Static codes allow operators to distinguish failures without logging source text.
+        detail = "요약 검증을 마치지 못했어요. 잠시 후 다시 시도해주세요."
         if isinstance(error, SummaryQualityError):
             quality_stages = {
                 "run_summary_skill": "quick_summary_quality_draft",
@@ -364,11 +365,11 @@ def run_quick_summary(
                 stage = quality_stages.get(frame.tb_frame.f_code.co_name, stage)
                 frame = frame.tb_next
             log_private_failure(stage)
+            if stage == "quick_summary_quality_draft":
+                detail = "요약을 만들지 못했어요. 잠시 후 다시 시도해주세요."
         elif isinstance(error, SummarySkillError):
             log_private_failure("quick_summary_generation")
+            detail = "요약을 만들지 못했어요. 잠시 후 다시 시도해주세요."
         else:
             log_private_failure("quick_summary_pipeline")
-        raise HTTPException(
-            status_code=502,
-            detail="요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.",
-        ) from None
+        raise HTTPException(status_code=502, detail=detail) from None

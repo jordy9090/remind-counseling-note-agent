@@ -107,12 +107,15 @@ def correct_summary(
     if introduced_script_fields(candidate, catalog) or summary_quality_issues(candidate):
         raise SummaryQualityError()
     # A reference deletion must not break a previously supported direct quote.
-    broken_quotes = set(summary_quote_issues(candidate, catalog)) - set(summary_quote_issues(summary, catalog))
-    if broken_quotes:
-        if not preserve_quoted_refs or text_corrections:
-            raise SummaryQualityError()
-        for field in broken_quotes:
+    quote_issues = summary_quote_issues(candidate, catalog)
+    if preserve_quoted_refs and quote_issues:
+        # Edits inside quotes were rejected above. Cancel the citation deletion
+        # even if the verifier also proposed a separate, valid lexical edit.
+        for field in quote_issues:
             getattr(candidate, field).source_refs = list(getattr(summary, field).source_refs)
+        quote_issues = summary_quote_issues(candidate, catalog)
+    if quote_issues.keys() - summary_quote_issues(summary, catalog).keys():
+        raise SummaryQualityError()
     changed = [field for field in SECTION_LIMITS
                if getattr(candidate, field).model_dump() != getattr(summary, field).model_dump()]
     return candidate, changed

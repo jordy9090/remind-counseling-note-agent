@@ -43,11 +43,14 @@ class SummaryCorrectionValidation(SummaryAssessment):
     source_ref_restorations: list[SourceRefRestoration] = Field(default_factory=list, max_length=7)
 
 
-class SummaryVerification(SummaryAssessment):
-    """Private initial verifier output with bounded correction proposals."""
-
+class SummaryEditProposal(BaseModel):
+    """Only the correction decisions for an independently assessed draft."""
     text_corrections: list[TextCorrection] = Field(default_factory=list, max_length=14)
     source_ref_reviews: list[SourceRefReview] = Field(default_factory=list, max_length=7)
+
+
+class SummaryVerification(SummaryAssessment, SummaryEditProposal):
+    """Private initial verifier output with bounded correction proposals."""
 
 
 def summary_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVerification]:
@@ -69,7 +72,7 @@ def summary_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVer
     )
 
 
-def quick_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVerification]:
+def quick_verification_schema(summary: SessionSummaryDraft, *, edits_only: bool = False) -> type[SummaryEditProposal]:
     """Require exactly the citation choices available to the independent verifier."""
     refs_by_field = {
         field: tuple(dict.fromkeys(getattr(summary, field).source_refs))
@@ -91,7 +94,9 @@ def quick_verification_schema(summary: SessionSummaryDraft) -> type[SummaryVerif
         ]
 
     review_list = Annotated[list[SourceRefReview], BeforeValidator(to_reviews, json_schema_input_type=choices)]
-    return create_model("QuickSummaryVerification", __base__=SummaryVerification, source_ref_reviews=(review_list, ...))
+    base = SummaryEditProposal if edits_only else SummaryVerification
+    name = "QuickSummaryEditProposal" if edits_only else "QuickSummaryVerification"
+    return create_model(name, __base__=base, source_ref_reviews=(review_list, ...))
 
 
 def _literal(value: str) -> str:

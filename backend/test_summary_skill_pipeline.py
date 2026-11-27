@@ -207,6 +207,62 @@ class SummarySkillPipelineTests(unittest.TestCase):
         self.structured_llm.assert_not_called()
         self.assertFalse(settings.use_stub)
 
+    def test_repeated_invalid_proposal_ends_the_request_without_a_partial_draft(self) -> None:
+        from app.services.summary_corrections import TextCorrection
+
+        invalid = SummaryVerification(source_ref_reviews=[
+            SourceRefReview(field=field, keep_source_refs=section.source_refs)
+            for field, section in _summary() if field != "session_info"
+        ], text_corrections=[TextCorrection(field="session_theme", original="missing", replacement="fabricated")])
+        verifier = Mock(invoke=Mock(return_value=invalid))
+        self.structured_llm.side_effect = None
+        self.structured_llm.return_value = verifier
+        module = _load_vercel_generate()
+        with TestClient(module.app) as client:
+            response = client.post(
+                "/api/notes/generate?scope=quick", json={"text": self.session_input.transcript_text},
+            )
+        self.assertEqual(502, response.status_code)
+        self.assertEqual({"detail": "요약 검증을 마치지 못했어요. 잠시 후 다시 시도해주세요."}, response.json())
+        self.assertEqual(2, verifier.invoke.call_count)
+        self.skill.assert_called_once()
+        self.insights.assert_called_once()
+
+    def test_authenticated_quick_route_recovers_inside_one_approved_post(self) -> None:
+        from app.api.security import AuthenticatedActor
+        from app.main import app
+        from app.services import deid_review as review
+        from app.services.qwen_deidentification import Entities
+        from app.services.summary_corrections import TextCorrection
+
+        actor = AuthenticatedActor("synthetic-owner", "synthetic-token")
+        self.stack.enter_context(patch.multiple(settings, poc_mode=True, require_deid_review=True,
+                                                deid_review_signing_key="synthetic-signing-key-" * 3))
+        self.stack.enter_context(patch("app.api.routes.notes._require_supabase_user", return_value=actor))
+        self.stack.enter_context(patch.object(review, "detect_entities", return_value=Entities(entities=[])))
+        prepared = review.prepare_review(review.ReviewStart(purpose="quick", payload={"text": self.session_input.transcript_text}), actor)
+        found = review.start_review(review.ReviewStart(purpose="quick", payload=prepared["payload"],
+                                                       preparation_token=prepared["preparation_token"]), actor)
+        approved = review.confirm_review(review.ReviewConfirm(purpose="quick", payload=found["payload"],
+                                                              detection_token=found["detection_token"]), actor)
+        valid = self._fake_llm(SummaryVerification).invoke()
+        invalid = valid.model_copy(update={"text_corrections": [
+            TextCorrection(field="session_theme", original="absent", replacement="invented")
+        ]})
+        verifier = Mock(invoke=Mock(side_effect=[invalid, valid]))
+        self.structured_llm.side_effect = None
+        self.structured_llm.return_value = verifier
+        response = TestClient(app).post("/api/notes/quick-summary", json=approved["payload"],
+            headers={"Authorization": "Bearer synthetic-token", "X-Review-Receipt": approved["receipt"]})
+        self.assertEqual(200, response.status_code)
+        result = GenerateNoteResponse.model_validate(response.json())
+        self.assertEqual(_summary().session_content.text, result.session_summary_draft.session_content.text)
+        self.assertIsNotNone(result.verification_report)
+        self.assertFalse(result.stub)
+        self.assertEqual(2, verifier.invoke.call_count)
+        self.skill.assert_called_once()
+        self.insights.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
