@@ -42,7 +42,7 @@ try {
     const context = await browser.newContext(scenario.retryLogin ? { viewport: { width: 390, height: 844 } } : {})
     const page = await context.newPage()
     const errors = [], draftWrites = []
-    let releaseSettings, tokenRequests = 0, generationRequests = 0
+    let releaseSettings, tokenRequests = 0, generationRequests = 0, preparations = 0, approvals = 0
     const settingsGate = new Promise(resolve => { releaseSettings = resolve })
     page.on('pageerror', error => errors.push(error.message))
     await page.route('**/*', async route => {
@@ -59,8 +59,14 @@ try {
       }
       if (pathname.endsWith('/auth/v1/user')) return reply(user)
       if (url.origin !== origin && !(url.origin === 'https://49.247.174.195:8443' && pathname.startsWith('/api/'))) return route.abort()
-      if (pathname === '/api/notes/quick-summary') { generationRequests += 1; return reply(response) }
+      if (pathname === '/api/notes/quick-summary') {
+        assert.equal(req.headers()['x-review-receipt'], 'synthetic-approved')
+        assert.equal(approvals, 1)
+        generationRequests += 1
+        return reply(response)
+      }
       if (pathname === '/api/notes/deidentification-prepare') {
+        preparations += 1
         const { payload } = req.postDataJSON()
         return reply({ payload, sources: [{ key: 'text', label: '현재 입력', text: payload.text }],
           items: [], model_used: false, preparation_token: 'synthetic-prepared', requires_detection_approval: true })
@@ -71,7 +77,10 @@ try {
         return reply({ payload, sources: [{ key: 'text', label: '현재 입력', text: payload.text }],
           items: [], model_used: true, detection_token: 'synthetic-detected' })
       }
-      if (pathname === '/api/notes/deidentification-confirm') return reply({ payload: req.postDataJSON().payload, receipt: 'synthetic-approved' })
+      if (pathname === '/api/notes/deidentification-confirm') {
+        approvals += 1
+        return reply({ payload: req.postDataJSON().payload, receipt: 'synthetic-approved' })
+      }
       if (pathname === '/api/notes/drafts') {
         if (req.method() === 'POST') {
           draftWrites.push(req.postDataJSON())
@@ -119,16 +128,44 @@ try {
       assert.equal(draftWrites.length, 0)
       assert.equal(await page.getByRole('article', { name: 'AI 요약 결과' }).count(), 0)
       assert.equal(await page.getByLabel('요약할 상담 내용', { exact: true }).inputValue(), '')
-      await page.getByLabel('요약할 상담 내용', { exact: true }).fill('가상 회기입니다. 친구와 만난 뒤 긴장이 조금 풀렸다고 이야기했습니다. 연락처는 010-0000-3141입니다.')
+      const memo = '가상 회기입니다. 친구와 만난 뒤 긴장이 조금 풀렸다고 이야기했습니다. 연락처는 010-0000-3141입니다.'
+      const input = page.getByLabel('요약할 상담 내용', { exact: true })
+      const summarize = page.getByRole('button', { name: '요약하기', exact: true })
+      const choice = page.getByRole('dialog', { name: '이름 사전을 사용할까요?', exact: true })
+      const detection = page.getByRole('dialog', { name: '식별정보 탐지 승인', exact: true })
+      await input.fill(memo)
+      await summarize.click()
+      await choice.waitFor()
+      assert.equal(preparations, 0)
+      assert.equal(generationRequests, 0)
+      if (scenario.name === 'password login') {
+        await choice.getByRole('button', { name: '닫기' }).click()
+        assert.equal(await input.inputValue(), memo)
+        assert.equal(preparations, 0)
+        await summarize.click()
+        await choice.getByRole('button', { name: '건너뛰기' }).click()
+        await detection.getByRole('button', { name: '닫기' }).click()
+        assert.equal(approvals, 0)
+        assert.equal(generationRequests, 0)
+        assert.equal(draftWrites.length, 0)
+        assert.equal(await input.inputValue(), memo)
+        await summarize.click()
+      }
+      if (process.env.SCREENSHOT_DIR && !scenario.slowSettings) {
+        fs.mkdirSync(process.env.SCREENSHOT_DIR, { recursive: true })
+        await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, 'name-dictionary-choice.png') })
+      }
       if (scenario.retryLogin) {
-        await page.getByRole('button', { name: '이름 사전', exact: true }).click()
+        await choice.getByRole('button', { name: '이름 사전 사용', exact: true }).click()
         const dictionary = page.getByRole('dialog', { name: '이름 사전' })
+        await dictionary.getByRole('button', { name: '뒤로가기' }).click()
+        assert.equal(preparations, 0)
+        await choice.getByRole('button', { name: '이름 사전 사용', exact: true }).click()
         await dictionary.getByLabel('친구 연결할 인물').selectOption({ label: '+ 새 인물로' })
         await dictionary.getByRole('button', { name: '적용하고 개인정보 확인' }).click()
       } else {
-        await page.getByRole('button', { name: '요약하기', exact: true }).click()
+        await choice.getByRole('button', { name: '건너뛰기', exact: true }).click()
       }
-      const detection = page.getByRole('dialog', { name: '식별정보 탐지 승인', exact: true })
       await detection.waitFor()
       if (scenario.retryLogin) assert.ok((await detection.innerText()).includes('친구[인물 B]'))
       assert.equal(await detection.getByRole('button', { name: '개인정보 찾기' }).isEnabled(), false)
@@ -140,6 +177,9 @@ try {
       assert.ok(!(await review.getByLabel('AI에 전달할 내용').innerText()).includes('010-0000-3141'))
       assert.equal(await review.getByRole('button', { name: /가린 항목/ }).getAttribute('aria-expanded'), 'false')
       assert.equal(await review.getByRole('button', { name: '요약하기' }).isEnabled(), false)
+      assert.equal(approvals, 0)
+      assert.equal(generationRequests, 0)
+      assert.equal(draftWrites.length, 0)
       if (scenario.retryLogin) {
         await review.getByRole('button', { name: /가린 항목/ }).click()
         await review.getByRole('button', { name: '항목 추가하기' }).click()
