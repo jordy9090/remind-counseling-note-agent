@@ -19,6 +19,55 @@ def reviews(summary):
 
 
 class SummaryCorrectionTests(unittest.TestCase):
+    def test_quick_mixed_edit_keeps_quote_evidence_and_requires_independent_approval(self):
+        self.state["use_summary_skill"] = True
+        self.state["session_summary_draft"] = self.summary
+        self.summary.session_theme.text = '내담자는 “잠이 안 와요.”라고 말함.'
+        self.summary.session_theme.source_refs = ["transcript.turn_1", "transcript.turn_4"]
+        self.summary.session_content.text = "두 결정은 अलग개로 나눔."
+        first = SummaryVerification(source_ref_reviews=reviews(self.summary), text_corrections=[
+            TextCorrection(field="session_content", original="अलग개로", replacement="별개로")
+        ])
+        next(item for item in first.source_ref_reviews if item.field == "session_theme").keep_source_refs = ["transcript.turn_4"]
+        for approved in (True, False):
+            with self.subTest(approved=approved):
+                invoke = Mock(side_effect=[first, SummaryCorrectionValidation(correction_validated=approved)])
+                with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key"), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)):
+                    if approved:
+                        result = verify_output(self.state)["session_summary_draft"]
+                        self.assertEqual(self.summary.session_theme, result.session_theme)
+                        self.assertEqual("두 결정은 별개로 나눔.", result.session_content.text)
+                    else:
+                        with self.assertRaises(SummaryQualityError):
+                            verify_output(self.state)
+                self.assertEqual(2, invoke.call_count)
+                self.assertIn("अलग개로", self.summary.session_content.text)
+
+    def test_quick_rechecks_invalid_verifier_proposal_only_once(self):
+        self.state["use_summary_skill"] = True
+        self.state["session_summary_draft"] = self.summary
+        invalid = SummaryVerification(
+            source_ref_reviews=reviews(self.summary),
+            requires_counselor_review=[CounselorReviewField(field="reflection", reason="원문 확인 필요")],
+            text_corrections=[TextCorrection(field="session_theme", original="unavailable", replacement="fabricated")],
+        )
+        valid = SummaryVerification(source_ref_reviews=reviews(self.summary))
+        for second in (valid, invalid):
+            with self.subTest(recovered=second is valid):
+                invoke = Mock(side_effect=[invalid, second])
+                with patch.multiple(settings, use_stub=False, openai_api_key="synthetic-key"), patch("app.graph.nodes.get_structured_llm", return_value=Mock(invoke=invoke)) as factory:
+                    if second is valid:
+                        result = verify_output(self.state)
+                        self.assertEqual(self.summary, result["session_summary_draft"])
+                        self.assertIsInstance(result["verification_report"], VerificationReport)
+                        self.assertIn(invalid.requires_counselor_review[0], result["verification_report"].requires_counselor_review)
+                    else:
+                        with self.assertRaises(SummaryQualityError):
+                            verify_output(self.state)
+                self.assertEqual(2, invoke.call_count)
+                retry_schema = factory.call_args.args[0]
+                self.assertEqual({"text_corrections", "source_ref_reviews"}, set(retry_schema.model_fields))
+
     def test_quick_citation_audit_retains_an_uncertain_removal_and_semantic_warning(self):
         from app.services.summary_verification import citation_audit_schema
         self.state["use_summary_skill"] = True

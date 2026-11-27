@@ -117,9 +117,13 @@ def quick_summary_session_input(text: str, *, max_chars: int = QUICK_SUMMARY_MAX
     )
 
 
-def generate_quick_summary(text: str, *, max_chars: int = QUICK_SUMMARY_MAX_CHARS) -> GenerateNoteResponse:
+def generate_quick_summary(text: str, *, max_chars: int = QUICK_SUMMARY_MAX_CHARS,
+                           rejected_quick_drafts: tuple[str, ...] = ()) -> GenerateNoteResponse:
     """Run the Skill core and existing checks without retrieval or storage."""
     from app.graph.graph import run_note_pipeline
 
     session_input, _ = deidentify_session_input(quick_summary_session_input(text, max_chars=max_chars))
+    if rejected_quick_drafts:
+        return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True,
+                                 rejected_quick_drafts=rejected_quick_drafts)
     return run_note_pipeline(session_input, actor="", allow_retrieval=False, use_summary_skill=True)

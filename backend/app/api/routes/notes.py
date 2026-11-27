@@ -37,7 +37,7 @@ from app.services.quick_summary import (
     rate_limiter,
 )
 from app.services.storage_deidentification import deidentify_session_input
-from app.services.summary_quality import SummaryQualityError
+from app.services.summary_quality import QuickCorrectionRejected, SummaryQualityError
 from app.services.summary_skill import SummarySkillError
 from app.services.deidentification_preview import (
     ANONYMOUS_PREVIEW_LIMIT,
@@ -342,15 +342,32 @@ def run_quick_summary(
             detail="요약 요청이 너무 많아요. 잠시 후 다시 시도하거나 로그인 후 이용해주세요.",
             headers={"Retry-After": str(error.retry_after)},
         ) from None
-    try:
+    started = monotonic()
+    rejected: tuple[str, ...] = ()
+    max_chars = AUTHENTICATED_MAX_CHARS if actor else QUICK_SUMMARY_MAX_CHARS
+
+    def approved_attempt() -> GenerateNoteResponse:
         with reviewed_request("quick", payload, request.headers.get("x-review-receipt", ""), review_actor(request, authorization)):
-            return generate_quick_summary(payload.text, max_chars=AUTHENTICATED_MAX_CHARS if actor else QUICK_SUMMARY_MAX_CHARS)
+            if rejected:
+                return generate_quick_summary(payload.text, max_chars=max_chars, rejected_quick_drafts=rejected)
+            return generate_quick_summary(payload.text, max_chars=max_chars)
+
+    try:
+        try:
+            return approved_attempt()
+        except QuickCorrectionRejected as error:
+            if monotonic() - started > 90:
+                raise
+            rejected = error.rejected_digests
+            log_private_failure("quick_summary_quality_correction_regenerating")
+        return approved_attempt()
     except HTTPException:
         raise
     except QuickSummaryInputError as error:
         raise HTTPException(status_code=422, detail=public_error_message(error, "요청 내용을 확인하고 다시 시도해주세요.")) from None
     except Exception as error:
         # Static codes allow operators to distinguish failures without logging source text.
+        detail = "요약 검증을 마치지 못했어요. 잠시 후 다시 시도해주세요."
         if isinstance(error, SummaryQualityError):
             quality_stages = {
                 "run_summary_skill": "quick_summary_quality_draft",
@@ -364,11 +381,12 @@ def run_quick_summary(
                 stage = quality_stages.get(frame.tb_frame.f_code.co_name, stage)
                 frame = frame.tb_next
             log_private_failure(stage)
+            if stage == "quick_summary_quality_draft" and not rejected:
+                detail = "요약을 만들지 못했어요. 잠시 후 다시 시도해주세요."
         elif isinstance(error, SummarySkillError):
             log_private_failure("quick_summary_generation")
+            if not rejected:
+                detail = "요약을 만들지 못했어요. 잠시 후 다시 시도해주세요."
         else:
             log_private_failure("quick_summary_pipeline")
-        raise HTTPException(
-            status_code=502,
-            detail="요약을 만들지 못했어요. 잠시 후 다시 시도해주세요.",
-        ) from None
+        raise HTTPException(status_code=502, detail=detail) from None
