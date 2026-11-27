@@ -10,6 +10,8 @@ import {
   type QuickSummaryResult,
 } from '../../lib/quickSummary'
 import type { NoteDraftResponse } from '../../types/session'
+import ModalShell from '../app-shell/ModalShell'
+import { OutlineButton, PrimaryButton } from '../app-shell/ui'
 import PersonMappingModal from '../deidentification/PersonMappingModal'
 import SourceMemoryCues from './SourceMemoryCues'
 import QuickAudioInput from './QuickAudioInput'
@@ -62,9 +64,8 @@ export default function QuickSummaryPanel({
   const [audioText, setAudioText] = useState('')
   const [audioPending, setAudioPending] = useState(false)
   const [loading, setLoading] = useState(false)
-  const reviewing = false
-  // Reviewed text waiting for the person matching step (등장 인물 정리).
-  const [personText, setPersonText] = useState<string | null>(null)
+  const [nameStep, setNameStep] = useState<{ screen: 'choose' | 'edit'; text: string; ownerId: string | null } | null>(null)
+  const reviewing = nameStep !== null && nameStep.ownerId === userId && !result
   const [extracting, setExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -90,20 +91,20 @@ export default function QuickSummaryPanel({
   const length = inputText.length
   const maxChars = canExtractDocuments ? AUTHENTICATED_QUICK_SUMMARY_MAX_CHARS : QUICK_SUMMARY_MAX_CHARS
   const overLimit = length > maxChars
-  const hasInputWork = Boolean(inputText.trim() || audioPending || loading || extracting || reviewing || personText !== null)
+  const hasInputWork = Boolean(inputText.trim() || audioPending || loading || extracting || reviewing)
   useUnsavedWork(!result && hasInputWork)
 
-  const summarize = (editNames = false) => {
+  const summarize = () => {
     if (onGenerationRequiresLogin) { onGenerationRequiresLogin(); return }
-    if (loading || audioPending) return
+    if (loading || extracting || audioPending || reviewing) return
     if (length < QUICK_SUMMARY_MIN_CHARS) return setError(`요약할 상담 내용을 ${QUICK_SUMMARY_MIN_CHARS}자 이상 입력해주세요.`)
     if (overLimit) return setError(`간편 요약은 ${maxChars.toLocaleString()}자까지 입력할 수 있어요.${canExtractDocuments ? '' : ' 로그인하면 2시간 상담 분량까지 이용할 수 있어요.'}`)
     setError(null)
-    if (editNames) setPersonText(inputText)
-    else void summarizeReviewed(inputText)
+    setNameStep({ screen: 'choose', text: inputText, ownerId: userId })
   }
 
-  const summarizeReviewed = async (reviewed: string) => {
+  const continueToPrivacyReview = async (source: string) => {
+    if (!nameStep || nameStep.ownerId !== owner.current || visibleResult.current || loading) return
     generation.current.controller?.abort()
     const id = ++generation.current.id
     const controller = new AbortController()
@@ -112,10 +113,10 @@ export default function QuickSummaryPanel({
     const requestResult = result
     const current = () => generation.current.id === id && !controller.signal.aborted
       && owner.current === requestOwner && visibleResult.current === requestResult
-    setPersonText(null)
+    setNameStep(null)
     setLoading(true)
     try {
-      const note = await requestQuickSummary(reviewed, { ownerId: requestOwner, signal: controller.signal })
+      const note = await requestQuickSummary(source, { ownerId: requestOwner, signal: controller.signal })
       if (!current()) return
       onResult(toResult(note))
       setCopied(false)
@@ -191,7 +192,7 @@ export default function QuickSummaryPanel({
     setCopied(false)
     setLoading(false)
     setExtracting(false)
-    setPersonText(null)
+    setNameStep(null)
     setAudioRevision(value => value + 1)
   }
 
@@ -287,10 +288,6 @@ export default function QuickSummaryPanel({
                 if (file && /\.(mp3|m4a|wav)$/i.test(file.name)) onAudioLogin?.()
                 else void addFile(file)
               }} />}
-              {!onGenerationRequiresLogin && length >= QUICK_SUMMARY_MIN_CHARS && (
-                <button type="button" disabled={loading || extracting || audioPending} onClick={() => summarize(true)}
-                  className="text-sm text-grey-600 underline underline-offset-4 hover:text-grey-900">이름 사전</button>
-              )}
               {overLimit && (
                 <span className="text-xs font-bold text-danger-500">
                   {length.toLocaleString()} / {maxChars.toLocaleString()}자
@@ -299,8 +296,8 @@ export default function QuickSummaryPanel({
             </div>
             <button
               type="button"
-              onClick={() => summarize()}
-              disabled={loading || extracting || audioPending}
+              onClick={summarize}
+              disabled={loading || extracting || audioPending || reviewing}
               className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary-400 px-6 text-sm font-bold text-white hover:bg-primary-500 disabled:opacity-60"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}{loading ? '요약하는 중' : onGenerationRequiresLogin ? '로그인하고 요약하기' : '요약하기'}
@@ -323,11 +320,19 @@ export default function QuickSummaryPanel({
 
       {below && <div className="mt-6 w-full">{below}</div>}
 
-      {personText !== null && (
+      {reviewing && nameStep.screen === 'choose' && (
+        <ModalShell ariaLabel="이름 사전을 사용할까요?" title="이름 사전을 사용할까요?" width={400} onClose={() => setNameStep(null)}>
+          <div className="grid grid-cols-2 gap-2">
+            <OutlineButton onClick={() => void continueToPrivacyReview(nameStep.text)}>건너뛰기</OutlineButton>
+            <PrimaryButton autoFocus onClick={() => setNameStep({ ...nameStep, screen: 'edit' })}>이름 사전 사용</PrimaryButton>
+          </div>
+        </ModalShell>
+      )}
+      {reviewing && nameStep.screen === 'edit' && (
         <PersonMappingModal
-          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: personText }]}
-          onBack={() => setPersonText(null)}
-          onConfirm={(texts) => void summarizeReviewed(texts[QUICK_SOURCE_KEY] ?? personText)}
+          sources={[{ key: QUICK_SOURCE_KEY, label: '입력한 상담 내용', text: nameStep.text }]}
+          onBack={() => setNameStep({ ...nameStep, screen: 'choose' })}
+          onConfirm={(texts) => void continueToPrivacyReview(texts[QUICK_SOURCE_KEY] ?? nameStep.text)}
         />
       )}
     </section>
