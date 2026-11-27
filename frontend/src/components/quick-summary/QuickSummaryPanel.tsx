@@ -198,7 +198,7 @@ export default function QuickSummaryPanel({
   return (
     <section className="mx-auto flex w-full min-w-0 max-w-[656px] flex-col items-center px-4 py-12 sm:py-16">
       <h1 className="text-center text-[26px] font-extrabold tracking-[-0.02em] text-[#0b1f5c] sm:text-[34px]">
-        {result ? 'AI 요약이 완성됐어요' : '간편 요약'}
+        {result ? 'AI 요약이 완성됐어요' : '상담 내용을 빠르게 정리해보세요'}
       </h1>
       {result && <p className="mt-2 text-center text-base text-[#1f2a4d] sm:text-lg">입력 내용을 바탕으로 회기 요약과 같은 항목으로 정리했어요.</p>}
 
