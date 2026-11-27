@@ -75,7 +75,9 @@ try {
     { name: 'late provider settings', slowSettings: true, retryLogin: false },
     { name: 'failed password then retry', slowSettings: true, retryLogin: true },
   ]) {
-    const context = await browser.newContext(scenario.retryLogin ? { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true } : {})
+    const viewport = scenario.retryLogin ? { width: 390, height: 844 }
+      : scenario.slowSettings ? { width: 1366, height: 768 } : { width: 1819, height: 920 }
+    const context = await browser.newContext({ viewport, hasTouch: scenario.retryLogin, isMobile: scenario.retryLogin })
     const page = await context.newPage()
     const errors = [], draftWrites = []
     let releaseSettings, tokenRequests = 0, generationRequests = 0, preparations = 0, approvals = 0
@@ -177,6 +179,7 @@ try {
       assert.equal(await page.getByRole('article', { name: 'AI 요약 결과' }).count(), 0)
       assert.equal(await page.getByLabel('요약할 상담 내용', { exact: true }).inputValue(), '')
       const memo = '가상 회기입니다. 😊 친구와 산책 후 긴장이 조금 풀렸다고 이야기했습니다. 연락처는 010-0000-3141입니다.'
+        + '\n상담자: 그때 어떤 느낌이었나요?\n내담자: 마음이 조금 가벼워졌어요.'.repeat(45)
       const input = page.getByLabel('요약할 상담 내용', { exact: true })
       const summarize = page.getByRole('button', { name: '요약하기', exact: true })
       const choice = page.getByRole('dialog', { name: '이름 사전을 사용할까요?', exact: true })
@@ -240,6 +243,29 @@ try {
       const expression = review.getByLabel('원문 표현')
       await expression.waitFor()
       assert.equal(await expression.inputValue(), selectedPhrase)
+      const dimensions = await review.evaluate(dialog => {
+        const source = dialog.querySelector('[aria-label="원문"]')
+        const input = dialog.querySelector('input[placeholder="예: 회사 내 관리자"]')
+        const row = dialog.querySelector('[data-row] button')
+        const bounds = element => {
+          const { width, height, top, bottom } = element.getBoundingClientRect()
+          return { width, height, top, bottom }
+        }
+        return { modal: bounds(dialog), source: bounds(source), input: bounds(input), footer: bounds(dialog.querySelector('footer')),
+          textSize: parseFloat(getComputedStyle(source).fontSize), fieldSize: parseFloat(getComputedStyle(input).fontSize),
+          rowSize: parseFloat(getComputedStyle(row).fontSize), overflows: dialog.scrollWidth > dialog.clientWidth || source.scrollWidth > source.clientWidth,
+          scrollable: source.scrollHeight > source.clientHeight }
+      })
+      assert(dimensions.modal.width >= viewport.width * .93 && dimensions.modal.height >= viewport.height * .90)
+      assert(dimensions.scrollable && !dimensions.overflows)
+      assert(dimensions.textSize >= (scenario.retryLogin ? 16 : 18) && dimensions.fieldSize >= 16 && dimensions.rowSize >= 16)
+      assert(dimensions.footer.bottom <= viewport.height && dimensions.footer.top > 0)
+      if (!scenario.retryLogin) {
+        assert(dimensions.source.width >= viewport.width * .49 && dimensions.source.height >= viewport.height * .57)
+        assert(dimensions.source.bottom <= dimensions.footer.top && dimensions.input.bottom <= dimensions.footer.top)
+      }
+      if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, 'privacy-edit-' + viewport.width + '.png') })
+      console.log('Privacy review', viewport.width + 'x' + viewport.height, JSON.stringify(dimensions))
       if (scenario.slowSettings && !scenario.retryLogin) {
         await review.getByRole('button', { name: '닫기', exact: true }).click()
         assert.equal(approvals, 0)

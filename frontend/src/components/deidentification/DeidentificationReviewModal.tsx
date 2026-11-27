@@ -199,11 +199,11 @@ export default function DeidentificationReviewModal({
       ariaLabel="AI로 보내기 전 내용 확인"
       title={submitLabel === '저장하기' ? '저장할 내용 확인' : 'AI에 보낼 내용 확인'}
       onClose={onBack}
-      width={1170}
+      expanded
       footer={(
-        <div className="flex w-full flex-col gap-5">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <label className={`flex items-center gap-3 text-sm font-semibold ${skip ? 'text-grey-400' : 'text-grey-800'}`}>
+            <label className={`flex items-center gap-2 text-base font-semibold ${skip ? 'text-grey-400' : 'text-grey-800'}`}>
               <input
                 type="checkbox"
                 className="h-6 w-6 shrink-0 cursor-pointer rounded-[6px] border-grey-200 accent-primary-400 disabled:cursor-not-allowed"
@@ -228,18 +228,18 @@ export default function DeidentificationReviewModal({
               </button>
             </label>}
           </div>
-          <div className="flex gap-3">
-            <PrimaryButton className="h-11 flex-1 rounded-xl text-sm" disabled={!canSubmit} onClick={submit}>
+          <div className="flex sm:w-48">
+            <PrimaryButton className="h-11 flex-1 rounded-xl text-base" disabled={!canSubmit} onClick={submit}>
               {submitting ? '확인 중…' : submitLabel}
             </PrimaryButton>
           </div>
         </div>
       )}
     >
-      <div className="flex flex-col gap-6">
+      <div className="flex min-w-0 flex-col gap-3 lg:h-full lg:min-h-0">
         {error && <p role="alert" className="text-danger-500">{error}</p>}
-        <div className={`grid grid-cols-1 gap-6 lg:grid-cols-2 ${skip ? 'opacity-60' : ''}`}>
-          <section aria-label="상담 자료" className="flex max-h-[48vh] min-h-0 flex-col rounded-card border border-grey-200 lg:h-[min(560px,56vh)] lg:max-h-none">
+        <div className={`grid min-w-0 grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-5 ${skip ? 'opacity-60' : ''}`}>
+          <section aria-label="상담 자료" className="flex max-h-[48dvh] min-h-0 min-w-0 flex-col rounded-card border border-grey-200 lg:max-h-none">
             <div role="tablist" className="grid shrink-0 grid-cols-2 border-b border-grey-200 px-1">
               {([['original', '원문'], ['ai', 'AI 전달용']] as const).map(([key, label]) => (
                 <button
@@ -274,13 +274,13 @@ export default function DeidentificationReviewModal({
               )}
             </div>}
 
-            {tab === 'original' && <p className="mx-4 mt-3 text-xs text-grey-600 sm:mx-6">가릴 표현을 원문에서 선택하세요.</p>}
+            {tab === 'original' && <p className="mx-3 mt-3 text-sm text-grey-600 sm:mx-5">가릴 표현을 원문에서 선택하세요.</p>}
             <div
               ref={textRef}
               onMouseUp={captureSelection}
               onTouchEnd={() => window.requestAnimationFrame(captureSelection)}
               aria-label={tab === 'ai' ? 'AI에 전달할 내용' : '원문'}
-              className="rm-scroll m-4 mt-2 min-h-0 select-text sm:m-6 sm:mt-2 flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-[10px] border border-grey-200 bg-[#F8FAFC] px-3.5 py-3 text-sm leading-7 text-grey-800"
+              className="rm-scroll m-3 mt-2 min-h-0 flex-1 select-text overflow-y-auto whitespace-pre-wrap break-words rounded-[10px] border border-grey-200 bg-[#F8FAFC] px-4 py-3 text-base leading-8 text-grey-800 sm:m-5 sm:mt-2 lg:px-5 lg:text-lg lg:leading-8"
             >
               {segments.map((segment, index) => {
                 if (segment.type === 'text') return <span key={index}>{segment.text}</span>
@@ -305,13 +305,13 @@ export default function DeidentificationReviewModal({
             </div>
           </section>
 
-          <section aria-label="비식별화 항목 검토" className="flex h-[440px] min-h-0 flex-col rounded-card border border-grey-200 lg:h-[min(560px,56vh)]">
-            <div className="flex h-[62px] shrink-0 items-center justify-between gap-3 border-b border-grey-200 px-6">
-              <h3 className="text-base font-bold text-grey-900">비식별화 항목 검토</h3>
+          <section aria-label="비식별화 항목 검토" className="flex min-h-0 min-w-0 flex-col rounded-card border border-grey-200 lg:overflow-y-auto">
+            <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-grey-200 px-3 py-2 sm:px-5">
+              <h3 className="text-base font-bold text-grey-900 lg:text-lg">비식별화 항목 검토</h3>
               <button
                 type="button"
                 onClick={() => openForm({ mode: 'add' })}
-                className="inline-flex h-10 items-center gap-1.5 rounded-full border border-primary-400 px-4 text-sm font-bold text-primary-400 hover:bg-primary-50"
+                className="inline-flex h-10 items-center gap-1.5 rounded-full border border-primary-400 px-4 text-base font-bold text-primary-400 hover:bg-primary-50"
               >
                 <Plus className="h-4 w-4" />항목 추가하기
               </button>
@@ -320,28 +320,28 @@ export default function DeidentificationReviewModal({
             {detecting ? (
               <div className="flex flex-1 items-center justify-center gap-2 text-sm text-grey-500"><Loader2 className="h-4 w-4 animate-spin" />식별 정보를 찾고 있어요</div>
             ) : (
-              <ul ref={listRef} className="rm-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
+              <ul ref={listRef} className="rm-scroll max-h-52 space-y-3 overflow-y-auto px-3 py-3 sm:px-5 lg:min-h-14 lg:max-h-none lg:flex-1">
                 {items.length === 0 && (
                   <li className="rounded-[12px] border border-dashed border-grey-200 px-4 py-8 text-center text-sm leading-6 text-grey-500">
                     자동으로 찾은 항목이 없어요.
                   </li>
                 )}
                 {items.map((item) => (
-                  <li key={item.id} data-row={item.id} className="flex items-center gap-3">
+                  <li key={item.id} data-row={item.id} className="flex items-center gap-2">
                     <span aria-label={item.kind === 'review' ? '확인 필요' : '자동 탐지'} className={`h-2.5 w-2.5 shrink-0 rounded-full ${DOT[item.kind]}`} />
                     <button
                       type="button"
                       onClick={() => selectItem(item, 'list')}
-                      className={`grid h-11 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 rounded-[10px] border px-3 text-sm ${selectedId === item.id ? 'border-primary-400 bg-primary-50' : 'border-transparent bg-grey-100 hover:bg-primary-50/60'}`}
+                      className={`grid min-h-11 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 rounded-[10px] border px-2 py-2 text-base leading-6 sm:gap-2 sm:px-3 ${selectedId === item.id ? 'border-primary-400 bg-primary-50' : 'border-transparent bg-grey-100 hover:bg-primary-50/60'}`}
                     >
-                      <span className="truncate text-center text-grey-600" title={item.original}>{item.original}</span>
+                      <span className="min-w-0 break-words text-center text-grey-600" title={item.original}>{item.original}</span>
                       <ArrowRight className="h-4 w-4 text-grey-400" strokeWidth={1.5} />
-                      <span className="truncate text-center font-bold text-grey-900" title={item.replacement}>{item.replacement}</span>
+                      <span className="min-w-0 break-words text-center font-bold text-grey-900" title={item.replacement}>{item.replacement}</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => { selectItem(item, 'list'); openForm({ mode: 'edit', itemId: item.id }, item.original, item.replacement) }}
-                      className="h-10 shrink-0 rounded-full border border-primary-400 px-4 text-sm font-bold text-primary-400 hover:bg-primary-50 sm:px-6"
+                      className="h-10 shrink-0 rounded-full border border-primary-400 px-4 text-base font-bold text-primary-400 hover:bg-primary-50 sm:px-6"
                     >
                       수정
                     </button>
@@ -354,26 +354,26 @@ export default function DeidentificationReviewModal({
             )}
 
             {form && (
-              <form onSubmit={saveForm} className="shrink-0 border-t border-grey-200 px-6 pb-6 pt-4">
+              <form onSubmit={saveForm} className="shrink-0 border-t border-grey-200 p-3 sm:p-4">
                 <div className="rounded-[12px] border border-primary-100 bg-primary-50/40 p-4">
-                  <p className="flex items-center gap-1.5 text-sm font-bold text-grey-900">
+                  <p className="flex items-center gap-1.5 text-base font-bold text-grey-900">
                     {form.mode === 'add' ? <Plus className="h-4 w-4" /> : <PenLine className="h-4 w-4" />}
                     {form.mode === 'add' ? '비식별화 항목 추가' : '선택한 표현 수정'}
                   </p>
-                  <label className="mt-3 block text-sm text-grey-700">
+                  <label className="mt-3 block text-base text-grey-700">
                     원문 표현
                     <input
-                      className="mt-1.5 h-11 w-full rounded-[10px] border border-grey-200 bg-white px-3 text-sm text-grey-900 outline-none placeholder:text-grey-400 focus:border-primary-400"
+                      className="mt-1.5 h-11 w-full rounded-[10px] border border-grey-200 bg-white px-3 text-base text-grey-900 outline-none placeholder:text-grey-400 focus:border-primary-400"
                       placeholder="축어록에 포함된 문구"
                       value={draftOriginal}
                       onChange={(event) => setDraftOriginal(event.target.value)}
                     />
                   </label>
-                  <label className="mt-3 block text-sm text-grey-700">
+                  <label className="mt-3 block text-base text-grey-700">
                     대체 표현
                     <input
                       autoFocus
-                      className="mt-1.5 h-11 w-full rounded-[10px] border border-grey-200 bg-white px-3 text-sm text-grey-900 outline-none placeholder:text-grey-400 focus:border-primary-400"
+                      className="mt-1.5 h-11 w-full rounded-[10px] border border-grey-200 bg-white px-3 text-base text-grey-900 outline-none placeholder:text-grey-400 focus:border-primary-400"
                       placeholder="예: 회사 내 관리자"
                       value={draftReplacement}
                       onChange={(event) => setDraftReplacement(event.target.value)}
@@ -381,8 +381,8 @@ export default function DeidentificationReviewModal({
                   </label>
                   {formError && <p role="alert" className="mt-2 text-xs text-danger-500">{formError}</p>}
                   <div className="mt-3 flex justify-end gap-2">
-                    <button type="button" onClick={closeForm} className="h-10 rounded-full border border-grey-200 bg-white px-4 text-sm font-bold text-grey-700 hover:bg-grey-100">취소</button>
-                    <button type="submit" className="h-10 rounded-full bg-primary-400 px-4 text-sm font-bold text-white hover:bg-primary-500">{form.mode === 'add' ? '추가하기' : '저장하기'}</button>
+                    <button type="button" onClick={closeForm} className="h-10 rounded-full border border-grey-200 bg-white px-4 text-base font-bold text-grey-700 hover:bg-grey-100">취소</button>
+                    <button type="submit" className="h-10 rounded-full bg-primary-400 px-4 text-base font-bold text-white hover:bg-primary-500">{form.mode === 'add' ? '추가하기' : '저장하기'}</button>
                   </div>
                 </div>
               </form>
