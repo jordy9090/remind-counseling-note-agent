@@ -71,7 +71,7 @@ for (const fixture of JSON.parse(fs.readFileSync('../backend/fixtures/korean_per
   assert.ok(detected.some(item => item.original === '윤다온'))
   for (const confirmed of [false, true]) {
     let result
-    execute(submitNode, { detecting: false, requireConfirmation: true, confirmed, skip: true,
+    execute(submitNode, { form: null, detecting: false, submitting: false, requireConfirmation: true, confirmed, skip: true,
       sources, items: detected, applyDeidItems: lib.applyDeidItems, onConfirm: value => { result = value } })
     assert.equal(Boolean(result), confirmed)
     if (result) {
