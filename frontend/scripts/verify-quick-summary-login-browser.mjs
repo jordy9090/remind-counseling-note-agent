@@ -13,6 +13,42 @@ const root = fileURLToPath(new URL('../dist/', import.meta.url))
 const port = 4187
 const entryUrl = process.env.TARGET_URL || ('http://127.0.0.1:' + port)
 const origin = new URL(entryUrl).origin
+const selectedPhrase = '산책'
+async function selectOriginalPhrase(page, original, touch) {
+  await original.scrollIntoViewIfNeeded()
+  const { start, end } = await original.evaluate((element, phrase) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    for (let node; (node = walker.nextNode());) {
+      const index = node.textContent.indexOf(phrase)
+      if (index === -1) continue
+      const range = document.createRange()
+      range.setStart(node, index)
+      range.setEnd(node, index + phrase.length)
+      const [first, ...rest] = range.getClientRects()
+      const last = rest.at(-1) || first
+      return { start: [first.left + 1, first.top + first.height / 2], end: [last.right - 1, last.top + last.height / 2] }
+    }
+    throw new Error('Synthetic selection missing from original text')
+  }, selectedPhrase)
+  if (touch) {
+    const cdp = await page.context().newCDPSession(page)
+    const [x, y] = start
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x + 3, y }] })
+    // Headless desktop Chrome emulates touch input without Android's native selection handles.
+    await original.evaluate((element, [start, end]) => {
+      const first = document.caretRangeFromPoint(...start), last = document.caretRangeFromPoint(...end)
+      if (!first || !last || !element.contains(first.startContainer) || !element.contains(last.startContainer)) throw new Error('Selection endpoints outside original')
+      window.getSelection().setBaseAndExtent(first.startContainer, first.startOffset, last.startContainer, last.startOffset)
+    }, [start, end])
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await cdp.detach()
+    return
+  }
+  await page.mouse.move(...start)
+  await page.mouse.down()
+  await page.mouse.move(...end, { steps: 12 })
+  await page.mouse.up()
+}
 const marker = '합성 회기 인계 확인 문장'
 const section = text => ({ text, evidence_type: 'reported', source_refs: [], needs_review: false })
 const draft = { session_info: { case_id: 'synthetic', session_number: 1, session_date: '2026-10-27', counselor_name: '' } }
@@ -39,7 +75,7 @@ try {
     { name: 'late provider settings', slowSettings: true, retryLogin: false },
     { name: 'failed password then retry', slowSettings: true, retryLogin: true },
   ]) {
-    const context = await browser.newContext(scenario.retryLogin ? { viewport: { width: 390, height: 844 } } : {})
+    const context = await browser.newContext(scenario.retryLogin ? { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true } : {})
     const page = await context.newPage()
     const errors = [], draftWrites = []
     let releaseSettings, tokenRequests = 0, generationRequests = 0, preparations = 0, approvals = 0
@@ -62,6 +98,9 @@ try {
       if (pathname === '/api/notes/quick-summary') {
         assert.equal(req.headers()['x-review-receipt'], 'synthetic-approved')
         assert.equal(approvals, 1)
+        assert(!req.postDataJSON().text.includes('010-0000-3141'))
+        assert(!req.postDataJSON().text.includes(selectedPhrase))
+        assert(req.postDataJSON().text.includes('[가상표현]'))
         generationRequests += 1
         return reply(response)
       }
@@ -79,7 +118,16 @@ try {
       }
       if (pathname === '/api/notes/deidentification-confirm') {
         approvals += 1
-        return reply({ payload: req.postDataJSON().payload, receipt: 'synthetic-approved' })
+        const { payload, detection_token, edits } = req.postDataJSON()
+        assert.equal(detection_token, 'synthetic-detected')
+        assert(edits.some(e => e.original === selectedPhrase && e.replacement === '[가상표현]'))
+        const points = Array.from(payload.text)
+        for (const edit of edits.toSorted((a, b) => b.start - a.start)) {
+          assert.equal(edit.path, 'text')
+          assert.equal(points.slice(edit.start, edit.end).join(''), edit.original)
+          points.splice(edit.start, edit.end - edit.start, edit.replacement)
+        }
+        return reply({ payload: { ...payload, text: points.join('') }, receipt: 'synthetic-approved' })
       }
       if (pathname === '/api/notes/drafts') {
         if (req.method() === 'POST') {
@@ -128,7 +176,7 @@ try {
       assert.equal(draftWrites.length, 0)
       assert.equal(await page.getByRole('article', { name: 'AI 요약 결과' }).count(), 0)
       assert.equal(await page.getByLabel('요약할 상담 내용', { exact: true }).inputValue(), '')
-      const memo = '가상 회기입니다. 친구와 만난 뒤 긴장이 조금 풀렸다고 이야기했습니다. 연락처는 010-0000-3141입니다.'
+      const memo = '가상 회기입니다. 😊 친구와 산책 후 긴장이 조금 풀렸다고 이야기했습니다. 연락처는 010-0000-3141입니다.'
       const input = page.getByLabel('요약할 상담 내용', { exact: true })
       const summarize = page.getByRole('button', { name: '요약하기', exact: true })
       const choice = page.getByRole('dialog', { name: '이름 사전을 사용할까요?', exact: true })
@@ -173,21 +221,48 @@ try {
       await detection.getByRole('button', { name: '개인정보 찾기', exact: true }).click()
       const review = page.getByRole('dialog', { name: 'AI로 보내기 전 내용 확인' })
       await review.waitFor()
-      assert.equal(await review.getByRole('tab', { name: '가린 내용' }).getAttribute('aria-selected'), 'true')
-      assert.ok(!(await review.getByLabel('AI에 전달할 내용').innerText()).includes('010-0000-3141'))
-      assert.equal(await review.getByRole('button', { name: /가린 항목/ }).getAttribute('aria-expanded'), 'false')
+      const original = review.getByLabel('원문', { exact: true })
+      assert.equal(await review.getByRole('tab', { name: '원문' }).getAttribute('aria-selected'), 'true')
+      assert(await review.getByRole('button', { name: '항목 추가하기' }).isVisible())
+      const sourceBox = await review.getByRole('region', { name: '상담 자료' }).boundingBox()
+      const editBox = await review.getByRole('region', { name: '비식별화 항목 검토' }).boundingBox()
+      assert(scenario.retryLogin ? sourceBox.y < editBox.y : sourceBox.x < editBox.x)
+      if (process.env.SCREENSHOT_DIR) {
+        fs.mkdirSync(process.env.SCREENSHOT_DIR, { recursive: true })
+        await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, scenario.retryLogin ? 'privacy-original-mobile.png' : 'privacy-original-desktop.png') })
+      }
+      assert((await original.innerText()).includes('010-0000-3141'))
       assert.equal(await review.getByRole('button', { name: '요약하기' }).isEnabled(), false)
       assert.equal(approvals, 0)
       assert.equal(generationRequests, 0)
       assert.equal(draftWrites.length, 0)
-      if (scenario.retryLogin) {
-        await review.getByRole('button', { name: /가린 항목/ }).click()
-        await review.getByRole('button', { name: '항목 추가하기' }).click()
-        await review.getByLabel('원문 표현').fill('긴장')
-        await review.getByLabel('대체 표현').fill('가상표현')
-        await review.getByRole('button', { name: '추가하기', exact: true }).click()
-        assert.ok((await review.getByLabel('AI에 전달할 내용').innerText()).includes('[가상표현]'))
+      await selectOriginalPhrase(page, original, scenario.retryLogin)
+      const expression = review.getByLabel('원문 표현')
+      await expression.waitFor()
+      assert.equal(await expression.inputValue(), selectedPhrase)
+      if (scenario.slowSettings && !scenario.retryLogin) {
+        await review.getByRole('button', { name: '닫기', exact: true }).click()
+        assert.equal(approvals, 0)
+        assert.equal(generationRequests, 0)
+        assert.equal(draftWrites.length, 0)
+        assert.equal(await input.inputValue(), memo)
+        await summarize.click()
+        await choice.getByRole('button', { name: '건너뛰기' }).click()
+        await detection.getByRole('checkbox').check()
+        await detection.getByRole('button', { name: '개인정보 찾기', exact: true }).click()
+        await selectOriginalPhrase(page, original, false)
+        await expression.waitFor()
       }
+      await review.getByRole('checkbox').check()
+      assert.equal(await review.getByRole('button', { name: '요약하기' }).isEnabled(), false)
+      await review.getByLabel('대체 표현').fill('가상표현')
+      await review.getByRole('button', { name: '추가하기', exact: true }).click()
+      assert.equal(await review.getByRole('checkbox').isChecked(), false)
+      await review.getByRole('tab', { name: 'AI 전달용' }).click()
+      const masked = await review.getByLabel('AI에 전달할 내용').innerText()
+      assert(!masked.includes('010-0000-3141'))
+      assert(!masked.includes(selectedPhrase))
+      assert(masked.includes('[가상표현]'))
       await review.getByRole('checkbox').check()
       await review.getByRole('button', { name: '요약하기', exact: true }).click()
       const result = page.getByRole('article', { name: 'AI 요약 결과' })
