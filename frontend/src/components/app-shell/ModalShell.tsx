@@ -12,6 +12,7 @@ export default function ModalShell({
   children,
   footer,
   width = 660,
+  expanded = false,
   ariaLabel,
   closeDisabled = false,
 }: {
@@ -21,6 +22,7 @@ export default function ModalShell({
   children: ReactNode
   footer?: ReactNode
   width?: number
+  expanded?: boolean
   ariaLabel: string
   closeDisabled?: boolean
 }) {
@@ -33,13 +35,13 @@ export default function ModalShell({
   }, [onClose, closeDisabled])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-grey-900/45 px-4 py-6" role="presentation">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center bg-grey-900/45 ${expanded ? 'p-2 sm:p-4 xl:p-6' : 'px-4 py-6'}`} role="presentation">
       <section
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
-        className="rm-modal max-h-[92vh] w-full overflow-hidden"
-        style={{ maxWidth: width }}
+        className={`rm-modal w-full overflow-hidden ${expanded ? 'h-full !gap-3 !p-3 sm:!gap-4 sm:!p-5 lg:!p-6' : 'max-h-[92vh]'}`}
+        style={expanded ? undefined : { maxWidth: width }}
       >
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
