@@ -100,7 +100,7 @@ import {
   type GroundingReviewItem,
 } from '../lib/groundingReview'
 import { runDraftGeneration } from '../lib/draftGeneration'
-import { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } from '../lib/supervisionDraft'
+import { normalizeSupervisionForm, applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } from '../lib/supervisionDraft'
 import { riskInformation, savedSummaryEvidence, summarySectionEvidence } from '../lib/summaryEvidence'
 import SourceMemoryCues from '../components/quick-summary/SourceMemoryCues'
 import { formatRelationalSupervisionMemo } from '../lib/relationalInsights'
@@ -391,7 +391,7 @@ export default function SessionDraftPage({
   const [isGeneratingFinalDocument, setIsGeneratingFinalDocument] = useState(false)
   const [finalDocumentError, setFinalDocumentError] = useState<string | null>(null)
   const [supervisionReportDraft, setSupervisionReportDraft] = useState<SupervisionReportDraft | null>(
-    localGroundingDemoView === 'supervision' ? groundingDemoSupervisionReport : null,
+    localGroundingDemoView === 'supervision' && groundingDemoSupervisionReport ? normalizeSupervisionForm(groundingDemoSupervisionReport) : null,
   )
   const [editingSupervisionBlockId, setEditingSupervisionBlockId] = useState<string | null>(null)
   const [editingSupervisionText, setEditingSupervisionText] = useState('')
@@ -1320,12 +1320,17 @@ export default function SessionDraftPage({
       const fallback: DocumentCapabilitiesResponse = {
         docx: { available: true },
         pdf: { available: false, reason: '문서 내보내기 지원 상태를 확인하지 못했습니다.' },
-        hwpx: { available: false, reason: '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.' },
+        hwpx: { available: false, reason: '한글 내보내기 지원 여부를 확인하지 못했습니다.' },
       }
       setDocumentCapabilities(fallback)
       return fallback
     }
   }
+
+  useEffect(() => {
+    // Restored final documents also need capabilities before HWPX/PDF download.
+    if (currentScreen === 'final_document' && !documentCapabilities) void refreshDocumentCapabilities()
+  }, [currentScreen, documentCapabilities])
 
   const openFinalDocument = async (documentType: FinalDocumentType = finalDocumentType) => {
     if (!result) return
@@ -1377,7 +1382,7 @@ export default function SessionDraftPage({
           transcript_mode: form.transcript_text.trim() ? 'full' : 'summary',
         })
 
-        setSupervisionReportDraft(report)
+        setSupervisionReportDraft(normalizeSupervisionForm(report))
       } catch (requestError) {
         setFinalDocumentError(requestError instanceof Error ? requestError.message : '수퍼비전 보고서 생성에 실패했습니다.')
       } finally {
@@ -1608,7 +1613,7 @@ export default function SessionDraftPage({
       setVisibleSectionIds(new Set(draft.visible_section_ids))
       setFinalDocumentType(finalType)
       setFinalDocumentSections((finalSections as FinalDocumentSection[]).map((section) => ({ ...section, groundingItems: [] })))
-      setSupervisionReportDraft((report as SupervisionReportDraft | null) || null)
+      setSupervisionReportDraft(report ? normalizeSupervisionForm(report as SupervisionReportDraft) : null)
       setStoredNoteId(record && !statusUnavailable ? noteId : null)
       setStoredNote(record)
       setConfirmedFingerprint(confirmedSections ? sectionFingerprint(confirmedSections) : null)
@@ -1720,7 +1725,7 @@ export default function SessionDraftPage({
 
       const { blob, filename } = await downloadDocumentExport(request)
       triggerBlobDownload(blob, filename)
-      setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : 'Word'} 다운로드를 시작했습니다.`)
+      setDocumentExportStatus(`${format === 'pdf' ? 'PDF' : format === 'hwpx' ? '한글 (HWPX)' : 'Word'} 다운로드를 시작했습니다.`)
     } catch (err) {
       const message = err instanceof Error ? err.message : '문서 내보내기 중 오류가 발생했습니다.'
       setDocumentExportError(message)
@@ -2814,6 +2819,26 @@ function SupervisionReportSectionView({
     )
   }
 
+  const maximum = section.id === 'C-1' && section.contentBlocks.some(block => block.id === 'C-1.table')
+    ? section.contentBlocks.find(block => block.id === 'C-1.maximum') : undefined
+  const renderBlock = (block: SupervisionContentBlock, preamble?: ReactNode): ReactNode => (
+    <SupervisionContentBlockView
+      key={block.id}
+      block={block}
+      preamble={preamble}
+      editing={editingBlockId === block.id}
+      editingHtml={editingHtml}
+      editingText={editingText}
+      evidenceIndex={evidenceIndex}
+      evidenceOpen={expandedEvidenceId === block.id}
+      onCellChange={onCellChange}
+      onBeginEdit={onBeginEdit}
+      onChangeEditingText={onChangeEditingText}
+      onCommitEdit={onCommitEdit}
+      onToggleEvidence={() => onToggleEvidence(expandedEvidenceId === block.id ? null : block.id)}
+    />
+  )
+
   return (
     <section className="py-4">
       <h3 className="text-[15px] font-extrabold text-slate-950">{section.title}</h3>
@@ -2828,21 +2853,9 @@ function SupervisionReportSectionView({
       )}
 
       <div className="mt-3 space-y-3">
-        {section.contentBlocks.map((block) => (
-          <SupervisionContentBlockView
-            key={block.id}
-            block={block}
-            editing={editingBlockId === block.id}
-            editingHtml={editingHtml}
-            editingText={editingText}
-            evidenceIndex={evidenceIndex}
-            evidenceOpen={expandedEvidenceId === block.id}
-            onCellChange={onCellChange}
-            onBeginEdit={onBeginEdit}
-            onChangeEditingText={onChangeEditingText}
-            onCommitEdit={onCommitEdit}
-            onToggleEvidence={() => onToggleEvidence(expandedEvidenceId === block.id ? null : block.id)}
-          />
+        {section.contentBlocks.filter(block => block !== maximum).map(block => renderBlock(
+          block,
+          block.id === 'C-1.table' && maximum ? renderBlock({ ...maximum, label: undefined }) : undefined,
         ))}
       </div>
     </section>
@@ -2851,6 +2864,7 @@ function SupervisionReportSectionView({
 
 function SupervisionContentBlockView({
   block,
+  preamble,
   editing,
   editingHtml,
   editingText,
@@ -2863,6 +2877,7 @@ function SupervisionContentBlockView({
   onToggleEvidence,
 }: {
   block: SupervisionContentBlock
+  preamble?: ReactNode
   editing: boolean
   editingHtml: string | null
   editingText: string
@@ -2881,7 +2896,7 @@ function SupervisionContentBlockView({
       </div>}
 
       {block.type === 'table' ? (
-        <SupervisionTable block={block} onCellChange={onCellChange} />
+        <SupervisionTable block={block} onCellChange={onCellChange} preamble={preamble} />
       ) : editing && isFormattableSupervisionBlock(block) ? (
         <RichTextField
           autoFocus
@@ -2924,8 +2939,8 @@ function SupervisionContentBlockView({
   )
 }
 
-const emptyProgressRow: Record<string, string> = { '회기': '', '상담일': '', '소요시간': '', '회기 주제': '', '취소·지각·결석': '', '이전 수퍼비전': '' }
-const progressWidths: Record<string, string> = { '회기': '7%', '상담일': '14%', '소요시간': '10%', '회기 주제': '43%', '취소·지각·결석': '13%', '이전 수퍼비전': '13%' }
+const emptyProgressRow: Record<string, string> = { '날짜(소요시간)': '', '회기 주제': '' }
+const progressWidths: Record<string, string> = { '날짜(소요시간)': '36%', '회기 주제': '64%' }
 type ChangeSupervisionCell = (blockId: string, row: number, column: string, value: string) => void
 
 function supervisionTableHeaders(block: SupervisionContentBlock) {
@@ -2935,14 +2950,19 @@ function supervisionTableHeaders(block: SupervisionContentBlock) {
   return [...new Set([...formColumns, ...stored])]
 }
 
-function SupervisionTable({ block, onCellChange }: { block: SupervisionContentBlock; onCellChange: ChangeSupervisionCell }) {
+function SupervisionTable({ block, onCellChange, preamble }: { block: SupervisionContentBlock; onCellChange: ChangeSupervisionCell; preamble?: ReactNode }) {
   const rows = block.rows?.length ? block.rows : [emptyProgressRow]
   const headers = supervisionTableHeaders(block)
   return (
     <div className="overflow-x-auto border border-slate-400">
-      <table aria-label={block.label || '회기 진행표'} className="w-full min-w-[680px] table-fixed border-collapse text-left text-[12px] font-semibold">
+      <table aria-label={block.label || '회기 진행표'} className="w-full min-w-[440px] table-fixed border-collapse text-left text-[12px] font-semibold">
         <colgroup>{headers.map(header => <col key={header} style={{ width: progressWidths[header] }} />)}</colgroup>
-        <thead className="bg-slate-100"><tr>{headers.map(header => (
+        <thead className="bg-slate-100">
+          {preamble && <tr>
+            <th className="border border-slate-400 px-2 py-2" scope="row">최대 상담 가능 회기 수</th>
+            <td className="border border-slate-400 bg-white" colSpan={headers.length - 1}>{preamble}</td>
+          </tr>}
+          <tr>{headers.map(header => (
           <th key={header} scope="col" className="break-keep border border-slate-400 px-2 py-2">{header}</th>
         ))}</tr></thead>
         <tbody>{rows.map((row, index) => (
@@ -4139,7 +4159,7 @@ function capabilityReasonToKorean(reason?: string | null): string {
     return '이 서버에는 PDF 생성을 위한 WeasyPrint 네이티브 런타임이 없어 PDF 다운로드를 사용할 수 없습니다.'
   }
   if (reason.includes('HWPX')) {
-    return '검증된 HWPX 템플릿이 아직 설정되지 않았습니다.'
+    return '한글 내보내기 지원 여부를 확인하지 못했습니다.'
   }
   return reason
 }

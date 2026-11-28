@@ -2,6 +2,16 @@
 
 These instructions apply to every coding agent working in this repository.
 
+## HWP and HWPX validation
+
+- Do not use Computer Use or any desktop UI automation during development or document validation unless the user explicitly requests it for that task. The user needs to keep using the computer; do not activate windows, send keys, move the pointer, or change focus.
+- Prefer background file-format checks, content and layout assertions, offline rendering, and headless browser tests. Headless tests must use a separate profile and must not attach to the user's browser. Report Polaris visual compatibility as unverified when it cannot be checked without desktop interaction.
+- Use **Polaris Office** for opening, editing, previewing, and validating Korean HWP/HWPX files. This is the user's required document application.
+- Do not launch Hancom Hangul, Hwp.exe, or Hancom Office for this work, even if an executable or installation entry exists. Do not assume it is licensed or available.
+- Check the exported file in Polaris Office when application-level validation is needed. If Polaris cannot be used, report the specific blocker instead of switching to Hancom or repeatedly asking which application to use.
+- Preserve documents already open in Polaris; use a separate tab or window for synthetic validation files.
+
+
 ## Developer-facing language
 
 - Write developer-facing documentation, PR titles/descriptions, issue titles/descriptions, and commit messages in natural technical English.

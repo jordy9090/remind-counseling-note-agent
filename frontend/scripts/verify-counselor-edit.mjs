@@ -16,7 +16,7 @@ const transpiled = ts.transpileModule(source, {
 })
 fs.writeFileSync(outputPath, transpiled.outputText, 'utf8')
 
-const { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels } = await import(pathToFileURL(outputPath).href)
+const { applyCounselorEditsToSummary, transcriptLineSpeaker, transcriptTurnLabels, normalizeSupervisionForm } = await import(pathToFileURL(outputPath).href)
 const section = (text, sourceRefs) => ({
   text,
   evidence_type: 'mixed',
@@ -69,13 +69,13 @@ const tableSource = pageAst.statements.filter(node => (ts.isFunctionDeclaration(
   .map(node => node.getText(pageAst)).join('\n')
 const tableJs = ts.transpileModule(tableSource, {compilerOptions: {target: ts.ScriptTarget.ES2020}}).outputText
 const exportSections = new Function('hasRichFormatting', tableJs + ';return buildSupervisionExportSections')(() => false)
-const blocks = exportSections({sections: [{id: 'C-1', title: '회기 진행표', level: 2, contentBlocks: [
+const blocks = exportSections(normalizeSupervisionForm({sections: [{id: 'C-1', title: '회기 진행표', level: 2, contentBlocks: [
   {id: 'memo', type: 'paragraph', text: 'Synthetic text', rows: null},
   {id: 'C-1.table', type: 'table', rows: [{'이전 수퍼비전': 'memo', '취소·지각·결석': '', '회기 주제': 'first\nsecond', '회기': '1회기', '추가 열': 'retained'}]},
-]}]})[0].content_blocks
+]}]}))[0].content_blocks
 assert(Array.isArray(blocks[0].rows) && blocks[0].rows.length === 0, 'nullable rows export as an empty array')
-assert(Object.keys(blocks[1].rows[0]).join('|') === '회기|상담일|소요시간|회기 주제|취소·지각·결석|이전 수퍼비전|추가 열', 'stored progress rows must use form order')
-assert(blocks[1].rows[0]['회기 주제'] === 'first\nsecond' && blocks[1].rows[0]['추가 열'] === 'retained', 'preserve multiline and additional cells')
+assert(Object.keys(blocks[1].rows[0]).join('|') === '날짜(소요시간)|회기 주제', 'stored progress rows must use form order')
+assert(blocks[1].rows[0]['회기 주제'] === 'first\nsecond\nmemo\n추가 열: retained', 'preserve multiline and additional cells')
 const builder = pageAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'buildFinalDocumentSections')
 assert(builder, 'final document builder must exist')
 const builderJs = ts.transpileModule(builder.getText(pageAst), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText

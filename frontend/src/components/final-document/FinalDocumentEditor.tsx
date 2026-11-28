@@ -92,6 +92,7 @@ export default function FinalDocumentEditor({
   const [openPalette, setOpenPalette] = useState<PaletteKind | null>(null)
   const [showHint, setShowHint] = useState(false)
   const pdfAvailable = Boolean(capabilities && capabilities.pdf.available !== false)
+  const hwpxAvailable = Boolean(capabilities?.hwpx.available)
 
   const fieldOf = (node: Node | null): HTMLElement | null => {
     const element = node instanceof Element ? node : node?.parentElement
@@ -182,6 +183,15 @@ export default function FinalDocumentEditor({
             {editedAt && <span className="text-sm text-grey-400">{formatEditedDate(editedAt)}</span>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onDownload('hwpx')}
+              disabled={isExporting || !hwpxAvailable}
+              title={hwpxAvailable ? '한글에서 편집할 수 있는 HWPX 파일' : '한글 내보내기 지원 여부를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.'}
+              className="inline-flex h-11 items-center gap-1.5 rounded-[10px] border border-grey-200 bg-white px-4 text-sm font-bold text-grey-700 hover:bg-grey-100 disabled:opacity-50"
+            >
+              한글 (HWPX)
+            </button>
             <button
               type="button"
               onClick={() => onDownload('docx')}

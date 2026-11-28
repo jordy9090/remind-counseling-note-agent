@@ -40,6 +40,8 @@ class SupervisionFormTests(unittest.TestCase):
         report = run_supervision_report_pipeline(request_for())
         self.assertEqual(report.title, "개인상담(공개상담) 사례 수퍼비전 보고서")
         self.assertEqual([section.id for section in report.sections], EXPECTED_SECTION_IDS)
+        progress = next(section for section in report.sections if section.id == "C-1").contentBlocks[1]
+        self.assertNotIn(PLACEHOLDER, progress.rows[-1]["날짜(소요시간)"])
 
     def test_missing_information_is_not_invented(self):
         report = run_supervision_report_pipeline(request_for())
@@ -85,7 +87,7 @@ class SupervisionFormTests(unittest.TestCase):
         sections = {section.id: section for section in report.sections}
         progress_blocks = sections["C-1"].contentBlocks
         self.assertEqual(progress_blocks[0].text, "12회기")
-        self.assertEqual(list(progress_blocks[1].rows[0]), ["회기", "상담일", "소요시간", "회기 주제", "취소·지각·결석", "이전 수퍼비전"])
+        self.assertEqual(list(progress_blocks[1].rows[0]), ["날짜(소요시간)", "회기 주제"])
         transcript = sections["C-2"].contentBlocks[0]
         self.assertEqual(transcript.type, "transcript")
         self.assertEqual(len(transcript.speakerTurns), 2)
