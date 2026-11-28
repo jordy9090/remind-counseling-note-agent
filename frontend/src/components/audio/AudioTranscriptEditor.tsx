@@ -2,14 +2,18 @@ import { Play, RefreshCcw } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { reviewAudioPrivacy } from '../../api/client'
 import {
+  assignAudioSegmentRole,
   buildNonverbalNotes,
   buildTranscriptText,
   formatTimestamp,
   getAudioSeekTarget,
   getNotableAcousticObservations,
+  getNextUnassignedAudioSegmentId,
   getSegmentSpeakerKey,
   getSpeakerRoleLabel,
+  isAudioSpeakerUnassigned,
   mergeAudioSegments,
+  selectAudioSegmentIds,
   splitAudioSegment,
   type SpeakerRole,
   type SpeakerRoleMap,
@@ -78,7 +82,15 @@ export function AudioTranscriptEditor({
   const [privacyBusy, setPrivacyBusy] = useState(false)
   const [privacyError, setPrivacyError] = useState('')
   const [editError, setEditError] = useState('')
+  const [selection, setSelection] = useState<{ key: string; ids: number[]; anchorId: number | null }>({ key: '', ids: [], anchorId: null })
+  const segmentRefs = useRef(new Map<number, HTMLDivElement>())
+  const navigation = useRef<{ key: string; id: number | null }>({ key: '', id: null })
   const segments = material.segments || []
+  // Splitting, merging, or switching materials starts a new selection scope.
+  const selectionKey = JSON.stringify([material.id, segments.map(segment => segment.id)])
+  const selectedIds = selection.key === selectionKey ? selection.ids : []
+  const selectedIdSet = new Set(selectedIds)
+  const unassignedCount = segments.filter(isAudioSpeakerUnassigned).length
   const hasIncompleteAudio = Boolean(material.failedRanges?.length)
   const isTranscribing = material.status === 'transcribing'
   const canEditTranscript = material.status === 'transcribed' && !hasIncompleteAudio
@@ -119,6 +131,37 @@ export function AudioTranscriptEditor({
     if (!audioRef.current || seekTarget === null) return
     audioRef.current.currentTime = seekTarget
     await audioRef.current.play()
+  }
+
+  const selectSegment = (id: number, checked: boolean, shiftKey: boolean) => {
+    if (!canEditTranscript) return
+    setSelection(current => {
+      const ids = current.key === selectionKey ? current.ids : []
+      const anchorId = current.key === selectionKey ? current.anchorId : null
+      return {
+        key: selectionKey,
+        ids: selectAudioSegmentIds(segments, ids, id, checked, shiftKey ? anchorId : null),
+        anchorId: shiftKey && anchorId !== null ? anchorId : id,
+      }
+    })
+  }
+
+  const assignSelectedRole = (role: Exclude<SpeakerRole, 'unassigned'>) => {
+    if (!canEditTranscript) return
+    const next = assignAudioSegmentRole(segments, selectedIds, role, speakerRoleMap)
+    if (!next.speakerKey) return
+    onUpdateSpeakerRole(next.speakerKey, role)
+    onUpdateSegments(next.segments)
+    setSelection({ key: selectionKey, ids: [], anchorId: null })
+  }
+
+  const goToNextUnassigned = () => {
+    const id = getNextUnassignedAudioSegmentId(segments, navigation.current.key === selectionKey ? navigation.current.id : null)
+    if (id === null) return
+    navigation.current = { key: selectionKey, id }
+    const row = segmentRefs.current.get(id)
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    row?.focus({ preventScroll: true })
   }
 
   return (
@@ -202,6 +245,32 @@ export function AudioTranscriptEditor({
       <p className="text-xs text-slate-600">발화를 나누려면 본문에 커서를 놓고 원음에서 확인한 분리 시각을 입력하세요. 병합은 같은 화자의 인접 발화에 사용할 수 있습니다.</p>
       {editError && <p role="alert" className="text-xs text-rose-700">{editError}</p>}
 
+      {segments.length > 0 && (
+        <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <p role="status" className="text-sm font-semibold text-slate-800">화자 미지정 {unassignedCount}줄</p>
+            <button type="button" disabled={unassignedCount === 0} onClick={goToNextUnassigned}
+              className="rounded border border-blue-300 bg-white px-3 py-2 text-sm text-blue-800 disabled:opacity-40">
+              다음 미지정 줄로
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={selectedIds.length === segments.length} disabled={!canEditTranscript}
+                ref={input => { if (input) input.indeterminate = selectedIds.length > 0 && selectedIds.length < segments.length }}
+                onChange={event => setSelection({ key: selectionKey, ids: event.target.checked ? segments.map(segment => segment.id) : [], anchorId: null })} />
+              전체 선택
+            </label>
+            <span className="text-sm text-slate-600">{selectedIds.length}줄 선택</span>
+            <button type="button" disabled={!canEditTranscript || selectedIds.length === 0} onClick={() => assignSelectedRole('counselor')}
+              className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">상담자로 지정</button>
+            <button type="button" disabled={!canEditTranscript || selectedIds.length === 0} onClick={() => assignSelectedRole('client')}
+              className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">내담자로 지정</button>
+          </div>
+          <p className="text-xs text-slate-600">체크박스로 줄을 고르세요. Shift 키를 누른 채 다른 줄의 체크박스를 클릭하면 그 사이의 줄도 선택하거나 해제합니다.</p>
+        </div>
+      )}
+
       {speakerKeys.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
           {speakerKeys.map((speakerKey) => (
@@ -228,11 +297,17 @@ export function AudioTranscriptEditor({
             const observations = getNotableAcousticObservations(segment)
             const seekTarget = getAudioSeekTarget(segment)
             return (
-              <div key={segment.id} className="rounded-md border border-slate-200 bg-white p-3" style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 220px' }}>
+              <div key={segment.id} tabIndex={-1} aria-label={`${index + 1}번째 발화`}
+                ref={row => { if (row) segmentRefs.current.set(segment.id, row); else segmentRefs.current.delete(segment.id) }}
+                onFocus={() => { navigation.current = { key: selectionKey, id: segment.id } }}
+                className={`rounded-md border p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 ${selectedIdSet.has(segment.id) ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-white'}`}
+                style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 220px' }}>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold text-slate-500">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                    <input type="checkbox" aria-label={`${index + 1}번째 발화 선택`} checked={selectedIdSet.has(segment.id)} disabled={!canEditTranscript}
+                      onChange={event => selectSegment(segment.id, event.target.checked, (event.nativeEvent as MouseEvent).shiftKey === true)} />
                     {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
-                  </span>
+                  </label>
                   <button
                     type="button"
                     onClick={() => void playSegment(segment)}

@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
+import * as jsxRuntime from 'react/jsx-runtime'
 
 const sourcePath = path.resolve('src/lib/audioTranscriptWorkflow.ts')
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'remind-audio-transcript-workflow-'))
@@ -17,17 +18,22 @@ const transpiled = ts.transpileModule(source, {
 })
 fs.writeFileSync(outputPath, transpiled.outputText, 'utf8')
 
+const workflow = await import(pathToFileURL(outputPath).href)
 const {
+  assignAudioSegmentRole,
   buildNonverbalNotes,
   buildTranscriptText,
   formatTimestamp,
   getAudioSeekTarget,
   getNotableAcousticObservations,
   getSegmentSpeakerKey,
+  getNextUnassignedAudioSegmentId,
+  isAudioSpeakerUnassigned,
   replaceAppliedAudioBlock,
   mergeAudioSegments,
   splitAudioSegment,
-} = await import(pathToFileURL(outputPath).href)
+  selectAudioSegmentIds,
+} = workflow
 
 function assert(condition, message) {
   if (!condition) {
@@ -83,6 +89,49 @@ assert(getNotableAcousticObservations(segments[1]).includes('빠른 말속도'),
 const nonverbal = buildNonverbalNotes(segments, speakerRoleMap)
 assert(nonverbal.includes('1.3초 멈춤 후 발화'), 'pause observation must be included in nonverbal notes')
 assert(nonverbal.includes('낮은 음량'), 'low volume observation must be included in nonverbal notes')
+
+// Nonconsecutive IDs ensure selection follows displayed order, including after edits.
+const liveFixture = Array.from({ length: 40 }, (_, index) => ({
+  id: index * 3 + 7, segment_id: `synthetic-live-${index}`, start: index * 10, end: index * 10 + 9,
+  speaker: null, text: `합성 실시간 발화 ${index + 1}`, volume_level: 'low',
+  review_flags: ['speaker_unassigned', 'speaker_reference_unmatched', 'live_chunk_boundary', 'low_confidence'],
+}))
+const liveBefore = JSON.stringify(liveFixture)
+assert(liveFixture.filter(isAudioSpeakerUnassigned).length === 40, 'all 40 live rows need speaker assignment')
+for (const speaker of [null, undefined, '', ' ', 'unknown']) {
+  assert(isAudioSpeakerUnassigned({ speaker }), 'missing and unknown speakers need review without flags')
+}
+for (const flag of ['speaker_unassigned', 'speaker_reference_unmatched']) {
+  assert(isAudioSpeakerUnassigned({ speaker: 'chunk_1_A', review_flags: [flag] }), 'flagged chunk speakers still need review')
+}
+assert(!isAudioSpeakerUnassigned({ speaker: 'speaker_1', review_flags: ['low_confidence'] }), 'unrelated warnings do not count as unassigned speakers')
+const allAssigned = assignAudioSegmentRole(liveFixture, liveFixture.map(segment => segment.id), 'counselor')
+const assignedRoles = { [allAssigned.speakerKey]: 'counselor' }
+assert(allAssigned.segments.every(segment => !isAudioSpeakerUnassigned(segment)), 'assign all resolves every missing speaker')
+assert((buildTranscriptText(allAssigned.segments, assignedRoles).match(/상담자:/g) || []).length === 40, 'all 40 rows receive the counselor role')
+assert(allAssigned.segments.every(segment => segment.review_flags.join(',') === 'live_chunk_boundary,low_confidence'), 'assignment preserves unrelated review warnings')
+assert(JSON.stringify(liveFixture) === liveBefore, 'bulk assignment must not mutate the original ASR fixture')
+const rangeIds = selectAudioSegmentIds(liveFixture, [liveFixture[9].id], liveFixture[19].id, true, liveFixture[9].id)
+assert(rangeIds.length === 11, 'Shift+click selects the inclusive forward range')
+const reverseIds = selectAudioSegmentIds(liveFixture, [liveFixture[19].id], liveFixture[9].id, true, liveFixture[19].id)
+assert(JSON.stringify(reverseIds) === JSON.stringify(rangeIds), 'backward ranges use the same display order')
+assert(selectAudioSegmentIds(liveFixture, rangeIds, liveFixture[19].id, false, liveFixture[9].id).length === 0, 'Shift+click can deselect a range')
+assert(selectAudioSegmentIds(liveFixture, [], liveFixture[9].id, true, -1).length === 1, 'a missing anchor selects only the clicked row')
+const rangeAssigned = assignAudioSegmentRole(allAssigned.segments, rangeIds, 'client', assignedRoles)
+assert(rangeAssigned.segments.filter(segment => segment.speaker === rangeAssigned.speakerKey).length === 11, 'only the selected range gets the client role')
+assert(rangeAssigned.segments[0] === allAssigned.segments[0], 'unselected rows retain identity and contents')
+const uploadedRoles = { speaker_1: 'client', speaker_2: 'counselor' }
+const uploadedAssignment = assignAudioSegmentRole(segments, [segments[0].id], 'counselor', uploadedRoles)
+assert(uploadedAssignment.speakerKey === 'speaker_2' && uploadedAssignment.segments[2] === segments[2], 'uploaded audio reuses the mapped role without reassigning other rows sharing the old speaker')
+const collision = assignAudioSegmentRole([{ ...liveFixture[0], speaker: 'manual_client_1' }], [liveFixture[0].id], 'client', { manual_client: 'counselor' })
+assert(collision.speakerKey === 'manual_client_2', 'manual keys must not collide with existing speakers or role mappings')
+assert(assignAudioSegmentRole(liveFixture, [], 'client').segments === liveFixture, 'empty selection is a no-op')
+assert(assignAudioSegmentRole(liveFixture, [-1], 'client').speakerKey === null, 'removed row IDs cannot cause assignment')
+const partlyAssigned = assignAudioSegmentRole(liveFixture, rangeIds, 'client').segments
+assert(getNextUnassignedAudioSegmentId(partlyAssigned, liveFixture[8].id) === liveFixture[20].id, 'navigation skips assigned rows')
+assert(getNextUnassignedAudioSegmentId(partlyAssigned, liveFixture[39].id) === liveFixture[0].id, 'navigation wraps to the first unresolved row')
+assert(getNextUnassignedAudioSegmentId(allAssigned.segments, null) === null, 'fully assigned transcripts have no navigation target')
+assert(getNextUnassignedAudioSegmentId([], null) === null, 'empty transcripts have no navigation target')
 
 const reapplied = replaceAppliedAudioBlock('상담사 메모\n\n이전 축어록', '이전 축어록', '수정된 축어록')
 assert(reapplied === '상담사 메모\n\n수정된 축어록', 're-apply must replace the previous audio block')
@@ -348,11 +397,13 @@ let uploadCalls = []
 const consentJs = ts.transpileModule(Object.entries(consentCallbacks).map(([name, body]) => `const ${name} = ${body}`).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText
-const consentActions = () => new Function('pendingAudioFiles', 'setPendingAudioFiles', 'onUploadFiles', 'AUDIO_EXTENSION', 'toFileList',
+const consentActions = (liveActive = false) => new Function('pendingAudioFiles', 'setPendingAudioFiles', 'onUploadFiles', 'AUDIO_EXTENSION', 'toFileList', 'liveActive',
   `${consentJs}; return {upload, resolveAudioConsent}`)(pendingFiles, value => { pendingFiles = value },
-  (files, approved) => uploadCalls.push({ files, approved }), /\.(mp3|m4a|wav)$/i, files => files)
+  (files, approved) => uploadCalls.push({ files, approved }), /\.(mp3|m4a|wav)$/i, files => files, liveActive)
 const syntheticAudio = { name: 'synthetic.wav' }
 const syntheticText = { name: 'synthetic.txt' }
+consentActions(true).upload([syntheticAudio, syntheticText])
+assert(uploadCalls.length === 0 && pendingFiles === null, 'active live capture must block overlapping file selection and upload')
 consentActions().upload([syntheticAudio])
 assert(uploadCalls.length === 0 && pendingFiles[0] === syntheticAudio, 'selection must wait for explicit consent')
 consentActions().resolveAudioConsent(false)
@@ -378,6 +429,150 @@ const temporarilyAbsent = markDirty({ ...roleMaterial, segments: [{ ...roleMater
 const restoredSpeaker = markDirty({ ...temporarilyAbsent, segments: roleMaterial.segments })
 assert(temporarilyAbsent.speakerRoleMap.speaker_1 === 'client', 'temporary absence must preserve the counselor-assigned speaker role')
 assert(restoredSpeaker.transcriptText.includes('내담자: 합성 발화'), 'restoring a speaker must restore its existing role automatically')
+
+// Render the actual editor with persistent hook state and invoke its JSX handlers.
+// Parent updates use the real upload helper so role and segment updates compose.
+const editorJs = ts.transpileModule(editorSource, { compilerOptions: {
+  target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
+} }).outputText
+function editorHarness(initialMaterial) {
+  let currentMaterial = initialMaterial, cursor = 0, tree, updates = 0
+  const hooks = [], rowActions = []
+  const react = {
+    useState(initial) {
+      const slot = cursor++
+      if (!(slot in hooks)) hooks[slot] = initial
+      return [hooks[slot], next => { hooks[slot] = typeof next === 'function' ? next(hooks[slot]) : next }]
+    },
+    useRef(initial) {
+      const slot = cursor++
+      return hooks[slot] ||= { current: initial }
+    },
+    useMemo: compute => compute(),
+  }
+  const imports = {
+    react, 'react/jsx-runtime': jsxRuntime, 'lucide-react': { Play: () => null, RefreshCcw: () => null },
+    '../../lib/audioTranscriptWorkflow': workflow,
+    '../../api/client': { reviewAudioPrivacy: () => { throw Error('Unexpected network call') } },
+  }
+  const exported = {}
+  new Function('require', 'exports', editorJs)(name => {
+    assert(name in imports, `unexpected editor import: ${name}`)
+    return imports[name]
+  }, exported)
+  const update = change => { updates++; currentMaterial = markDirty({ ...currentMaterial, ...change }) }
+  const props = {
+    applyMode: 'append', transcriptionAvailable: true, transcriptionReason: null,
+    onUpdateSegments: segments => update({ segments }),
+    onUpdateSpeakerRole: (key, role) => update({ speakerRoleMap: { ...currentMaterial.speakerRoleMap, [key]: role } }),
+    onUpdateSegmentText: (id, text) => update({ segments: currentMaterial.segments.map(segment => segment.id === id ? { ...segment, text } : segment) }),
+    onApply: () => {}, onApplyModeChange: () => {}, onExpectedSpeakersChange: () => {}, onTranscribe: () => {},
+  }
+  function nodes(node) {
+    if (!node || typeof node !== 'object') return []
+    if (Array.isArray(node)) return node.flatMap(item => nodes(item))
+    return [node, ...nodes(node.props?.children)]
+  }
+  function text(node) {
+    if (node == null || typeof node === 'boolean') return ''
+    if (typeof node !== 'object') return String(node)
+    if (Array.isArray(node)) return node.map(text).join('')
+    return text(node.props?.children)
+  }
+  const find = predicate => {
+    const node = nodes(tree).find(predicate)
+    assert(node, 'expected editor control is rendered')
+    return node
+  }
+  const label = value => find(node => node.props?.['aria-label'] === value)
+  const button = value => find(node => node.type === 'button' && text(node) === value)
+  function render() {
+    cursor = 0
+    tree = exported.AudioTranscriptEditor({ ...props, material: currentMaterial })
+    for (const node of nodes(tree)) {
+      if (typeof node.ref === 'function') node.ref({
+        scrollIntoView: () => rowActions.push(['scroll', node.props['aria-label']]),
+        focus: () => { rowActions.push(['focus', node.props['aria-label']]); node.props.onFocus?.() },
+      })
+    }
+  }
+  render()
+  return {
+    render, label, button, rowActions,
+    material: () => currentMaterial, updates: () => updates,
+    replace: material => { currentMaterial = material; render() },
+    includes: value => text(tree).includes(value),
+    selectAll(checked) {
+      const control = find(node => node.type === 'label' && text(node) === '전체 선택').props.children[0]
+      assert(!control.props.disabled, 'select all must be editable')
+      control.props.onChange({ target: { checked } }); render()
+    },
+    select(index, checked = true, shiftKey = false) {
+      const control = label(`${index + 1}번째 발화 선택`)
+      assert(!control.props.disabled, 'row selection must be editable')
+      control.props.onChange({ target: { checked }, nativeEvent: { shiftKey } }); render()
+    },
+    click(value) {
+      const control = button(value)
+      assert(!control.props.disabled, `${value} must be enabled`)
+      control.props.onClick(); render()
+    },
+  }
+}
+const syntheticMaterial = { id: 'synthetic-live', kind: 'audio', filename: 'synthetic-live.wav', status: 'transcribed',
+  warnings: [], appliedTargets: ['transcript_text'], segments: liveFixture, rawSegments: structuredClone(liveFixture), speakerRoleMap: {} }
+const editor = editorHarness(syntheticMaterial)
+assert(editor.includes('화자 미지정 40줄') && editor.button('상담자로 지정').props.disabled, 'initial UI counts all missing speakers and blocks empty assignment')
+editor.selectAll(true)
+assert(editor.includes('40줄 선택'), 'select all reaches all 40 checkboxes')
+editor.click('상담자로 지정')
+assert(editor.includes('화자 미지정 0줄') && editor.includes('0줄 선택'), 'assign all clears unresolved count and selection')
+assert(editor.button('다음 미지정 줄로').props.disabled, 'navigation disables once all speakers are assigned')
+assert((editor.material().transcriptText.match(/상담자:/g) || []).length === 40, 'parent receives all 40 assigned rows with their mapped role')
+assert(editor.material().dirtySinceApply && editor.material().appliedTargets.length === 0, 'bulk assignment requires reviewing and reapplying the edited transcript')
+assert(JSON.stringify(editor.material().rawSegments) === liveBefore, 'editor assignment preserves the ASR original')
+editor.select(9)
+editor.select(19, true, true)
+assert(editor.includes('11줄 선택'), 'actual Shift handler selects an inclusive range')
+editor.click('내담자로 지정')
+assert((editor.material().transcriptText.match(/내담자:/g) || []).length === 11, 'range assignment changes exactly 11 roles')
+assert((editor.material().transcriptText.match(/상담자:/g) || []).length === 29, 'range assignment preserves all other roles')
+editor.select(19)
+editor.select(9, true, true)
+editor.select(9, false, true)
+assert(editor.includes('0줄 선택'), 'backward Shift range deselection is wired to the editor')
+editor.selectAll(true)
+editor.selectAll(false)
+assert(editor.includes('0줄 선택'), 'select all can also clear selection')
+editor.replace(syntheticMaterial)
+editor.click('다음 미지정 줄로')
+editor.click('다음 미지정 줄로')
+assert(editor.rowActions.at(-1).join(':') === 'focus:2번째 발화', 'navigation scrolls and focuses successive unresolved rows')
+editor.label('40번째 발화').props.onFocus()
+editor.click('다음 미지정 줄로')
+assert(editor.rowActions.at(-1).join(':') === 'focus:1번째 발화', 'navigation wraps after the focused last row')
+editor.select(0)
+editor.replace({ ...syntheticMaterial, id: 'synthetic-upload', segments, speakerRoleMap })
+assert(editor.includes('0줄 선택'), 'switching materials clears selection even if IDs overlap')
+editor.select(0)
+editor.replace({ ...editor.material(), segments: splitAudioSegment(segments, 1, 3, 2) })
+assert(editor.includes('0줄 선택'), 'splitting a row resets stale selection')
+editor.replace({ ...syntheticMaterial, id: 'synthetic-upload', segments, speakerRoleMap })
+editor.label('1번 발화 화자').props.onChange({ target: { value: 'speaker_2' } })
+editor.render()
+assert(editor.material().segments[0].speaker === 'speaker_2' && editor.material().segments[2].speaker === 'speaker_1', 'existing single-row upload assignment still changes only that row')
+assert(editor.material().transcriptText.includes('상담자: 편집된 첫 발화'), 'single-row upload assignment preserves role-map behavior')
+const uploadKey = keyFor(editor.material(), editor.material().segments, editor.material().speakerRoleMap)
+editor.select(1)
+editor.click('내담자로 지정')
+assert(uploadKey !== keyFor(editor.material(), editor.material().segments, editor.material().speakerRoleMap), 'bulk upload edits invalidate the previous privacy review')
+for (const locked of [{ status: 'transcribing' }, { failedRanges: [{ start: 10, end: 20 }] }]) {
+  editor.replace({ ...syntheticMaterial, ...locked })
+  const before = editor.updates()
+  assert(editor.label('1번째 발화 선택').props.disabled && editor.button('내담자로 지정').props.disabled, 'incomplete audio disables bulk editing')
+  editor.button('내담자로 지정').props.onClick()
+  assert(editor.updates() === before, 'disabled transcript cannot be changed by the assignment handler')
+}
 
 fs.rmSync(outputDir, { recursive: true, force: true })
 console.log('audio transcript workflow verification passed')

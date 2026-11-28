@@ -28,6 +28,8 @@ import {
 import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor'
 import { AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../lib/audioConsent'
 import { clearHostedAudioCheckpoint } from '../lib/hostedAudio'
+import type { LiveRecordingResult } from '../lib/liveAudio'
+import { useUnsavedWork } from '../lib/unsavedWork'
 import { useAuthSession } from '../lib/authSession'
 import GroundingEvidenceReview, {
   EvidenceDrawer,
@@ -407,6 +409,8 @@ export default function SessionDraftPage({
   const [documentCapabilitiesError, setDocumentCapabilitiesError] = useState<string | null>(null)
   const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilitiesResponse | null>(null)
   const [audioCapabilitiesError, setAudioCapabilitiesError] = useState<string | null>(null)
+  const [liveAudioActive, setLiveAudioActive] = useState(false)
+  useUnsavedWork(liveAudioActive || materials.some(material => material.kind === 'audio' && material.dirtySinceApply === true))
   // 로그인 사용자 소유 케이스 목록(서버가 RLS로 필터) + 최근 문서. 홈/내담자/문서 화면 진입 시마다 다시 불러온다.
   const [caseList, setCaseList] = useState<CaseListItem[]>([])
   const [recentDocuments, setRecentDocuments] = useState<RecentDocumentItem[]>([])
@@ -684,6 +688,20 @@ export default function SessionDraftPage({
     }
   }
 
+  const acceptLiveRecording = ({ file, transcription }: LiveRecordingResult) => {
+    const objectUrl = URL.createObjectURL(file)
+    objectUrlsRef.current.add(objectUrl)
+    const material = buildTranscribedAudioMaterial({
+      id: makeMaterialId(file), kind: 'audio', filename: file.name, mediaType: file.type,
+      status: 'selected', warnings: [], file, objectUrl, expectedSpeakers: 2, appliedTargets: [],
+    }, transcription)
+    setMaterials(previous => [material, ...previous])
+    setLiveAudioActive(false)
+    setSelectedMaterialId(material.id)
+    setMaterialModal('audio_review')
+    void refreshAudioCapabilities()
+  }
+
   const refreshAudioCapabilities = async () => {
     setAudioCapabilitiesError(null)
     try {
@@ -935,6 +953,7 @@ export default function SessionDraftPage({
 
   const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault()
+    if (liveAudioActive) { setError('녹음을 종료하고 축어록을 검토한 뒤 요약해주세요.'); return }
     if (persistenceLock.current || isLoading) return
     if (!form.case_id.trim()) {
       setHasSubmitted(true)
@@ -1101,6 +1120,7 @@ export default function SessionDraftPage({
   }
 
   const goBackToInput = () => {
+    setRestoreOpen(false)
     setInputMode('existing')
     setInputReturnScreen('summary_draft')
     setCurrentScreen('session_input')
@@ -1110,6 +1130,7 @@ export default function SessionDraftPage({
   }
 
   const navigateSection = (section: ShellSection) => {
+    if (liveAudioActive) { setError('녹음을 종료하고 축어록을 검토한 뒤 다른 화면으로 이동해주세요.'); return }
     setCurrentScreen(section === 'quick' ? 'quick_summary' : section)
   }
 
@@ -1165,6 +1186,7 @@ export default function SessionDraftPage({
   }
 
   const closeSessionInput = () => {
+    if (liveAudioActive) { setError('녹음을 종료하면 원음과 축어록을 보관하고 이동할 수 있습니다.'); return }
     setError(null)
     setHasSubmitted(false)
     setCurrentScreen(inputReturnScreen)
@@ -1172,6 +1194,7 @@ export default function SessionDraftPage({
 
   /** 내담자 선택/프로필의 "새 회기 기록": 케이스 ID·가명·다음 회기 번호를 채운 새 회기 기록 모달을 연다. */
   const startSessionForCase = ({ caseId, caseAlias, sessionNumber }: StartSessionInput) => {
+    if (liveAudioActive) { setError('진행 중인 녹음을 먼저 종료해주세요.'); return }
     const sameSession = form.case_id === caseId && form.session_number === sessionNumber
     if (!sameSession && (hasUsableNoteInput || result || materials.length)
       && !window.confirm('현재 화면의 작성 내용을 비우고 이 내담자의 새 회기를 시작합니다. 저장하지 않은 변경사항은 사라집니다. 계속할까요?')) return
@@ -1543,6 +1566,7 @@ export default function SessionDraftPage({
 
   /** sessionExists: the draft belongs to a session that is already stored (re-summarizing overwrites it). */
   const restoreTemporary = (draftId: string, sessionExists = false) => {
+    if (liveAudioActive) { setError('녹음을 종료하고 축어록을 보관한 뒤 저장된 기록을 불러와주세요.'); return }
     if (!allowRestore()) return
     void runPersistence(async () => {
       const draft = temporaryDraftPayload(await loadTemporaryDraft(draftId))
@@ -1633,6 +1657,7 @@ export default function SessionDraftPage({
   }
 
   const restoreNote = (noteId: string) => {
+    if (liveAudioActive) { setError('녹음을 종료하고 축어록을 보관한 뒤 저장된 기록을 불러와주세요.'); return }
     const reopeningSavedNote = noteId === storedNoteId
       && confirmedFingerprint === sectionFingerprint(draftSections)
     if (!reopeningSavedNote && !allowRestore()) return
@@ -1897,7 +1922,7 @@ export default function SessionDraftPage({
             materials={materials}
             audioCapabilities={audioCapabilities}
             error={error}
-            isLoading={isLoading}
+            isLoading={isLoading || isPersistenceBusy}
             uploadLimitLabel={DOCUMENT_UPLOAD_LIMIT_LABEL}
             onChangeSessionTime={setSessionTime}
             onUpdateField={updateField}
@@ -1905,6 +1930,9 @@ export default function SessionDraftPage({
             onOpenMaterial={openMaterialPreview}
             onRemoveMaterial={removeMaterial}
             onSubmit={() => void handleSubmit()}
+            liveActive={liveAudioActive}
+            onLiveActiveChange={setLiveAudioActive}
+            onLiveComplete={acceptLiveRecording}
           />
         )}
 
