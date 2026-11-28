@@ -348,11 +348,13 @@ let uploadCalls = []
 const consentJs = ts.transpileModule(Object.entries(consentCallbacks).map(([name, body]) => `const ${name} = ${body}`).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText
-const consentActions = () => new Function('pendingAudioFiles', 'setPendingAudioFiles', 'onUploadFiles', 'AUDIO_EXTENSION', 'toFileList',
+const consentActions = (liveActive = false) => new Function('pendingAudioFiles', 'setPendingAudioFiles', 'onUploadFiles', 'AUDIO_EXTENSION', 'toFileList', 'liveActive',
   `${consentJs}; return {upload, resolveAudioConsent}`)(pendingFiles, value => { pendingFiles = value },
-  (files, approved) => uploadCalls.push({ files, approved }), /\.(mp3|m4a|wav)$/i, files => files)
+  (files, approved) => uploadCalls.push({ files, approved }), /\.(mp3|m4a|wav)$/i, files => files, liveActive)
 const syntheticAudio = { name: 'synthetic.wav' }
 const syntheticText = { name: 'synthetic.txt' }
+consentActions(true).upload([syntheticAudio, syntheticText])
+assert(uploadCalls.length === 0 && pendingFiles === null, 'active live capture must block overlapping file selection and upload')
 consentActions().upload([syntheticAudio])
 assert(uploadCalls.length === 0 && pendingFiles[0] === syntheticAudio, 'selection must wait for explicit consent')
 consentActions().resolveAudioConsent(false)
