@@ -110,7 +110,7 @@ async function db(page, action, args) {
         for (const record of a.result) records.put({ ...record, expiresAt: Date.now() + 24 * 3600 * 1000 })
       }
       if (action === 'fixture') {
-        const key = [args.userId, 'logout-fixture', 1, 'logout-recording']
+        const key = [args.userId, args.caseId || 'logout-fixture', 1, args.id || 'logout-recording']
         records.put({ key, filename: 'synthetic.wav', count: 1, frames: 160000, expiresAt: Date.now() + 86400000 })
         chunks.put({ key: [...key, 0], recording: key, index: 0, pcm: new Blob([new Uint8Array(320000)]) })
       }
@@ -133,6 +133,7 @@ try {
   page = await newPage()
   await page.evaluate(({ storageKey, session }) => localStorage.setItem(storageKey, JSON.stringify(session)), { storageKey, session })
   await page.reload()
+  if (process.env.SCENARIO !== 'retention') {
   await openSession(page)
   await click(page, '상담 녹음 시작')
   await page.getByRole('dialog', { name: '상담 녹음 동의 확인' }).getByRole('checkbox').check()
@@ -191,14 +192,22 @@ try {
   await waitFor(async () => !(await db(page, 'read')).records.some(record => record.key[3] === saved.records[0].key[3]), 'review application did not delete original recording')
   assert.equal((await db(page, 'read')).chunks.length, 6)
   console.log('PASS review application deletes only its original PCM after counselor/privacy confirmation')
+  } else {
+    // Resume only unfinished checks without repeating the already-validated capture/review flow.
+    await db(page, 'fixture', { userId: user.id, caseId: client.case_id, id: 'manual-delete' })
+    await db(page, 'seed', { id: 'other-session', sessionNumber: 2, ttl: 86400000 })
+    await db(page, 'seed', { id: 'other-case', caseId: 'other-case', ttl: 86400000 })
+  }
 
   // Close the page without applying; reopening must still offer only the matching session.
   await page.close()
   page = await newPage(); await openSession(page)
+  await recorder(page).getByRole('button', { name: '이어서 검토', exact: true }).waitFor()
   assert.equal(await recorder(page).getByRole('button', { name: '이어서 검토', exact: true }).count(), 1)
+  const remainingChunks = (await db(page, 'read')).chunks.filter(chunk => chunk.recording[1] !== client.case_id || chunk.recording[2] !== 1).length
   await click(page, '삭제')
   await waitFor(async () => (await db(page, 'read')).records.length === 2, 'manual deletion did not remove its recording')
-  assert.equal((await db(page, 'read')).chunks.length, 4)
+  assert.equal((await db(page, 'read')).chunks.length, remainingChunks)
   console.log('PASS case/session isolation and explicit deletion of PCM plus metadata')
 
   await page.clock.install()
