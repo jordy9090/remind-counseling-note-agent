@@ -44,7 +44,8 @@ from app.schemas.note import (
     RetrievalReport,
     SanitizedInput,
     SessionInput,
-    SessionSummaryDraft,
+    SessionSummary,
+    summary_v2_to_v1,
     StructuredCaseData,
     VerificationReport,
 )
@@ -74,7 +75,7 @@ class NoteGraphState(TypedDict, total=False):
     grounding: GroundedGenerationResult | None
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
-    session_summary_draft: SessionSummaryDraft
+    session_summary_draft: SessionSummary
     verification_report: VerificationReport
     initial_verification_report: VerificationReport
     revision_attempted: bool
@@ -204,7 +205,7 @@ def run_note_pipeline(
     state = note_graph.invoke(initial_state)
     insights = None
     if session_input.insight_lens == "psychodynamic_relational":
-        insights = generate_relational_insights(state["sanitized_input"], state["session_summary_draft"])
+        insights = generate_relational_insights(state["sanitized_input"], summary_v2_to_v1(state["session_summary_draft"]))
     confirmed_session_note = state.get("confirmed_session_note") or _build_confirmed_session_note(state)
     return GenerateNoteResponse(
         sanitized_input=state["sanitized_input"],
@@ -227,7 +228,7 @@ def run_note_pipeline(
 
 
 def _build_confirmed_session_note(state: NoteGraphState) -> dict[str, Any]:
-    summary = state["session_summary_draft"]
+    summary = summary_v2_to_v1(state["session_summary_draft"])
     verification = state["verification_report"]
     preview = state["document_transform_preview"]
 

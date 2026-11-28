@@ -32,12 +32,18 @@ from app.schemas.note import (
     SessionInfo,
     SessionInput,
     SessionSummaryDraft,
+    SessionSummaryV2,
+    SummarySectionGroup,
+    summary_sections,
+    summary_v2_to_v1,
     StructuredCaseData,
     SummarySection,
     VerificationReport,
 )
 from app.services.llm import get_structured_llm
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues, summary_quote_issues
+from app.services.summary_quality import CLIENT_LINE, enforce_summary_v2
+from app.services.summary_verification import SummaryAssessment, apply_summary_v2_verification
 from app.services.summary_rules import labeled_summary_input, session_summary_writing_rules
 from app.services.summary_verification import SummaryCorrectionValidation, SummaryVerification, apply_summary_verification, summary_verification_schema
 from app.services.summary_corrections import SourceRefReview, correct_summary, introduced_script_fields, retain_required_refs
@@ -397,14 +403,17 @@ def generate_summary(state: dict[str, Any]) -> dict[str, Any]:
         case_context,
         template_context,
     )
-    llm = get_structured_llm(SessionSummaryDraft)
+    llm = get_structured_llm(SessionSummaryV2 if settings.summary_schema_version == "v2" else SessionSummaryDraft)
     summary = llm.invoke(prompt)
     quality_issues = summary_quality_issues(summary)
     if quality_issues:
         repair_outline = summary.model_dump(mode="json")
         for field_name in quality_issues:
             # Repeating the rejected dialogue dump anchors the model to copying it again.
-            repair_outline[field_name]["text"] = "원문에서 의미를 새로 요약할 항목. 이전 발췌문을 재사용하지 마세요."
+            target = repair_outline
+            for part in field_name.split("."):
+                target = target[int(part)] if isinstance(target, list) else target[part]
+            target["text"] = "원문에서 의미를 새로 요약할 항목. 이전 발췌문을 재사용하지 마세요."
         summary = llm.invoke(
             prompt
             + "\n\n아래 초안은 요약 형식 검사를 통과하지 못했습니다. 원래 입력과 근거만 사용하여 한 번 다시 작성하세요."
@@ -455,6 +464,8 @@ def verify_output(state: dict[str, Any]) -> dict[str, Any]:
     structured: StructuredCaseData = state["structured_case_data"]
     evidence_mapped: EvidenceMappedData = state["evidence_mapped_data"]
     summary: SessionSummaryDraft = state["session_summary_draft"]
+    if isinstance(summary, SessionSummaryV2):
+        return _verify_output_v2(state, summary)
     privacy_context: list[RetrievedPrivacyRule] = state.get("retrieved_privacy_context") or []
     fallback = _mock_verification(sanitized, evidence_mapped, privacy_context)
     if settings.stub_mode:
@@ -517,6 +528,33 @@ Correction audit:
     return {"session_summary_draft": summary, "verification_report": verification}
 
 
+def _verify_output_v2(state: dict[str, Any], summary: SessionSummaryV2) -> dict[str, Any]:
+    """Keep existing verifier semantics while preserving v2 quotes and item boundaries."""
+    sanitized = state["sanitized_input"]
+    context = state.get("retrieved_case_context") or []
+    catalog = _source_catalog(sanitized, context)
+    enforce_summary_v2(summary, catalog)
+    assessment = None
+    if not settings.stub_mode:
+        prompt = _build_verification_prompt(
+            sanitized, state["structured_case_data"], state["evidence_mapped_data"],
+            summary_v2_to_v1(summary), state.get("retrieved_privacy_context") or [], case_context=context,
+        )
+        prompt += (
+            "\nThis is a v2 summary. The seven-section view above is for compatibility. "
+            "Do not propose text corrections or citation pruning: assess support and next_plan only. "
+            "Client reactions are intentional verbatim lines and are exempt from the three-quote limit. "
+            "Also assess ALL original episodes and client_understanding below against their cited sources; "
+            "use the original v2 field names in review findings. Understanding is tentative, not a diagnosis. "
+            "The original draft is not evidence.\nOriginal v2 draft:\n" + _json(summary)
+        )
+        assessment = get_structured_llm(SummaryAssessment).invoke(prompt)
+    report = apply_summary_v2_verification(summary, assessment, catalog)
+    _apply_verification_consistency(summary, report)
+    _merge_grounding_verification(report, state.get("grounding"))
+    return {"session_summary_draft": summary, "verification_report": report}
+
+
 def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
     """Mark risky sections for review without re-verifying unchanged draft text."""
     if state.get("revision_attempted"):
@@ -526,15 +564,7 @@ def conditional_revision(state: dict[str, Any]) -> dict[str, Any]:
         return {"revision_attempted": False, "revision_needs_reverify": False}
 
     summary: SessionSummaryDraft = state["session_summary_draft"].model_copy(deep=True)
-    for section in (
-        summary.session_theme,
-        summary.presenting_problem,
-        summary.session_content,
-        summary.counselor_intervention,
-        summary.client_response,
-        summary.reflection,
-        summary.next_plan,
-    ):
+    for _, section in summary_sections(summary):
         if section.evidence_type != "direct":
             section.requires_review = True
     return {
@@ -550,7 +580,8 @@ def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
     """Assemble complete, evidence-grounded counselor-facing document drafts."""
     sanitized: SanitizedInput = state["sanitized_input"]
     structured: StructuredCaseData = state["structured_case_data"]
-    summary: SessionSummaryDraft = state["session_summary_draft"].model_copy(deep=True)
+    original = state["session_summary_draft"]
+    summary = summary_v2_to_v1(original)
     template_context: RetrievedTemplateContext | None = state.get("retrieved_template_context")
     session_input: SessionInput = state["session_input"]
     client_alias = sanitized.client_alias
@@ -620,7 +651,7 @@ def transform_document_preview(state: dict[str, Any]) -> dict[str, Any]:
         notice=selected.notice,
     )
     return {
-        "session_summary_draft": summary,
+        "session_summary_draft": original if isinstance(original, SessionSummaryV2) else summary,
         "document_transform_preview": preview,
         "session_note_draft": session_note,
         "termination_report_draft": termination,
@@ -728,7 +759,7 @@ def _mock_structured_case(
 
 
 def _mock_summary(sanitized: SanitizedInput, structured: StructuredCaseData) -> SessionSummaryDraft:
-    return SessionSummaryDraft(
+    legacy = SessionSummaryDraft(
         session_info=SessionInfo(
             case_id=sanitized.case_id,
             client_alias=sanitized.client_alias,
@@ -755,6 +786,40 @@ def _mock_summary(sanitized: SanitizedInput, structured: StructuredCaseData) -> 
         ),
         next_plan=_section_from_first(structured.next_plan, "추후 계획 확인 필요"),
     )
+    if settings.summary_schema_version == "v1":
+        return legacy
+    catalog = _source_catalog(sanitized, [])
+    client_lines = [(ref, match.group(1)) for ref, line in catalog.items()
+                    if ref.startswith("transcript.turn_") and (match := CLIENT_LINE.fullmatch(line))]
+
+    def item(text: str, ref: str) -> SummarySection:
+        return SummarySection(text=text, evidence_type="direct", source_refs=[ref])
+
+    concerns = [(ref, text) for ref, text in client_lines
+                if re.search(r"힘들|싶어|싶어요|못나|불안|두려|걱정", text)
+                and not re.search(r"어제|지난|오늘|그날|했어요|했는데", text)]
+    episodes = [item(text, ref) for ref, text in client_lines
+                if re.search(r"어제|지난|오늘|그날", text)][:3]
+    concern = (item(f'"{concerns[0][1]}" 내담자가 이러한 어려움이나 바람을 표현함.', concerns[0][0])
+               if concerns else SummarySection(text="[자료에서 확인되지 않음]", evidence_type="needs_review", requires_review=True))
+    summary = SessionSummaryV2(
+        session_info=legacy.session_info, session_theme=legacy.session_theme,
+        presenting_concern=concern, episodes=SummarySectionGroup(items=episodes),
+        session_content=(SummarySection(
+            text="내담자가 설명한 어려움과 반응을 다룸. 상담에서 다룬 구체적 흐름은 상담사 확인이 필요함.",
+            evidence_type="needs_review", source_refs=[ref for ref, _ in client_lines[:1]], requires_review=True,
+        )),
+        counselor_intervention=legacy.counselor_intervention,
+        client_reactions=SummarySectionGroup(items=[item(text, ref) for ref, text in client_lines[:4]]),
+        client_understanding=SummarySection(
+            text=("내담자가 자신의 경험을 말로 표현하는 모습이 있다. 그때 어떤 감정이었을 수 있는지와 "
+                  "그렇게 반응한 게 이해되는 지점은 상담사 확인이 필요하다." if client_lines else "[자료에서 확인되지 않음]"),
+            evidence_type="needs_review", source_refs=[ref for ref, _ in client_lines[:1]], requires_review=True,
+        ),
+        reflection=legacy.reflection, next_plan=legacy.next_plan,
+    )
+    _normalize_summary_refs(summary, sanitized, [])
+    return summary
 
 
 def _mock_verification(
@@ -1023,19 +1088,19 @@ def _normalize_summary_refs(
     case_context: list[RetrievedCaseContextItem],
 ) -> None:
     catalog = _source_catalog(sanitized, case_context)
-    for section in (
-        summary.session_theme, summary.presenting_problem, summary.session_content,
-        summary.counselor_intervention, summary.client_response, summary.reflection,
-        summary.next_plan,
-    ):
+    # Check original reaction refs before normalization can collapse duplicate IDs.
+    enforce_summary_v2(summary, catalog)
+    sections = dict(summary_sections(summary))
+    for section in sections.values():
         section.source_refs = _resolve_source_refs(section.text, section.source_refs, catalog)
         section.requires_review = section.requires_review or not section.source_refs or section.evidence_type in {
             "inferred", "model_inference", "needs_review", "counselor_input", "prior_context_based",
         }
     for field in summary_quote_issues(summary, catalog):
-        section = getattr(summary, field)
+        section = sections[field]
         section.requires_review = True
         section.evidence_type = "needs_review"
+    enforce_summary_v2(summary, catalog)
 
 
 def _unique_review_claims(items: list[ReviewableClaim]) -> list[ReviewableClaim]:
@@ -1076,14 +1141,14 @@ def _apply_verification_consistency(
         item.field.removeprefix("session_summary_draft.").removesuffix(".text")
         for item in verification.requires_counselor_review
     }
-    fields = ("session_theme", "presenting_problem", "session_content", "counselor_intervention",
-              "client_response", "reflection", "next_plan")
+    sections = dict(summary_sections(summary))
+    fields = tuple(sections)
     named_claims = [(claim, {field for field in fields
                             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(field)}(?![A-Za-z0-9_])", claim)})
                     for claim in review_claims]
     for field in fields:
-        section = getattr(summary, field)
-        if field in review_fields or section.evidence_type != "direct" or any(
+        section = sections[field]
+        if field in review_fields or field.split(".")[0] in review_fields or section.evidence_type != "direct" or any(
             field in named or (not named and _text_similarity(section.text, claim) >= 0.35)
             for claim, named in named_claims
         ):
@@ -1205,6 +1270,17 @@ def _build_summary_prompt(
     requested_section_ids = requested_section_ids or []
     case_context = case_context or []
     source_ref_keys = list(_source_catalog(sanitized, case_context))
+    if settings.summary_schema_version == "v2":
+        from app.services.summary_rules import SKILL_PATH, summary_skill_instructions
+        return (
+            summary_skill_instructions(SKILL_PATH.read_text(encoding="utf-8"), "v2")
+            + "\n" + _prior_context_guidance(case_context)
+            + "\nSanitized input:\n" + _json(labeled_summary_input(sanitized))
+            + "\nAllowed source refs:\n" + _json(source_ref_keys)
+            + "\nReviewed prior context (background only):\n" + _json(case_context)
+            + "\nRequested sections:\n" + _json(requested_section_ids)
+            + "\nCounselor-selected topic:\n" + _json(session_topic)
+        )
     # Raw session material is supplied once. Repeated extraction lists encourage
     # structured-output models to copy utterances into intervention/response fields.
     evidence_index = [

@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "input": {
+    "case_id": "SYNTH-SUMMARY-V2-03",
+    "session_number": 1,
+    "session_date": "2026-11-27",
+    "counselor_name": "",
+    "sources": {
+      "counselor_memo": "상담자는 내담자의 마음을 질문함.",
+      "transcript_text": "내담자: 쉬고 싶다고 편하게 말하고 싶어요.\n내담자: 어제 가족과 저녁을 먹으며 주말 부탁을 받고 바로 알겠다고 했어요.\n상담자: 대답하고 난 뒤에는 어떤 마음이었나요?\n내담자: 조금 답답했어요.\n내담자: 거절하면 서운해할까 봐 두려워요.",
+      "key_issue_tags": [
+        "가족에게 휴식을 말하기"
+      ]
+    }
+  }
+}

@@ -221,5 +221,109 @@ class SummaryQualityTests(unittest.TestCase):
         self.assertIn("counselor_memo", result.reflection.source_refs)
 
 
+
+def _state_v2() -> dict:
+    state = _state()
+    state["sanitized_input"].sources.transcript_text = (
+        "내담자: 내가 못나 보여요. 편하게 말하고 싶어요.\n"
+        "내담자: 어제 친구와 대화하다가 대답이 없어 입을 다물었어요.\n"
+        "상담자: 그때 어떤 느낌이었나요?\n"
+        "내담자: 두려웠어요.\n"
+        "내담자: 아직은 말하기 힘들어요."
+    )
+    return state
+
+
+def _summary_v2():
+    from app.schemas.note import SessionSummaryV2, SummarySectionGroup
+    legacy = _summary()
+    shared = {name: getattr(legacy, name).model_copy(deep=True) for name in (
+        "session_info", "session_theme", "session_content", "counselor_intervention", "reflection", "next_plan",
+    )}
+    shared["next_plan"] = SummarySection(text="[자료에서 확인되지 않음]", evidence_type="needs_review", requires_review=True)
+    return SessionSummaryV2(
+        **shared,
+        presenting_concern=_section('"내가 못나 보여요." 내담자는 편하게 말하고 싶다는 바람을 표현함.', "transcript.turn_1"),
+        episodes=SummarySectionGroup(items=[_section(
+            "어제 친구와 대화 중 대답이 없어 입을 다물었다고 보고함.", "transcript.turn_2")]),
+        client_reactions=SummarySectionGroup(items=[
+            _section("내가 못나 보여요.", "transcript.turn_1"),
+            _section("대답이 없어 입을 다물었어요.", "transcript.turn_2"),
+            _section("두려웠어요.", "transcript.turn_4"),
+            _section("아직은 말하기 힘들어요.", "transcript.turn_5"),
+        ]),
+        client_understanding=_section(
+            "대답이 없을 때 입을 다무는 모습이 있다. 그때 두려운 감정이었을 수 있다. "
+            "말하기 어려웠다는 표현에서 멈춘 반응이 이해될 수 있다.", "transcript.turn_2"),
+    )
+
+
+class SummaryV2QualityTests(unittest.TestCase):
+    def test_four_verbatim_reactions_are_exempt_from_prose_and_quote_limits(self):
+        from app.services.summary_quality import summary_quote_issues, enforce_summary_v2
+        from app.graph.nodes import _source_catalog
+        summary = _summary_v2()
+        catalog = _source_catalog(_state_v2()["sanitized_input"], [])
+        enforce_summary_v2(summary, catalog)
+        self.assertEqual(4, len(summary.client_reactions.items))
+        self.assertFalse(summary.client_reactions.requires_review)
+        self.assertEqual({}, summary_quality_issues(summary))
+        self.assertEqual({}, summary_quote_issues(summary, catalog))
+        self.assertTrue(summary.client_understanding.requires_review)
+
+    def test_mismatched_reaction_is_removed_without_repairing_its_words(self):
+        from app.services.summary_quality import enforce_summary_v2, REACTION_WARNING
+        from app.graph.nodes import _source_catalog
+        catalog = _source_catalog(_state_v2()["sanitized_input"], [])
+        cases = [
+            ("못나 보인다.", ["transcript.turn_1"]),
+            ("내가 못나 보여요.", ["transcript.turn_2"]),
+            ("내가 못나 보여요.", ["transcript_text"]),
+            ("내가 못나 보여요.", ["transcript.turn_1", "transcript.turn_1"]),
+            ("내가 못나 보여요.", ["transcript.turn_999"]),
+            ("그때 어떤 느낌이었나요?", ["transcript.turn_3"]),
+            ("내가못나 보여요.", ["transcript.turn_1"]),
+            ("내가 못나 보여요.\n두려웠어요.", ["transcript.turn_1"]),
+            ("", ["transcript.turn_1"]),
+        ]
+        for text, refs in cases:
+            with self.subTest(text=text, refs=refs):
+                summary = _summary_v2()
+                summary.client_reactions.items[0].text = text
+                summary.client_reactions.items[0].source_refs = refs
+                enforce_summary_v2(summary, catalog)
+                self.assertEqual(3, len(summary.client_reactions.items))
+                self.assertTrue(summary.client_reactions.requires_review)
+                self.assertIn(REACTION_WARNING, summary.warnings)
+                self.assertNotIn("transcript.turn_1", summary.client_reactions.source_refs)
+                enforce_summary_v2(summary, catalog)
+                self.assertEqual([REACTION_WARNING], summary.warnings)
+
+    def test_understanding_warns_on_diagnoses_and_categorical_explanations(self):
+        from app.services.summary_quality import enforce_summary_v2, UNDERSTANDING_WARNING
+        for text in ("우울증이다.", "관계 때문이다.", "회피성 성격이다.", "불안장애가 있다.", "ADHD다."):
+            with self.subTest(text=text):
+                summary = _summary_v2()
+                summary.client_understanding.text = text
+                summary.client_understanding.requires_review = False
+                enforce_summary_v2(summary, {})
+                self.assertTrue(summary.client_understanding.requires_review)
+                self.assertIn(UNDERSTANDING_WARNING, summary.warnings)
+
+    def test_regular_generation_selects_v2_schema_and_keeps_local_identity(self):
+        from app.schemas.note import SessionSummaryV2
+        candidate = _summary_v2()
+        candidate.session_info.case_id = "SYNTH-UNTRUSTED"
+        candidate.client_reactions.items[0].text = "지어낸 반응"
+        provider = Mock(invoke=Mock(return_value=candidate))
+        with patch.object(settings, "summary_schema_version", "v2"), patch.object(settings, "use_stub", False), \
+                patch("app.graph.nodes.get_structured_llm", return_value=provider) as setup:
+            result = generate_summary(_state_v2())["session_summary_draft"]
+        setup.assert_called_once_with(SessionSummaryV2)
+        self.assertEqual("SYNTH-SUMMARY", result.session_info.case_id)
+        self.assertEqual(3, len(result.client_reactions.items))
+        self.assertNotIn("아래 7개", provider.invoke.call_args.args[0])
+
+
 if __name__ == "__main__":
     unittest.main()

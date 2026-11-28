@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "input": {
+    "case_id": "SYNTH-SUMMARY-V2-04",
+    "session_number": 1,
+    "session_date": "2026-11-27",
+    "counselor_name": "",
+    "sources": {
+      "counselor_memo": "상담자는 내담자의 마음을 질문함.",
+      "transcript_text": "내담자: 답장을 기다리는 게 힘들어요.\n내담자: 어제 친구에게 보낼 글을 쓰다 지우고 휴대폰을 내려놨어요.\n상담자: 지금 다시 읽어보는 것은 어떠세요?\n내담자: 지금은 읽기 싫어요.\n내담자: 내일 다시 읽고, 그때도 못 보내겠으면 안 보낼 수도 있어요.",
+      "key_issue_tags": [
+        "연락에 대한 양가적인 마음과 조건부 계획"
+      ]
+    }
+  }
+}

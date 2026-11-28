@@ -221,5 +221,62 @@ class SummarySkillTests(unittest.TestCase):
         self.assertIsNone(result.response_model)
 
 
+
+class SummaryV2SkillTests(unittest.TestCase):
+    def test_v1_prompt_body_is_byte_identical_and_default_is_v1(self):
+        import hashlib
+        from app.core.config import Settings
+        from app.services.summary_rules import SKILL_PATH, summary_skill_instructions
+        self.assertEqual("v1", Settings(_env_file=None).summary_schema_version)
+        body = summary_skill_instructions(SKILL_PATH.read_text(encoding="utf-8"), "v1")
+        self.assertEqual("bf5a77bd5d1aea1843d566a98d909dbe63f78443f258f3d5c1565431c320fa13", hashlib.sha256(body.encode()).hexdigest())
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            Settings(_env_file=None, summary_schema_version="v3")
+
+    def test_v2_skill_selects_prompt_schema_and_removes_unmatched_line(self):
+        from test_summary_quality import _state_v2, _summary_v2
+        from app.schemas.note import SessionSummaryV2
+        summary = _summary_v2()
+        summary.client_reactions.items[1].text = "고쳐 쓴 가짜 인용"
+        fields = summary.model_dump(exclude={"session_info", "schema_version", "warnings"})
+        fields["client_understanding"]["requires_review"] = False
+        provider = Mock()
+        provider.with_structured_output.return_value.invoke.return_value = {"parsed": fields, "raw": None}
+        with patch.object(settings, "summary_schema_version", "v2"), \
+                patch.object(settings, "use_stub", False), \
+                patch.object(settings, "openai_api_key", "synthetic-key"), \
+                patch.object(summary_skill, "get_llm", return_value=provider):
+            result = summary_skill.run_summary_skill(_state_v2()["sanitized_input"])
+        provider.with_structured_output.assert_called_once_with(summary_skill.SummarySkillV2Fields, include_raw=True)
+        messages = provider.with_structured_output.return_value.invoke.call_args.args[0]
+        self.assertIn("client_reactions", messages[0].content)
+        self.assertIn("상한에서 제외", messages[0].content)
+        self.assertIsInstance(result.summary, SessionSummaryV2)
+        self.assertEqual("v2", result.summary.model_dump()["schema_version"])
+        self.assertEqual(3, len(result.summary.client_reactions.items))
+        self.assertTrue(result.summary.client_reactions.requires_review)
+        self.assertTrue(result.summary.client_understanding.requires_review)
+        self.assertEqual("SYNTH-SUMMARY", result.summary.session_info.case_id)
+        self.assertEqual(1, result.model_calls)
+
+    def test_v2_stub_and_response_roundtrip_keep_order_and_metadata(self):
+        from test_summary_quality import _state_v2
+        from app.graph.nodes import _mock_summary
+        from app.schemas.note import SessionSummaryV2
+        state = _state_v2()
+        with patch.object(settings, "summary_schema_version", "v2"):
+            summary = _mock_summary(state["sanitized_input"], state["structured_case_data"])
+        data = summary.model_dump()
+        self.assertEqual([
+            "session_theme", "presenting_concern", "episodes", "session_content", "counselor_intervention",
+            "client_reactions", "client_understanding", "reflection", "next_plan",
+        ], [key for key in data if key not in {"schema_version", "session_info", "warnings"}])
+        self.assertEqual(data, SessionSummaryV2.model_validate_json(summary.model_dump_json()).model_dump())
+        self.assertEqual(4, len(summary.client_reactions.items))
+        self.assertEqual(1, len(summary.episodes.items))
+        self.assertTrue(summary.client_understanding.requires_review)
+
+
 if __name__ == "__main__":
     unittest.main()
