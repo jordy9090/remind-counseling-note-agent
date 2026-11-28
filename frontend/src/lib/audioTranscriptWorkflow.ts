@@ -76,6 +76,61 @@ export function getSpeakerRoleLabel(role: SpeakerRole): string {
   return roleLabels[role]
 }
 
+const unassignedSpeakerFlags = new Set(['speaker_unassigned', 'speaker_reference_unmatched'])
+
+export function isAudioSpeakerUnassigned(segment: AudioSegment): boolean {
+  return !segment.speaker?.trim() || segment.speaker === 'unknown'
+    || Boolean(segment.review_flags?.some(flag => unassignedSpeakerFlags.has(flag)))
+}
+
+export function getNextUnassignedAudioSegmentId(segments: AudioSegment[], afterId: number | null): number | null {
+  const start = segments.findIndex(segment => segment.id === afterId)
+  for (let offset = 1; offset <= segments.length; offset++) {
+    const segment = segments[(start + offset) % segments.length]
+    if (isAudioSpeakerUnassigned(segment)) return segment.id
+  }
+  return null
+}
+
+export function selectAudioSegmentIds(
+  segments: AudioSegment[], selectedIds: number[], id: number, checked: boolean, anchorId: number | null = null,
+): number[] {
+  const index = segments.findIndex(segment => segment.id === id)
+  if (index < 0) return selectedIds
+  const anchor = segments.findIndex(segment => segment.id === anchorId)
+  const affected = segments.slice(Math.min(index, anchor < 0 ? index : anchor), Math.max(index, anchor) + 1)
+  const selected = new Set(selectedIds)
+  for (const segment of affected) {
+    if (checked) selected.add(segment.id)
+    else selected.delete(segment.id)
+  }
+  return segments.filter(segment => selected.has(segment.id)).map(segment => segment.id)
+}
+
+export function assignAudioSegmentRole(
+  segments: AudioSegment[], selectedIds: number[], role: Exclude<SpeakerRole, 'unassigned'>,
+  speakerRoleMap: SpeakerRoleMap = {},
+): { segments: AudioSegment[]; speakerKey: string | null } {
+  const selected = new Set(selectedIds)
+  if (!segments.some(segment => selected.has(segment.id))) return { segments, speakerKey: null }
+
+  // Reuse an explicitly mapped speaker without changing any other speaker's role.
+  let speakerKey = Object.keys(speakerRoleMap).find(key => key.trim() && key !== 'unknown' && speakerRoleMap[key] === role)
+  if (!speakerKey) {
+    const occupied = new Set([...Object.keys(speakerRoleMap), ...segments.map(getSegmentSpeakerKey)])
+    const base = `manual_${role}`
+    speakerKey = base
+    for (let suffix = 1; occupied.has(speakerKey); suffix++) speakerKey = `${base}_${suffix}`
+  }
+  return {
+    speakerKey,
+    segments: segments.map(segment => selected.has(segment.id) ? {
+      ...segment, speaker: speakerKey,
+      review_flags: segment.review_flags?.filter(flag => !unassignedSpeakerFlags.has(flag)),
+    } : segment),
+  }
+}
+
 export function replaceAppliedAudioBlock(current: string, previous: string, next: string): string | null {
   const currentText = current.trim()
   const previousText = previous.trim()
