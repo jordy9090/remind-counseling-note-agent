@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "input": {
+    "case_id": "SYNTH-SUMMARY-V2-05",
+    "session_number": 1,
+    "session_date": "2026-11-27",
+    "counselor_name": "",
+    "sources": {
+      "counselor_memo": "상담자는 회기에서 들은 내용을 더 확인할 필요가 있다고 메모함.",
+      "transcript_text": "",
+      "key_issue_tags": [
+        "축어록 없는 합성 상담 메모"
+      ]
+    }
+  }
+}

@@ -230,5 +230,113 @@ class SummaryVerificationTests(unittest.TestCase):
         self.assertIn(marker, result["session_note_draft"].model_dump_json())
 
 
+
+class SummaryV2VerificationTests(unittest.TestCase):
+    def test_versionless_payload_is_v1_even_when_runtime_is_v2(self):
+        from pydantic import TypeAdapter, ValidationError
+        from app.schemas.note import SessionSummary, SessionSummaryDraft
+        from test_summary_quality import _summary_v2
+        adapter = TypeAdapter(SessionSummary)
+        with patch.object(settings, "summary_schema_version", "v2"):
+            loaded = adapter.validate_python(_summary().model_dump())
+            self.assertIsInstance(loaded, SessionSummaryDraft)
+            self.assertEqual("v1", loaded.schema_version)
+            with self.assertRaises(ValidationError):
+                adapter.validate_python(_summary_v2().model_dump(exclude={"schema_version"}))
+            with self.assertRaises(ValidationError):
+                adapter.validate_python({**_summary().model_dump(), "schema_version": "v3"})
+
+    def test_converter_merges_only_first_episode_and_preserves_metadata_without_aliases(self):
+        from test_summary_quality import _summary_v2, _section
+        from app.schemas.note import summary_v2_to_v1
+        summary = _summary_v2()
+        summary.episodes.items.append(_section("두 번째 사건", "transcript.turn_9"))
+        summary.episodes.requires_review = True
+        summary.client_reactions.requires_review = True
+        adapted = summary_v2_to_v1(summary)
+        self.assertEqual(summary.presenting_concern.text + "\n" + summary.episodes.items[0].text,
+                         adapted.presenting_problem.text)
+        self.assertEqual(["transcript.turn_1", "transcript.turn_2"], adapted.presenting_problem.source_refs)
+        self.assertTrue(adapted.presenting_problem.requires_review)
+        self.assertEqual("\n".join(item.text for item in summary.client_reactions.items), adapted.client_response.text)
+        self.assertTrue(adapted.client_response.requires_review)
+        self.assertEqual(summary.next_plan.model_dump(), adapted.next_plan.model_dump())
+        adapted.next_plan.text = "changed"
+        self.assertNotEqual("changed", summary.next_plan.text)
+        self.assertNotIn("client_understanding", adapted.model_dump())
+        self.assertEqual("v1", adapted.schema_version)
+        self.assertNotIn("schema_version", adapted.model_dump())
+
+    def test_verifier_uses_adapter_and_retains_v2_with_plan_and_diagnosis_warnings(self):
+        from test_summary_quality import _state_v2, _summary_v2
+        from app.services.summary_verification import SummaryAssessment
+        state, summary = _state_v2(), _summary_v2()
+        summary.client_understanding.text = "우울증 때문이다."
+        summary.client_reactions.items[0].text = "일치하지 않는 인용"
+        summary.next_plan.text = "앉아 있기로 함."
+        state["session_summary_draft"] = summary
+        assessment = SummaryAssessment(next_plan_assessment=PlanAssessment(status="in_session_only"))
+        with patch.object(settings, "use_stub", False), patch("app.graph.nodes.get_structured_llm",
+                return_value=Mock(invoke=Mock(return_value=assessment))) as provider:
+            result = verify_output(state)
+        provider.assert_called_once_with(SummaryAssessment)
+        prompt = provider.return_value.invoke.call_args.args[0]
+        self.assertIn('"presenting_problem"', prompt)
+        self.assertIn('"client_understanding"', prompt)
+        self.assertEqual("v2", result["session_summary_draft"].schema_version)
+        self.assertEqual(3, len(summary.client_reactions.items))
+        self.assertTrue(summary.client_reactions.requires_review)
+        self.assertEqual("[자료에서 확인되지 않음]", summary.next_plan.text)
+        fields = {item.field for item in result["verification_report"].requires_counselor_review}
+        self.assertTrue({"client_understanding", "client_reactions", "next_plan"} <= fields)
+        self.assertTrue(result["verification_report"].unsupported_or_risky_claims)
+
+    def test_documents_and_supervision_consume_legacy_adapter_without_erasing_v2(self):
+        from test_summary_quality import _state_v2, _summary_v2
+        from app.schemas.note import SupervisionReportRequest, summary_v2_to_v1
+        from app.graph.supervision_report import run_supervision_report_pipeline
+        from app.graph.graph import _build_confirmed_session_note
+        state, summary = _state_v2(), _summary_v2()
+        state["session_summary_draft"] = summary
+        state["session_input"] = SessionInput(
+            case_id="SYNTH-SUMMARY", session_number=1, counselor_memo="", transcript_text="", insight_lens="none")
+        state["verification_report"] = VerificationReport()
+        result = transform_document_preview(state)
+        self.assertIs(summary, result["session_summary_draft"])
+        adapted = summary_v2_to_v1(summary)
+        self.assertEqual(adapted.presenting_problem.text, result["session_note_draft"].sections["주호소/핵심 문제"])
+        self.assertEqual(adapted.client_response.text, result["session_note_draft"].sections["내담자 반응"])
+        confirmed = _build_confirmed_session_note({**state, **result})
+        self.assertEqual(adapted.client_response.text, confirmed["sections"]["client_response"])
+        report = run_supervision_report_pipeline(SupervisionReportRequest(
+            session_input=state["session_input"], session_summary_draft=summary))
+        self.assertIn("두려웠어요", report.model_dump_json())
+        self.assertNotIn(summary.client_understanding.text, report.model_dump_json())
+
+    def test_v1_and_v2_are_persisted_and_versionless_records_read_as_v1(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from test_persistence_workflow import INPUT, TOKEN, offline_environment
+        for version in ("v1", "v2"):
+            with self.subTest(version=version), offline_environment() as store, \
+                    patch.object(settings, "summary_schema_version", version):
+                client = TestClient(app)
+                response = client.post("/api/notes/generate", json={**INPUT, "insight_lens": "none"},
+                                       headers={"Authorization": "Bearer " + TOKEN})
+                self.assertEqual(200, response.status_code)
+                stored = store.tables["generated_notes"][0]
+                self.assertEqual(version, stored["draft_json"]["schema_version"])
+                draft = response.json()["session_summary_draft"]
+                if version == "v1":
+                    self.assertNotIn("schema_version", draft)
+                    stored["draft_json"].pop("schema_version")
+                else:
+                    self.assertEqual("v2", draft["schema_version"])
+                    self.assertIn("client_understanding", stored["draft_json"])
+                reopened = client.get("/api/notes/records/" + stored["id"], headers={"Authorization": "Bearer " + TOKEN})
+                self.assertEqual(200, reopened.status_code)
+                self.assertEqual(version, reopened.json()["draft_json"]["schema_version"])
+
+
 if __name__ == "__main__":
     unittest.main()

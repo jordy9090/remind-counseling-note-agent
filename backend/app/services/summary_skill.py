@@ -19,11 +19,11 @@ from pydantic import ConfigDict, create_model
 
 from app.core.config import settings
 from app.graph.nodes import _normalize_summary_refs, _source_catalog
-from app.schemas.note import SanitizedInput, SessionInfo, SessionSummaryDraft, SummarySection
+from app.schemas.note import SanitizedInput, SessionInfo, SessionSummary, SessionSummaryDraft, SessionSummaryV2, SummarySection
 from app.services.llm import get_llm
 from app.services.relational_insights import has_documented_counselor_reflection
 from app.services.summary_quality import SummaryQualityError, summary_quality_issues
-from app.services.summary_rules import SKILL_PATH, labeled_summary_input
+from app.services.summary_rules import SKILL_PATH, labeled_summary_input, summary_skill_instructions
 
 
 SUMMARY_FIELDS = tuple(name for name in SessionSummaryDraft.model_fields if name != "session_info")
@@ -37,6 +37,13 @@ SummarySkillFields = create_model(
         for name, field in SessionSummaryDraft.model_fields.items()
         if name in SUMMARY_FIELDS
     },
+)
+SummarySkillV2Fields = create_model(
+    "SummarySkillV2Fields",
+    __config__=ConfigDict(extra="forbid"),
+    **{name: (field.annotation, deepcopy(field))
+       for name, field in SessionSummaryV2.model_fields.items()
+       if name not in {"session_info", "schema_version", "warnings"}},
 )
 
 
@@ -55,7 +62,7 @@ class SummarySkillRequest:
 
 @dataclass(frozen=True)
 class SummarySkillResult:
-    summary: SessionSummaryDraft
+    summary: SessionSummary
     skill_sha256: str
     model_calls: int
     latency_ms: int
@@ -75,7 +82,7 @@ def build_summary_skill_request(sanitized: SanitizedInput) -> SummarySkillReques
     parts = document.split("---", 2)
     if len(parts) != 3 or parts[0].strip() or "name: session-summary" not in parts[1].splitlines():
         raise SummarySkillError()
-    instructions = parts[2].strip()
+    instructions = summary_skill_instructions(document, settings.summary_schema_version)
     if not instructions:
         raise SummarySkillError()
     # Do not transmit session identifiers, personal metadata, or sensitive-info
@@ -101,15 +108,17 @@ def run_summary_skill(sanitized: SanitizedInput) -> SummarySkillResult:
     if settings.use_stub or not settings.openai_api_key:
         raise SummarySkillError()
     request = build_summary_skill_request(sanitized)
+    fields_schema = SummarySkillV2Fields if settings.summary_schema_version == "v2" else SummarySkillFields
+    summary_schema = SessionSummaryV2 if settings.summary_schema_version == "v2" else SessionSummaryDraft
     started = time.perf_counter()
     try:
         result = get_llm(max_retries=0).with_structured_output(
-            SummarySkillFields, include_raw=True,
+            fields_schema, include_raw=True,
         ).invoke(list(request.messages))
         if result.get("parsing_error") or result.get("parsed") is None:
             raise SummarySkillError()
-        fields = SummarySkillFields.model_validate(result["parsed"])
-        summary = SessionSummaryDraft(
+        fields = fields_schema.model_validate(result["parsed"])
+        summary = summary_schema(
             session_info=SessionInfo(
                 case_id=sanitized.case_id,
                 client_alias=sanitized.client_alias,

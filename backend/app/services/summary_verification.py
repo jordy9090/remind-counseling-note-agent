@@ -5,9 +5,50 @@ from typing import Literal, Union
 
 from pydantic import BaseModel, Field, create_model
 
-from app.schemas.note import CounselorReviewField, ReviewableClaim, SessionSummaryDraft, VerificationReport
+from app.schemas.note import (CounselorReviewField, ReviewableClaim, SessionSummaryDraft,
+                              SessionSummaryV2, VerificationReport, summary_v2_to_v1)
 from app.services.summary_quality import QUOTED_TEXT, SECTION_LIMITS
 from app.services.summary_corrections import SourceRefRestoration, SourceRefReview, TextCorrection
+from app.services.summary_quality import enforce_summary_v2, REACTION_WARNING, UNDERSTANDING_WARNING
+
+
+def apply_summary_v2_verification(
+    summary: SessionSummaryV2, result: SummaryAssessment | None, catalog: dict[str, str],
+) -> VerificationReport:
+    """Validate the compatibility view and retain the original v2 item boundaries."""
+    enforce_summary_v2(summary, catalog)
+    report = VerificationReport()
+    if result is not None:
+        legacy = summary_v2_to_v1(summary)
+        report = apply_summary_verification(legacy, result, catalog)
+        for field in ("session_theme", "session_content", "counselor_intervention", "reflection", "next_plan"):
+            setattr(summary, field, getattr(legacy, field))
+        # A merged concern or reaction cannot safely be rewritten back into items.
+        # Preserve the original, independently checked text and propagate review flags.
+        summary.presenting_concern.requires_review |= legacy.presenting_problem.requires_review
+        summary.client_reactions.requires_review |= legacy.client_response.requires_review
+        for review in report.requires_counselor_review:
+            if review.field == "presenting_problem":
+                summary.episodes.requires_review = True
+                review.field = "presenting_concern"
+            elif review.field == "client_response":
+                review.field = "client_reactions"
+    report.requires_counselor_review.append(CounselorReviewField(
+        field="client_understanding", reason="내담자 이해는 잠정적 해석이며 항상 상담사 확인이 필요합니다.",
+    ))
+    if summary.client_reactions.requires_review:
+        report.requires_counselor_review.append(CounselorReviewField(
+            field="client_reactions", reason="인용 원문과 내담자 반응의 수를 확인해주세요.",
+        ))
+    for warning in summary.warnings:
+        field = "client_reactions" if warning == REACTION_WARNING else "client_understanding"
+        report.requires_counselor_review.append(CounselorReviewField(field=field, reason=warning))
+        if warning == UNDERSTANDING_WARNING:
+            report.unsupported_or_risky_claims.append(ReviewableClaim(
+                claim=summary.client_understanding.text, reason=warning,
+                recommendation="근거와 추정 어미를 확인하고 단정적 표현을 수정해주세요.",
+            ))
+    return report
 
 
 class PlanEvidence(BaseModel):
@@ -83,7 +124,7 @@ def cited_lines(refs: list[str], catalog: dict[str, str]) -> list[str]:
 
 def apply_summary_verification(
     summary: SessionSummaryDraft,
-    result: SummaryVerification,
+    result: SummaryAssessment,
     catalog: dict[str, str],
 ) -> VerificationReport:
     """Keep unsafe wording out of the displayed draft, retaining findings for review.

@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "input": {
+    "case_id": "SYNTH-SUMMARY-V2-02",
+    "session_number": 1,
+    "session_date": "2026-11-27",
+    "counselor_name": "",
+    "sources": {
+      "counselor_memo": "상담자는 내담자의 마음을 질문함.",
+      "transcript_text": "내담자: 질문을 해도 괜찮다고 느끼고 싶어요.\n내담자: 지난 회의에서 동료에게 물어보려다 손을 내렸어요.\n상담자: 손을 내릴 때 어떤 느낌이었나요?\n내담자: 얼굴이 뜨거웠어요.\n내담자: 이상한 질문처럼 들릴까 봐 걱정돼요.",
+      "key_issue_tags": [
+        "회의에서 질문을 망설인 경험"
+      ]
+    }
+  }
+}

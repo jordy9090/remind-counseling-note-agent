@@ -1,6 +1,6 @@
 """설정 관리: 환경변수 로드 및 Pydantic 설정"""
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # USE_STUB=1 이면 키가 있어도 강제로 스텁 모드 사용 (오프라인 데모용)
     use_stub: bool = False
+    summary_schema_version: Literal["v1", "v2"] = "v1"
     runtime_environment: str = "production"
     # Exact frontend origins; preview deployments are added explicitly during validation.
     api_cors_allowed_origins: str = "https://remind.ai.kr"

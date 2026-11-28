@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "input": {
+    "case_id": "SYNTH-SUMMARY-V2-01",
+    "session_number": 1,
+    "session_date": "2026-11-27",
+    "counselor_name": "",
+    "sources": {
+      "counselor_memo": "상담자는 내담자의 마음을 질문함.",
+      "transcript_text": "내담자: 내가 못나 보여요. 편하게 말하고 싶어요.\n내담자: 어제 친구와 대화하다가 대답이 없어 입을 다물었어요.\n상담자: 그때 어떤 마음이었나요?\n내담자: 두려웠어요.\n내담자: 아직은 말하기 힘들어요.",
+      "key_issue_tags": [
+        "친구의 침묵과 표현의 어려움"
+      ]
+    }
+  }
+}

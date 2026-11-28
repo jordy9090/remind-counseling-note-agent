@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator, model_validator
 
 from app.schemas.grounding import GroundedGenerationResult
 from app.schemas.insight import RelationalInsights
@@ -138,6 +138,11 @@ class SummarySection(BaseModel):
 
 
 class SessionSummaryDraft(BaseModel):
+    @property
+    def schema_version(self) -> Literal["v1"]:
+        """Legacy responses retain their original shape; storage records the version."""
+        return "v1"
+
     session_info: SessionInfo
     session_theme: SummarySection = Field(description="다음 회기 전에 기억할 구체적 사건·반응을 담은 주제 한 문장. 임상 범주만 남기지 않으며 짧은 핵심 원문 인용은 허용. 발언·제안·의향을 실제 수행이나 동의로 단정하지 않음.")
     presenting_problem: SummarySection = Field(description="이번 회기에 가져온 최근 사건에서 누구와 무슨 일이 있었고 어떤 반응이 이어졌는지 핵심 1문장으로 요약. 원인·진단 추정 금지.")
@@ -146,6 +151,83 @@ class SessionSummaryDraft(BaseModel):
     client_response: SummarySection = Field(description="개입에 대한 내담자의 반응과 남은 어려움을 1~2문장, 목표 90~140자로 통합. 발화를 이어 붙이지 않음.")
     reflection: SummarySection = Field(description="상담자가 직접 메모한 자신의 반응과 성찰만 1~2문장, 목표 90~150자로 요약. 내담자의 감정이나 추정을 상담자 감정으로 바꾸지 않음.")
     next_plan: SummarySection = Field(description="회기 이후 또는 다음 회기의 계획을 최대 350자로 요약. 서로 다른 계획이 여러 개면 1~4문장으로 구분. 별도 합의 행동과 다음 회기 일정·확인할 내용을 구분하며 시점·조건·횟수·선택 사항·보류 가능성을 빠뜨리지 않음. 적은 자료는 짧게 쓰되 여러 계획을 60~90자에 억지로 압축하지 않음. 현재 회기의 자세 유지·잠시 기다리기·개입 거절을 다음 계획으로 옮기지 않음. 별도 향후 계획이 없으면 미확인 및 검토 필요로 표시. 나중에 결정할 행동을 확정하거나 입력에 없는 대상·과제를 만들지 않음.")
+
+
+class SummarySectionGroup(BaseModel):
+    """Ordered evidence-linked items with a persistent group-level review flag."""
+
+    items: list[SummarySection] = Field(default_factory=list)
+    evidence_type: EvidenceType = "direct"
+    source_refs: list[str] = Field(default_factory=list)
+    requires_review: bool = False
+
+
+class SessionSummaryV2(BaseModel):
+    schema_version: Literal["v2"] = "v2"
+    session_info: SessionInfo
+    session_theme: SummarySection = Field(description=SessionSummaryDraft.model_fields["session_theme"].description)
+    presenting_concern: SummarySection = Field(description="내담자의 주관적 호소와 원하는 것. 내담자 표현의 짧은 직접 인용 1~2개와 1문장. 사건 서술 금지.")
+    episodes: SummarySectionGroup = Field(description="에피소드 1~3개를 items에 담음. 각각 언제·누구와·무슨 일과 그때 내담자 반응, 근거 줄. 원인·상대 의도 추정 금지. 자료가 없으면 빈 목록과 검토 표시.")
+    session_content: SummarySection = Field(description="상담실에서 실제로 다룬 흐름 2~3문장. 에피소드 반복 금지.")
+    counselor_intervention: SummarySection = Field(description=SessionSummaryDraft.model_fields["counselor_intervention"].description)
+    client_reactions: SummarySectionGroup = Field(description="내담자가 실제로 한 말 그대로 3~4개 items. 각 text는 따옴표나 화자 표지를 추가하지 않은 원문의 연속 구절 한 줄, source_refs는 해당 transcript.turn_N 하나. 자료가 적으면 지어내지 않고 검토 표시.")
+    client_understanding: SummarySection = Field(description="이런 모습이 있다(근거) → 그때 어떤 감정이었을 수 있다 → 그렇게 반응한 게 이해되는 지점. 정서·관계 패턴의 전체적 이해 2~4문장, 추정 어미. 진단명·단정적 원인 금지. requires_review는 항상 true.")
+    reflection: SummarySection = Field(description=SessionSummaryDraft.model_fields["reflection"].description)
+    next_plan: SummarySection = Field(description=SessionSummaryDraft.model_fields["next_plan"].description)
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def retain_review_boundaries(self) -> "SessionSummaryV2":
+        self.client_understanding.requires_review = True
+        if len(self.episodes.items) > 3 or len(self.client_reactions.items) > 4:
+            raise ValueError("Summary v2 item limits exceeded.")
+        return self
+
+
+def _summary_schema_version(value: Any) -> str:
+    return value.get("schema_version", "v1") if isinstance(value, dict) else value.schema_version
+
+
+SessionSummary = Annotated[
+    Annotated[SessionSummaryV2, Tag("v2")] | Annotated[SessionSummaryDraft, Tag("v1")],
+    Discriminator(_summary_schema_version),
+]
+
+
+def summary_v2_to_v1(summary: SessionSummary) -> SessionSummaryDraft:
+    """Copy into the legacy document contract without losing review metadata."""
+    if isinstance(summary, SessionSummaryDraft):
+        return summary.model_copy(deep=True)
+
+    def combine(items: list[SummarySection], *, requires_review: bool = False) -> SummarySection:
+        return SummarySection(
+            text="\n".join(item.text for item in items),
+            evidence_type=(items[0].evidence_type if items and len({item.evidence_type for item in items}) == 1
+                           else "mixed" if items else "needs_review"),
+            source_refs=list(dict.fromkeys(ref for item in items for ref in item.source_refs)),
+            requires_review=requires_review or not items or any(item.requires_review for item in items),
+        )
+
+    shared = {name: getattr(summary, name).model_copy(deep=True) for name in (
+        "session_info", "session_theme", "session_content", "counselor_intervention", "reflection", "next_plan",
+    )}
+    return SessionSummaryDraft(
+        **shared,
+        presenting_problem=combine([summary.presenting_concern, *summary.episodes.items[:1]],
+                                   requires_review=summary.episodes.requires_review),
+        client_response=combine(summary.client_reactions.items, requires_review=summary.client_reactions.requires_review),
+    )
+
+
+def summary_sections(summary: SessionSummary) -> list[tuple[str, SummarySection]]:
+    """Return only prose sections, including each ordered v2 item."""
+    result = []
+    for name, value in summary:
+        if isinstance(value, SummarySection):
+            result.append((name, value))
+        elif isinstance(value, SummarySectionGroup):
+            result.extend((f"{name}.items.{index}", item) for index, item in enumerate(value.items))
+    return result
 
 
 class GroundedItem(BaseModel):
@@ -274,7 +356,7 @@ class ConfirmGeneratedNoteResponse(BaseModel):
 class GenerateNoteResponse(BaseModel):
     structured_case_data: StructuredCaseData
     evidence_mapped_data: EvidenceMappedData
-    session_summary_draft: SessionSummaryDraft
+    session_summary_draft: SessionSummary
     verification_report: VerificationReport
     document_transform_preview: DocumentTransformPreview
     session_note_draft: GeneratedDocumentDraft | None = None
@@ -297,6 +379,13 @@ class GenerateNoteResponse(BaseModel):
 
 class GeneratedNoteRecord(BaseModel):
     """Owned stored note, including the complete counselor-confirmed payload."""
+
+    @field_validator("draft_json", mode="before")
+    @classmethod
+    def read_legacy_summary_version(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "session_info" in value and "session_theme" in value:
+            return {"schema_version": "v1", **value}
+        return value
 
     note_id: str
     case_id: str
@@ -383,7 +472,7 @@ class SupervisionReportRequest(BaseModel):
     """Request a personal counseling case supervision report draft."""
 
     session_input: SessionInput
-    session_summary_draft: SessionSummaryDraft | None = None
+    session_summary_draft: SessionSummary | None = None
     demo_mode: bool = False
     report_date: str = ""
     client_alias: str = ""

@@ -276,6 +276,7 @@ def persist_generated_note(session_input: SessionInput, result: GenerateNoteResp
         report.session_id = session_id
 
         draft_json = result.session_summary_draft.model_dump(mode="json")
+        draft_json["schema_version"] = getattr(result.session_summary_draft, "schema_version", "v1")
         draft_json["insight_lens"] = session_input.insight_lens
         if result.relational_insights is not None:
             # Reflective hypotheses remain draft metadata, outside confirmed sections and memory.
@@ -1213,6 +1214,7 @@ def save_quick_summary_session(
         next_plan=section("next_plan"),
     )
     draft_json = draft.model_dump(mode="json")
+    draft_json["schema_version"] = draft.schema_version
     draft_json["source"] = "quick_summary"
     # Reopening the session shows exactly the items of the quick summary, in the same order.
     draft_json["workspace_sections"] = [

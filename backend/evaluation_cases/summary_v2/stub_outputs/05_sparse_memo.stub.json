@@ -1,0 +1,89 @@
+{
+  "synthetic": true,
+  "mode": "stub",
+  "session_summary_draft": {
+    "schema_version": "v2",
+    "session_info": {
+      "case_id": "SYNTH-SUMMARY-V2-05",
+      "client_alias": "",
+      "session_number": 1,
+      "session_date": "2026-11-27",
+      "counselor_name": ""
+    },
+    "session_theme": {
+      "text": "주요 회기 주제: 축어록 없는 합성 상담 메모",
+      "evidence_type": "direct",
+      "source_refs": [
+        "counselor_memo"
+      ],
+      "requires_review": false
+    },
+    "presenting_concern": {
+      "text": "[자료에서 확인되지 않음]",
+      "evidence_type": "needs_review",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "episodes": {
+      "items": [],
+      "evidence_type": "needs_review",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "session_content": {
+      "text": "내담자가 설명한 어려움과 반응을 다룸. 상담에서 다룬 구체적 흐름은 상담사 확인이 필요함.",
+      "evidence_type": "needs_review",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "counselor_intervention": {
+      "text": "상담자는 회기에서 들은 내용을 더 확인할 필요가 있다고 메모함.",
+      "evidence_type": "direct",
+      "source_refs": [
+        "counselor_memo"
+      ],
+      "requires_review": false
+    },
+    "client_reactions": {
+      "items": [],
+      "evidence_type": "needs_review",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "client_understanding": {
+      "text": "[자료에서 확인되지 않음]",
+      "evidence_type": "needs_review",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "reflection": {
+      "text": "상담자 reflection은 상담사가 직접 작성하거나 확인해야 합니다.",
+      "evidence_type": "counselor_input",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "next_plan": {
+      "text": "[상담사 확인 필요]",
+      "evidence_type": "needs_review",
+      "source_refs": [],
+      "requires_review": true
+    },
+    "warnings": []
+  },
+  "verification_report": {
+    "grounded_items": [],
+    "weakly_grounded_items": [],
+    "unsupported_or_risky_claims": [],
+    "sensitive_info_items": [],
+    "requires_counselor_review": [
+      {
+        "field": "client_understanding",
+        "reason": "내담자 이해는 잠정적 해석이며 항상 상담사 확인이 필요합니다."
+      },
+      {
+        "field": "client_reactions",
+        "reason": "인용 원문과 내담자 반응의 수를 확인해주세요."
+      }
+    ]
+  }
+}

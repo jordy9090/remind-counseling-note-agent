@@ -1,6 +1,8 @@
 """Evidence-only supervision report workflow."""
 from __future__ import annotations
 
+from app.schemas.note import summary_v2_to_v1
+
 from app.services.supervision_form import progress_form_rows
 
 import re
@@ -107,7 +109,8 @@ def load_case_context(state: SupervisionReportState) -> dict[str, Any]:
         "institution": request.institution or PLACEHOLDER,
         "supervisor": request.supervisor or PLACEHOLDER,
         "supervision_date_place": request.supervision_date_place or PLACEHOLDER,
-        "current_summary": request.session_summary_draft, "current_input": session,
+        "current_summary": (summary_v2_to_v1(request.session_summary_draft)
+                            if request.session_summary_draft is not None else None), "current_input": session,
         "demo_mode": False,
     }}
 
