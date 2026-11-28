@@ -1,4 +1,32 @@
-import type { SessionSummaryDraft, SummarySection } from '../types/session'
+import type { SessionSummaryDraft, SummarySection, SupervisionReportDraft } from '../types/session'
+
+/** Present legacy saved drafts using the reference form without dropping edited cells. */
+export function normalizeSupervisionForm(report: SupervisionReportDraft): SupervisionReportDraft {
+  return { ...report, sections: report.sections.map(section => ({
+    ...section,
+    title: section.title.replace(/^[ABC]-(\d+)\./, '$1.'),
+    contentBlocks: section.contentBlocks.map(block => block.id !== 'C-1.table' ? block : ({
+      ...block,
+      rows: (block.rows || []).map(row => {
+        if ('날짜(소요시간)' in row) return row
+        if (!['회기', '상담일', '소요시간', '이전 수퍼비전'].some(key => key in row)) return row
+        const value = (key: string) => {
+          const text = String(row[key] || '').trim()
+          return text === '[상담사 확인 필요]' ? '' : text
+        }
+        const present = (text: string) => text !== '' && text !== '-'
+        let date = ['회기', '상담일'].map(value).filter(present).join(' ')
+        if (present(value('소요시간'))) date += ` (${value('소요시간')})`
+        const topic = ['회기 주제', '취소·지각·결석', '이전 수퍼비전'].map(value)
+          .filter(text => present(text) && text !== '상담')
+        for (const [key, text] of Object.entries(row)) {
+          if (!['회기', '상담일', '소요시간', '회기 주제', '취소·지각·결석', '이전 수퍼비전'].includes(key) && text) topic.push(`${key}: ${text}`)
+        }
+        return { '날짜(소요시간)': date, '회기 주제': topic.join('\n') }
+      }),
+    })),
+  })) }
+}
 
 export interface CounselorEditedSection {
   id: string

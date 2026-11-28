@@ -1125,7 +1125,7 @@ end $$;"""
     assert capabilities_response.status_code == 200, capabilities_response.text
     capabilities = capabilities_response.json()
     assert capabilities["docx"]["available"] is True
-    assert capabilities["hwpx"]["available"] is False
+    assert capabilities["hwpx"]["available"] is True
     assert capabilities["pdf"]["available"] is True, capabilities
 
     _run_material_upload_smoke_tests(authenticated_client)
@@ -1820,8 +1820,9 @@ end $$;"""
         assert empty_sections_response.status_code == 422
 
         hwpx_response = authenticated_client.post("/api/documents/export", json={**session_export_payload, "format": "hwpx"})
-        assert hwpx_response.status_code == 422
-        assert "HWPX" in hwpx_response.text
+        assert hwpx_response.status_code == 200
+        assert hwpx_response.headers["content-type"] == "application/hwp+zip"
+        assert hwpx_response.content.startswith(b"PK")
 
     print(
         "Smoke test passed: health, note generation, temporary draft storage, cached recomposition, "

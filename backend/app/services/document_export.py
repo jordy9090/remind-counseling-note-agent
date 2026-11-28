@@ -1,4 +1,4 @@
-"""Document export service for DOCX/PDF output."""
+"""Document export service for DOCX, PDF, and HWPX output."""
 from __future__ import annotations
 
 import html
@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 from app.schemas.document import DocumentContentBlock, DocumentExportRequest, DocumentSection
 from app.services.rich_text import RichParagraph, parse_rich_text
+from app.services.supervision_form import form_heading, progress_form_rows
 
 
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -79,7 +80,7 @@ class DocumentExportResult:
 
 
 class DocumentExporter(ABC):
-    """Base exporter interface; HWPX can plug in here later."""
+    """Base exporter interface."""
 
     content_type: str
     extension: str
@@ -154,7 +155,7 @@ class DocxDocumentExporter(DocumentExporter):
 
         document.add_paragraph()
 
-        for doc_section in renderable_sections(request.sections):
+        for doc_section in document_sections(request):
             if doc_section.level <= 1:
                 paragraph = document.add_paragraph()
                 paragraph.paragraph_format.keep_with_next = True
@@ -217,14 +218,13 @@ class PdfDocumentExporter(DocumentExporter):
 
 
 class HwpxDocumentExporter(DocumentExporter):
-    content_type = "application/vnd.hancom.hwpx"
+    content_type = "application/hwp+zip"
     extension = "hwpx"
 
     def export(self, request: DocumentExportRequest) -> bytes:
-        raise UnsupportedExportFormat(
-            "HWPX 내보내기는 검증된 HWPX 템플릿 ZIP 구조가 준비된 뒤 활성화할 수 있습니다. "
-            "현재는 Word/한글 호환 DOCX 또는 PDF를 선택해주세요."
-        )
+        from app.services.hwpx_export import docx_to_hwpx
+
+        return docx_to_hwpx(DocxDocumentExporter().export(request))
 
 
 class DocumentExportService:
@@ -257,11 +257,37 @@ class DocumentExportService:
         return {
             "docx": {"available": True, "reason": None},
             "pdf": {"available": pdf_available, "reason": None if pdf_available else pdf_reason},
-            "hwpx": {
-                "available": False,
-                "reason": "Verified HWPX template is not configured.",
-            },
+            "hwpx": {"available": True, "reason": None},
         }
+
+
+def document_sections(request: DocumentExportRequest) -> list[DocumentSection]:
+    sections = list(renderable_sections(request.sections))
+    if request.document_type != "supervision_report":
+        return sections
+    result = []
+    for section in sections:
+        blocks = section.content_blocks
+        if section.id == "C-1":
+            maximum = next((block for block in blocks if block.id == "C-1.maximum"), None)
+            if any(block.id == "C-1.table" for block in blocks):
+                blocks = [block.model_copy(update={
+                    "rows": progress_form_rows(block.rows), "label": None,
+                    "text": clean_export_text(maximum.text or "") if maximum else "",
+                }) if block.id == "C-1.table" else block
+                          for block in blocks if block.id != "C-1.maximum"]
+        result.append(section.model_copy(update={"title": form_heading(section.title), "content_blocks": blocks}))
+    return result
+
+
+def table_matrix(block: DocumentContentBlock) -> tuple[list[list[str]], int]:
+    headers = ordered_table_headers(block.rows)
+    rows = [[str(header) for header in headers]]
+    rows.extend([[stringify_cell_value(row.get(header, "")) for header in headers] for row in block.rows])
+    if block.id == "C-1.table" and headers == ["날짜(소요시간)", "회기 주제"]:
+        rows.insert(0, ["최대 상담 가능 회기 수", clean_export_text(block.text or "")])
+        return rows, 2
+    return rows, 1
 
 
 def build_metadata_rows(request: DocumentExportRequest) -> list[tuple[str, str]]:
@@ -355,7 +381,15 @@ def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
     )
     section_style = ParagraphStyle("KoreanSection", parent=body, fontSize=12, leading=18, spaceBefore=5 * mm, spaceAfter=2 * mm)
     label_style = ParagraphStyle("KoreanLabel", parent=body, fontSize=8, leading=11)
-    story = [Paragraph(html.escape(request.title), title_style)]
+    title = Paragraph(html.escape(request.title), title_style)
+    story = [title]
+    if request.document_type == "supervision_report":
+        title_style.spaceAfter = 0
+        title_box = Table([[title]], colWidths=[174 * mm])
+        title_box.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 1.2, colors.black),
+                                       ("TOPPADDING", (0, 0), (-1, -1), 10),
+                                       ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
+        story = [title_box, Spacer(1, 3 * mm)]
 
     metadata_rows = (
         build_supervision_metadata_grid(request)
@@ -379,7 +413,7 @@ def render_pdf_with_reportlab(request: DocumentExportRequest) -> bytes:
     ]))
     story.extend([metadata_table, Spacer(1, 4 * mm)])
 
-    for section in renderable_sections(request.sections):
+    for section in document_sections(request):
         story.append(Paragraph(html.escape(section.title), section_style))
         if section.content_blocks:
             for block in section.content_blocks:
@@ -411,27 +445,32 @@ def _reportlab_block(block: DocumentContentBlock, body, label_style) -> list[obj
     if block.label:
         elements.append(Paragraph(f"<b>{html.escape(block.label)}</b>", label_style))
     if block.rows:
-        keys = list(block.rows[0])
-        rows = [[Paragraph(html.escape(str(key)), label_style) for key in keys]]
-        rows.extend([
-            [Paragraph(html.escape(stringify_cell_value(row.get(key, ""))).replace("\n", "<br/>"), body) for key in keys]
-            for row in block.rows
-        ])
-        table = Table(rows, repeatRows=1)
+        matrix, header_count = table_matrix(block)
+        rows = [[Paragraph(html.escape(cell).replace("\n", "<br/>"), body) for cell in row] for row in matrix]
+        table = Table(rows, repeatRows=header_count, colWidths=([174 * 72 / 25.4 * ratio for ratio in (.36, .64)] if header_count == 2 else None))
         table.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+            ("BACKGROUND", (0, 0), (-1, header_count - 1), colors.HexColor("#f1f5f9")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         elements.append(table)
+        return elements
     for label, turn in zip(transcript_turn_labels(block.speaker_turns), block.speaker_turns):
         silence = f" (침묵 {turn.silence_seconds}초)" if turn.silence_seconds else ""
         elements.append(Paragraph(f"<b>{label}:</b> {html.escape(turn.text)}{silence}", body))
     rich = block_rich_paragraphs(block)
-    if rich is not None:
-        elements.extend(_reportlab_rich(rich, body))
-    elif block.text and block.text.strip() != SUPERVISION_PLACEHOLDER:
-        elements.append(Paragraph(html.escape(block.text).replace("\n", "<br/>"), body))
+    text_elements = _reportlab_rich(rich, body) if rich is not None else [
+        Paragraph(html.escape(clean_export_text(block.text or "")).replace("\n", "<br/>") or "<br/>", body)
+    ]
+    if block.type == "reflection_box":
+        box = Table([[text_elements]], colWidths=[174 * 72 / 25.4])
+        box.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), .5, colors.black),
+                                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f3f4f6")),
+                                 ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                 ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+        elements.append(box)
+    else:
+        elements.extend(text_elements)
     elements.append(Spacer(1, 2))
     return elements
 
@@ -688,7 +727,7 @@ def add_block_to_docx(document, block: DocumentContentBlock, font_name: str) -> 
         label_run.bold = True
         set_run_font(label_run, font_name)
     if block.type == "table" and block.rows:
-        add_table_block_to_docx(document, block.rows, font_name)
+        add_table_block_to_docx(document, block, font_name)
         return
     if block.type == "transcript" and block.speaker_turns:
         for label, turn in zip(transcript_turn_labels(block.speaker_turns), block.speaker_turns):
@@ -715,27 +754,23 @@ def add_block_to_docx(document, block: DocumentContentBlock, font_name: str) -> 
     add_content_to_docx(document, block.text or "", font_name)
 
 
-def add_table_block_to_docx(document, rows: list[dict[str, object]], font_name: str) -> None:
-    headers = ordered_table_headers(rows)
-    table = document.add_table(rows=len(rows) + 1, cols=len(headers))
+def add_table_block_to_docx(document, block: DocumentContentBlock, font_name: str) -> None:
+    matrix, header_count = table_matrix(block)
+    table = document.add_table(rows=len(matrix), cols=len(matrix[0]))
     table.style = "Table Grid"
-    if len(headers) == 6:
-        set_table_column_widths(table, [15, 22, 20, 43, 38, 32])
-    mark_table_header_repeat(table.rows[0])
-    for index, header in enumerate(headers):
-        cell = table.cell(0, index)
-        cell.text = str(header)
-        shade_cell(cell, "E2E8F0")
-        for paragraph in cell.paragraphs:
-            for run in paragraph.runs:
-                run.bold = True
-                set_run_font(run, font_name)
-    for row_index, row in enumerate(rows, start=1):
-        for column_index, header in enumerate(headers):
+    if header_count == 2:
+        set_table_column_widths(table, [61, 109])
+    for row_index, row in enumerate(matrix):
+        if row_index < header_count:
+            mark_table_header_repeat(table.rows[row_index])
+        for column_index, value in enumerate(row):
             cell = table.cell(row_index, column_index)
-            cell.text = stringify_cell_value(row.get(header, ""))
+            cell.text = value
+            if row_index < header_count:
+                shade_cell(cell, "E2E8F0")
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
+                    run.bold = row_index < header_count
                     set_run_font(run, font_name)
     document.add_paragraph()
 
@@ -849,7 +884,7 @@ def render_pdf_html(request: DocumentExportRequest) -> str:
         title=escape_text(request.title),
         font_family=font_family,
         metadata_rows=render_metadata_rows_html(request),
-        sections=render_sections_html(request.sections),
+        sections=render_sections_html(document_sections(request)),
         review_notice=escape_text(REVIEW_NOTICE),
     )
 
@@ -918,13 +953,13 @@ def render_content_html(content: str | list[str] | None) -> str:
 def render_block_html(block: DocumentContentBlock) -> str:
     label_html = f'<p class="block-label">{escape_text(block.label)}</p>' if block.label else ""
     if block.type == "table" and block.rows:
-        headers = ordered_table_headers(block.rows)
-        header_html = "".join(f"<th>{escape_text(header)}</th>" for header in headers)
-        rows_html = []
-        for row in block.rows:
-            cells = "".join(f"<td>{escape_text(stringify_cell_value(row.get(header, '')))}</td>" for header in headers)
-            rows_html.append(f"<tr>{cells}</tr>")
-        return f"{label_html}<table class=\"content-table\"><thead><tr>{header_html}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
+        matrix, header_count = table_matrix(block)
+        def row_html(row, tag):
+            return "<tr>" + "".join(f"<{tag}>{escape_text(value)}</{tag}>" for value in row) + "</tr>"
+        head = "".join(row_html(row, "th") for row in matrix[:header_count])
+        body = "".join(row_html(row, "td") for row in matrix[header_count:])
+        columns = '<colgroup><col style="width:36%"><col style="width:64%"></colgroup>' if header_count == 2 else ""
+        return f'{label_html}<table class="content-table">{columns}<thead>{head}</thead><tbody>{body}</tbody></table>'
     if block.type == "transcript" and block.speaker_turns:
         turns = []
         for label, turn in zip(transcript_turn_labels(block.speaker_turns), block.speaker_turns):
