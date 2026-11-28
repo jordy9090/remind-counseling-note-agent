@@ -29,6 +29,7 @@ import { AudioTranscriptEditor } from '../components/audio/AudioTranscriptEditor
 import { AUDIO_UPLOAD_MAX_BYTES, AUDIO_UPLOAD_LIMIT_LABEL } from '../lib/audioConsent'
 import { clearHostedAudioCheckpoint } from '../lib/hostedAudio'
 import type { LiveRecordingResult } from '../lib/liveAudio'
+import { deleteLiveAudioFile } from '../lib/liveAudioStore'
 import { useUnsavedWork } from '../lib/unsavedWork'
 import { useAuthSession } from '../lib/authSession'
 import GroundingEvidenceReview, {
@@ -681,6 +682,8 @@ export default function SessionDraftPage({
   }
 
   const removeMaterial = (materialId: string) => {
+    const file = materialsRef.current.find(material => material.id === materialId)?.file
+    if (file) void deleteLiveAudioFile(file).catch(() => setError('브라우저에 보관된 녹음을 삭제하지 못했습니다. 녹음의 삭제 버튼으로 다시 시도해주세요.'))
     revokeObjectUrl(materialsRef.current.find((material) => material.id === materialId)?.objectUrl)
     setMaterials((prev) => prev.filter((item) => item.id !== materialId))
     if (selectedMaterialId === materialId) {
@@ -900,6 +903,7 @@ export default function SessionDraftPage({
       transcript_text: nextTranscriptText,
       nonverbal_notes: nextNonverbalNotes,
     }))
+    if (material.file) void deleteLiveAudioFile(material.file).catch(() => setError('검토는 반영했지만 브라우저 원음을 삭제하지 못했습니다. 녹음의 삭제 버튼으로 다시 시도해주세요.'))
     setMaterials((prev) =>
       prev.map((item) =>
         item.id === materialId

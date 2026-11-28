@@ -161,6 +161,7 @@ export default function SessionInputPage({
   return (
     <section aria-label="새 회기 입력" className="mx-auto w-full max-w-[658px] px-4 pb-10 pt-2">
       <LiveSessionRecorder key={`${form.case_id}:${form.session_number}`} onComplete={onLiveComplete}
+        caseId={form.case_id} sessionNumber={form.session_number}
         onActiveChange={onLiveActiveChange} disabled={isLoading || processing || Boolean(pendingAudioFiles)} />
       <dialog ref={consentDialog} aria-labelledby="audio-consent-title" aria-describedby="audio-consent-description"
         onCancel={(event) => { event.preventDefault(); resolveAudioConsent(false) }}

@@ -41,6 +41,8 @@ interface Options {
   onUpdate: (snapshot: LiveAudioSnapshot) => void
   onLimit: () => void
   capture?: CaptureFactory
+  persistChunk?: (index: number, pcm: Blob) => Promise<void>
+  onStorageError?: () => void
 }
 
 const emptySnapshot = (): LiveAudioSnapshot => ({
@@ -48,7 +50,7 @@ const emptySnapshot = (): LiveAudioSnapshot => ({
 })
 export const initialLiveAudioSnapshot = emptySnapshot
 
-/** Capture stays in this tab; only explicit, owner-scoped CLOVA requests leave it. */
+/** Only explicit, owner-scoped CLOVA requests leave the browser. */
 export class LiveAudioRecorder {
   private snapshot = emptySnapshot()
   private capture?: AudioCapture
@@ -62,9 +64,37 @@ export class LiveAudioRecorder {
   private pumpPromise?: Promise<void>
   private finishPromise?: Promise<LiveRecordingResult>
   private captureIssue = ''
+  private storagePromise: Promise<void> = Promise.resolve()
+  private storageFailed = false
   private filename = `상담-실시간-${new Date().toISOString().replace(/[:.]/g, '-')}.wav`
 
   constructor(private options: Options) {}
+
+  get recordingFilename(): string { return this.filename }
+
+  /** Restore PCM locally; retry is the only action that sends restored chunks. */
+  restore(filename: string, parts: { index: number; pcm: Blob }[]): void {
+    if (this.snapshot.state !== 'idle' || this.aborted || !parts.length) return
+    this.filename = filename
+    for (const part of parts) {
+      const frames = part.pcm.size / 2
+      if (part.index !== this.chunks.length || !Number.isInteger(frames) || frames <= 0
+        || frames > LIVE_CHUNK_SECONDS * LIVE_AUDIO_RATE || this.totalFrames + frames > LIVE_MAX_SECONDS * LIVE_AUDIO_RATE) {
+        throw new Error('보관된 녹음 형식을 확인하지 못했습니다.')
+      }
+      const header = encodeWav(new Float32Array())
+      const view = new DataView(header.buffer)
+      view.setUint32(4, 36 + part.pcm.size, true)
+      view.setUint32(40, part.pcm.size, true)
+      const start = this.totalFrames / LIVE_AUDIO_RATE
+      this.totalFrames += frames
+      this.chunks.push({ index: part.index, start, end: this.totalFrames / LIVE_AUDIO_RATE,
+        file: new File([header as BlobPart, part.pcm], `live-${part.index}.wav`, { type: 'audio/wav' }), status: 'failed' })
+    }
+    this.snapshot = { ...emptySnapshot(), state: 'paused', duration: this.totalFrames / LIVE_AUDIO_RATE,
+      message: '원음을 복구했습니다. 전사 텍스트는 저장하지 않습니다. 실패 구간 다시 처리를 누르면 원음을 전송해 다시 전사합니다.' }
+    this.emit()
+  }
 
   async start(): Promise<void> {
     if (this.snapshot.state !== 'idle' || this.aborted) return
@@ -130,6 +160,12 @@ export class LiveAudioRecorder {
     const start = end - this.pendingLength / LIVE_AUDIO_RATE
     const bytes = encodeWav(this.pendingSamples())
     const file = new File([bytes as BlobPart], `live-${this.chunks.length}.wav`, { type: 'audio/wav' })
+    const index = this.chunks.length
+    if (this.options.persistChunk && !this.storageFailed) {
+      this.storagePromise = this.storagePromise.then(async () => {
+        if (!this.storageFailed) await this.options.persistChunk!(index, file.slice(44))
+      }).catch(() => { this.storageFailed = true; this.options.onStorageError?.() })
+    }
     this.chunks.push({ index: this.chunks.length, start, end, file, status: 'pending' })
     this.pending = []
     this.pendingLength = 0
@@ -184,7 +220,7 @@ export class LiveAudioRecorder {
   }
 
   async resume(): Promise<void> {
-    if (this.aborted || this.snapshot.state !== 'paused') return
+    if (this.aborted || this.snapshot.state !== 'paused' || !this.capture) return
     if (this.chunks.some(c => c.status === 'failed')) {
       this.snapshot.message = '실패한 구간을 먼저 다시 처리해주세요. 녹음된 음성은 유지됩니다.'
       this.emit()
@@ -243,6 +279,7 @@ export class LiveAudioRecorder {
     this.capture = undefined
     if (this.aborted) throw new Error('녹음 작업이 종료되었습니다.')
     this.flushChunk()
+    await this.storagePromise
     if (this.pumpPromise) await this.pumpPromise
     // A flush may have joined a pump just as its last request completed.
     if (!this.chunks.some(c => c.status === 'failed') && this.chunks.some(c => c.status === 'pending')) {

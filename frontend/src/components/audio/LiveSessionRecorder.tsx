@@ -6,6 +6,8 @@ import { AUDIO_CONSENT_MESSAGE } from '../../lib/audioConsent'
 import { LiveAudioRecorder, initialLiveAudioSnapshot, type LiveRecordingResult } from '../../lib/liveAudio'
 import { buildLiveSessionDraft } from '../../lib/liveSessionDraft'
 import { useUnsavedWork } from '../../lib/unsavedWork'
+import { appendLiveAudio, createLiveAudio, deleteLiveAudio, listLiveAudio, loadLiveAudio,
+  rememberLiveAudioFile, subscribeLiveAudioStore, type StoredLiveAudio } from '../../lib/liveAudioStore'
 
 const time = (value: number) => `${Math.floor(value / 60).toString().padStart(2, '0')}:${Math.floor(value % 60).toString().padStart(2, '0')}`
 const buttonBase = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50'
@@ -13,7 +15,9 @@ const button = `${buttonBase} border-grey-200 bg-white text-grey-800`
 const accentButton = `${buttonBase} border-primary-400 bg-white text-primary-500`
 const solidButton = `${buttonBase} border-primary-400 bg-primary-400 text-white`
 
-export default function LiveSessionRecorder({ onComplete, onActiveChange, disabled = false }: {
+export default function LiveSessionRecorder({ caseId, sessionNumber, onComplete, onActiveChange, disabled = false }: {
+  caseId: string
+  sessionNumber: number
   onComplete: (result: LiveRecordingResult) => void
   onActiveChange: (active: boolean) => void
   disabled?: boolean
@@ -23,6 +27,11 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
   const [consentOpen, setConsentOpen] = useState(false)
   const [consented, setConsented] = useState(false)
   const [notice, setNotice] = useState('')
+  const [storageNotice, setStorageNotice] = useState('')
+  const [recoverable, setRecoverable] = useState<StoredLiveAudio[]>([])
+  const [recovering, setRecovering] = useState(false)
+  const [recovered, setRecovered] = useState(false)
+  const stored = useRef<StoredLiveAudio | null>(null)
   const recorder = useRef<LiveAudioRecorder | null>(null)
   const startupAbort = useRef<AbortController | null>(null)
   const epoch = useRef(0)
@@ -59,7 +68,27 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
     recorder.current?.dispose()
     recorder.current = null
     onActiveRef.current(false)
-  }, [userId])
+  }, [userId, caseId, sessionNumber])
+
+  useEffect(() => {
+    let alive = true
+    let request = 0
+    const refresh = async () => {
+      if (!userId) return
+      const current = ++request
+      try {
+        const records = await listLiveAudio({ userId, caseId, sessionNumber })
+        if (alive && current === request) setRecoverable(records.filter(record => record.key[3] !== stored.current?.key[3]))
+      } catch {
+        if (alive) setStorageNotice('브라우저 녹음 저장소를 사용할 수 없습니다. 녹음은 계속할 수 있지만 화면을 닫기 전에 원음을 내려받아주세요.')
+      }
+    }
+    void refresh()
+    const unsubscribe = subscribeLiveAudioStore(() => { void refresh() })
+    return () => { alive = false; unsubscribe() }
+  }, [userId, caseId, sessionNumber])
+
+  const storageError = () => setStorageNotice('브라우저 저장 공간이 부족하거나 저장소를 사용할 수 없어 이후 원음을 보관하지 못합니다. 녹음은 계속됩니다. 화면을 닫기 전에 원음을 내려받아주세요.')
 
   const finish = async () => {
     const current = recorder.current
@@ -69,6 +98,7 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
     try {
       const result = await current.finish()
       if (run !== epoch.current) return
+      if (stored.current) rememberLiveAudioFile(result.file, stored.current.key)
       onActiveRef.current(false)
       onCompleteRef.current(result)
       setNotice(result.transcription.failed_ranges?.length
@@ -86,7 +116,7 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
   finishRef.current = finish
 
   const start = async () => {
-    if (!consented || !userId || disabled || active) return
+    if (!consented || !userId || disabled || active || recovering) return
     const run = ++epoch.current
     completing.current = false
     const owner = userId
@@ -96,6 +126,9 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
     recorder.current = null
     setConsentOpen(false)
     setNotice('')
+    setStorageNotice('')
+    setRecovered(false)
+    stored.current = null
     setSnapshot({ ...initialLiveAudioSnapshot(), state: 'starting' })
     onActiveRef.current(true)
     try {
@@ -104,11 +137,18 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
       if (!capabilities.transcription.available || capabilities.runtime_mode !== 'real' || capabilities.provider !== 'clova') {
         throw new Error('현재 연결에서는 CLOVA 실시간 녹음을 사용할 수 없습니다. 음성 인식 연결 설정을 확인해주세요.')
       }
+      let saved: StoredLiveAudio | null = null
       const current = new LiveAudioRecorder({
         send: (file, signal) => transcribeLiveAudioChunk(file, owner, signal),
         onUpdate: next => { if (run === epoch.current) setSnapshot(next) },
         onLimit: () => { if (run === epoch.current) void finishRef.current() },
+        persistChunk: (index, pcm) => saved ? appendLiveAudio(saved.key, index, pcm) : Promise.resolve(),
+        onStorageError: () => { if (run === epoch.current) storageError() },
       })
+      try { saved = await createLiveAudio({ userId: owner, caseId, sessionNumber }, current.recordingFilename) }
+      catch { if (run === epoch.current) storageError() }
+      if (run !== epoch.current) { current.dispose(); return }
+      stored.current = saved
       recorder.current = current
       await current.start()
     } catch (error) {
@@ -119,6 +159,51 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
       setNotice(error instanceof Error ? error.message : '녹음을 시작하지 못했습니다.')
       onActiveRef.current(false)
     }
+  }
+
+  const recover = async (record: StoredLiveAudio) => {
+    if (!userId || active || disabled || recovering) return
+    const run = ++epoch.current
+    setRecovering(true)
+    try {
+      const saved = await loadLiveAudio(record.key)
+      if (run !== epoch.current) return
+      recorder.current?.dispose()
+      const current = new LiveAudioRecorder({
+        send: (file, signal) => transcribeLiveAudioChunk(file, userId, signal),
+        onUpdate: next => { if (run === epoch.current) setSnapshot(next) },
+        onLimit: () => {},
+      })
+      current.restore(saved.record.filename, saved.chunks)
+      recorder.current = current
+      stored.current = saved.record
+      completing.current = false
+      setRecovered(true)
+      setNotice('')
+      setRecoverable(previous => previous.filter(item => item.key[3] !== record.key[3]))
+      onActiveRef.current(true)
+    } catch (error) {
+      if (run === epoch.current) setNotice(error instanceof Error ? error.message : '녹음을 복구하지 못했습니다.')
+    } finally { if (run === epoch.current) setRecovering(false) }
+  }
+
+  const discard = async (record: StoredLiveAudio | null) => {
+    const run = epoch.current
+    try {
+      if (record) await deleteLiveAudio(record.key)
+      if (run !== epoch.current) return
+      setRecoverable(previous => previous.filter(item => item.key[3] !== record?.key[3]))
+      if (!record || record.key[3] === stored.current?.key[3]) {
+        epoch.current++
+        recorder.current?.dispose()
+        recorder.current = null
+        stored.current = null
+        completing.current = false
+        setSnapshot(initialLiveAudioSnapshot())
+        setNotice('녹음을 삭제했습니다.')
+        onActiveRef.current(false)
+      }
+    } catch { setNotice('녹음을 삭제하지 못했습니다. 다시 시도해주세요.') }
   }
 
   const download = () => {
@@ -155,7 +240,7 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
     <div className="flex flex-wrap items-center justify-between gap-3 bg-primary-50/60 p-4">
       <div><h2 className="flex items-center gap-2 text-base font-bold text-grey-900"><Mic className="h-5 w-5 text-primary-400" />실시간 상담 기록 <span className="rounded bg-white px-2 py-0.5 text-xs font-medium text-grey-600">베타</span></h2>
         <p className="mt-1 text-sm leading-6 text-grey-600">상담하면서 축어록과 발화별 임시 메모를 확인하세요.</p></div>
-      {!active && <button type="button" className={accentButton} disabled={disabled || !userId}
+      {!active && <button type="button" className={accentButton} disabled={disabled || !userId || recovering}
         onClick={() => { setConsented(false); setConsentOpen(true) }}><Mic className="h-4 w-4" />{snapshot.state === 'finished' ? '새 녹음 시작' : '상담 녹음 시작'}</button>}
       {active && <div className="flex items-center gap-2 text-sm font-semibold text-grey-800" role="status">
         {snapshot.state === 'recording' ? <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> : snapshot.state === 'starting' || snapshot.state === 'finishing' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}
@@ -164,13 +249,20 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
       </div>}
     </div>
 
+    {!active && recoverable.map(record => <div key={record.key[3]} role="status" className="space-y-2 border-t border-grey-200 p-4">
+      <p className="text-sm text-grey-800">중단된 녹음 {Math.max(1, Math.ceil(record.frames / 16000 / 60))}분이 있습니다. 이어서 검토할까요?</p>
+      <button type="button" className={accentButton} disabled={disabled || recovering} onClick={() => void recover(record)}>이어서 검토</button>{' '}
+      <button type="button" className={button} disabled={recovering} onClick={() => void discard(record)}>삭제</button>
+    </div>)}
+
     {(active || snapshot.state === 'finished') && <div className="space-y-4 p-4">
       {snapshot.state !== 'starting' && <div className="flex flex-wrap items-center gap-2">
         {snapshot.state === 'recording' && <button type="button" className={button} onClick={() => recorder.current?.pause()}><Pause className="h-4 w-4" />일시정지</button>}
-        {snapshot.state === 'paused' && <button type="button" className={button} disabled={snapshot.failed > 0 || snapshot.queued >= 3} onClick={() => void recorder.current?.resume()}><Play className="h-4 w-4" />녹음 계속</button>}
+        {snapshot.state === 'paused' && !recovered && <button type="button" className={button} disabled={snapshot.failed > 0 || snapshot.queued >= 3} onClick={() => void recorder.current?.resume()}><Play className="h-4 w-4" />녹음 계속</button>}
         {snapshot.failed > 0 && snapshot.state === 'paused' && <button type="button" className={button} onClick={() => void recorder.current?.retry()}><RefreshCcw className="h-4 w-4" />실패 구간 다시 처리</button>}
         {active && <button type="button" className={accentButton} disabled={snapshot.state === 'finishing'} onClick={() => void finish()}><Square className="h-4 w-4" />녹음 종료·검토</button>}
         <button type="button" className={button} disabled={!snapshot.duration} onClick={download}><Download className="h-4 w-4" />원음 다운로드</button>
+        <button type="button" className={button} disabled={snapshot.state === 'finishing'} onClick={() => void discard(stored.current)}>삭제</button>
         {snapshot.queued > 0 && <span className="text-sm text-grey-600">{snapshot.queued}개 구간 처리 대기</span>}
       </div>}
       <div aria-label="마이크 입력 크기" className="h-1.5 overflow-hidden rounded-full bg-grey-100"><div className="h-full rounded-full bg-primary-400 transition-[width]" style={{ width: `${snapshot.level * 100}%` }} /></div>
@@ -192,5 +284,6 @@ export default function LiveSessionRecorder({ onComplete, onActiveChange, disabl
       <p className="text-xs leading-5 text-grey-500">10초 단위 전사 · 서버 응답에 따라 표시가 늦어질 수 있습니다 · 최대 60분<br />임시 메모는 원문 발화를 자동 분류합니다. 최종 AI 요약은 종료 후 화자·개인정보 검토를 거쳐 생성합니다. 녹음 중에는 이 화면을 열어두세요.</p>
     </div>}
     {notice && <p role="status" className="flex items-start gap-2 border-t border-grey-200 px-4 py-3 text-sm leading-6 text-grey-700">{snapshot.state === 'finished' && <CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-emerald-600" />}{notice}</p>}
+    {storageNotice && <p role="alert" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">{storageNotice}</p>}
   </section>
 }
